@@ -252,6 +252,10 @@ touched it for 20 s; a write racing it is refused as `newer` and the owner's win
 The creature's own pairing box (a `prompt` behind Pair and Reconnect) answers that robots are
 paired from JBrain.
 
+A persona also wears its own face (`growbot_personas.face`, lantern by default): the pull and
+the poll carry it, `growbot-box.js` hands it to `growbot-face.js` before the face loads, and a
+`gb-box-state` event with a new one changes the face where the creature stands.
+
 ### Visual memories (wave G4d)
 
 The saved views upstream keeps in IndexedDB (`v3/visual-memory.js`) live on the box with the

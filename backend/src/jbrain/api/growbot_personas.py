@@ -38,6 +38,7 @@ from jbrain.growbot import memories, souls
 from jbrain.growbot.personas import (
     NAME_MAX,
     Checkpoint,
+    Face,
     MemoriesDo,
     Memory,
     Persona,
@@ -106,6 +107,8 @@ class PersonaOut(BaseModel):
     wearing: str | None
     # How many visual memories it has.
     memories: int
+    # The face its creature wears.
+    face: str
 
 
 class MemoryOut(BaseModel):
@@ -177,6 +180,7 @@ def _persona_out(p: Persona) -> PersonaOut:
         checkpoints=p.checkpoints,
         wearing=p.wearing,
         memories=p.memories,
+        face=p.face,
     )
 
 
@@ -314,7 +318,9 @@ class NewPersonaIn(BaseModel):
 
 
 class RenameIn(BaseModel):
-    name: str = Field(max_length=200)
+    # Either or both: a new name, a new face.
+    name: str | None = Field(default=None, max_length=200)
+    face: Face | None = None
 
 
 class RegionIn(BaseModel):
@@ -367,8 +373,14 @@ async def persona_detail(request: Request, owner: OwnerDep, pid: Pid) -> Persona
 
 @router.patch("/personas/{pid}")
 async def rename_persona(request: Request, owner: OwnerDep, pid: Pid, body: RenameIn) -> WrittenOut:
+    """A new name (a soul write, so its phone reloads on it), a new face (not a soul write: the
+    phone's poll carries it and the creature changes face where it stands), or both."""
     ctx = _owner_ctx(owner)
+    if body.face is not None and not await _repo(request).set_face(ctx, pid, body.face):
+        raise HTTPException(status_code=404, detail="no such persona")
     p = await _get(request, ctx, pid)
+    if body.name is None:
+        return WrittenOut(persona=await _detail(request, ctx, p), checkpoint=None)
     name = _name(body.name)
     return await _written(
         request, ctx, pid, souls.renamed(p.soul or {}, name), None, name, p.version
@@ -400,7 +412,12 @@ async def duplicate_persona(request: Request, owner: OwnerDep, pid: Pid) -> Pers
     p = await _get(request, ctx, pid)
     name = f"{p.name} copy"[:NAME_MAX]
     made = await repo.create(
-        ctx, name, souls.renamed(p.soul or {}, name), f"copy of {p.name}", memories_from=p.id
+        ctx,
+        name,
+        souls.renamed(p.soul or {}, name),
+        f"copy of {p.name}",
+        memories_from=p.id,
+        face=cast(Face, p.face),
     )
     return await _detail(request, ctx, made)
 
@@ -573,6 +590,7 @@ class PulledOut(BaseModel):
     soul: dict[str, Any]
     # The robot this persona wears now, or None: the phone drives the legs only while it is.
     wearing: str | None
+    face: str
 
 
 class PushedOut(BaseModel):
@@ -603,7 +621,7 @@ async def pull_soul(request: Request, body: PhoneIn) -> PulledOut:
     got = await _repo(request).pull(_SYSTEM_OWNER, body.persona, body.phone)
     if isinstance(got, str):
         raise _away(got)
-    return PulledOut(version=got.version, soul=got.soul, wearing=got.wearing)
+    return PulledOut(version=got.version, soul=got.soul, wearing=got.wearing, face=got.face)
 
 
 class StateOut(BaseModel):
@@ -611,6 +629,8 @@ class StateOut(BaseModel):
     wearing: str | None
     # Bumped by every change to its visual memories: the phone syncs when it moves.
     memories: int
+    # The face it wears: the creature changes to it where it stands.
+    face: str
 
 
 @internal_router.post("/soul/state")
@@ -622,7 +642,7 @@ async def soul_state(request: Request, body: PhoneIn) -> StateOut:
     got = await _repo(request).pull(_SYSTEM_OWNER, body.persona, body.phone, with_soul=False)
     if isinstance(got, str):
         raise _away(got)
-    return StateOut(version=got.version, wearing=got.wearing, memories=got.memories)
+    return StateOut(version=got.version, wearing=got.wearing, memories=got.memories, face=got.face)
 
 
 @internal_router.post("/soul/push")

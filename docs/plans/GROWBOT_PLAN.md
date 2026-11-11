@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
+> **Status:** In progress · **Last verified:** 2026-11-11 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -151,7 +151,9 @@ The owner (2026-11-10) did not like upstream's face and chose the panels' ostric
 mocks (`docs/mocks/growbot-face/`; binding spec in `docs/reference/DESIGN.md` "GrowBot — the
 creature's face"). `patches/growbot-face.js` draws it at full resolution over upstream's pixel
 sky from the same state upstream drew its own eyes from, so the brain still sets only
-`emotion`; the one new brain verb is `coat`, which recolours it.
+`emotion`; the one new brain verb is `coat`, which recolours it. Since 2026-11-11 the face is
+each persona's own (migration 0259, `growbot_personas.face`), lantern by default (owner): picked
+on the persona's *Manage* tab, read by the phone with the soul and changed at its next poll.
 
 ### 2b. Settings live on the box, and the PWA owns them
 

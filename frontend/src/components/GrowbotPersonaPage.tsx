@@ -7,6 +7,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   type GrowbotCheckpoint,
+  type GrowbotFace,
   type GrowbotMemory,
   type GrowbotPersona,
   type GrowbotPersonaDetail,
@@ -16,6 +17,7 @@ import {
 } from "../api/client";
 import { useBackLayer } from "../backLayers";
 import {
+  FACES,
   MEMORY,
   type Places,
   REGIONS,
@@ -91,6 +93,8 @@ export function GrowbotPersonaPage({
   const [ptab, setPtab] = useState<PTab>("soul");
   const [editing, setEditing] = useState<RegionInfo | null>(null);
   const [renaming, setRenaming] = useState(false);
+  // The face being saved, shown picked while it is.
+  const [facing, setFacing] = useState<GrowbotFace | null>(null);
   const [restoring, setRestoring] = useState<GrowbotCheckpoint | null>(null);
   const [cpName, setCpName] = useState("");
   const [mems, setMems] = useState<GrowbotMemory[] | null>(null);
@@ -483,9 +487,49 @@ export function GrowbotPersonaPage({
     );
   }
 
+  /** Saved as it is tapped: a face is not a soul write, so nothing reloads and there is no
+   *  checkpoint to undo to; tapping the old one back is the undo. */
+  async function pickFace(face: GrowbotFace) {
+    const was = detail?.face ?? p.face;
+    if (face === was || facing !== null) return;
+    setFacing(face);
+    try {
+      took(await api.setGrowbotPersonaFace(p.id, face));
+      const name = FACES.find((f) => f.id === face)?.name ?? face;
+      say(
+        p.phone
+          ? `${p.name} wears the ${name.toLowerCase()} face; it changes ${onPhone(p.phone, pl)} in a few seconds.`
+          : `${p.name} wears the ${name.toLowerCase()} face next time it opens.`,
+      );
+    } catch (e) {
+      say(`The face didn't change — ${message(e)}`);
+    } finally {
+      setFacing(null);
+    }
+  }
+
   function manageTab() {
+    const current = facing ?? detail?.face ?? p.face;
     return (
       <section className="gb-card">
+        <fieldset className="gb-choices">
+          <legend>Face</legend>
+          {FACES.map((f) => (
+            <label key={f.id} className={`gb-choice${current === f.id ? " sel" : ""}`}>
+              <input
+                type="radio"
+                name={`gb-face-${p.id}`}
+                checked={current === f.id}
+                disabled={facing !== null}
+                onChange={() => void pickFace(f.id)}
+              />
+              <span className="gb-tx">
+                {f.name}
+                <em>{f.what}</em>
+              </span>
+            </label>
+          ))}
+        </fieldset>
         <div className="gb-acts two first">
           <button type="button" className="gb-btn" onClick={() => setRenaming(true)}>
             Rename

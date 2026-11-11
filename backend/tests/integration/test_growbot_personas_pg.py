@@ -408,6 +408,9 @@ async def test_the_schema_bounds_names_and_shapes(maker: async_sessionmaker) -> 
     with pytest.raises(DBAPIError):
         async with scoped_session(maker, OWNER) as session:
             await session.execute(text("UPDATE app.growbot_personas SET soul = '[1]'::jsonb"))
+    with pytest.raises(DBAPIError):
+        async with scoped_session(maker, OWNER) as session:
+            await session.execute(text("UPDATE app.growbot_personas SET face = 'cat'"))
 
 
 # -- the routes, over the real repo ---------------------------------------------------------
@@ -498,6 +501,18 @@ async def test_routes_seed_duplicate_rename_reset_and_delete(maker: async_sessio
     renamed = c.patch(f"/api/growbot/personas/{dup['id']}", json={"name": "Pip"}).json()
     assert renamed["persona"]["name"] == "Pip" and renamed["checkpoint"] is None
     assert renamed["persona"]["soul"]["meta"]["name"] == "Pip"
+
+    # A face is the persona's own, lantern until picked, and not a soul write (its phone does
+    # not reload for it); a duplicate wears its original's.
+    assert dup["face"] == "lantern"
+    version = renamed["persona"]["version"]
+    faced = c.patch(f"/api/growbot/personas/{dup['id']}", json={"face": "robot"}).json()
+    assert faced["persona"]["face"] == "robot" and faced["persona"]["version"] == version
+    assert faced["persona"]["name"] == "Pip" and faced["checkpoint"] is None
+    assert c.patch(f"/api/growbot/personas/{dup['id']}", json={"face": "cat"}).status_code == 422
+    nobody = "/api/growbot/personas/00000000-0000-4000-8000-000000000000"
+    assert c.patch(nobody, json={"face": "robot"}).status_code == 404
+    assert c.post(f"/api/growbot/personas/{dup['id']}/duplicate").json()["face"] == "robot"
 
     reset = c.post(f"/api/growbot/personas/{pid}/reset").json()
     assert reset["persona"]["soul"] == souls.fresh("Sprout")
@@ -591,7 +606,7 @@ async def test_routes_open_hand_over_and_who_wears_fish(maker: async_sessionmake
     # Sync over the sidecar's routes.
     pulled = c.post("/internal/growbot/soul/pull", json={"persona": sprout, "phone": PHONE_A})
     assert pulled.status_code == 200 and pulled.json()["version"] == 1
-    assert pulled.json()["wearing"] is None
+    assert pulled.json()["wearing"] is None and pulled.json()["face"] == "lantern"
     pushed = c.post(
         "/internal/growbot/soul/push",
         json={"persona": sprout, "phone": PHONE_A, "base": 1, "soul": {"soul_format": 3, "n": 1}},
@@ -603,7 +618,7 @@ async def test_routes_open_hand_over_and_who_wears_fish(maker: async_sessionmake
     )
     assert stale.status_code == 409 and stale.json()["detail"] == "newer"
     state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_A})
-    assert state.json() == {"version": 2, "wearing": None, "memories": 0}
+    assert state.json() == {"version": 2, "wearing": None, "memories": 0, "face": "lantern"}
     moved_state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_B})
     assert moved_state.status_code == 409
     assert c.post("/internal/growbot/soul/state", json={}).status_code == 401
