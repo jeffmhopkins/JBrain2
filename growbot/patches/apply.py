@@ -707,6 +707,13 @@ SCRUB_PATCHES: list[tuple[str, str, str, int]] = [
         'gap:6px" data-gb-cloud="1"></button>',
         1,
     ),
+    # A creature last left on the credits tab would reopen on the hidden room.
+    (
+        "v3/next.html",
+        'if(_t==="s"||_t==="c"||_t==="t") bTab=_t;',
+        'if(_t==="s"||(_t==="c"&&!window.__gbBox)||_t==="t") bTab=_t;',
+        1,
+    ),
 ]
 PATCHES += SCRUB_PATCHES
 

@@ -10554,7 +10554,7 @@ g("gbkSee").addEventListener("click",function(){ kick("eyeBtn"); setTimeout(pain
    top level never leaves. Controls that cannot be real yet (money, soul, voice, keys, the dial)
    say so in one line and offer the hatch: the host's own panel inside our frame, with a way back. */
 /* remember the top-level tab only: never reopen inside Advanced or a nested row. */
-var bTab="t"; try{ var _t=localStorage.getItem("gbk_tab"); if(_t==="s"||_t==="c"||_t==="t") bTab=_t; }catch(e){}
+var bTab="t"; try{ var _t=localStorage.getItem("gbk_tab"); if(_t==="s"||(_t==="c"&&!window.__gbBox)||_t==="t") bTab=_t; }catch(e){}
 function setTab(t){ W.moveOpen=false; bTab=t; W.open=""; W.note=""; try{ localStorage.setItem("gbk_tab",t); }catch(e){} renderBrainP(); }
 /* The settings room mirrors the host picker. It owns no model catalogue or saved choice. */
 var W={mindOpen:"",open:"",forget:false,lookOpen:false,moveOpen:false,moveFrom:"c",mvSoul:false,mvCode:false,dialOpen:false,dialMoved:false,eye:"front",voice:"robot",soulInfo:false,adv:false,codeOpen:false,note:""};

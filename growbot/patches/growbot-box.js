@@ -897,8 +897,13 @@
     var k = touch && screenW > 0 ? window.innerWidth / screenW : 1;
     return k > 1.25 ? Math.min(k, 3) : 1;
   }
+  var lastW = 0, lastK = 1;
   function paint() {
-    var k = scale();
+    // Re-measure only when the width changes: an Android keyboard shortens the window past
+    // its width, which would read as landscape and drop the zoom mid-typing.
+    var k = window.innerWidth === lastW ? lastK : scale();
+    lastW = window.innerWidth;
+    lastK = k;
     style.textContent =
       "#say{font-size:" + 15 * k + "px!important;line-height:1.6!important}" +
       "#err{font-size:" + 14 * k + "px!important}" +
@@ -907,6 +912,9 @@
       "#gbkBBody{zoom:1.2}" +
       // The credits tab (apply.py SCRUB_PATCHES): a box creature has no credits.
       "[data-gb-cloud]{display:none!important}" +
+      // The same cloud rooms reached another way: the money-code badge, and the full
+      // panel's key and credits tabs behind the voice row's hand-off.
+      "#giftBtn,#bpTabByok,#bpTabCredits{display:none!important}" +
       "div:has(>[data-gb-cloud]){grid-template-columns:repeat(2,1fr)!important}" +
       (k > 1 ? "body>*:not(#wrap){zoom:" + k.toFixed(3) + "}" : "");
   }

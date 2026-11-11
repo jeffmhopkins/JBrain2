@@ -284,7 +284,9 @@ The creature's Settings tab is scrubbed of what a box-run creature has no use fo
 soul backup row (the box holds the soul; personas and their checkpoints are the backup), the
 cloud logs link, the old full panel and *Advanced*'s placeholders. `SCRUB_PATCHES` hide them
 behind `window.__gbBox`, which `growbot-box.js` sets, so the page without the shim keeps
-upstream's panel. What stays: the body, *follow my face*, the eye, the voice and low power.
+upstream's panel. What stays: the body, *follow my face*, the eye, the voice and low power. The money-code badge, a
+saved credits tab and the full panel's key and credits tabs are closed off the same way, and
+*My thoughts* loses its cloud logs link.
 
 Upstream sets the spoken line at 11px and the brain panel at 11-12.5px; `growbot-box.js` raises
 them to phone sizes. A phone in desktop-site mode (Safari's *Request Desktop Website*, Chrome's

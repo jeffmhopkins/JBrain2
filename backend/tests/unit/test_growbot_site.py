@@ -415,9 +415,11 @@ def test_the_brain_panel_keeps_only_what_a_box_creature_uses() -> None:
     assert 'function moveMeRow(){ if(window.__gbBox) return "";' in page
     assert "if(W.adv&&!window.__gbBox){" in page
     assert page.count('data-gb-cloud="1"') == 1
+    assert '(_t==="c"&&!window.__gbBox)' in page
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.__gbBox = true;" in shim
     assert "[data-gb-cloud]{display:none!important}" in shim
+    assert "#giftBtn,#bpTabByok,#bpTabCredits{display:none!important}" in shim
 
 
 def test_the_text_is_phone_sized_even_in_desktop_site_mode() -> None:
