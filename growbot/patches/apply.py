@@ -477,10 +477,14 @@ ERROR_PATCHES: list[tuple[str, str, str, int]] = [
         "streamErr=String(j.error.message||j.error).slice(0,160);",
         1,
     ),
+    # On a property, not in the message: the page's catch matches its message against
+    # /\b429\b/, /HTTP 402/ and the like, and the box's words may hold any number. And only
+    # on the box's lane (not L, the owner's own brain server, whose probe reads "empty stream").
     (
         "v3/next.html",
         'if(!full) throw new Error("empty stream");',
-        'if(!full) throw new Error(streamErr?"the box said: "+streamErr:"empty stream");',
+        'if(!full){ var _ee=new Error("empty stream"); if(streamErr&&!L)_ee.boxSaid=streamErr;'
+        " throw _ee; }",
         1,
     ),
     (
@@ -491,13 +495,27 @@ ERROR_PATCHES: list[tuple[str, str, str, int]] = [
         1,
     ),
     # Upstream's 30 s fuse is a cloud model's. The box reads a creature's ~8k-token prompt at
-    # a few hundred tokens a second, so a turn can take 20 s before its first word; 90 s still
-    # ends inside the page's own 100 s flight watchdog (FLIGHT_MAX_MS).
+    # a few hundred tokens a second, so a spoken turn can take 20 s before its first word.
+    # Ticks keep 30 s, so an idle thought never holds a spoken one back for long.
     (
         "v3/next.html",
-        "_decisionTokens,30000",
-        "_decisionTokens,90000",
-        3,
+        "_decisionTokens,30000,function(full",
+        "_decisionTokens,90000,function(full",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "_decisionTokens,30000,_vis",
+        "_decisionTokens,90000,_vis",
+        1,
+    ),
+    # A stream that ran out of time is not retried buffered: a second 90 s would end past the
+    # page's own 100 s flight watchdog (FLIGHT_MAX_MS), its answer thrown away.
+    (
+        "v3/next.html",
+        "if(_streamSaid||e.charged||e.gateFail||",
+        'if(_streamSaid||e.charged||e.gateFail||(e&&e.name==="AbortError")||',
+        1,
     ),
 ]
 PATCHES += ERROR_PATCHES

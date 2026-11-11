@@ -831,6 +831,8 @@
   };
 
   window.gbBoxEars = function (e) {
+    // Another tab owns the soul: the page's held fetch never reached the box, and says so.
+    if (e && /^held:/.test(String(e.message || ""))) return String(e.message);
     var why = ears.why;
     if (!why && aborted(e)) {
       why = "the box's speech model took over " + secs(Date.now() - ears.t0) + " s, so I stopped waiting";
@@ -840,7 +842,8 @@
 
   window.gbBoxBrainWhy = function (e) {
     var m = String((e && e.message) || e || "");
-    // Every spoken turn waits 90 s (apply.py ERROR_PATCHES raises the 30 s fuse).
+    if (e && typeof e.boxSaid === "string") return "the box said: " + e.boxSaid;
+    // A spoken turn waits 90 s (apply.py ERROR_PATCHES raises the 30 s fuse).
     if (aborted(e)) return "the box's model didn't answer within 90 s, so I stopped waiting";
     if (unreachable(e)) return "I couldn't reach the box";
     if (m === "empty stream") return "the box's model answered with nothing";

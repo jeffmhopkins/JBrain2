@@ -326,7 +326,11 @@ def test_the_creature_says_why_the_box_failed_it() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert page.count("window.gbBoxEars?window.gbBoxEars(e)") == 2
     assert "window.gbBoxBrainWhy?window.gbBoxBrainWhy(e):e.message" in page
-    assert 'new Error(streamErr?"the box said: "+streamErr:"empty stream")' in page
-    assert "_decisionTokens,30000" not in page and page.count("_decisionTokens,90000") == 3
+    # The box's words ride a property: the page's catch pattern-matches the message.
+    assert "if(streamErr&&!L)_ee.boxSaid=streamErr;" in page
+    assert 'if (e && typeof e.boxSaid === "string")' in shim
+    # Spoken turns wait 90 s, ticks keep 30, and a timed-out stream is not retried.
+    assert page.count("_decisionTokens,90000") == 2 and page.count("_decisionTokens,30000") == 1
+    assert 'e.gateFail||(e&&e.name==="AbortError")||' in page
     assert 'toast("\u2026didn\'t catch that")' not in page
     assert "the speech model heard no words" in page

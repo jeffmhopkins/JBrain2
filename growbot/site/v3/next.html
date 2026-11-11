@@ -4881,7 +4881,7 @@ function callModelStream(sys,msgs,slug,maxTok,tmo,onText,Lover){
       if(!r.body||!r.body.getReader) throw new Error("no stream body");
       var reader=r.body.getReader(), dec=new TextDecoder(), buf="", full="", streamFailed=false,streamErr="";
       function pump(){ return reader.read().then(function(res){
-        if(res.done){ if(to)clearTimeout(to); if(!full) throw new Error(streamErr?"the box said: "+streamErr:"empty stream");
+        if(res.done){ if(to)clearTimeout(to); if(!full){ var _ee=new Error("empty stream"); if(streamErr&&!L)_ee.boxSaid=streamErr; throw _ee; }
           var complete=!streamFailed&&!buf.trim();
           _streamInfo.transport=complete?"complete":"malformed";
           if(L&&L.probe) L.probe.complete=complete;
@@ -8472,13 +8472,13 @@ function think(event,kind,extra){
     ? callModelStream(sys,msgs,slug,_decisionTokens,90000,function(full,complete){ if(_gen!==_flightGen) return; if(_agen!==actGen) return; if(typeof complete==="boolean"){ _burstComplete=complete; return; } if(typeof vmStreamSpeech!=="function"||vmStreamSpeech(full,_vmTurn))onSayStream(full,_replyLang); },undefined,_replyMeta).catch(function(e){ if(_gen!==_flightGen) throw e;
         if(_imitationAtIssue&&(!_imitationCtl||!_imitationCtl.valid(_imitationAtIssue)))throw e;
         if(_agen!==actGen) throw e;   // 0908: the activity this turn was for has ENDED — a failed stream must not buy a second, buffered call for it. Rethrowing keeps the outer .catch, which is where inFlight and the flight timer are cleared, so cancelling still tidies the request up   // K3 0808: a stream that outlives the watchdog must NOT buy a buffered retry whose answer the stale-bailing .then would discard — throw instead; the outer .catch bails on the same stale check, so the orphan costs nothing
-        if(_streamSaid||e.charged||e.gateFail||e.status===401||e.status===402||e.status===429) throw e;   // 0920 log read #3: a dead BYOK key (401) looped every 14s and each try hit the server TWICE (stream, then this fallback) — a refused key is not "cost nothing", it is refused
+        if(_streamSaid||e.charged||e.gateFail||(e&&e.name==="AbortError")||e.status===401||e.status===402||e.status===429) throw e;   // 0920 log read #3: a dead BYOK key (401) looped every 14s and each try hit the server TWICE (stream, then this fallback) — a refused key is not "cost nothing", it is refused
         /* 0807: a 404 here is the vision provider pin matching no endpoint, and the buffered
            retry would carry the same frames and 404 again. Go straight to blind so the turn
            costs one wasted call instead of two. Every other error keeps the original path. */
         var _vis=/^HTTP 404/.test(String(e&&e.message||"")) && JSON.stringify(msgs).indexOf('"image_url"')>=0;
         _burstComplete=true; _replyMeta.transport="buffered_fallback"; return callModel(sys,msgs,slug,_decisionTokens,90000,_vis); })   // fall back to buffered ONLY when the stream call cost nothing (network/5xx pre-answer); a paid-but-dead stream or a quota rejection must not buy a second call (review: double-charge)
-    : callModel(sys,msgs,slug,_decisionTokens,90000);
+    : callModel(sys,msgs,slug,_decisionTokens,30000);
   _p=_p.then(function(firstRaw){
     if(_imitationAtIssue&&(!_imitationCtl||!_imitationCtl.valid(_imitationAtIssue)))return firstRaw;
     if(_vmTurn)_vmTurn.stripped=!!_visStripped;

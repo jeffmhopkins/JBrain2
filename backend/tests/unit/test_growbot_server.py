@@ -1034,6 +1034,7 @@ def test_stt_failures_say_which(gb: types.ModuleType) -> None:
     why = gb._stt_failure
     assert why(gb.Upstream(503, b"", "", "timeout")) == "the box's speech model took over 60 s"
     assert why(gb.Upstream(500, b"", "")) == "the box's speech model failed (HTTP 500)"
+    assert why(gb.Upstream(503, b"", "", "broken")) == "the box's speech model sent a broken answer"
 
 
 def test_a_slow_call_is_told_from_a_dead_one(gb: types.ModuleType) -> None:

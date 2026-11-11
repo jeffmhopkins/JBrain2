@@ -542,8 +542,11 @@ def http_call(
     except (OSError, ValueError, http.client.HTTPException) as exc:
         # HTTPException: a truncated or garbled answer (IncompleteRead, BadStatusLine).
         reason = getattr(exc, "reason", exc)
-        timed_out = isinstance(reason, TimeoutError) or "timed out" in str(reason)
-        return Upstream(503, b"", "", "timeout" if timed_out else "down")
+        if isinstance(reason, TimeoutError) or "timed out" in str(reason):
+            return Upstream(503, b"", "", "timeout")
+        if isinstance(exc, (ValueError, http.client.HTTPException)):
+            return Upstream(503, b"", "", "broken")
+        return Upstream(503, b"", "", "down")
 
 
 # ── HTTP plumbing ─────────────────────────────────────────────────────────────
@@ -2219,6 +2222,8 @@ def _stt_failure(up: Upstream) -> str:
         return f"the box's speech model took over {STT_TIMEOUT_S:.0f} s"
     if up.why == "down":
         return "the box's speech service isn't running"
+    if up.why == "broken":
+        return "the box's speech model sent a broken answer"
     return f"the box's speech model failed (HTTP {up.status})"
 
 
