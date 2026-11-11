@@ -691,6 +691,68 @@ def test_a_failed_proxy_lookup_keeps_the_last_good_address(
     assert app._proxy_addrs == {"127.0.0.1"}
 
 
+def test_through_the_tunnel_the_client_is_cloudflares_answer(
+    gb: types.ModuleType, site: Path, tmp_path: Path
+) -> None:
+    # Everyone away from home reaches Caddy from the connector: without this they would share
+    # one backoff bucket, and a few bad tickets from anywhere would lock the owner out.
+    config = gb.Config(
+        site=site,
+        api_url="http://127.0.0.1:9",
+        tts_url="http://127.0.0.1:9",
+        stt_url="http://127.0.0.1:9",
+        token_file=tmp_path / "none",
+        trusted_proxy="127.0.0.1",
+        trusted_tunnel="127.0.0.5",
+    )
+    app = gb.GrowBot(config)
+
+    def ip(peer: str, headers: list[tuple[str, str]]) -> str:
+        req = gb.Request("GET", "/", "/", {}, "HTTP/1.1", headers, peer=peer)
+        return str(asyncio.run(app.client_ip(req)))
+
+    cf = ("cf-connecting-ip", "203.0.113.9")
+    assert ip("127.0.0.1", [("x-real-ip", "127.0.0.5"), cf]) == "203.0.113.9"
+    # A malformed claim is no address: the connector's own bucket, never a made-up one.
+    assert ip("127.0.0.1", [("x-real-ip", "127.0.0.5"), ("cf-connecting-ip", "x")]) == "127.0.0.5"
+    # Only when Caddy saw the connector: a LAN client naming any address is that client.
+    assert ip("127.0.0.1", [("x-real-ip", "10.0.0.7"), cf]) == "10.0.0.7"
+    # And only from Caddy: anything else on the network is its own socket address.
+    assert ip("127.0.0.9", [("x-real-ip", "127.0.0.5"), cf]) == "127.0.0.9"
+
+
+def test_away_buckets_take_an_ipv6_client_whole(gb: types.ModuleType) -> None:
+    # One client holds a whole /64, so stepping through it must not buy fresh tries.
+    assert gb._bucket("2001:db8:1:2:aaaa::1") == gb._bucket("2001:db8:1:2:ffff::9")
+    assert gb._bucket("2001:db8:1:2:aaaa::1") == "2001:db8:1:2::/64"
+    assert gb._bucket("2001:db8:1:3::1") != gb._bucket("2001:db8:1:2::1")
+    assert gb._bucket("::ffff:203.0.113.9") == "203.0.113.9"
+    assert gb._bucket("203.0.113.9") == "203.0.113.9"
+    assert gb._bucket("nope") is None
+
+
+def test_a_client_spends_one_ticket_at_a_time_and_the_gate_has_a_ceiling(
+    run: _Running, gb: types.ModuleType
+) -> None:
+    # The backoff counts a failure only once the api answers, so without these one client could
+    # queue hundreds of junk tickets on the gate, ahead of the robots' hellos.
+    run.app._opening["127.0.0.1"] = gb.OPENING_PER_CLIENT
+    busy = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
+    assert busy.status == 429
+    busy.read()
+    del run.app._opening["127.0.0.1"]
+    for i in range(gb.OPENING_MAX):
+        run.app._opening[f"10.0.0.{i}"] = 1
+    full = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
+    assert full.status == 503
+    full.read()
+    run.app._opening.clear()
+    ok = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
+    assert ok.status == 200
+    ok.read()
+    assert not run.app._opening
+
+
 def test_backoff_window(gb: types.ModuleType) -> None:
     backoff = gb.Backoff()
     for t in range(gb.BACKOFF_LIMIT):
@@ -1289,7 +1351,15 @@ def test_keep_alive_serves_several_requests_on_one_connection(run: _Running) -> 
 
 
 class _Ws:
-    def __init__(self, run: _Running, path: str, *, cookie: bool | str, origin: str | None = None):
+    def __init__(
+        self,
+        run: _Running,
+        path: str,
+        *,
+        cookie: bool | str,
+        origin: str | None = None,
+        extra: tuple[str, ...] = (),
+    ):
         self.sock = socket.create_connection(("127.0.0.1", run.port), timeout=5)
         key = base64.b64encode(os.urandom(16)).decode()
         headers = [
@@ -1306,6 +1376,7 @@ class _Ws:
             headers.append(f"Origin: {origin or run.origin}")
         elif origin:
             headers.append(f"Origin: {origin}")
+        headers.extend(extra)
         self.sock.sendall(("\r\n".join(headers) + "\r\n\r\n").encode())
         head = b""
         while b"\r\n\r\n" not in head:
@@ -1422,6 +1493,20 @@ def test_a_bad_handshake_is_refused(run: _Running, header: str) -> None:
     request += "".join(f"{k}: {v}\r\n" for k, v in lines.items()) + "\r\n"
     out = _raw(run, request.encode())
     assert not out.startswith(b"HTTP/1.1 101"), out[:80]
+
+
+def test_through_the_tunnel_only_a_signed_in_phone_reaches_the_relay(run: _Running) -> None:
+    # A robot dials in on the LAN. From the internet, a chip-shaped socket (no Origin, and a
+    # junk cookie that gets past Caddy's sniffing) would hold the robots' budget or guess keys.
+    # Caddy's away site marks every request; no address lookup is involved.
+    away = ("Cookie: gb_session=x", "X-Growbot-Away: 1")
+    assert _Ws(run, "/d/gb-abc123", cookie=False, extra=away).status == 403
+    assert _Ws(run, "/d/gb-abc123", cookie=False, extra=away[1:]).status == 403
+    # The same socket from the LAN is a robot dialing in.
+    assert _Ws(run, "/d/gb-abc123", cookie=False).status == 101
+    # And a signed-in phone through the tunnel is let in.
+    phone = _Ws(run, "/d/gb-abc123", cookie=True, extra=away[1:])
+    assert phone.status == 101
 
 
 def test_the_relay_refuses_bad_codes_and_foreign_origins(run: _Running) -> None:

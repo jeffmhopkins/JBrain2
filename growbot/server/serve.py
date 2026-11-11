@@ -2,7 +2,7 @@
 """The GrowBot sidecar: the creature's web app, its /api shim and the robot relay, on the box.
 
 One asyncio process behind Caddy's LAN site `https://<lan host>:8444` (docs/plans/GROWBOT_PLAN.md
-§2). It serves `GROWBOT_SITE` as the web root, answers the upstream app's `/api/*` calls from the
+§2), and its away-from-home name `growbot.<host>` through the tunnel (growbot/README.md). It serves `GROWBOT_SITE` as the web root, answers the upstream app's `/api/*` calls from the
 box (the api's model lane, tts-stt's Kokoro and whisper, and fixed answers for the cloud-only
 routes), and relays WebSocket frames between the phone and the robot at `/d/<code>`.
 
@@ -122,6 +122,12 @@ MAX_UNAUTH_SOCKETS = 16
 STREAM_WORKERS = 8
 API_WORKERS = 2
 GATE_WORKERS = 2
+# Redeems in flight: one per client, and this many in all. The backoff counts a failure only
+# once its api call answers, so without these a client (from the internet, since the away
+# name) could queue hundreds of junk tickets on the gate at once, ahead of the robots' hellos
+# and the owner's own ticket, holding a connection each.
+OPENING_PER_CLIENT = 1
+OPENING_MAX = 16
 # Failed /open tickets and robot hellos per client before it waits out the window.
 BACKOFF_LIMIT = 8
 BACKOFF_WINDOW_S = 300.0
@@ -233,6 +239,28 @@ def _warn_once(key: str, message: str) -> None:
         print(f"growbot: {message}", flush=True)
 
 
+def _bucket(value: str) -> str | None:
+    """`value` as a backoff key: the address, or for IPv6 its /64, which one client owns
+    whole, so walking through it buys no fresh tries."""
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
+
+
+def _ip(value: str) -> str | None:
+    """`value` as a canonical IP address, or None when it is not one."""
+    try:
+        return str(ipaddress.ip_address(value.strip()))
+    except ValueError:
+        return None
+
+
 # ── configuration ─────────────────────────────────────────────────────────────
 
 
@@ -247,6 +275,8 @@ class Config:
     default_model: str = "qwen3-vl-30b"
     # The one peer whose X-Real-IP is believed (Caddy sets it from the client it saw).
     trusted_proxy: str = "proxy"
+    # The tunnel connector: when Caddy saw it, Cloudflare's Cf-Connecting-IP names the client.
+    trusted_tunnel: str = "cloudflared"
 
     @classmethod
     def from_env(cls) -> Config:
@@ -264,6 +294,7 @@ class Config:
             ),
             default_model=env("GROWBOT_DEFAULT_MODEL", "qwen3-vl-30b"),
             trusted_proxy=env("GROWBOT_TRUSTED_PROXY", "proxy"),
+            trusted_tunnel=env("GROWBOT_TRUSTED_TUNNEL", "cloudflared"),
         )
 
 
@@ -990,6 +1021,8 @@ class GrowBot:
         self._rider_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-rider")
         self.rider_backoff = Backoff()
         self._proxy_addrs: set[str] = set()
+        self._opening: collections.Counter[str] = collections.Counter()
+        self._tunnel_addrs: set[str] = set()
         self._proxy_at = -math.inf
         self._models: list[dict[str, Any]] = []
         self._root_cert = b""
@@ -1009,25 +1042,38 @@ class GrowBot:
 
     async def client_ip(self, req: Request) -> str:
         """The client a request is for: Caddy's X-Real-IP when it came from Caddy, else the
-        peer itself (anything else on the network could otherwise name any address)."""
+        peer itself (anything else on the network could otherwise name any address). When the
+        client Caddy saw is the tunnel connector, Cloudflare's Cf-Connecting-IP: otherwise
+        everyone away from home shares the connector's backoff bucket, and a few bad tickets
+        from anywhere would lock the owner out of the away address."""
         if time.monotonic() - self._proxy_at > 60.0:
             self._proxy_at = time.monotonic()
-            try:
-                infos = await asyncio.to_thread(
-                    socket.getaddrinfo, self.config.trusted_proxy, None
-                )
-                self._proxy_addrs = {str(i[4][0]) for i in infos}
-            except OSError:
-                # Keep the last good answer: an empty set would fold every client behind the
-                # proxy into one backoff bucket, and a few bad tickets would lock the owner out.
-                pass
-        if req.peer in self._proxy_addrs:
-            real = req.header("x-real-ip")
-            try:
-                return str(ipaddress.ip_address(real))
-            except ValueError:
-                pass
-        return req.peer
+            self._proxy_addrs = await self._resolve(
+                self.config.trusted_proxy, self._proxy_addrs
+            )
+            self._tunnel_addrs = await self._resolve(
+                self.config.trusted_tunnel, self._tunnel_addrs
+            )
+        if req.peer not in self._proxy_addrs:
+            return req.peer
+        real = _ip(req.header("x-real-ip"))
+        if real is None:
+            return req.peer
+        if real in self._tunnel_addrs:
+            return _bucket(req.header("cf-connecting-ip")) or real
+        return real
+
+    @staticmethod
+    async def _resolve(name: str, last: set[str]) -> set[str]:
+        """`name`'s addresses. A failed lookup keeps the last good answer: an empty proxy set
+        would fold every client into one backoff bucket, and a few bad tickets would lock the
+        owner out. The tunnel connector is off on a box without the tunnel, which resolves to
+        nothing and so trusts no Cf-Connecting-IP."""
+        try:
+            infos = await asyncio.to_thread(socket.getaddrinfo, name, None)
+        except OSError:
+            return last
+        return {str(i[4][0]) for i in infos}
 
     def _auth(self) -> dict[str, str]:
         try:
@@ -1299,19 +1345,29 @@ class GrowBot:
             client = f"cross-site:{client}"
         if self.ticket_backoff.blocked(client):
             return Response(429, b"too many tries", headers=[("Retry-After", "300")])
+        if self._opening[client] >= OPENING_PER_CLIENT:
+            return Response(429, b"one at a time", headers=[("Retry-After", "5")])
+        if sum(self._opening.values()) >= OPENING_MAX:
+            return Response(503, b"busy", headers=[("Retry-After", "5")])
         # The phone id this browser already has, so it stays the same phone across tickets (a
         # persona ticket spent here closes the persona it held). Only a valid session's.
         held = self._claims(req)
-        up = await self._call(
-            self._api_post,
-            "/internal/growbot/ticket/redeem",
-            {
-                "ticket": ticket,
-                "phone": held.phone if held else "",
-                "label": phone_label(req.header("user-agent")),
-            },
-            pool=self._gate,
-        )
+        self._opening[client] += 1
+        try:
+            up = await self._call(
+                self._api_post,
+                "/internal/growbot/ticket/redeem",
+                {
+                    "ticket": ticket,
+                    "phone": held.phone if held else "",
+                    "label": phone_label(req.header("user-agent")),
+                },
+                pool=self._gate,
+            )
+        finally:
+            self._opening[client] -= 1
+            if self._opening[client] <= 0:
+                del self._opening[client]
         got = _redeemed(up) if self._ok(up) else None
         if got is None:
             self.ticket_backoff.fail(client)
@@ -1720,6 +1776,14 @@ class GrowBot:
         # socket with one is a web page squatting the robots' budget or burning their tries.
         if not authed and req.header("origin"):
             return Response(403, b"cross-origin")
+        # A robot dials in on the LAN, never through the tunnel: from the internet only a
+        # signed-in phone may open a socket, or anyone could hold the robots' unauthenticated
+        # budget or guess at their keys. Caddy's away site shuts a cookieless /d/, but any
+        # cookie named gb_session gets past that, so this is the gate.
+        # Caddy's away site stamps every request (and :8444 strips it), so this needs no DNS
+        # and has no stale window. Believed from anyone: a forged one only refuses its sender.
+        if not authed and req.header("x-growbot-away"):
+            return Response(403, b"robots dial in at home")
         if req.method != "GET" or "websocket" not in req.tokens("upgrade"):
             return Response(426, b"websocket only", headers=[("Upgrade", "websocket")])
         if "upgrade" not in req.tokens("connection"):

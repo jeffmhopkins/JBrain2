@@ -574,6 +574,10 @@ class Settings(BaseSettings):
     # `<slug>-preview.<base>`) so a sandbox-run dev app can never be served on the owner
     # origin even if the edge is misconfigured. Empty (the default) fail-closes the proxy.
     jcode_preview_base_host: str = ""
+    # Caddy's main site address (JBRAIN_SITE_ADDR): `http://<name>` in Cloudflare tunnel mode,
+    # a bare name when Caddy fetches its own certificate. Only tunnel mode renders the GrowBot
+    # away site (deploy/proxy-preview-conf.sh), so only it may hand out its link.
+    site_addr: str = ""
     # The shared jcode token the in-sandbox grok CLI presents to the api's residency-aware
     # jcode LLM proxy (Authorization: Bearer). The external-LLM endpoint forwards straight
     # to the local-llm gateway (JBRAIN_LOCAL_LLM_URL), so it needs no separate shim URL;

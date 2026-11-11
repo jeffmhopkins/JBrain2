@@ -1,6 +1,6 @@
 # Home-network access via Cloudflare Tunnel
 
-> **Status:** Living · **Last verified:** 2026-10-26
+> **Status:** Living · **Last verified:** 2026-11-11
 
 This is the recommended way to reach JBrain from outside your house when the box
 sits on a home network with a **dynamic IP** and possibly **CGNAT** (carrier-grade
@@ -172,7 +172,9 @@ is the Cloudflare wildcard:
    every other subdomain; the app sites already 404 `/__jcode_preview*`, so a sandbox dev
    app can only ever be served on its own subdomain. Defense in depth: the api also
    rejects in-process any request whose Host isn't `<slug>-preview.<base>`. Nothing to
-   hand-edit; unset the var to tear the site back down.
+   hand-edit; unset the var to tear the site back down. The same file renders the GrowBot
+   creature's away-from-home site, `growbot.<host>` (`growbot/README.md` "Away from
+   home"), which rides this wildcard too.
 4. **Enable preview.** Run **`sudo jbrain enable-jcode-preview`** — it sets
    `JCODE_PREVIEW_BASE_HOST` (defaulting to your `JBRAIN_DOMAIN`; pass an apex explicitly
    — `sudo jbrain enable-jcode-preview <apex>` — for a subdomain deploy) and recreates

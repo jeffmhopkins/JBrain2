@@ -63,3 +63,47 @@ http://*.${host} {
 	}
 }
 EOF
+
+# GrowBot away from home: the creature on growbot.<host>, so the PWA opens it from anywhere
+# (owner, 2026-11-11). It rides the same wildcard tunnel route as the previews, so it needs no
+# Cloudflare change, and a name of its own beats the wildcard above. It is the LAN site's
+# :8444 block with three doors shut: the setup page and the box's certificate are for a phone
+# on the home network, and a robot dials the relay there too, so a cookieless /d/ (a chip,
+# never a phone) has no business arriving through the tunnel. Named matchers, not path
+# shorthand: Caddy sorts path-only handles ahead of named ones, which would shut /d/ on the
+# phones as well. The cookie is rebuilt as on :8444; the owner's `__Host-` cookie is
+# host-only on the apex and never sent here, but any other cookie for the domain would be.
+# X-Growbot-Away tells the sidecar the request crossed the tunnel, so it refuses a relay socket
+# with no valid session (a cookie named gb_session is all Caddy can check).
+cat > "$dir/growbot.caddy" <<EOF
+http://growbot.${host} {
+	@shut path /internal* /setup.html /setup.js /box-root.crt
+	handle @shut {
+		respond 404
+	}
+	request_body {
+		max_size 16MB
+	}
+	@session header_regexp Cookie (^|;)\s*gb_session=
+	handle @session {
+		reverse_proxy growbot:8810 {
+			flush_interval -1
+			header_up Cookie "gb_session={http.request.cookie.gb_session}"
+			header_up X-Real-IP {remote_host}
+			header_up X-Growbot-Away 1
+		}
+	}
+	@chip path /d/*
+	handle @chip {
+		respond 404
+	}
+	handle {
+		reverse_proxy growbot:8810 {
+			flush_interval -1
+			header_up -Cookie
+			header_up X-Real-IP {remote_host}
+			header_up X-Growbot-Away 1
+		}
+	}
+}
+EOF

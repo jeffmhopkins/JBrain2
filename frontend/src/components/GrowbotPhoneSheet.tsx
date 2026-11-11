@@ -63,7 +63,8 @@ export function GrowbotPhoneSheet({ personas, pl, initialPersona, say, onClose }
       // from: the phone that redeems this code would be taken for this one.
       forgetLaunchHere(pid);
       try {
-        const url = (await api.growbotTicket(code ? { persona: pid, code } : { persona: pid })).url;
+        const what = code ? { persona: pid, code } : { persona: pid };
+        const url = (await api.growbotTicket({ ...what, where: "lan" })).url;
         if (!current) return;
         setTicket(url);
         // Code 1 names only the box, so it stays up when a later ticket fails to load.

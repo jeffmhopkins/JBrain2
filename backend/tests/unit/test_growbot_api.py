@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -23,6 +24,7 @@ from jbrain.api import growbot
 from jbrain.api.deps import current_debug_principal, owner_only
 from jbrain.auth.keys import hash_token
 from jbrain.auth.service import PrincipalInfo
+from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.growbot.repo import TICKET_TTL, MintedTicket, Redeemed, RobotInfo
 from jbrain.storage import FsInternalSecrets
@@ -78,13 +80,20 @@ class FakeRepo:
 
 
 def _app(
-    tmp_path: Path, repo: FakeRepo, *, lan_addr: str = "https://jbrain.local", mint: bool = True
+    tmp_path: Path,
+    repo: FakeRepo,
+    *,
+    lan_addr: str = "https://jbrain.local",
+    away: str = "",
+    mint: bool = True,
 ) -> tuple[FastAPI, dict[str, str]]:
     app = FastAPI()
     app.include_router(growbot.router, prefix="/api")
     app.include_router(growbot.debug_router, prefix="/api")
     app.include_router(growbot.internal_router, prefix="/internal")
-    app.state.settings = SimpleNamespace(lan_addr=lan_addr)
+    app.state.settings = SimpleNamespace(
+        lan_addr=lan_addr, jcode_preview_base_host=away, site_addr="http://x.com"
+    )
     app.state.growbot_repo = repo
     secrets = FsInternalSecrets(tmp_path)
     app.state.growbot_secrets = secrets
@@ -124,6 +133,48 @@ def test_no_lan_site_refuses_the_ticket_and_mints_nothing(tmp_path: Path, repo: 
     r = TestClient(app).post("/api/growbot/ticket")
     assert r.status_code == 409 and "JBRAIN_LAN_ADDR" in r.json()["detail"]
     assert repo.tickets == {}
+
+
+def test_away_from_the_lan_site_the_link_is_the_away_name(
+    tmp_path: Path, repo: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The PWA reached by its public name may be anywhere: :8444 opens only at home, while the
+    # away name opens everywhere, home included.
+    app, _ = _app(tmp_path, repo, away="Example.com")
+    client = TestClient(app)
+    out = client.post("/api/growbot/ticket", json={"code": "gb-a1b2c3"}).json()
+    url = urlsplit(out["url"])
+    assert (url.scheme, url.netloc, url.path) == ("https", "growbot.example.com", "/open")
+    assert parse_qs(url.query) == {"ticket": [out["ticket"]], "id": ["gb-a1b2c3"]}
+    # The robot's own phone scans its link from the setup page on :8444, which follows only
+    # that origin's links.
+    lan = client.post("/api/growbot/ticket", json={"where": "lan"}).json()
+    assert urlsplit(lan["url"]).netloc == "jbrain.local:8444"
+    assert client.post("/api/growbot/ticket", json={"where": "x"}).status_code == 422
+    # A PWA on the LAN site stays home.
+    monkeypatch.setattr(growbot.client_ip, "ingress", lambda _conn: "lan")
+    home = client.post("/api/growbot/ticket").json()
+    assert urlsplit(home["url"]).netloc == "jbrain.local:8444"
+
+
+def test_an_away_link_needs_no_lan_site(tmp_path: Path, repo: FakeRepo) -> None:
+    app, _ = _app(tmp_path, repo, lan_addr="", away="example.com")
+    out = TestClient(app).post("/api/growbot/ticket").json()
+    assert out["url"].startswith("https://growbot.example.com/open?ticket=")
+
+
+@pytest.mark.parametrize("base", ["", "  ", "bad host", "x.com/evil", "a{b}.com"])
+def test_no_away_name_without_a_base_the_proxy_would_render(base: str) -> None:
+    # deploy/proxy-preview-conf.sh renders no away site for these, so no link may name one.
+    settings = cast(Settings, SimpleNamespace(jcode_preview_base_host=base, site_addr="http://x"))
+    assert growbot.away_host(settings) == ""
+
+
+def test_no_away_name_unless_caddy_runs_behind_the_tunnel() -> None:
+    # A box fetching its own certificate renders no away site (it would have no certificate).
+    for addr, want in (("hopkins.test", ""), ("", ""), ("http://hopkins.test", "growbot.x.com")):
+        settings = cast(Settings, SimpleNamespace(jcode_preview_base_host="x.com", site_addr=addr))
+        assert growbot.away_host(settings) == want
 
 
 def test_robots_mint_rotate_list_and_forget(tmp_path: Path, repo: FakeRepo) -> None:

@@ -204,6 +204,8 @@ services:
       # before forwarding, so a sandbox dev app can't be served on the owner origin.
       # Shares the .env var with the jcode service; empty fail-closes the proxy.
       JBRAIN_JCODE_PREVIEW_BASE_HOST: ${JCODE_PREVIEW_BASE_HOST:-}
+      # Read with the base host above: the GrowBot away name is rendered only in tunnel mode.
+      JBRAIN_SITE_ADDR: ${JBRAIN_SITE_ADDR:-${JBRAIN_DOMAIN}}
       # The external-LLM proxy (owner-minted public endpoints exposing the on-box coder)
       # forwards straight to the local-llm gateway's OpenAI endpoint (JBRAIN_LOCAL_LLM_URL
       # above) — the api already reaches it on `internal`. Off the jcode profile

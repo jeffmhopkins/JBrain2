@@ -374,6 +374,24 @@ describe("GrowbotScreen launching", () => {
     await waitFor(() => expect(tickets(s)[1]?.body).toEqual({ persona: BOLT }));
   });
 
+  it("opens away from home without the certificate sheet", async () => {
+    // The away name has a public certificate: only the LAN site needs the box's own.
+    const { tab } = fakeTab();
+    const s = serve({ ...UP, away: true }, (path) =>
+      path === "/api/growbot/ticket"
+        ? json({ ticket: "t", url: "https://growbot.example.com/open?ticket=t" })
+        : null,
+    );
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Captain Bolt" }));
+    fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
+    expect(screen.queryByRole("dialog", { name: "First time on this phone" })).toBeNull();
+    await waitFor(() =>
+      expect(tab.location.href).toBe("https://growbot.example.com/open?ticket=t"),
+    );
+    expect(tickets(s)[0]?.body).toEqual({ persona: BOLT });
+  });
+
   it("closes the blank tab when the link can't be made, and says why", async () => {
     localStorage.setItem(CERT_NOTED_KEY, "1");
     const { tab } = fakeTab();
@@ -546,17 +564,18 @@ describe("GrowbotScreen on another phone", () => {
     expect(await within(sheet).findByRole("region", { name: "Code 2" })).toHaveTextContent(
       "Opens Sprout, alone.",
     );
-    expect(tickets(s)[0]?.body).toEqual({ persona: SPROUT });
+    // The phone's setup page on :8444 follows only that origin's link.
+    expect(tickets(s)[0]?.body).toEqual({ persona: SPROUT, where: "lan" });
     expect(within(sheet).getByText(/Sprout is open on Pixel 6a\. Opening it/)).toBeTruthy();
 
     fireEvent.click(within(sheet).getByRole("button", { name: "Captain Bolt" }));
-    await waitFor(() => expect(tickets(s).at(-1)?.body).toEqual({ persona: BOLT }));
+    await waitFor(() => expect(tickets(s).at(-1)?.body).toEqual({ persona: BOLT, where: "lan" }));
     fireEvent.click(within(sheet).getByRole("radio", { name: /Wearing Fish/ }));
     expect(within(sheet).getByRole("radio", { name: /Wearing Fish/ })).toHaveAccessibleName(
       /Sprout lets go and carries on alone\./,
     );
     await waitFor(() =>
-      expect(tickets(s).at(-1)?.body).toEqual({ persona: BOLT, code: "gb-e3b6d8" }),
+      expect(tickets(s).at(-1)?.body).toEqual({ persona: BOLT, code: "gb-e3b6d8", where: "lan" }),
     );
     expect(await within(sheet).findByText(/Opens Captain Bolt wearing Fish\./)).toBeTruthy();
   });

@@ -33,6 +33,8 @@ EOF
 # growbot's own cookie alone (or dropped), so the api session never reaches vendored
 # code. growbot's /internal routes are the api's (bearer growbot.token); the prefix is
 # refused here so none is ever reachable from the LAN.
+# X-Growbot-Away is the away site's mark (proxy-preview-conf.sh); it is stripped here so
+# nothing on the LAN arrives wearing it.
 host="${JBRAIN_LAN_ADDR#*://}"
 host="${host%%/*}"
 host="${host%%:*}"
@@ -51,6 +53,7 @@ https://${host}:8444 {
 			flush_interval -1
 			header_up Cookie "gb_session={http.request.cookie.gb_session}"
 			header_up X-Real-IP {remote_host}
+			header_up -X-Growbot-Away
 		}
 	}
 	handle {
@@ -58,6 +61,7 @@ https://${host}:8444 {
 			flush_interval -1
 			header_up -Cookie
 			header_up X-Real-IP {remote_host}
+			header_up -X-Growbot-Away
 		}
 	}
 }

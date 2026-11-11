@@ -56,8 +56,41 @@ default-on (no compose profile), publishes no port, and sits on `edge` (Caddy re
 database, the supervisor or the model gateway.
 
 Caddy's LAN site `https://jbrain.local:8444` (rendered by `deploy/proxy-lan-conf.sh` from
-`JBRAIN_LAN_ADDR`, same `tls internal` CA as the LAN app) is the only way in. It is its own
+`JBRAIN_LAN_ADDR`, same `tls internal` CA as the LAN app) is the way in at home. It is its own
 origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide with the PWA's.
+
+### Away from home
+
+So the PWA opens a persona from anywhere (owner, 2026-11-11), the creature is also served on
+`https://growbot.<host>` through the Cloudflare tunnel, where `<host>` is
+`JBRAIN_JCODE_PREVIEW_BASE_HOST`: `deploy/proxy-preview-conf.sh` renders it beside the
+previews' `http://*.<host>` site, so it rides their wildcard tunnel route and DNS record and
+needs no Cloudflare change (and exists exactly when they do: tunnel mode, base host set). Its
+certificate is Cloudflare's, so a phone installs nothing. It is the `:8444` block with three
+doors shut: `/setup.html`, `/setup.js` and `/box-root.crt` are for a phone at home, and a
+cookieless `/d/` (a robot dialing the relay, never a phone) 404s, since a robot dials in on the
+LAN. Caddy only sniffs for a cookie named `gb_session`, so the sidecar is the real gate: the away
+site stamps `X-Growbot-Away` on every request (`:8444` strips it), and a relay socket wearing it
+without a valid session is 403, keeping the robots' unauthenticated budget and their key guesses
+on the LAN. `/open` spends one ticket per client at a time and 16 in all, since its backoff
+counts a failure only once the api answers; away clients are keyed by address, an IPv6 one by
+its /64. A signed-in phone's `/d/` passes, so a
+persona opened away still wears its body at home through the relay. Cloudflare sees this site's
+traffic (chat, voice, camera frames), as it does the PWA's. One thing the LAN origin never had:
+the jcode previews (`<slug>-preview.<host>`, the owner's own sandboxed dev apps) are same-site
+with it, so a hostile preview the phone opened could toss a `Domain=<host>` `gb_session` that
+signs the phone out there, or spend `/open`'s backoff. Neither reaches a session, the relay or a
+response (exact-Origin checks, `frame-ancestors 'self'`, no CORS); a `__Host-` cookie name would
+close the first, at the cost of signing every phone out once.
+
+The api picks the link: a ticket minted from the PWA on the LAN site opens on `:8444`, one
+minted from anywhere else on the away name (`growbot.opens_away`; `GET /api/growbot/status`
+says which as `away`, and the PWA skips the box-certificate sheet when it is true). The robot's
+own phone asks for `where: "lan"`, because its setup page follows only `:8444`'s links. A
+phone's session is per origin, so the first open away is a fresh sign-in on that phone. Behind
+the tunnel Caddy's peer is the connector, so the sidecar takes the client from Cloudflare's
+`Cf-Connecting-IP` when, and only when, Caddy's `X-Real-IP` is `cloudflared` (as the api's
+`client_ip.py` does): otherwise every away client would share one backoff bucket.
 
 | Env | Default | Meaning |
 | --- | --- | --- |
@@ -69,6 +102,7 @@ origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide wi
 | `GROWBOT_TOKEN_FILE` | `/run/jbrain-growbot/growbot.token` | Bearer for the api's `/internal/growbot/*`; re-read per call. |
 | `GROWBOT_DEFAULT_MODEL` | `qwen3-vl-30b` | Lineup fallback while the api lists no models. |
 | `GROWBOT_TRUSTED_PROXY` | `proxy` | The one peer whose `X-Real-IP` is believed (Caddy's compose name, re-resolved every minute). |
+| `GROWBOT_TRUSTED_TUNNEL` | `cloudflared` | The connector: when Caddy's `X-Real-IP` is it, `Cf-Connecting-IP` names the client. Unresolvable (no tunnel) trusts nothing. |
 
 ## Flashing a robot (wave G2)
 
