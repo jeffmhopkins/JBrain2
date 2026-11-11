@@ -15,12 +15,12 @@ import ssl
 from tests.unit.test_owner_site import _Echo, _Stack, key_dirs, stack  # noqa: F401
 
 
-def _get(s: _Stack, path: str, cookie: str | None) -> tuple[bytes, bytes]:
+def _get(s: _Stack, path: str, cookie: str | None, extra: str = "") -> tuple[bytes, bytes]:
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     tls.check_hostname = False
     tls.verify_mode = ssl.CERT_NONE
     raw = socket.create_connection(("127.0.0.1", s.ports["growbot"]), timeout=5)
-    sent = f"Cookie: {cookie}\r\n" if cookie is not None else ""
+    sent = (f"Cookie: {cookie}\r\n" if cookie is not None else "") + extra
     with tls.wrap_socket(raw, server_hostname="jbrain.local") as conn:
         conn.sendall(
             f"GET {path} HTTP/1.1\r\nHost: jbrain.local:{s.ports['growbot']}\r\n{sent}"
@@ -41,6 +41,10 @@ def test_only_the_growbot_cookie_reaches_growbot(stack: _Stack) -> None:  # noqa
     seen = json.loads(body)
     assert seen["cookie"] == "gb_session=abc.def.ghi"
     assert "x-jbrain-ingress" not in seen
+    assert "x-growbot-away" not in seen
+    # Nothing on the LAN arrives wearing the away site's mark.
+    _, body = _get(stack, "/", "gb_session=x", extra="X-Growbot-Away: 1\r\n")
+    assert "x-growbot-away" not in json.loads(body)
     # growbot's same-origin check compares Origin with the Host the browser sent.
     assert seen["host"] == f"jbrain.local:{stack.ports['growbot']}"
 
@@ -97,6 +101,8 @@ def test_the_away_name_serves_growbot_with_its_cookie_alone(stack: _Stack) -> No
     # growbot's same-origin check compares Origin with this Host.
     assert seen["host"] == "growbot.preview.test"
     assert "x-jbrain-ingress" not in seen
+    # The sidecar's mark that the request crossed the tunnel.
+    assert seen["x-growbot-away"] == "1"
     head, _, body = _away(stack, "/", "jbrain_x=owner-secret").partition(b"\r\n\r\n")
     assert head.startswith(b"HTTP/1.1 200") and "cookie" not in json.loads(body)
 

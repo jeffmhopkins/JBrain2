@@ -122,6 +122,12 @@ MAX_UNAUTH_SOCKETS = 16
 STREAM_WORKERS = 8
 API_WORKERS = 2
 GATE_WORKERS = 2
+# Redeems in flight: one per client, and this many in all. The backoff counts a failure only
+# once its api call answers, so without these a client (from the internet, since the away
+# name) could queue hundreds of junk tickets on the gate at once, ahead of the robots' hellos
+# and the owner's own ticket, holding a connection each.
+OPENING_PER_CLIENT = 1
+OPENING_MAX = 16
 # Failed /open tickets and robot hellos per client before it waits out the window.
 BACKOFF_LIMIT = 8
 BACKOFF_WINDOW_S = 300.0
@@ -231,6 +237,20 @@ def _warn_once(key: str, message: str) -> None:
     if key not in _warned:
         _warned.add(key)
         print(f"growbot: {message}", flush=True)
+
+
+def _bucket(value: str) -> str | None:
+    """`value` as a backoff key: the address, or for IPv6 its /64, which one client owns
+    whole, so walking through it buys no fresh tries."""
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
 
 
 def _ip(value: str) -> str | None:
@@ -1001,6 +1021,7 @@ class GrowBot:
         self._rider_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-rider")
         self.rider_backoff = Backoff()
         self._proxy_addrs: set[str] = set()
+        self._opening: collections.Counter[str] = collections.Counter()
         self._tunnel_addrs: set[str] = set()
         self._proxy_at = -math.inf
         self._models: list[dict[str, Any]] = []
@@ -1039,15 +1060,8 @@ class GrowBot:
         if real is None:
             return req.peer
         if real in self._tunnel_addrs:
-            return _ip(req.header("cf-connecting-ip")) or real
+            return _bucket(req.header("cf-connecting-ip")) or real
         return real
-
-    async def via_tunnel(self, req: Request) -> bool:
-        """Whether the request came through the Cloudflare tunnel: from Caddy, which saw the
-        connector."""
-        await self.client_ip(req)  # refreshes the two address sets
-        real = _ip(req.header("x-real-ip"))
-        return req.peer in self._proxy_addrs and real is not None and real in self._tunnel_addrs
 
     @staticmethod
     async def _resolve(name: str, last: set[str]) -> set[str]:
@@ -1331,19 +1345,29 @@ class GrowBot:
             client = f"cross-site:{client}"
         if self.ticket_backoff.blocked(client):
             return Response(429, b"too many tries", headers=[("Retry-After", "300")])
+        if self._opening[client] >= OPENING_PER_CLIENT:
+            return Response(429, b"one at a time", headers=[("Retry-After", "5")])
+        if sum(self._opening.values()) >= OPENING_MAX:
+            return Response(503, b"busy", headers=[("Retry-After", "5")])
         # The phone id this browser already has, so it stays the same phone across tickets (a
         # persona ticket spent here closes the persona it held). Only a valid session's.
         held = self._claims(req)
-        up = await self._call(
-            self._api_post,
-            "/internal/growbot/ticket/redeem",
-            {
-                "ticket": ticket,
-                "phone": held.phone if held else "",
-                "label": phone_label(req.header("user-agent")),
-            },
-            pool=self._gate,
-        )
+        self._opening[client] += 1
+        try:
+            up = await self._call(
+                self._api_post,
+                "/internal/growbot/ticket/redeem",
+                {
+                    "ticket": ticket,
+                    "phone": held.phone if held else "",
+                    "label": phone_label(req.header("user-agent")),
+                },
+                pool=self._gate,
+            )
+        finally:
+            self._opening[client] -= 1
+            if self._opening[client] <= 0:
+                del self._opening[client]
         got = _redeemed(up) if self._ok(up) else None
         if got is None:
             self.ticket_backoff.fail(client)
@@ -1756,7 +1780,9 @@ class GrowBot:
         # signed-in phone may open a socket, or anyone could hold the robots' unauthenticated
         # budget or guess at their keys. Caddy's away site shuts a cookieless /d/, but any
         # cookie named gb_session gets past that, so this is the gate.
-        if not authed and await self.via_tunnel(req):
+        # Caddy's away site stamps every request (and :8444 strips it), so this needs no DNS
+        # and has no stale window. Believed from anyone: a forged one only refuses its sender.
+        if not authed and req.header("x-growbot-away"):
             return Response(403, b"robots dial in at home")
         if req.method != "GET" or "websocket" not in req.tokens("upgrade"):
             return Response(426, b"websocket only", headers=[("Upgrade", "websocket")])

@@ -69,9 +69,12 @@ needs no Cloudflare change (and exists exactly when they do: tunnel mode, base h
 certificate is Cloudflare's, so a phone installs nothing. It is the `:8444` block with three
 doors shut: `/setup.html`, `/setup.js` and `/box-root.crt` are for a phone at home, and a
 cookieless `/d/` (a robot dialing the relay, never a phone) 404s, since a robot dials in on the
-LAN. Caddy only sniffs for a cookie named `gb_session`, so the sidecar is the real gate: a relay
-socket without a valid session that came through the tunnel is 403, keeping the robots'
-unauthenticated budget and their key guesses on the LAN. A signed-in phone's `/d/` passes, so a
+LAN. Caddy only sniffs for a cookie named `gb_session`, so the sidecar is the real gate: the away
+site stamps `X-Growbot-Away` on every request (`:8444` strips it), and a relay socket wearing it
+without a valid session is 403, keeping the robots' unauthenticated budget and their key guesses
+on the LAN. `/open` spends one ticket per client at a time and 16 in all, since its backoff
+counts a failure only once the api answers; away clients are keyed by address, an IPv6 one by
+its /64. A signed-in phone's `/d/` passes, so a
 persona opened away still wears its body at home through the relay. Cloudflare sees this site's
 traffic (chat, voice, camera frames), as it does the PWA's. One thing the LAN origin never had:
 the jcode previews (`<slug>-preview.<host>`, the owner's own sandboxed dev apps) are same-site

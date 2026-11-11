@@ -721,6 +721,38 @@ def test_through_the_tunnel_the_client_is_cloudflares_answer(
     assert ip("127.0.0.9", [("x-real-ip", "127.0.0.5"), cf]) == "127.0.0.9"
 
 
+def test_away_buckets_take_an_ipv6_client_whole(gb: types.ModuleType) -> None:
+    # One client holds a whole /64, so stepping through it must not buy fresh tries.
+    assert gb._bucket("2001:db8:1:2:aaaa::1") == gb._bucket("2001:db8:1:2:ffff::9")
+    assert gb._bucket("2001:db8:1:2:aaaa::1") == "2001:db8:1:2::/64"
+    assert gb._bucket("2001:db8:1:3::1") != gb._bucket("2001:db8:1:2::1")
+    assert gb._bucket("::ffff:203.0.113.9") == "203.0.113.9"
+    assert gb._bucket("203.0.113.9") == "203.0.113.9"
+    assert gb._bucket("nope") is None
+
+
+def test_a_client_spends_one_ticket_at_a_time_and_the_gate_has_a_ceiling(
+    run: _Running, gb: types.ModuleType
+) -> None:
+    # The backoff counts a failure only once the api answers, so without these one client could
+    # queue hundreds of junk tickets on the gate, ahead of the robots' hellos.
+    run.app._opening["127.0.0.1"] = gb.OPENING_PER_CLIENT
+    busy = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
+    assert busy.status == 429
+    busy.read()
+    del run.app._opening["127.0.0.1"]
+    for i in range(gb.OPENING_MAX):
+        run.app._opening[f"10.0.0.{i}"] = 1
+    full = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
+    assert full.status == 503
+    full.read()
+    run.app._opening.clear()
+    ok = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
+    assert ok.status == 200
+    ok.read()
+    assert not run.app._opening
+
+
 def test_backoff_window(gb: types.ModuleType) -> None:
     backoff = gb.Backoff()
     for t in range(gb.BACKOFF_LIMIT):
@@ -1466,14 +1498,12 @@ def test_a_bad_handshake_is_refused(run: _Running, header: str) -> None:
 def test_through_the_tunnel_only_a_signed_in_phone_reaches_the_relay(run: _Running) -> None:
     # A robot dials in on the LAN. From the internet, a chip-shaped socket (no Origin, and a
     # junk cookie that gets past Caddy's sniffing) would hold the robots' budget or guess keys.
-    run.app.config.trusted_proxy = "127.0.0.1"
-    run.app.config.trusted_tunnel = "127.0.0.5"
-    run.app._proxy_at = -float("inf")
-    away = ("Cookie: gb_session=x", "X-Real-IP: 127.0.0.5", "Cf-Connecting-IP: 203.0.113.9")
+    # Caddy's away site marks every request; no address lookup is involved.
+    away = ("Cookie: gb_session=x", "X-Growbot-Away: 1")
     assert _Ws(run, "/d/gb-abc123", cookie=False, extra=away).status == 403
     assert _Ws(run, "/d/gb-abc123", cookie=False, extra=away[1:]).status == 403
     # The same socket from the LAN is a robot dialing in.
-    assert _Ws(run, "/d/gb-abc123", cookie=False, extra=("X-Real-IP: 10.0.0.7",)).status == 101
+    assert _Ws(run, "/d/gb-abc123", cookie=False).status == 101
     # And a signed-in phone through the tunnel is let in.
     phone = _Ws(run, "/d/gb-abc123", cookie=True, extra=away[1:])
     assert phone.status == 101

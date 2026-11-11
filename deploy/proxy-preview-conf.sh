@@ -73,6 +73,8 @@ EOF
 # shorthand: Caddy sorts path-only handles ahead of named ones, which would shut /d/ on the
 # phones as well. The cookie is rebuilt as on :8444; the owner's `__Host-` cookie is
 # host-only on the apex and never sent here, but any other cookie for the domain would be.
+# X-Growbot-Away tells the sidecar the request crossed the tunnel, so it refuses a relay socket
+# with no valid session (a cookie named gb_session is all Caddy can check).
 cat > "$dir/growbot.caddy" <<EOF
 http://growbot.${host} {
 	@shut path /internal* /setup.html /setup.js /box-root.crt
@@ -88,6 +90,7 @@ http://growbot.${host} {
 			flush_interval -1
 			header_up Cookie "gb_session={http.request.cookie.gb_session}"
 			header_up X-Real-IP {remote_host}
+			header_up X-Growbot-Away 1
 		}
 	}
 	@chip path /d/*
@@ -99,6 +102,7 @@ http://growbot.${host} {
 			flush_interval -1
 			header_up -Cookie
 			header_up X-Real-IP {remote_host}
+			header_up X-Growbot-Away 1
 		}
 	}
 }
