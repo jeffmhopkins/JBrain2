@@ -2200,7 +2200,7 @@ function groqTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext
   _languageForm(fd,meta); // 0909: only explicit input intent pins language; Automatic may carry bounded person transcript context. Never navigator.language.
   var h={}; if(pbDevTok) h["x-pb-device"]=pbDevTok;   // 0802: token on audio = per-device AUDIO_DAILY_CALLS allowance (server skips the money meter for audio); tokenless audio rode a shared per-IP bucket one long session could exhaust
   var _ac=(typeof AbortController!=="undefined")?new AbortController():null;   // 0815: same tail-cut as diTranscribe; the backstop gets a longer leash (it is the LAST resort)
-  var _pri=!!STT_GROQ, _lease=_pri?8000:12000;   // 0827: SHORT leash on the primary, LONG on the backstop. Tied to ROLE, not to provider — flipping the roles without flipping the leashes would make the fallback cohort wait longer than they do today.
+  var _pri=!!STT_GROQ, _lease=65000;   // 0827: SHORT leash on the primary, LONG on the backstop. Tied to ROLE, not to provider — flipping the roles without flipping the leashes would make the fallback cohort wait longer than they do today.
   var _tk=Date.now()%1e7;
   var _tm=_ac?setTimeout(function(){ try{ logEv("stt_timeout",{tgt:"groq",ms:Date.now()-_sg0,pri:_pri?1:0,kb:Math.round(blob.size/1024),tok:_tk}); }catch(e){} try{ _ac.abort(); }catch(e){} },_lease):null;
   (soulOwned()?fetch:_heldFetch)("/api/llm?target=groq-audio",_ac?{method:"POST",headers:h,body:fd,signal:_ac.signal}:{method:"POST",headers:h,body:fd})
@@ -2222,7 +2222,7 @@ function diTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext=t
      the EXISTING transport-failure path. AbortController is guarded (Safari 12.1+; absent = old
      behavior, no timeout). stt_timeout telemetry says how often the tail actually bites. */
   var _ac=(typeof AbortController!=="undefined")?new AbortController():null;
-  var _pri=!STT_GROQ, _lease=_pri?8000:12000;   // 0827: same role-based rule as the groq lane above
+  var _pri=!STT_GROQ, _lease=65000;   // 0827: same role-based rule as the groq lane above
   var _tk=Date.now()%1e7;
   var _tm=_ac?setTimeout(function(){ try{ logEv("stt_timeout",{tgt:"di",ms:Date.now()-_st0,pri:_pri?1:0,kb:Math.round(blob.size/1024),tok:_tk}); }catch(e){} try{ _ac.abort(); }catch(e){} },_lease):null;
   (soulOwned()?fetch:_heldFetch)("/api/llm?target=deepinfra-audio",_ac?{method:"POST",headers:h,body:fd,signal:_ac.signal}:{method:"POST",headers:h,body:fd})

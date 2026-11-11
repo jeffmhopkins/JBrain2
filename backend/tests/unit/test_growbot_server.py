@@ -1015,6 +1015,47 @@ def test_stt_rewrites_the_upload_for_whisper(
     assert parts["language"].data == b"en"
     assert parts["file"].data == audio
     assert parts["file"].filename == "speech.webm"
+    # A webm states no length, so whisper keeps its full window.
+    assert "audio_ctx" not in parts
+
+
+def _wav(seconds: float, rate: int = 16000) -> bytes:
+    pcm = b"\0\0" * int(seconds * rate)
+    fmt = (1).to_bytes(2, "little") + (1).to_bytes(2, "little") + rate.to_bytes(4, "little")
+    fmt += (rate * 2).to_bytes(4, "little") + (2).to_bytes(2, "little") + (16).to_bytes(2, "little")
+    return (
+        b"RIFF"
+        + (36 + len(pcm)).to_bytes(4, "little")
+        + b"WAVE"
+        + b"fmt "
+        + len(fmt).to_bytes(4, "little")
+        + fmt
+        + b"data"
+        + len(pcm).to_bytes(4, "little")
+        + pcm
+    )
+
+
+def test_a_short_wav_buys_whisper_a_window_its_own_size(
+    run: _Running, gb: types.ModuleType
+) -> None:
+    """Whisper pads every clip to 30 s; a WAV states its length, so the encoder window is
+    sized to it, as the room panels' is."""
+    _Fake.stt_reply = json.dumps({"text": "hi"}).encode()
+    body, ctype = _multipart({"model": "whisper-large-v3-turbo"}, _wav(3.0))
+    resp = run.request("POST", "/api/llm?target=groq-audio", body, {"Content-Type": ctype})
+    assert resp.status == 200
+    call = [s for s in _Fake.seen if s["path"] == "/v1/audio/transcriptions"][-1]
+    parts = {p.name: p for p in gb.parse_multipart(call["body"], call["ctype"])}
+    assert parts["audio_ctx"].data == b"225"
+    assert gb.audio_window(_wav(1.0)) == 160  # the floor
+    assert gb.audio_window(_wav(29.0)) == 1500  # the full window, never more
+    assert gb.audio_window(_wav(31.0)) is None
+    assert gb.wav_seconds(b"RIFF\0\0\0\0WAVEjunk") is None
+    # A streamed WAV's placeholder size reads as the bytes actually present.
+    streamed = bytearray(_wav(2.0))
+    streamed[40:44] = (0xFFFFFFFF).to_bytes(4, "little")
+    assert gb.wav_seconds(bytes(streamed)) == 2.0
 
 
 def test_stt_without_audio_or_with_whisper_down(run: _Running) -> None:

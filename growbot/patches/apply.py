@@ -610,6 +610,25 @@ SPEED_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += SPEED_PATCHES
 
+# Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s. Both lanes are the box's
+# one whisper here, so a leash only re-sends the same clip to the queue it is waiting in; the
+# box's own limit (serve.py STT_TIMEOUT_S) and its reason (gbBoxEars) decide instead.
+STT_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "var _pri=!!STT_GROQ, _lease=_pri?8000:12000;",
+        "var _pri=!!STT_GROQ, _lease=65000;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var _pri=!STT_GROQ, _lease=_pri?8000:12000;",
+        "var _pri=!STT_GROQ, _lease=65000;",
+        1,
+    ),
+]
+PATCHES += STT_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

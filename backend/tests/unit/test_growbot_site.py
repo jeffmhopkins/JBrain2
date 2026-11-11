@@ -355,6 +355,8 @@ def test_the_creature_says_why_the_box_failed_it() -> None:
     assert 'e.gateFail||(e&&e.name==="AbortError")||' in page
     assert 'toast("\u2026didn\'t catch that")' not in page
     assert "the speech model heard no words" in page
+    # Both transcriber lanes are the box's whisper: no 8 s/12 s cloud leash re-sending the clip.
+    assert page.count("_lease=65000;") == 2 and "_lease=_pri?8000:12000" not in page
 
 
 def test_the_system_prompt_holds_only_what_stays_put() -> None:
