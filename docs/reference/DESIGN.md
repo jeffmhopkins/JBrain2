@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-11-10
+> **Status:** Living · **Last verified:** 2026-11-11
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3342,8 +3342,11 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     and why for the ones made before an edit, restore, reset or import), each with *Restore* (a
     centre confirm that names the date and says the current state is saved first; its toast has
     *Undo*) and *New persona from it*.
-  - *Manage*: *Rename* (the list's name; the creature still calls itself by its own name until
-    told otherwise), *Duplicate* (memories and visual memories, no checkpoints), *Export soul
+  - *Manage*: *Face* first (owner, 2026-11-11): a radio list, *Lantern* (the default),
+    *Ostrich*, *Robot*, *Pixel*, each with a one-line description, saved as it is tapped. It is
+    not a soul write, so no checkpoint and no reload: the toast says it changes on its phone in
+    a few seconds (its poll), or next time it opens. Then *Rename* (the list's name; the
+    creature still calls itself by its own name until told otherwise), *Duplicate* (memories and visual memories, no checkpoints), *Export soul
     file* (its memories but not its visual memories, which stay on the box), *Import over it*
     (the file is checked first: too big or not a soul says so with *Nothing changed*; a
     checkpoint is saved before it lands), *Reset to a fresh creature* (armed, saves *Before
@@ -3367,8 +3370,9 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
 
 ## GrowBot — the creature's face (owner, 2026-11-10 — binding mock: `docs/mocks/growbot-face/a-ostrich.html`, variant A; rivals B "the panels' robot" and C "lantern eyes" retained in `docs/mocks/growbot-face/README.md`; built in `growbot/patches/growbot-face.js`)
 
-The creature on a GrowBot's phone is the panels' ostrich, so a GrowBot and a JPanel in the same
-room are visibly the same family.
+A persona wears one of four faces, the lantern by default (owner, 2026-11-11; picked under
+*Manage*). This section specifies the ostrich face: the panels' ostrich, so a GrowBot wearing it
+and a JPanel in the same room are visibly the same family.
 
 - **Head, ringed neck, body.** The panels' ostrich head at its own proportions, a short neck of
   rings (the owner: a long ringed neck with no body under it, and a solid neck, both read wrong),
@@ -3382,8 +3386,11 @@ room are visibly the same family.
   veil are upstream's, unchanged; only the 12 px rectangle eyes give way.
 - **It recolours itself when asked** (the reply's `coat` verb, beside `sky`), keeps the colour
   across a reload, and goes back to steel on *default*.
-- `?face=robot|lantern` shows a rival; `?face=pixel`, or a throw in the new face, shows
-  upstream's own face.
+- **Each persona wears its own face** (owner, 2026-11-11): *Lantern* by default, chosen per
+  persona on its page's *Manage* tab, and a phone already showing it changes face where it
+  stands at its next poll. Without a persona (a G2 session) the phone's own choice, else lantern.
+- `?face=lantern|ostrich|robot|pixel` overrides that; `?face=pixel`, or a throw in the new face,
+  shows upstream's own face.
 
 ## Room endpoint — the robot pet's body (settled 2026-09-13; binding mock: `docs/mocks/room-endpoint/pet-face.html`, round record `docs/mocks/room-endpoint/README.md`, plan `docs/plans/ROOM_ENDPOINT_PLAN.md`)
 

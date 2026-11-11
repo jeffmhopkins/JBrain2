@@ -87,6 +87,27 @@ def test_the_pixel_eyes_give_way_only_while_the_new_face_is_on() -> None:
     assert "broken = true;" in face
 
 
+def test_a_persona_wears_its_own_face_lantern_by_default() -> None:
+    """The box's face for the persona is read before the face loads, a poll's new one changes
+    it where it stands, and only ?face= outranks it."""
+    face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    assert 'var DEFAULT = "lantern";' in face
+    assert (
+        face.index("if (valid(asked)) return asked;")
+        < face.index("if (valid(window.__gbBoxFace)) return window.__gbBoxFace;")
+        < face.index("localStorage.gb_face ||")
+    )
+    assert 'window.addEventListener("gb-box-state", function (ev) {' in face
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert shim.index("window.__gbBoxFace = state.json.face;") < shim.index(
+        "if (state.status === 204) {"
+    )
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert page.index('<script src="/growbot-box.js">') < page.index(
+        '<script src="/growbot-face.js">'
+    )
+
+
 def test_the_creature_can_recolour_itself_like_the_sky() -> None:
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert prompts.index('\'"coat":"OMIT usually') < prompts.index('\'"sky":"OMIT usually')

@@ -60,6 +60,7 @@ class Persona:
     wearing: str | None
     soul: dict[str, Any] | None = None
     memories: int = 0
+    face: str = "lantern"
 
 
 @dataclass(frozen=True)
@@ -105,9 +106,12 @@ class Pulled:
     soul: dict[str, Any]
     wearing: str | None
     memories: int = 0
+    face: str = "lantern"
 
 
 PushResult = int | Literal["moved", "newer", "gone"]
+# The faces growbot-face.js draws (migration 0259's CHECK); lantern is the default.
+Face = Literal["lantern", "ostrich", "robot", "pixel"]
 Away = Literal["moved", "gone"]
 # How a restore, reset or import treats the memories: keep them, clear them, or put back the
 # ones checkpoint `str` kept.
@@ -131,7 +135,9 @@ class PersonaRepo(Protocol):
         soul: dict[str, Any],
         made_from: str,
         memories_from: str | None = None,
+        face: Face = "lantern",
     ) -> Persona: ...
+    async def set_face(self, ctx: SessionContext, pid: str, face: Face) -> bool: ...
     async def write_soul(
         self,
         ctx: SessionContext,
@@ -182,7 +188,7 @@ class PersonaRepo(Protocol):
 
 _PERSONA = (
     "p.id::text AS id, p.name, p.version, p.made_from, p.phone_id, p.last_phone_id,"
-    " p.opened_at, p.created_at, p.updated_at,"
+    " p.opened_at, p.created_at, p.updated_at, p.face,"
     " (SELECT count(*) FROM app.growbot_checkpoints c WHERE c.persona_id = p.id) AS checkpoints,"
     " (SELECT b.code FROM app.growbot_body b WHERE b.persona_id = p.id LIMIT 1) AS wearing,"
     " (SELECT count(*) FROM app.growbot_memories m WHERE m.persona_id = p.id) AS memories"
@@ -213,6 +219,7 @@ def _persona(r: Any, soul: bool = False) -> Persona:
         wearing=r.wearing,
         soul=dict(r.soul) if soul else None,
         memories=int(r.memories),
+        face=r.face,
     )
 
 
@@ -307,6 +314,7 @@ class SqlPersonaRepo:
         soul: dict[str, Any],
         made_from: str,
         memories_from: str | None = None,
+        face: Face = "lantern",
     ) -> Persona:
         """A new persona; with `memories_from`, holding a copy of that persona's memories
         (a duplicate), whose pictures it shares."""
@@ -314,10 +322,10 @@ class SqlPersonaRepo:
             pid = (
                 await session.execute(
                     text(
-                        "INSERT INTO app.growbot_personas (name, soul, made_from)"
-                        " VALUES (:n, CAST(:s AS jsonb), :f) RETURNING id::text"
+                        "INSERT INTO app.growbot_personas (name, soul, made_from, face)"
+                        " VALUES (:n, CAST(:s AS jsonb), :f, :face) RETURNING id::text"
                     ),
-                    {"n": name, "s": _json(soul), "f": made_from[:120]},
+                    {"n": name, "s": _json(soul), "f": made_from[:120], "face": face},
                 )
             ).scalar_one()
             if memories_from is not None and (src := _uuid(memories_from)) is not None:
@@ -334,6 +342,21 @@ class SqlPersonaRepo:
             made = await self._one(session, pid, soul=True)
             assert made is not None
             return made
+
+    async def set_face(self, ctx: SessionContext, pid: str, face: Face) -> bool:
+        """Not a soul write: the version stays, so its phone does not reload, and its poll
+        carries the face to the creature."""
+        if (key := _uuid(pid)) is None:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            done = await session.execute(
+                text(
+                    "UPDATE app.growbot_personas SET face = :f, updated_at = now()"
+                    " WHERE id = :p RETURNING 1"
+                ),
+                {"p": key, "f": face},
+            )
+            return done.first() is not None
 
     async def _checkpoint_now(
         self, session: AsyncSession, pid: str, name: str, auto: bool, why: str, freed: set[str]
@@ -730,7 +753,7 @@ class SqlPersonaRepo:
             row = (
                 await session.execute(
                     text(
-                        f"SELECT p.version, p.memories_version,"
+                        f"SELECT p.version, p.memories_version, p.face,"
                         f" {'p.soul' if with_soul else 'NULL'} AS soul,"
                         " (SELECT b.code FROM app.growbot_body b WHERE b.persona_id = p.id"
                         "  LIMIT 1) AS wearing"
@@ -747,7 +770,9 @@ class SqlPersonaRepo:
                 text("UPDATE app.growbot_phones SET last_seen_at = now() WHERE id = :ph"),
                 {"ph": phone_id},
             )
-            return Pulled(row.version, dict(row.soul or {}), row.wearing, row.memories_version)
+            return Pulled(
+                row.version, dict(row.soul or {}), row.wearing, row.memories_version, row.face
+            )
 
     async def push(
         self, ctx: SessionContext, pid: str, phone_id: str, base: int, soul: dict[str, Any]

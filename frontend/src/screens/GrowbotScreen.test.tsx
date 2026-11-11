@@ -61,6 +61,7 @@ function persona(over: Partial<GrowbotPersona>): GrowbotPersona {
     checkpoints: 0,
     memories: 0,
     wearing: null,
+    face: "lantern",
     ...over,
   };
 }
@@ -815,6 +816,31 @@ describe("GrowbotScreen a persona's page", () => {
       }),
     );
     expect(await screen.findByText("Made Wren from Sprout — Before the beach trip.")).toBeTruthy();
+  });
+
+  it("picks a persona's face from Manage, without a soul write", async () => {
+    const s = serve(
+      UP,
+      pageRoutes((path, init) => {
+        if (path === `/api/growbot/personas/${SPROUT}` && init?.method === "PATCH") {
+          return json({ persona: detail({ face: "robot" }), checkpoint: null });
+        }
+        return null;
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    const faces = screen.getByRole("group", { name: "Face" });
+    expect(within(faces).getByRole("radio", { name: /^Lantern/ })).toHaveProperty("checked", true);
+    fireEvent.click(within(faces).getByRole("radio", { name: /^Robot/ }));
+    expect(
+      await screen.findByText(
+        "Sprout wears the robot face; it changes on Pixel 6a in a few seconds.",
+      ),
+    ).toBeTruthy();
+    expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({ face: "robot" });
+    expect(within(faces).getByRole("radio", { name: /^Robot/ })).toHaveProperty("checked", true);
   });
 
   it("renames, duplicates and exports from Manage", async () => {

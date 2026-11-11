@@ -264,6 +264,10 @@
   }
 
   var state = sync("GET", PATH + "/state");
+  // The face this persona wears, read by growbot-face.js, which loads next.
+  if (state.status === 200 && state.json && typeof state.json.face === "string") {
+    window.__gbBoxFace = state.json.face;
+  }
   if (state.status === 204) {
     window.__gbBoxSoul = { g2: true };
     // A G2 session: the phone's own creature comes back if a persona had the key (or one

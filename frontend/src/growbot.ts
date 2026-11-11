@@ -4,6 +4,7 @@
 // copy from their shared.js).
 
 import type {
+  GrowbotFace,
   GrowbotFailCode,
   GrowbotFlashJob,
   GrowbotMemory,
@@ -476,6 +477,15 @@ export function clip(s: string, n: number): string {
   const one = s.replace(/\s+/g, " ").trim();
   return one.length > n ? `${one.slice(0, n - 1).trimEnd()}…` : one;
 }
+
+/** The faces a persona's creature can wear (growbot/patches/growbot-face.js), in the order
+ *  the picker shows them. */
+export const FACES: { id: GrowbotFace; name: string; what: string }[] = [
+  { id: "lantern", name: "Lantern", what: "Two glowing eyes, no body." },
+  { id: "ostrich", name: "Ostrich", what: "The panels' ostrich: crest, eyes and a ringed neck." },
+  { id: "robot", name: "Robot", what: "Square robot eyes." },
+  { id: "pixel", name: "Pixel", what: "The original pixel eyes." },
+];
 
 /** The creature's own memories, read-only here: it writes them itself. */
 export const MEMORY = [

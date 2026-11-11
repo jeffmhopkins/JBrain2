@@ -3986,7 +3986,11 @@ export interface GrowbotPersona {
   /** How many visual memories it has (saved views of people and things it has met). */
   memories: number;
   wearing: string | null;
+  /** The face its creature wears; lantern until the owner picks another. */
+  face: GrowbotFace;
 }
+
+export type GrowbotFace = "lantern" | "ostrich" | "robot" | "pixel";
 
 export interface GrowbotCheckpoint {
   id: string;
@@ -8178,6 +8182,15 @@ export const api = {
     const response = await request(
       `/api/growbot/personas/${encodeURIComponent(id)}`,
       jsonInit("PATCH", { name }),
+    );
+    return (await response.json()) as GrowbotWritten;
+  },
+
+  /** Not a soul write: its phone keeps running and changes face at its next poll. */
+  async setGrowbotPersonaFace(id: string, face: GrowbotFace): Promise<GrowbotWritten> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { face }),
     );
     return (await response.json()) as GrowbotWritten;
   },

@@ -3,23 +3,35 @@
    stars, the sparks, and two 12 px rectangle eyes. apply.py keeps the sky, stars and sparks,
    skips the rectangle eyes, and calls draw() once per frame with the state the eyes were drawn
    from, so this file decides shapes only and the brain still sets nothing but `emotion`.
-   The owner chose the face from the mock set in docs/mocks/growbot-face/; the other two stay
-   reachable with ?face=robot|lantern (or localStorage gb_face), and ?face=pixel is upstream's
-   own face, which is also what a throw in draw() falls back to. */
+   A persona wears the face the owner picks for it in JBrain (migration 0259): growbot-box.js
+   reads it with the soul into __gbBoxFace, and its poll's gb-box-state event changes it where
+   the creature stands. Without a persona (a G2 session) it is localStorage gb_face, else the
+   lantern (owner, 2026-11-11). ?face=lantern|ostrich|robot|pixel overrides both, and pixel is
+   upstream's own face, which is also what a throw in draw() falls back to. */
 (function () {
   "use strict";
 
-  var DEFAULT = "ostrich";
+  var DEFAULT = "lantern";
   var LW = 360, LH = 740;
 
+  function valid(v) { return v === "pixel" || v === "ostrich" || v === "robot" || v === "lantern"; }
+  var asked = "";
+  try { asked = new URLSearchParams(location.search).get("face") || ""; } catch (e) {}
   function pick() {
+    if (valid(asked)) return asked;
+    if (valid(window.__gbBoxFace)) return window.__gbBoxFace;
     var v = "";
-    try { v = new URLSearchParams(location.search).get("face") || ""; } catch (e) {}
-    if (!v) { try { v = localStorage.gb_face || ""; } catch (e) {} }
-    return v === "pixel" || v === "ostrich" || v === "robot" || v === "lantern" ? v : DEFAULT;
+    try { v = localStorage.gb_face || ""; } catch (e) {}
+    return valid(v) ? v : DEFAULT;
   }
   var face = pick();
   var broken = false;
+  window.addEventListener("gb-box-state", function (ev) {
+    var f = ev && ev.detail && ev.detail.face;
+    if (valid(asked) || !valid(f) || f === face) return;
+    face = f;
+    broken = false;
+  });
 
   /* Its colour, as on the panels: steel by default, and the creature recolours itself when
      asked ("turn gold") through the reply's `coat` verb, the way `sky` washes the sky. Kept in

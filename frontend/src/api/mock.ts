@@ -463,6 +463,7 @@ function mockGbPersona(
     checkpoints: cps.length,
     memories: vms.length,
     wearing: null,
+    face: "lantern",
     ...over,
     soul,
     vms,
@@ -688,6 +689,13 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
   const rest = m[2] ?? "";
   if (!rest && method === "GET") return json(mockGbDetail(p));
   if (!rest && method === "PATCH") {
+    const face = body().face;
+    if (face !== undefined) {
+      if (!["lantern", "ostrich", "robot", "pixel"].includes(String(face)))
+        return json({ detail: "not a face" }, 422);
+      p.face = face as GrowbotPersona["face"];
+      return json({ persona: mockGbDetail(p), checkpoint: null });
+    }
     const name = String(body().name ?? "").trim();
     if (!name) return json({ detail: "Give it a name." }, 422);
     p.name = name;
@@ -727,7 +735,7 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
     const name = `${p.name} copy`;
     const copy = mockGbPersona(
       name,
-      { made_from: `copy of ${p.name}` },
+      { made_from: `copy of ${p.name}`, face: p.face },
       { ...structuredClone(p.soul), meta: { ...p.soul.meta, name } },
       [],
       p.vms.map((v) => ({ ...v })),
