@@ -1044,3 +1044,97 @@ details.gb-help[open] summary::after {
     transition: none;
   }
 }
+
+/* Visual memories: a grid of saved views (mock `.vm-grid`). The glyph sits under the picture,
+   so it shows while the view loads and stays if it can't. */
+.gb-vm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.gb-vm {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  overflow: hidden;
+  background: var(--surface);
+}
+.gb-vm-look {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.gb-vm-look:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: -2px;
+}
+.gb-vm-pic {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  background: var(--surface-2);
+  color: var(--text-3);
+  overflow: hidden;
+}
+.gb-vm-pic svg {
+  width: 46%;
+  height: 46%;
+}
+.gb-vm-pic.ok svg {
+  visibility: hidden;
+}
+.gb-vm-pic img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.gb-vm-cap {
+  padding: 6px 8px 0;
+  font-size: var(--fs-micro);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gb-vm-when {
+  padding: 0 8px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.gb-vm-del {
+  margin: 4px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--danger-text);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.gb-vm-del.armed {
+  background: var(--danger-tint);
+  font-weight: 600;
+}
+/* The sheet: every view of one memory, larger. */
+.gb-vm-views {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.gb-vm-views .gb-vm-pic {
+  border-radius: var(--r-input);
+}

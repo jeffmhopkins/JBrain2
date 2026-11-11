@@ -68,6 +68,18 @@ class _YesPersonaRepo:
     async def riders(self, ctx: object) -> list[object]:
         return []
 
+    async def phone_memories(self, ctx: object, pid: str, phone: str) -> tuple[int, list]:
+        return 0, []
+
+    async def phone_view(self, ctx: object, pid: str, phone: str, mid: str, i: int) -> bytes:
+        return b"\xff\xd8\xff"
+
+    async def phone_keep(self, ctx: object, pid: str, phone: str, saved: object) -> int:
+        return 1
+
+    async def phone_forget(self, ctx: object, pid: str, phone: str, ids: list[str]) -> int:
+        return 1
+
 
 GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ("POST", "/internal/growbot/ticket/redeem", {"ticket": "t"}, 200),
@@ -84,6 +96,20 @@ GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
         200,
     ),
     ("GET", "/internal/growbot/body/gb-x", None, 200),
+    ("POST", "/internal/growbot/memories/list", {"persona": _PID, "phone": _PHONE}, 200),
+    (
+        "POST",
+        "/internal/growbot/memories/view",
+        {"persona": _PID, "phone": _PHONE, "id": "r1", "i": 0},
+        200,
+    ),
+    ("POST", "/internal/growbot/memories/keep", {"persona": _PID, "phone": _PHONE}, 400),
+    (
+        "POST",
+        "/internal/growbot/memories/forget",
+        {"persona": _PID, "phone": _PHONE, "ids": ["r1"]},
+        200,
+    ),
 ]
 # Routes with a path parameter, as app.routes names them.
 _TEMPLATES = {"/internal/growbot/body/gb-x": "/internal/growbot/body/{code}"}

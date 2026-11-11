@@ -131,6 +131,11 @@ SOUL_WORKERS = 2
 # A soul the phone pushes: the api's 1 MB soul cap, plus room for the JSON around it.
 MAX_SOUL_BODY = 1_100_000
 SOUL_PATH = "/api/box/persona"
+# A persona's visual memories (wave G4d): one record with up to three views, each at most
+# upstream's VM_MAX_B64 of base64, and its fields.
+MEMORY_PATH = "/api/box/memories"
+MAX_MEMORY_BODY = 2_500_000
+MEMORY_ID_RE = re.compile(r"r[0-9a-f]{1,32}")
 
 # Upstream's pairing codes are `gb-` + 6 hex; the api holds robots to this same shape.
 CODE_RE = re.compile(r"gb-[A-Za-z0-9]{1,32}")
@@ -628,7 +633,11 @@ async def read_head(reader: asyncio.StreamReader) -> Request:
 def body_limit(req: Request) -> int:
     # A pushed soul is capped near the api's own cap, so an oversized one is refused before
     # its upload instead of after 16 MiB of it.
-    return MAX_SOUL_BODY if req.path == SOUL_PATH else MAX_BODY
+    if req.path == SOUL_PATH:
+        return MAX_SOUL_BODY
+    if req.path in (MEMORY_PATH, MEMORY_PATH + "/forget"):
+        return MAX_MEMORY_BODY
+    return MAX_BODY
 
 
 def body_framing(req: Request) -> int | None:
@@ -1362,6 +1371,8 @@ class GrowBot:
         name = req.path[len("/api/") :]
         if req.path in (SOUL_PATH, SOUL_PATH + "/state"):
             return await self.soul_route(req)
+        if req.path in (MEMORY_PATH, MEMORY_PATH + "/view", MEMORY_PATH + "/forget"):
+            return await self.memory_route(req)
         if name in ("journal", "episodes") and req.method == "DELETE":
             # The app's erase flow reads a JSON answer; there is nothing here to erase.
             return json_response(200, {"ok": True})
@@ -1430,6 +1441,70 @@ class GrowBot:
                 return json_response(503, {"error": "the box is busy"}, headers)
             # The page keeps which persona its unsent writes belong to, so a phone that was
             # given another persona never pushes the old one's soul into the new one.
+            return json_response(200, {**got, "persona": claims.persona}, headers)
+        if up.status in (400, 404, 409, 413):
+            try:
+                detail = json.loads(up.body).get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            why = detail if isinstance(detail, str) else "refused"
+            return json_response(up.status, {"error": why[:200]}, headers)
+        return json_response(503, {"error": "the box is busy"}, headers)
+
+    async def memory_route(self, req: Request) -> Response:
+        """The persona's visual memories, which live on the box (wave G4d): `GET` lists what
+        the box holds (each record's fields and its views' times, never a picture), `GET
+        …/view?id=&i=` is one picture as base64, `POST {persona, memory}` keeps a record the
+        creature saved, and `POST …/forget {persona, ids}` drops ones it forgot. 204 for a G2
+        session; the api's 400, 404, 409 and 413 pass through, anything else is a 503."""
+        claims = self._claims(req)
+        if claims is None or not claims.persona:
+            return Response(204, headers=[("Cache-Control", "no-store")])
+        who: dict[str, Any] = {"persona": claims.persona, "phone": claims.phone}
+        sub = req.path[len(MEMORY_PATH) :]
+        picture = False
+        if req.method == "GET" and sub == "":
+            path, payload = "/internal/growbot/memories/list", who
+        elif req.method == "GET" and sub == "/view":
+            mid, i = req.arg("id"), req.arg("i")
+            if not MEMORY_ID_RE.fullmatch(mid) or i not in ("0", "1", "2"):
+                return json_response(400, {"error": "a memory id and a view"})
+            path, payload, picture = (
+                "/internal/growbot/memories/view",
+                {**who, "id": mid, "i": int(i)},
+                True,
+            )
+        elif req.method == "POST" and sub in ("", "/forget"):
+            msg = _parse(req.body)
+            if msg is None:
+                return json_response(400, {"error": "a visual memory"})
+            if msg.get("persona") != claims.persona:
+                # As the soul's push: a page still on a persona this phone has since swapped
+                # never writes its memories into the new one.
+                return json_response(409, {"error": "other"})
+            if sub == "":
+                path, payload = "/internal/growbot/memories/keep", {
+                    **who,
+                    "memory": msg.get("memory"),
+                }
+            else:
+                path, payload = "/internal/growbot/memories/forget", {
+                    **who,
+                    "ids": msg.get("ids"),
+                }
+        else:
+            return json_response(405, {"error": "method not allowed"})
+        up = await self._call(self._api_post, path, payload, pool=self._soul_pool)
+        headers = [("Cache-Control", "no-store")]
+        if up.status == 200 and picture:
+            # IndexedDB keeps a view as the base64 of its JPEG, so it is sent that way.
+            return json_response(
+                200, {"j": base64.b64encode(up.body).decode("ascii")}, headers
+            )
+        if up.status == 200:
+            got = _parse(up.body)
+            if got is None:
+                return json_response(503, {"error": "the box is busy"}, headers)
             return json_response(200, {**got, "persona": claims.persona}, headers)
         if up.status in (400, 404, 409, 413):
             try:

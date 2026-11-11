@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatEvent } from "../agent/types";
-import { api } from "./client";
+import { api, growbotMemoryViewUrl } from "./client";
 
 function sseBody(frames: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -284,6 +284,27 @@ describe("api GrowBot", () => {
       ["/api/growbot/body/gb-3fa91c", "PUT", JSON.stringify({ persona: null })],
       ["/api/growbot/ticket", "POST", JSON.stringify({ persona: id, code: "gb-3fa91c" })],
     ]);
+  });
+
+  it("reads and forgets visual memories, taking one already gone as forgotten", async () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    const fetchMock = stub({ memories: [{ id: "r1a2b3c4d", kind: "person", name: "Ann" }] });
+    expect((await api.growbotMemories(id)).map((m) => m.id)).toEqual(["r1a2b3c4d"]);
+    await api.growbotForgetMemory(id, "r1a2b3c4d");
+    expect(fetchMock.mock.calls.map((c) => [String(c[0]), c[1]?.method])).toEqual([
+      [`/api/growbot/personas/${id}/memories`, undefined],
+      [`/api/growbot/personas/${id}/memories/r1a2b3c4d`, "DELETE"],
+    ]);
+    expect(growbotMemoryViewUrl(id, "r1a2b3c4d", 2)).toBe(
+      `/api/growbot/personas/${id}/memories/r1a2b3c4d/views/2`,
+    );
+
+    stub({ detail: "no such memory" }, 404);
+    await expect(api.growbotForgetMemory(id, "r1a2b3c4d")).resolves.toBeUndefined();
+    stub({ detail: "The box couldn't forget it just now." }, 500);
+    await expect(api.growbotForgetMemory(id, "r1a2b3c4d")).rejects.toThrow(
+      "The box couldn't forget it just now.",
+    );
   });
 
   it("names an exported soul file after the box's download name", async () => {

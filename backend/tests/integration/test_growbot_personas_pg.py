@@ -603,7 +603,7 @@ async def test_routes_open_hand_over_and_who_wears_fish(maker: async_sessionmake
     )
     assert stale.status_code == 409 and stale.json()["detail"] == "newer"
     state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_A})
-    assert state.json() == {"version": 2, "wearing": None}
+    assert state.json() == {"version": 2, "wearing": None, "memories": 0}
     moved_state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_B})
     assert moved_state.status_code == 409
     assert c.post("/internal/growbot/soul/state", json={}).status_code == 401

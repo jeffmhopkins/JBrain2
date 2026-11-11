@@ -377,6 +377,43 @@ PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 
+# Visual memories follow the persona (wave G4d; growbot-box.js does the sync).
+VISUAL_MEMORY_PATCHES: list[tuple[str, str, str, int]] = [
+    # Each persona's saved views are its own namespace on a shared phone.
+    (
+        "v3/visual-memory.js",
+        'function vmNs(){ try{ return localStorage.getItem("pb2_sid")||',
+        'function vmNs(){ try{ return window.__gbBoxVmNs||localStorage.getItem("pb2_sid")||',
+        1,
+    ),
+    # The store opens only after the box's records are merged in.
+    (
+        "v3/visual-memory.js",
+        "function vmOpen(){ return new Promise(function(res,rej){ if(_vmDb) return res(_vmDb);",
+        "function vmOpen(){ var w=window.gbBoxMemReady; return w&&!_vmDb?"
+        "w.then(vmOpenNow,vmOpenNow):vmOpenNow(); }\n"
+        "function vmOpenNow(){ return new Promise(function(res,rej){ if(_vmDb) return res(_vmDb);",
+        1,
+    ),
+    # Every write the creature makes to it is sent to the box.
+    (
+        "v3/visual-memory.js",
+        "tx.oncomplete=function(){ done(); res(",
+        'tx.oncomplete=function(){ done(); if(mode==="readwrite"&&'
+        'typeof window.gbBoxMemChanged==="function"){ try{ window.gbBoxMemChanged(); }'
+        "catch(e){} } res(",
+        1,
+    ),
+    # A phone that cached the old file loads this one.
+    (
+        "v3/next.html",
+        '<script src="/v3/visual-memory.js?v=1005-mem"></script>',
+        '<script src="/v3/visual-memory.js?v=1005-mem-box"></script>',
+        1,
+    ),
+]
+PATCHES += VISUAL_MEMORY_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

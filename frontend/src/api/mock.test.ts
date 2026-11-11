@@ -11,6 +11,7 @@ import type {
   GrowbotFlashJob,
   GrowbotFlashRequest,
   GrowbotFlashSetup,
+  GrowbotMemory,
   GrowbotOverview,
   GrowbotPersona,
   GrowbotRobot,
@@ -863,6 +864,58 @@ describe("mock GrowBot", () => {
     ).json()) as GrowbotOverview;
     expect(rode.body.find((b) => b.code === "gb-3fa91c")?.persona).toBe(bolt.id);
     expect(rode.personas.find((p) => p.id === sprout.id)?.wearing).toBeNull();
+  });
+
+  it("keeps visual memories with checkpoints: forget, reset, restore, duplicate, import", async () => {
+    const ov = (await (await call("/api/growbot/personas")).json()) as GrowbotOverview;
+    const sprout = ov.personas[0] as GrowbotPersona;
+    const base = `/api/growbot/personas/${sprout.id}`;
+    const list = async (b = base) =>
+      ((await (await call(`${b}/memories`)).json()) as { memories: GrowbotMemory[] }).memories;
+    const mine = await list();
+    expect(mine.length).toBe(sprout.memories);
+    expect(mine.length).toBeGreaterThan(1);
+    const dates = mine.map((m) => m.saved_at ?? "");
+    expect(dates).toEqual([...dates].sort().reverse());
+    expect(mine.some((m) => !m.name)).toBe(true);
+
+    const kept = (await (
+      await call(`${base}/checkpoints`, jsonInit("POST", { name: "Keep" }))
+    ).json()) as { id: string; memories: number };
+    expect(kept.memories).toBe(mine.length);
+
+    const gone = (mine[0] as GrowbotMemory).id;
+    expect((await call(`${base}/memories/${gone}`, { method: "DELETE" })).status).toBe(204);
+    expect((await call(`${base}/memories/${gone}`, { method: "DELETE" })).status).toBe(404);
+    expect((await list()).map((m) => m.id)).not.toContain(gone);
+
+    const reset = (await (
+      await call(`${base}/reset`, { method: "POST" })
+    ).json()) as GrowbotWritten;
+    expect(reset.persona.memories).toBe(0);
+    expect(reset.checkpoint?.memories).toBe(mine.length - 1);
+    expect(await list()).toEqual([]);
+
+    const back = (await (
+      await call(`${base}/checkpoints/${kept.id}/restore`, { method: "POST" })
+    ).json()) as GrowbotWritten;
+    expect(back.persona.memories).toBe(mine.length);
+    expect((await list()).map((m) => m.id)).toContain(gone);
+
+    const copy = (await (
+      await call(`${base}/duplicate`, { method: "POST" })
+    ).json()) as GrowbotPersona;
+    expect(copy.memories).toBe(mine.length);
+    expect(await list(`/api/growbot/personas/${copy.id}`)).toHaveLength(mine.length);
+
+    const over = (await (
+      await call(
+        "/api/growbot/personas/import",
+        jsonInit("POST", { soul: { soul_format: 3 }, over: sprout.id }),
+      )
+    ).json()) as GrowbotWritten;
+    expect(over.persona.memories).toBe(0);
+    expect(over.checkpoint?.memories).toBe(mine.length);
   });
 
   it("refuses a flash it could not run, with a sentence", async () => {

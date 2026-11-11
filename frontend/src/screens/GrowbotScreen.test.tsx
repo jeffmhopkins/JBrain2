@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   GrowbotCheckpoint,
   GrowbotFlashJob,
+  GrowbotMemory,
   GrowbotOverview,
   GrowbotPersona,
   GrowbotPersonaDetail,
@@ -58,6 +59,7 @@ function persona(over: Partial<GrowbotPersona>): GrowbotPersona {
     created_at: iso(30 * 864e5),
     updated_at: iso(0),
     checkpoints: 0,
+    memories: 0,
     wearing: null,
     ...over,
   };
@@ -104,6 +106,7 @@ function cp(over: Partial<GrowbotCheckpoint> = {}): GrowbotCheckpoint {
     auto: false,
     why: "",
     created_at: iso(12 * 864e5),
+    memories: 0,
     ...over,
   };
 }
@@ -629,11 +632,12 @@ describe("GrowbotScreen a persona's page", () => {
     serve(UP, pageRoutes());
     render(<GrowbotScreen />);
     await openSprout();
-    for (const t of ["Soul", "Checkpoints", "Manage"]) {
-      expect(screen.getByRole("tab", { name: t })).toBeInTheDocument();
-    }
-    // Memories is wave G4d's.
-    expect(screen.queryByRole("tab", { name: "Memories" })).toBeNull();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      "Soul",
+      "Memories0",
+      "Checkpoints",
+      "Manage",
+    ]);
     for (const r of ["Personality", "Expression", "Name and description", "Dreams", "Thinking"]) {
       expect(screen.getByRole("button", { name: new RegExp(`^${r}`) })).toBeInTheDocument();
     }
@@ -906,7 +910,7 @@ describe("GrowbotScreen a persona's page", () => {
     fireEvent.click(within(sheet).getByRole("button", { name: "Import over Sprout" }));
     expect(
       await screen.findByText(
-        "Sprout is now the imported soul. “Before import” keeps what it was.",
+        "Sprout is now the imported soul, and its visual memories are cleared. “Before import” keeps what it was, visual memories too.",
       ),
     ).toBeTruthy();
     expect(s.calls.find((c) => c.path.endsWith("/import"))?.body).toEqual({ soul, over: SPROUT });
@@ -929,11 +933,13 @@ describe("GrowbotScreen a persona's page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset to a fresh creature" }));
     expect(s.calls.some((c) => c.path.endsWith("/reset"))).toBe(false);
     fireEvent.click(
-      screen.getByRole("button", { name: "Tap again — a checkpoint is saved first" }),
+      screen.getByRole("button", {
+        name: "Tap again — its visual memories go too; a checkpoint is saved first",
+      }),
     );
     expect(
       await screen.findByText(
-        /^Sprout is a fresh creature again\. “Before reset” keeps everything it was\./,
+        /^Sprout is a fresh creature again, and its visual memories are cleared\. “Before reset” keeps everything it was, visual memories too\./,
       ),
     ).toBeTruthy();
 
@@ -951,6 +957,259 @@ describe("GrowbotScreen a persona's page", () => {
     expect(s.calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toEqual([
       `/api/growbot/personas/${SPROUT}`,
     ]);
+  });
+});
+
+describe("GrowbotScreen a persona's visual memories", () => {
+  function vm(over: Partial<GrowbotMemory> = {}): GrowbotMemory {
+    return {
+      id: "r1a2b3c4d",
+      kind: "person",
+      name: "my person",
+      desc: "The one who picks it up when it falls.",
+      saved_at: iso(30 * 864e5),
+      views: 3,
+      confirmed: "human",
+      ...over,
+    };
+  }
+  const SCENE = vm({ id: "r00000002", kind: "scene", name: "", desc: "", views: 1 });
+  const MEMS = `/api/growbot/personas/${SPROUT}/memories`;
+
+  /** The box's memories, which the routes read and delete from as the box would. */
+  function memRoutes(box: { list: GrowbotMemory[] }, extra?: Route): Route {
+    return (path, init) => {
+      const got = extra?.(path, init);
+      if (got) return got;
+      const method = init?.method ?? "GET";
+      if (path === `/api/growbot/personas/${SPROUT}` && method === "GET") {
+        return json(detail({ memories: box.list.length }));
+      }
+      if (path === MEMS && method === "GET") return json({ memories: box.list });
+      const del = path.startsWith(`${MEMS}/`) ? path.slice(MEMS.length + 1) : "";
+      if (del && method === "DELETE") {
+        if (!box.list.some((m) => m.id === del)) return new Response(null, { status: 404 });
+        box.list = box.list.filter((m) => m.id !== del);
+        return new Response(null, { status: 204 });
+      }
+      return null;
+    };
+  }
+  const reads = (s: Served) => s.calls.filter((c) => c.path === MEMS && c.method === "GET");
+
+  async function openMemories(n: number) {
+    fireEvent.click(await screen.findByRole("button", { name: /^Sprout — soul/ }));
+    await screen.findByText("Personality and settings");
+    fireEvent.click(screen.getByRole("tab", { name: `Memories, ${n}` }));
+  }
+
+  it("reads them only when the tab opens, and shows each saved view with its label", async () => {
+    const s = serve(UP, memRoutes({ list: [vm(), SCENE] }));
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Sprout — soul/ }));
+    await screen.findByText("Personality and settings");
+    expect(reads(s)).toHaveLength(0);
+    fireEvent.click(screen.getByRole("tab", { name: "Memories, 2" }));
+    const grid = await screen.findByRole("list", { name: "Saved views" });
+    const items = within(grid).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("my person");
+    // A memory with no name still reads as what it is.
+    expect(items[1]).toHaveTextContent("A scene");
+    const pic = within(items[0] as HTMLElement).getByRole("img", { name: "my person" });
+    expect(pic).toHaveAttribute("src", `${MEMS}/r1a2b3c4d/views/0`);
+    expect(pic).toHaveAttribute("loading", "lazy");
+    expect(within(grid).getByRole("button", { name: "Delete A scene" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/they name people, so they stay on the box\. Deleting one makes it forget/),
+    ).toBeTruthy();
+    expect(reads(s)).toHaveLength(1);
+
+    // A picture that won't load leaves the kind's glyph in its place.
+    fireEvent.error(pic);
+    expect(within(items[0] as HTMLElement).queryByRole("img")).toBeNull();
+
+    fireEvent.click(within(grid).getByRole("button", { name: "Look at my person" }));
+    const sheet = screen.getByRole("dialog", { name: "my person" });
+    expect(
+      within(sheet)
+        .getAllByRole("img")
+        .map((i) => i.getAttribute("alt")),
+    ).toEqual(["my person, view 1 of 3", "my person, view 2 of 3", "my person, view 3 of 3"]);
+    expect(within(sheet).getByText("The one who picks it up when it falls.")).toBeTruthy();
+    expect(within(sheet).getByText(/^A person · saved /)).toBeTruthy();
+  });
+
+  it("says so when it has none yet", async () => {
+    serve(UP, memRoutes({ list: [] }));
+    render(<GrowbotScreen />);
+    await openMemories(0);
+    expect(
+      await screen.findByText(
+        "No saved views yet. It saves one when it meets a person or a thing it wants to remember.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Saved views" })).toBeNull();
+  });
+
+  it("shows the box's refusal when they can't be read", async () => {
+    serve(
+      UP,
+      memRoutes({ list: [] }, (path) =>
+        path === MEMS ? json({ detail: "GrowBot isn't answering." }, 503) : null,
+      ),
+    );
+    render(<GrowbotScreen />);
+    await openMemories(0);
+    expect(await screen.findByRole("alert")).toHaveTextContent("GrowBot isn't answering.");
+  });
+
+  it("forgets one only on a second tap, says so, and reads the list again", async () => {
+    const box = { list: [vm(), SCENE] };
+    const s = serve(UP, memRoutes(box));
+    render(<GrowbotScreen />);
+    await openMemories(2);
+    const grid = await screen.findByRole("list", { name: "Saved views" });
+    fireEvent.click(within(grid).getByRole("button", { name: "Delete my person" }));
+    expect(s.calls.some((c) => c.method === "DELETE")).toBe(false);
+    const armed = within(grid).getByRole("button", { name: "Tap again to forget my person" });
+    expect(armed).toHaveTextContent("Tap again");
+    fireEvent.click(armed);
+    expect(
+      await screen.findByText(
+        "Sprout forgot “my person”. It forgets on Pixel 6a the next time it's idle.",
+      ),
+    ).toBeTruthy();
+    expect(s.calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toEqual([
+      `${MEMS}/r1a2b3c4d`,
+    ]);
+    await waitFor(() => expect(reads(s)).toHaveLength(2));
+    await waitFor(() => expect(within(grid).getAllByRole("listitem")).toHaveLength(1));
+    expect(screen.getByRole("tab", { name: "Memories, 1" })).toBeInTheDocument();
+
+    // From the sheet too, with the same two taps; the sheet closes with it.
+    fireEvent.click(within(grid).getByRole("button", { name: "Look at A scene" }));
+    const sheet = screen.getByRole("dialog", { name: "A scene" });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Delete A scene" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "Tap again to forget A scene" }));
+    expect(
+      await screen.findByText(
+        "Sprout forgot that scene. It forgets on Pixel 6a the next time it's idle.",
+      ),
+    ).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "A scene" })).toBeNull());
+  });
+
+  it("takes a memory already gone as forgotten, and says when one wasn't", async () => {
+    const box = { list: [vm(), SCENE] };
+    const s = serve(
+      UP,
+      memRoutes(box, (path, init) => {
+        if (init?.method !== "DELETE") return null;
+        if (path.endsWith("/r1a2b3c4d")) {
+          // Forgotten meanwhile on the phone: the box no longer has it.
+          box.list = box.list.filter((m) => m.id !== "r1a2b3c4d");
+          return new Response(null, { status: 404 });
+        }
+        return json({ detail: "The box couldn't forget it just now." }, 500);
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openMemories(2);
+    const grid = await screen.findByRole("list", { name: "Saved views" });
+    fireEvent.click(within(grid).getByRole("button", { name: "Delete my person" }));
+    fireEvent.click(within(grid).getByRole("button", { name: "Tap again to forget my person" }));
+    expect(await screen.findByText(/^Sprout forgot “my person”\./)).toBeTruthy();
+    await waitFor(() => expect(reads(s)).toHaveLength(2));
+    await waitFor(() => expect(within(grid).getAllByRole("listitem")).toHaveLength(1));
+
+    fireEvent.click(within(grid).getByRole("button", { name: "Delete A scene" }));
+    fireEvent.click(within(grid).getByRole("button", { name: "Tap again to forget A scene" }));
+    expect(
+      await screen.findByText(
+        "Sprout didn't forget that scene — The box couldn't forget it just now.",
+      ),
+    ).toBeTruthy();
+    expect(within(grid).getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  it("reads them again after a restore or a reset, and says what those do to them", async () => {
+    const box = { list: [vm(), SCENE] };
+    const kept = cp({ memories: 1 });
+    const s = serve(
+      UP,
+      memRoutes(box, (path, init) => {
+        if (path === `/api/growbot/personas/${SPROUT}` && (init?.method ?? "GET") === "GET") {
+          return json(
+            detail({
+              memories: box.list.length,
+              checkpoint_list: [kept, cp({ id: "00000000-0000-4000-8000-00000000c003" })],
+            }),
+          );
+        }
+        if (path.endsWith(`/checkpoints/${kept.id}/restore`)) {
+          box.list = [vm()];
+          return json({
+            persona: detail({ memories: 1, version: 2 }),
+            checkpoint: cp({
+              id: "00000000-0000-4000-8000-00000000c00d",
+              name: "Before restoring",
+            }),
+          });
+        }
+        if (path.endsWith("/reset")) {
+          box.list = [];
+          return json({
+            persona: detail({ memories: 0, version: 3 }),
+            checkpoint: cp({ id: "00000000-0000-4000-8000-00000000c00e", name: "Before reset" }),
+          });
+        }
+        if (path.endsWith("/checkpoints/00000000-0000-4000-8000-00000000c00e/restore")) {
+          box.list = [vm()];
+          return json({
+            persona: detail({ memories: 1, version: 4 }),
+            checkpoint: cp({ id: "00000000-0000-4000-8000-00000000c00f", name: "Before undo" }),
+          });
+        }
+        return null;
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openMemories(2);
+    await screen.findByRole("list", { name: "Saved views" });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Checkpoints" }));
+    // A checkpoint says how many it keeps, when it keeps any.
+    expect(screen.getByText(/· 1 visual memory$/)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[0] as HTMLElement);
+    const dlg = screen.getByRole("dialog", { name: "Restore “Before the beach trip”?" });
+    expect(dlg).toHaveTextContent(/gets back the visual memories it had then/);
+    fireEvent.click(within(dlg).getByRole("button", { name: "Restore" }));
+    expect(await screen.findByText(/^Sprout is back to “Before the beach trip”\./)).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Memories, 1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Memories, 1" }));
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "Saved views" })).getAllByRole("listitem"),
+      ).toHaveLength(1),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset to a fresh creature" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Tap again — its visual memories go too; a checkpoint is saved first",
+      }),
+    );
+    expect(await screen.findByText(/its visual memories are cleared\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Memories, 0" }));
+    expect(await screen.findByText(/^No saved views yet\./)).toBeTruthy();
+
+    // Undo from the toast while the tab is open brings them back without leaving it.
+    const before = reads(s).length;
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(reads(s).length).toBeGreaterThan(before));
+    expect(await screen.findByRole("list", { name: "Saved views" })).toBeInTheDocument();
   });
 });
 

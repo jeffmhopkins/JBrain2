@@ -39,6 +39,7 @@ _HASH = "sha256-" + base64.b64encode(b"x" * 32).decode()
 _PERSONA = "0b7c2f4e-1a2b-4c3d-8e9f-0a1b2c3d4e5f"
 _PHONE = "phone-" + "a" * 20
 _NEW_PHONE = "phone-" + "n" * 20
+_JPEG = b"\xff\xd8\xff\xe0face"
 
 
 def authed_get(handler: BaseHTTPRequestHandler) -> bool:
@@ -154,6 +155,18 @@ class _Fake(BaseHTTPRequestHandler):
                 default = (200, {"version": 4})
             elif self.path.endswith("/state"):
                 default = (200, {"version": 3, "wearing": "gb-abc123"})
+            status, reply = _Fake.soul.get(self.path, default)
+            self._reply(status, json.dumps(reply).encode())
+        elif self.path.startswith("/internal/growbot/memories/"):
+            if not authed:
+                self._reply(401, b"{}")
+                return
+            if self.path.endswith("/view") and self.path not in _Fake.soul:
+                self._reply(200, _JPEG, "image/jpeg")
+                return
+            default = (200, {"version": 3})
+            if self.path.endswith("/list"):
+                default = (200, {"version": 2, "memories": []})
             status, reply = _Fake.soul.get(self.path, default)
             self._reply(status, json.dumps(reply).encode())
         elif self.path == "/internal/growbot/robot/verify":
@@ -2332,3 +2345,117 @@ def test_one_sessions_refusals_never_lock_out_another(run: _Running, gb: types.M
         assert _Ws(run, "/d/gb-abc123", cookie=True).status == 403
     assert _Ws(run, "/d/gb-abc123", cookie=True).status == 429
     assert _Ws(run, "/d/gb-abc123", cookie=_persona_cookie(run)).status == 101
+
+
+# --- a persona's visual memories (wave G4d) -------------------------------------------------
+
+
+def test_the_memory_routes_reach_the_api_as_this_phone(run: _Running) -> None:
+    assert _soul_call(run, "GET", "/api/box/memories") == (
+        200,
+        {"version": 2, "memories": [], "persona": _PERSONA},
+    )
+    listed = [s for s in _Fake.seen if s["path"] == "/internal/growbot/memories/list"][-1]
+    assert listed["auth"] == f"Bearer {_TOKEN}"
+    assert json.loads(listed["body"]) == {"persona": _PERSONA, "phone": _PHONE}
+    # IndexedDB keeps a view as base64, so that is how one is sent.
+    assert _soul_call(run, "GET", "/api/box/memories/view?id=r1a&i=2") == (
+        200,
+        {"j": base64.b64encode(_JPEG).decode()},
+    )
+    view = [s for s in _Fake.seen if s["path"] == "/internal/growbot/memories/view"][-1]
+    assert json.loads(view["body"]) == {"persona": _PERSONA, "phone": _PHONE, "id": "r1a", "i": 2}
+    record = {"id": "r1a", "views": [{"j": "AAAA", "t": 1}]}
+    assert _soul_call(
+        run, "POST", "/api/box/memories", {"persona": _PERSONA, "memory": record}
+    ) == (200, {"version": 3, "persona": _PERSONA})
+    keep = [s for s in _Fake.seen if s["path"] == "/internal/growbot/memories/keep"][-1]
+    assert json.loads(keep["body"]) == {"persona": _PERSONA, "phone": _PHONE, "memory": record}
+    assert _soul_call(
+        run, "POST", "/api/box/memories/forget", {"persona": _PERSONA, "ids": ["r1a"]}
+    ) == (200, {"version": 3, "persona": _PERSONA})
+    forget = [s for s in _Fake.seen if s["path"] == "/internal/growbot/memories/forget"][-1]
+    assert json.loads(forget["body"]) == {"persona": _PERSONA, "phone": _PHONE, "ids": ["r1a"]}
+
+
+def test_a_g2_session_has_no_memories_on_the_box(run: _Running) -> None:
+    for method, path in (
+        ("GET", "/api/box/memories"),
+        ("GET", "/api/box/memories/view?id=r1&i=0"),
+        ("POST", "/api/box/memories"),
+        ("POST", "/api/box/memories/forget"),
+    ):
+        body = {"persona": _PERSONA} if method == "POST" else None
+        assert _soul_call(run, method, path, body, cookie=run.cookie) == (204, None)
+    assert not [s for s in _Fake.seen if s["path"].startswith("/internal/growbot/memories/")]
+
+
+def test_memories_name_the_persona_they_came_from(run: _Running) -> None:
+    for path in ("/api/box/memories", "/api/box/memories/forget"):
+        for named in ("", "1" + _PERSONA[1:], None):
+            body = {"persona": named, "memory": {}, "ids": []}
+            assert _soul_call(run, "POST", path, body) == (409, {"error": "other"})
+    assert _soul_call(run, "POST", "/api/box/memories", ["not", "an", "object"]) == (
+        400,
+        {"error": "a visual memory"},
+    )
+    for query in ("id=r1", "id=R1&i=0", "id=r1&i=3", "id=r1&i=-1", "i=0", "id=../x&i=0"):
+        assert _soul_call(run, "GET", "/api/box/memories/view?" + query)[0] == 400, query
+    assert not [s for s in _Fake.seen if s["path"].startswith("/internal/growbot/memories/")]
+
+
+@pytest.mark.parametrize(
+    ("path", "status", "detail"),
+    [
+        ("keep", 409, "moved"),
+        ("keep", 404, "gone"),
+        ("keep", 413, "full"),
+        ("keep", 400, "a view that is not a JPEG"),
+        ("view", 404, "no such view"),
+        ("list", 409, "moved"),
+    ],
+)
+def test_the_apis_memory_refusals_reach_the_page(
+    run: _Running, path: str, status: int, detail: str
+) -> None:
+    _Fake.soul = {f"/internal/growbot/memories/{path}": (status, {"detail": detail})}
+    method, url, body = {
+        "keep": ("POST", "/api/box/memories", {"persona": _PERSONA, "memory": {}}),
+        "view": ("GET", "/api/box/memories/view?id=r1&i=0", None),
+        "list": ("GET", "/api/box/memories", None),
+    }[path]
+    assert _soul_call(run, method, url, body) == (status, {"error": detail})
+
+
+def test_a_memory_api_that_cannot_answer_is_a_retry(run: _Running) -> None:
+    for status in (401, 500):
+        _Fake.soul = {"/internal/growbot/memories/list": (status, {"detail": "x"})}
+        assert _soul_call(run, "GET", "/api/box/memories")[0] == 503
+    _Fake.soul = {"/internal/growbot/memories/list": (200, ["no"])}  # type: ignore[dict-item]
+    assert _soul_call(run, "GET", "/api/box/memories")[0] == 503
+    _Fake.soul = {"/internal/growbot/memories/keep": (418, ["no"])}  # type: ignore[dict-item]
+    body = {"persona": _PERSONA, "memory": {}}
+    assert _soul_call(run, "POST", "/api/box/memories", body)[0] == 503
+    _Fake.soul = {"/internal/growbot/memories/forget": (400, ["no"])}  # type: ignore[dict-item]
+    body = {"persona": _PERSONA, "ids": []}
+    assert _soul_call(run, "POST", "/api/box/memories/forget", body) == (400, {"error": "refused"})
+
+
+def test_the_memory_routes_take_only_their_methods(run: _Running) -> None:
+    assert _soul_call(run, "POST", "/api/box/memories/view", {"persona": _PERSONA})[0] == 405
+    assert _soul_call(run, "GET", "/api/box/memories/forget")[0] == 405
+    assert _soul_call(run, "DELETE", "/api/box/memories")[0] == 405
+
+
+def test_a_memory_bigger_than_three_views_is_refused_before_its_upload(
+    run: _Running, gb: types.ModuleType
+) -> None:
+    head = (
+        f"POST /api/box/memories HTTP/1.1\r\nHost: {run.host}\r\n"
+        f"Cookie: {_persona_cookie(run)}\r\n"
+        f"Content-Length: {gb.MAX_MEMORY_BODY + 1}\r\nExpect: 100-continue\r\n\r\n"
+    )
+    out = _raw(run, head.encode())
+    assert out.startswith(b"HTTP/1.1 413"), out[:80]
+    req = gb.Request("POST", "/api/box/memories", "/api/box/memories", {}, "HTTP/1.1", [])
+    assert gb.body_limit(req) == gb.MAX_MEMORY_BODY >= 3 * 800_000

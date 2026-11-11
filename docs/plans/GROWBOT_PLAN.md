@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4🔶 (G4a✅ G4b✅ G4c✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
+> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -391,9 +391,15 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
     Fish*, the hand-over banners, *On another phone* with a persona and the body, and the
     persona page with its tabs (soul and editor, checkpoints, manage). "This phone" is learned
     from a launch here that lands (the creature's phone id is another origin's), and the
-    launcher tile says who wears the body. The page's *Memories* tab waits for G4d.
-  - **G4d — visual memories.** Their blobs through the storage abstraction under their own
-    namespace, synced like the soul, the grid with delete, and kept in checkpoints.
+    launcher tile says who wears the body.
+  - **G4d — visual memories.** ✅ Migration 0258 (`growbot_memories`, owner-only under RLS
+    with its isolation test); the pictures in the blob store's own `growbot-memories`
+    namespace, deleted only once no memory or checkpoint names them. The phone syncs record by
+    record against what both sides last agreed on (`growbot-box.js`), with apply.py pinning
+    `vmNs()` to the persona and holding the creature's store until the box's records are in. A
+    checkpoint keeps them and a restore brings them back; reset and import clear them (their
+    checkpoint keeps them); duplicate copies them; export leaves them out. The persona page's
+    *Memories* tab is the grid with an armed delete and a viewer.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic.
 
