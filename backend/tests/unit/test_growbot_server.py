@@ -1753,7 +1753,7 @@ def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
             headers={
                 "Sec-Fetch-Dest": dest,
                 "Sec-Fetch-Mode": mode,
-                "Sec-Fetch-Site": "cross-site",
+                "Sec-Fetch-Site": "same-site",
             },
             cookie=False,
         )
