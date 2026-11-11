@@ -10431,7 +10431,7 @@ body:not(.editing) #brainTabBtn{display:none!important}
   <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(120,160,200,.22);border:1px solid rgba(120,160,200,.22);margin-bottom:12px">
     <button type="button" id="gbkTabT" style="font-family:inherit;font-size:12px;letter-spacing:.1em;text-transform:uppercase;padding:12px 6px;background:#0E1622;color:#E8F6FF;border:0;min-height:46px;cursor:pointer">My thoughts</button>
     <button type="button" id="gbkTabS" style="font-family:inherit;font-size:12px;letter-spacing:.1em;text-transform:uppercase;padding:12px 6px;background:#0E1622;color:#E8F6FF;border:0;min-height:46px;cursor:pointer">Settings</button>
-    <button type="button" id="gbkTabC" style="font-family:inherit;font-size:12px;letter-spacing:.1em;text-transform:uppercase;padding:12px 6px;background:#0E1622;color:#E8F6FF;border:0;min-height:46px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px"></button>
+    <button type="button" id="gbkTabC" style="font-family:inherit;font-size:12px;letter-spacing:.1em;text-transform:uppercase;padding:12px 6px;background:#0E1622;color:#E8F6FF;border:0;min-height:46px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px" data-gb-cloud="1"></button>
   </div>
   <div id="gbkBBody" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;display:flex;flex-direction:column;gap:10px"></div>
 </div>
@@ -10554,7 +10554,7 @@ g("gbkSee").addEventListener("click",function(){ kick("eyeBtn"); setTimeout(pain
    top level never leaves. Controls that cannot be real yet (money, soul, voice, keys, the dial)
    say so in one line and offer the hatch: the host's own panel inside our frame, with a way back. */
 /* remember the top-level tab only: never reopen inside Advanced or a nested row. */
-var bTab="t"; try{ var _t=localStorage.getItem("gbk_tab"); if(_t==="s"||_t==="c"||_t==="t") bTab=_t; }catch(e){}
+var bTab="t"; try{ var _t=localStorage.getItem("gbk_tab"); if(_t==="s"||(_t==="c"&&!window.__gbBox)||_t==="t") bTab=_t; }catch(e){}
 function setTab(t){ W.moveOpen=false; bTab=t; W.open=""; W.note=""; try{ localStorage.setItem("gbk_tab",t); }catch(e){} renderBrainP(); }
 /* The settings room mirrors the host picker. It owns no model catalogue or saved choice. */
 var W={mindOpen:"",open:"",forget:false,lookOpen:false,moveOpen:false,moveFrom:"c",mvSoul:false,mvCode:false,dialOpen:false,dialMoved:false,eye:"front",voice:"robot",soulInfo:false,adv:false,codeOpen:false,note:""};
@@ -10612,12 +10612,12 @@ function showBrainLogLink(link){
  var old=g("gbkBrainLogLink");if(old){old.focus();old.select();return;}
  var input=document.createElement("input");input.id="gbkBrainLogLink";input.type="text";input.readOnly=true;input.value=link;input.setAttribute("aria-label","Brain log link");input.style.cssText="width:100%;box-sizing:border-box;padding:10px;background:#0E1622;color:#E8F6FF;border:1px solid #7F93AB";row.insertAdjacentElement("afterend",input);input.focus();input.select();window.toast("Select and copy this brain log link.");
 }
-function brainLogsSection(){
+function brainLogsSection(){ if(window.__gbBox) return "";
  var on=false;try{on=!!(window.logOn&&window.logOn()&&window.LOG_SID);}catch(e){}
  return '<button type="button" class="gbkWrow" id="gbkBrainLogs"'+(on?'':' disabled')+'><span class="gbkTt"><b>Copy brain logs</b><small>'+(on?'Copy a link to thoughts and activity':'Turn on cloud journaling in the full panel to copy logs')+'</small></span></button>'+
    (on?'<div class="gbkWnote">Anyone with the link can read these logs.</div>':'');
 }
-function moveMeRow(){ return '<button type="button" class="gbkWrow" id="gbkPackOpen" style="border-left:3px solid #37E0C8"><span class="gbkIco">'+px("soul",3)+'</span><span class="gbkTt"><b>move me</b><small>move credits to a new phone · take a memory backup too</small></span></button>'; }
+function moveMeRow(){ if(window.__gbBox) return ""; return '<button type="button" class="gbkWrow" id="gbkPackOpen" style="border-left:3px solid #37E0C8"><span class="gbkIco">'+px("soul",3)+'</span><span class="gbkTt"><b>move me</b><small>move credits to a new phone · take a memory backup too</small></span></button>'; }
 function wRow(id,ic,tint,title,sub){ var open=(W.open===id);
   return '<button type="button" class="gbkWrow'+(open?" open":"")+'" data-w="'+id+'" aria-expanded="'+(open?"true":"false")+'">'+
     '<span class="gbkIco"'+(tint?' style="color:'+tint+'"':'')+'>'+px(ic,3)+'</span>'+
@@ -10874,7 +10874,7 @@ function roomHTML(){ var h="";
      if(W.open==="ft") h+='<div class="gbkWpane">'+_fb+'</div>';
   } }catch(e){}
   var current=g("csCur");
-  h+=wRow("dial","brain","","the brain dial",'<span id="gbkBrainChoice">'+esc(current&&current.textContent||"brain still loading")+'</span>');
+  if(!window.__gbBox)h+=wRow("dial","brain","","the brain dial",'<span id="gbkBrainChoice">'+esc(current&&current.textContent||"brain still loading")+'</span>');
   if(W.open==="dial"){
     h+='<div class="gbkWpane"><div id="gbkLocalBrain" style="display:none"><div class="gbkWnote">your server chooses the model. the OpenRouter slider does not change it.</div><button type="button" class="gbkWbtn" data-hand="byok">open your server settings</button></div><div id="gbkCloudDial">';
     if(!W.dialOpen) h+='<button type="button" class="gbkWbtn" id="gbkDialOpen">Open the brain dial</button>';
@@ -10915,7 +10915,7 @@ function roomHTML(){ var h="";
        hand-off below reaches the full voice pane, so the real setting stays reachable. */
     '<button type="button" class="gbkWrow" data-hand="voice" data-full="1"><span class="gbkIco" style="color:#7F93AB">'+px("go",3)+'</span>'+
     '<span class="gbkTt"><b>open the voice panel</b><small>test it and pick it there, with a way back.</small></span></button></div>';
-  h+=wRow("soul","soul","#9A86FF","soul","the backup, and the door to a new phone");
+  if(!window.__gbBox)h+=wRow("soul","soul","#9A86FF","soul","the backup, and the door to a new phone");
   if(W.open==="soul"){ h+='<div class="gbkWpane"><div class="gbkWnote">the soul file is everything your growbot is. keep one somewhere safe.</div>'+
     '<div class="gbkWopts"><button type="button" class="gbkWbtn" id="gbkSoulInfo">what is in the file</button></div>'+
     (W.soulInfo?soulPages():"")+
@@ -10927,7 +10927,7 @@ function roomHTML(){ var h="";
     '</div>'; }
   h+=moveMeRow();
   h+=lowPowerRow();
-  h+=wRow("byok","brain","#FFB24D","your own key","bring your own brain, optional");
+  if(!window.__gbBox)h+=wRow("byok","brain","#FFB24D","your own key","bring your own brain, optional");
   /* 0908 (Brit): these were two dead INPUTS, not just dead buttons — one asked for a real
      sk-or- key and threw it away. Removed, and the row hands off to the host's own key pane where
      the working field and its handler already live. Access to the real setting is preserved. */
@@ -10938,8 +10938,8 @@ function roomHTML(){ var h="";
      settings". The "change its wi-fi network" row (0921, moved to the bottom 0922) is REMOVED, not
      hidden: it sent people to the multi-network travel flow, which is not confirmed on real
      hardware yet. wifirowtest.js now pins its absence; bring it back from git history. */
-  h+='<button type="button" id="gbkAdvTog" aria-expanded="'+(W.adv?"true":"false")+'">Advanced<span class="gbkWar'+(W.adv?" open":"")+'">&#8964;</span></button>';
-  if(W.adv){ h+='<div id="gbkAdv" style="display:flex;flex-direction:column;gap:10px">';
+  if(!window.__gbBox)h+='<button type="button" id="gbkAdvTog" aria-expanded="'+(W.adv?"true":"false")+'">Advanced<span class="gbkWar'+(W.adv?" open":"")+'">&#8964;</span></button>';
+  if(W.adv&&!window.__gbBox){ h+='<div id="gbkAdv" style="display:flex;flex-direction:column;gap:10px">';
     h+=wRow("trace","diary","#FFB24D","turn trace","where the last turn stopped");
     if(W.open==="trace") h+='<div class="gbkWpane"><div class="gbkMono">heard you        &middot;<br>read the words   &middot;<br>thought          &middot;<br>spoke            &middot;</div><div class="gbkWnote">the real timings land here with the update.</div></div>';
     h+=wRow("raw","see","#FFB24D","raw senses","exactly what goes to the model");
@@ -10949,7 +10949,7 @@ function roomHTML(){ var h="";
     h+=brainLogsSection();
     if(W.open==="raw") h+='<div class="gbkWpane"><div class="gbkMono">light   &middot;<br>motion  &middot;<br>sound   &middot;<br>sight   '+(window.camOn?"open":"closed")+'</div><div class="gbkWnote">these numbers are live in the real app.</div></div>';
     h+='</div>'; }
-  h+=hatch("mind");
+  if(!window.__gbBox)h+=hatch("mind");
  }
  return h;
 }

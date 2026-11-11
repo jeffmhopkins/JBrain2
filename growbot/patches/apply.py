@@ -646,6 +646,77 @@ STT_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += STT_PATCHES
 
+# The brain panel's settings, scrubbed of what a box-run creature has no use for (owner,
+# 2026-11-11: "some of the settings no longer are applicable to us because we run only on the
+# local model"). The box picks the model, there are no credits or keys, the soul lives on the box
+# (personas, its own backups), and the logs link and the old full panel are cloud journaling and
+# the cloud dials. Hidden behind window.__gbBox (growbot-box.js), so the page without the shim
+# keeps upstream's panel; the rows that stay are the body, face following, eye, voice and low
+# power.
+_BOX = "if(!window.__gbBox)"
+SCRUB_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'h+=wRow("dial","brain","","the brain dial"',
+        _BOX + 'h+=wRow("dial","brain","","the brain dial"',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'h+=wRow("soul","soul","#9A86FF","soul"',
+        _BOX + 'h+=wRow("soul","soul","#9A86FF","soul"',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'h+=wRow("byok","brain","#FFB24D","your own key"',
+        _BOX + 'h+=wRow("byok","brain","#FFB24D","your own key"',
+        1,
+    ),
+    ("v3/next.html", 'h+=hatch("mind");', _BOX + 'h+=hatch("mind");', 1),
+    (
+        "v3/next.html",
+        "function brainLogsSection(){",
+        'function brainLogsSection(){ if(window.__gbBox) return "";',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function moveMeRow(){",
+        'function moveMeRow(){ if(window.__gbBox) return "";',
+        1,
+    ),
+    # Advanced held only upstream's placeholders ("the real timings land here with the
+    # update") and the cloud logs link.
+    (
+        "v3/next.html",
+        "  h+='<button type=\"button\" id=\"gbkAdvTog\"",
+        "  " + _BOX + "h+='<button type=\"button\" id=\"gbkAdvTog\"",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "if(W.adv){ h+='<div id=\"gbkAdv\"",
+        "if(W.adv&&!window.__gbBox){ h+='<div id=\"gbkAdv\"",
+        1,
+    ),
+    # The credits tab: two tabs, not three.
+    (
+        "v3/next.html",
+        'gap:6px"></button>',
+        'gap:6px" data-gb-cloud="1"></button>',
+        1,
+    ),
+    # A creature last left on the credits tab would reopen on the hidden room.
+    (
+        "v3/next.html",
+        'if(_t==="s"||_t==="c"||_t==="t") bTab=_t;',
+        'if(_t==="s"||(_t==="c"&&!window.__gbBox)||_t==="t") bTab=_t;',
+        1,
+    ),
+]
+PATCHES += SCRUB_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

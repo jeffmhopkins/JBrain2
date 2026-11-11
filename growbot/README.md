@@ -277,6 +277,23 @@ mic never produced text). `serve.py` sizes `audio_ctx` to a WAV clip's own lengt
 panels' 9.5 s to 2.3 s cut), and `STT_PATCHES` drop the cloud leashes and the hand-off to a
 backstop lane, which only re-sent the same clip to the same whisper.
 
+### The brain panel and text size
+
+The creature's Settings tab is scrubbed of what a box-run creature has no use for (owner,
+2026-11-11): the brain dial (the box picks the model), credits, *move me*, *your own key*, the
+soul backup row (the box holds the soul; personas and their checkpoints are the backup), the
+cloud logs link, the old full panel and *Advanced*'s placeholders. `SCRUB_PATCHES` hide them
+behind `window.__gbBox`, which `growbot-box.js` sets, so the page without the shim keeps
+upstream's panel. What stays: the body, *follow my face*, the eye, the voice and low power. The money-code badge, a
+saved credits tab and the full panel's key and credits tabs are closed off the same way, and
+*My thoughts* loses its cloud logs link.
+
+Upstream sets the spoken line at 11px and the brain panel at 11-12.5px; `growbot-box.js` raises
+them to phone sizes. A phone in desktop-site mode (Safari's *Request Desktop Website*, Chrome's
+*Desktop site*) ignores the viewport tag and lays the page out ~980px wide; the shim detects that
+(a touch screen whose window is over 1.25x its screen) and zooms the controls back, leaving the
+face's canvas, which sizes itself to the window.
+
 ### Visual memories (wave G4d)
 
 The saved views upstream keeps in IndexedDB (`v3/visual-memory.js`) live on the box with the
