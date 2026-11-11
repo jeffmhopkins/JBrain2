@@ -108,8 +108,9 @@ def test_browse_has_its_own_slot_added_last_and_freed_early() -> None:
         SlotRole.PET,
         SlotRole.SMALL,
     ]
-    # Small first, then GrowBot's cheap prefix, then browse.
-    assert FLASH_NEXT_POOL.eviction_order()[:3] == [7, 10, 8]
+    # Small first, then browse; GrowBot just before the chat pair (it is talked to live).
+    assert FLASH_NEXT_POOL.eviction_order()[:2] == [7, 8]
+    assert FLASH_NEXT_POOL.eviction_order()[-3:] == [10, 0, 9]
     assert role_for("browse.step") is SlotRole.BROWSE
 
 
@@ -224,10 +225,11 @@ def test_slot_pin_names_a_role_or_nothing_at_all() -> None:
 
 def test_growbot_has_its_own_slot_appended_last() -> None:
     """The eleventh slot was appended, so the first ten keep their ids; the creature's turns
-    land there and spill to the small slot, never into jerv's or the kid pet's."""
+    land there and only there: its warm prefix lives in that slot, so a turn waits for it rather
+    than re-reading the whole prompt in another."""
     growbot = FLASH_NEXT_POOL.reservation(SlotRole.GROWBOT)
     assert growbot.slot == FLASH_NEXT_POOL.n_slots - 1 == 10
-    assert growbot.overflow is SlotRole.SMALL
+    assert growbot.overflow is None
     assert growbot.cap_tokens == 2 * FLASH_NEXT_POOL.cap(SlotRole.PET)
     assert slot_roles.GROWBOT_ROLE is SlotRole.GROWBOT
     assert SlotRole.GROWBOT not in slot_roles.TASK_ROLES.values()

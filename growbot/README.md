@@ -256,6 +256,21 @@ A persona also wears its own face (`growbot_personas.face`, lantern by default):
 the poll carry it, `growbot-box.js` hands it to `growbot-face.js` before the face loads, and a
 `gb-box-state` event with a new one changes the face where the creature stands.
 
+### Fast turns
+
+The box's model is a hybrid: llama.cpp reuses a cached prompt only from a context checkpoint,
+and it leaves one at each message boundary. Upstream built the creature's system message with
+its state, clock, diary, move status and self-stats about 2k tokens in, so every turn diverged
+before any checkpoint and re-read all ~8k tokens (~20 s on the box). `apply.py`'s
+`SPEED_PATCHES` keep the system message to what stays put (constitution, identity, output
+schema, the movement guide's fixed contracts) and move the moving parts (wants, state, clock,
+diary, latest move, seek and stance status, gait list, self-stats) to the head of the turn's
+own message (`gbBoxLive` in `growbot-box.js`), so a turn resumes at the system's end and reads
+only its history and its moment. The creature's slot (`slot_roles`, GrowBot) never spills to
+another slot, where that checkpoint does not exist, and is freed only after every background
+slot. The cost: a second phone (or persona) open at once waits behind the first and replaces
+its cached prompt, so two creatures talking together are each slow.
+
 ### Visual memories (wave G4d)
 
 The saved views upstream keeps in IndexedDB (`v3/visual-memory.js`) live on the box with the

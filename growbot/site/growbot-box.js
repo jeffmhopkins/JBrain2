@@ -858,3 +858,22 @@
     return m;
   };
 })();
+
+// What changes every turn rides in the turn's own message, so the system message stays the
+// same text from one turn to the next and the box resumes its cached prompt at the system's
+// end instead of re-reading it whole (apply.py SPEED_PATCHES). False hands it back to the
+// page, which then keeps upstream's layout.
+(function () {
+  var HEAD = "== WHERE THINGS STAND (your memory and state right now; context, not words anyone said) ==\n";
+  window.gbBoxLive = function (msgs, live) {
+    var last = msgs && msgs[msgs.length - 1];
+    if (!last || last.role !== "user") return false;
+    var text = String(live || "").replace(/^\s+/, "");
+    if (!text) return true;
+    var head = HEAD + text + "\n\n== THIS MOMENT ==\n";
+    if (typeof last.content === "string") last.content = head + last.content;
+    else if (Array.isArray(last.content)) last.content = [{ type: "text", text: head }].concat(last.content);
+    else return false;
+    return true;
+  };
+})();

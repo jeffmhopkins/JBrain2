@@ -355,3 +355,41 @@ def test_the_creature_says_why_the_box_failed_it() -> None:
     assert 'e.gateFail||(e&&e.name==="AbortError")||' in page
     assert 'toast("\u2026didn\'t catch that")' not in page
     assert "the speech model heard no words" in page
+
+
+def test_the_system_prompt_holds_only_what_stays_put() -> None:
+    """The box's hybrid model reuses a cached prompt only up to a checkpoint at a message
+    boundary, so a turn is fast only when the system message is the same text as the last
+    turn's. The state, clock, diary, self-stats and recall ride the turn's own message."""
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    start = prompts.index("function buildSystem(")
+    body = prompts[start : prompts.index("\n}\n", start)]
+    assert body.endswith("\n  return _gbStatic + buildOutputSchema(soul.body);")
+    live = body[body.index("buildSystem.live = ") : body.index("  return _gbStatic")]
+    for moving in ("== LONG-ARC", "== SCRATCHPAD", "clock", "== RECENT DIARY", "diary"):
+        assert moving in live
+    static = body[body.index("var _gbStatic = ") : body.index("buildSystem.live = ")]
+    assert "SAFETY_FLOOR" in static and "== YOUR IDENTITY" in static and "clock" not in static
+
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '_gbLive=(buildSystem.live||"")+(moveGuideText.live||"")' in page
+    # The movement guide's live lines (latest move, seek beat, stance) leave it in every mode.
+    guide = page[page.index("function moveGuideText(){") : page.index("/* ---- MIMIC")]
+    assert guide.count("moveGuideText.live=") == 3
+    for moving in (
+        "goalBlock()",
+        "gaitList()",
+        "_recStatus()",
+        "_namedStatus()",
+        "_expressionGuide()",
+    ):
+        for line in guide.splitlines():
+            if moving in line and "return " in line:
+                assert line.index("moveGuideText.live=") < line.index(moving), moving
+    assert "_gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text;" in page
+    assert "sys+=" not in page[
+        page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
+    ].replace("sys+=_gbLive;", "")
+    assert '<script src="/v3/prompts.js?v=1008-motion-box"' in page
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.gbBoxLive = function (msgs, live)" in shim

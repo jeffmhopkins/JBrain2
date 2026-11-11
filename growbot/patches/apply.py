@@ -520,6 +520,96 @@ ERROR_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += ERROR_PATCHES
 
+# A creature turn costs only what changed since the last one (wave G4e). The box's model
+# (a hybrid) reuses a cached prompt only up to a context checkpoint, and llama.cpp leaves one at
+# each message boundary; upstream put the state, clock, diary, move status and self-stats INSIDE
+# the system message, ~2k tokens in, so every turn diverged before any checkpoint and re-read all ~8k
+# tokens (~20 s). The system message now holds only what stays put; the moving parts lead the
+# turn's own message (growbot-box.js gbBoxLive), and the next turn resumes at the system's end.
+SPEED_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/prompts.js",
+        '  return persona + "\\n" + SAFETY_FLOOR + ',
+        '  var _gbStatic = persona + "\\n" + SAFETY_FLOOR + ',
+        1,
+    ),
+    # Identity, name and person change only after a dream or a naming, so they stay put.
+    (
+        "v3/prompts.js",
+        "_nameBlk(soul) + person +   // 0907",
+        "_nameBlk(soul) + person;   // 0907",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        '    "\\n\\n== LONG-ARC (dream-written) ==" + wants',
+        '  buildSystem.live = "\\n\\n== LONG-ARC (dream-written) ==" + wants',
+        1,
+    ),
+    # The movement guide's live lines (latest move, get-up and seek status, the gait list that
+    # leads with the last move, the expression bench's stance line) go the same way.
+    (
+        "v3/next.html",
+        '  if(MODE==="phone") return base+PHONE_MOVE_GUIDE+games+activityContract()+goalBlock();',
+        '  if(MODE==="phone"){ moveGuideText.live=goalBlock();'
+        " return base+PHONE_MOVE_GUIDE+games+activityContract(); }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "+activityContract()+goalBlock();   /* 0929 P1 (X8)",
+        '+activityContract()+((moveGuideText.live=goalBlock()),"");   /* 0929 P1 (X8)',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '+(typeof bodyWalkTruth==="function"?bodyWalkTruth(body):"")+/*LAB-GETUP{*/'
+        '(typeof getupOn==="function"&&getupOn()?_recStatus():"")+/*}LAB-GETUP*/'
+        '(typeof _namedStatus==="function"?_namedStatus():"")+gaitList()+activityContract()'
+        '+goalBlock()+(typeof _expressionGuide==="function"?_expressionGuide():"");',
+        '+(typeof bodyWalkTruth==="function"?bodyWalkTruth(body):"")+activityContract()'
+        "+((moveGuideText.live=/*LAB-GETUP{*/"
+        '(typeof getupOn==="function"&&getupOn()?_recStatus():"")+/*}LAB-GETUP*/'
+        '(typeof _namedStatus==="function"?_namedStatus():"")+gaitList()+goalBlock()'
+        '+(typeof _expressionGuide==="function"?_expressionGuide():"")),"");',
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        '(diary || "(nothing yet)") +\n    buildOutputSchema(soul.body);',
+        '(diary || "(nothing yet)");\n  return _gbStatic + buildOutputSchema(soul.body);',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '+moveGuideText()+"\\n\\n"+selfStats()+(typeof vmPrompt==="function"?vmPrompt(_vmTurn):"");',
+        '+moveGuideText(), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\\n\\n"+selfStats()'
+        '+(typeof vmPrompt==="function"?vmPrompt(_vmTurn):"");',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "if(_imitationAtIssue&&_imitationCtl)sys+=_imitationCtl.guide(",
+        "if(_imitationAtIssue&&_imitationCtl)_gbLive+=_imitationCtl.guide(",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'sys+=MEMLOG_ASK; if(_recall&&_recall.text) sys+=_recall.text;',
+        '_gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text;'
+        ' if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;',
+        1,
+    ),
+    # A phone that cached the old file loads this one.
+    (
+        "v3/next.html",
+        '<script src="/v3/prompts.js?v=1008-motion"',
+        '<script src="/v3/prompts.js?v=1008-motion-box"',
+        1,
+    ),
+]
+PATCHES += SPEED_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

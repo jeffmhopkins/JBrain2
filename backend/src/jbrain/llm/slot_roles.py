@@ -178,8 +178,8 @@ FLASH_NEXT_POOL: Final = KvPool(
     chat_pair=(SlotRole.INTERACTIVE, SlotRole.INTERACTIVE_ALT),
     reservations=(
         RoleReservation(SlotRole.INTERACTIVE, 0, 262_144, 9, "jerv chat A"),
-        RoleReservation(SlotRole.INGEST, 1, 131_072, 8, "Ingest and analysis"),
-        RoleReservation(SlotRole.SCHEDULED, 2, 262_144, 7, "Scheduled tasks"),
+        RoleReservation(SlotRole.INGEST, 1, 131_072, 7, "Ingest and analysis"),
+        RoleReservation(SlotRole.SCHEDULED, 2, 262_144, 6, "Scheduled tasks"),
         # A research run and a scheduled news run share this slot; spilling to the workshop
         # slot keeps the second from queueing behind the first inside llama-server, where the
         # wait counts against the HTTP timeout.
@@ -187,13 +187,13 @@ FLASH_NEXT_POOL: Final = KvPool(
             SlotRole.RESEARCH,
             3,
             262_144,
-            5,
+            4,
             "Research and sub-agents",
             overflow=SlotRole.WORKSHOP,
         ),
-        RoleReservation(SlotRole.JCODE, 4, 262_144, 6, "jcode"),
-        RoleReservation(SlotRole.WORKSHOP, 5, 131_072, 4, "Wiki, notes, intake"),
-        RoleReservation(SlotRole.PET, 6, 32_768, 3, "Kid pet", overflow=SlotRole.SMALL),
+        RoleReservation(SlotRole.JCODE, 4, 262_144, 5, "jcode"),
+        RoleReservation(SlotRole.WORKSHOP, 5, 131_072, 3, "Wiki, notes, intake"),
+        RoleReservation(SlotRole.PET, 6, 32_768, 2, "Kid pet", overflow=SlotRole.SMALL),
         RoleReservation(SlotRole.SMALL, 7, 65_536, 0, "Small prompts"),
         # Added last (2026-10-05) so slots 0-7 keep their ids and the eviction order among the
         # first eight. (Saved F4 files do NOT survive it: `-np` is in their fingerprint and the
@@ -202,7 +202,7 @@ FLASH_NEXT_POOL: Final = KvPool(
         # two browse steps would evict the run's cache and re-prefill it whole. Research-sized
         # cap, though a browse prompt compacts at ~24k (agent/browse.py). Freed early: its
         # prefix is worth something only while a run is going, and one run is a few minutes.
-        RoleReservation(SlotRole.BROWSE, 8, 131_072, 2, "Browser agent"),
+        RoleReservation(SlotRole.BROWSE, 8, 131_072, 1, "Browser agent"),
         # jerv's second chat slot (owner, 2026-10-06), appended so slots 0-8 keep their ids.
         # The pair holds the pool's top two ranks, and which member gets the last one follows
         # the JOB, not the id: the pool guard is told which slot holds the most recent
@@ -211,11 +211,13 @@ FLASH_NEXT_POOL: Final = KvPool(
         # the disk store restores in ~2 s. Same cap as A: a chat turn may land in either.
         RoleReservation(SlotRole.INTERACTIVE_ALT, 9, 262_144, 10, "jerv chat B"),
         # The desk robot's creature (docs/plans/GROWBOT_PLAN.md G1), appended so slots 0-9 keep
-        # their ids; the ranks above it moved up one to make room, keeping their order. A turn
-        # is ~1k tokens of text plus a camera frame or a few saved views, so a pet-sized cap
-        # doubled for the images; spilling to the small slot keeps a second phone from queueing
-        # inside llama-server. Freed right after the small slot: its prefix is cheap to rebuild.
-        RoleReservation(SlotRole.GROWBOT, 10, 65_536, 1, "GrowBot", overflow=SlotRole.SMALL),
+        # their ids. A turn is ~9k tokens of prompt plus a camera frame or a few saved views, so
+        # a pet-sized cap doubled for the images. The creature is talked to live and the owner
+        # gave it priority (2026-11-11): its turn resumes from the checkpoint at the end of its
+        # system prompt, which only THIS slot holds, so it never spills (a turn in the small slot
+        # re-reads all ~8k tokens, ~20 s, where waiting out a cancelled turn here is a second or
+        # two), and it is freed only after every background slot, just before the chat pair.
+        RoleReservation(SlotRole.GROWBOT, 10, 65_536, 8, "GrowBot"),
     ),
 )
 
