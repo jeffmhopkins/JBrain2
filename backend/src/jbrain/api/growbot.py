@@ -190,9 +190,10 @@ _AWAY_BASE = re.compile(r"[A-Za-z0-9.-]+")
 def away_host(settings: Settings) -> str:
     """The creature's away-from-home name, `growbot.<base>` (deploy/proxy-preview-conf.sh), or
     "" when the box has none. It rides the jcode previews' wildcard tunnel route, so it exists
-    exactly when they do."""
+    exactly when the script renders them: a base host, in tunnel mode."""
     base = settings.jcode_preview_base_host.strip()
-    return f"growbot.{base.lower()}" if _AWAY_BASE.fullmatch(base) else ""
+    tunnel = settings.site_addr.strip().startswith("http://")
+    return f"growbot.{base.lower()}" if tunnel and _AWAY_BASE.fullmatch(base) else ""
 
 
 def opens_away(request: Request, settings: Settings) -> bool:

@@ -1042,6 +1042,13 @@ class GrowBot:
             return _ip(req.header("cf-connecting-ip")) or real
         return real
 
+    async def via_tunnel(self, req: Request) -> bool:
+        """Whether the request came through the Cloudflare tunnel: from Caddy, which saw the
+        connector."""
+        await self.client_ip(req)  # refreshes the two address sets
+        real = _ip(req.header("x-real-ip"))
+        return req.peer in self._proxy_addrs and real is not None and real in self._tunnel_addrs
+
     @staticmethod
     async def _resolve(name: str, last: set[str]) -> set[str]:
         """`name`'s addresses. A failed lookup keeps the last good answer: an empty proxy set
@@ -1745,6 +1752,12 @@ class GrowBot:
         # socket with one is a web page squatting the robots' budget or burning their tries.
         if not authed and req.header("origin"):
             return Response(403, b"cross-origin")
+        # A robot dials in on the LAN, never through the tunnel: from the internet only a
+        # signed-in phone may open a socket, or anyone could hold the robots' unauthenticated
+        # budget or guess at their keys. Caddy's away site shuts a cookieless /d/, but any
+        # cookie named gb_session gets past that, so this is the gate.
+        if not authed and await self.via_tunnel(req):
+            return Response(403, b"robots dial in at home")
         if req.method != "GET" or "websocket" not in req.tokens("upgrade"):
             return Response(426, b"websocket only", headers=[("Upgrade", "websocket")])
         if "upgrade" not in req.tokens("connection"):

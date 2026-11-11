@@ -1319,7 +1319,15 @@ def test_keep_alive_serves_several_requests_on_one_connection(run: _Running) -> 
 
 
 class _Ws:
-    def __init__(self, run: _Running, path: str, *, cookie: bool | str, origin: str | None = None):
+    def __init__(
+        self,
+        run: _Running,
+        path: str,
+        *,
+        cookie: bool | str,
+        origin: str | None = None,
+        extra: tuple[str, ...] = (),
+    ):
         self.sock = socket.create_connection(("127.0.0.1", run.port), timeout=5)
         key = base64.b64encode(os.urandom(16)).decode()
         headers = [
@@ -1336,6 +1344,7 @@ class _Ws:
             headers.append(f"Origin: {origin or run.origin}")
         elif origin:
             headers.append(f"Origin: {origin}")
+        headers.extend(extra)
         self.sock.sendall(("\r\n".join(headers) + "\r\n\r\n").encode())
         head = b""
         while b"\r\n\r\n" not in head:
@@ -1452,6 +1461,22 @@ def test_a_bad_handshake_is_refused(run: _Running, header: str) -> None:
     request += "".join(f"{k}: {v}\r\n" for k, v in lines.items()) + "\r\n"
     out = _raw(run, request.encode())
     assert not out.startswith(b"HTTP/1.1 101"), out[:80]
+
+
+def test_through_the_tunnel_only_a_signed_in_phone_reaches_the_relay(run: _Running) -> None:
+    # A robot dials in on the LAN. From the internet, a chip-shaped socket (no Origin, and a
+    # junk cookie that gets past Caddy's sniffing) would hold the robots' budget or guess keys.
+    run.app.config.trusted_proxy = "127.0.0.1"
+    run.app.config.trusted_tunnel = "127.0.0.5"
+    run.app._proxy_at = -float("inf")
+    away = ("Cookie: gb_session=x", "X-Real-IP: 127.0.0.5", "Cf-Connecting-IP: 203.0.113.9")
+    assert _Ws(run, "/d/gb-abc123", cookie=False, extra=away).status == 403
+    assert _Ws(run, "/d/gb-abc123", cookie=False, extra=away[1:]).status == 403
+    # The same socket from the LAN is a robot dialing in.
+    assert _Ws(run, "/d/gb-abc123", cookie=False, extra=("X-Real-IP: 10.0.0.7",)).status == 101
+    # And a signed-in phone through the tunnel is let in.
+    phone = _Ws(run, "/d/gb-abc123", cookie=True, extra=away[1:])
+    assert phone.status == 101
 
 
 def test_the_relay_refuses_bad_codes_and_foreign_origins(run: _Running) -> None:

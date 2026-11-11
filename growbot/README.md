@@ -69,9 +69,16 @@ needs no Cloudflare change (and exists exactly when they do: tunnel mode, base h
 certificate is Cloudflare's, so a phone installs nothing. It is the `:8444` block with three
 doors shut: `/setup.html`, `/setup.js` and `/box-root.crt` are for a phone at home, and a
 cookieless `/d/` (a robot dialing the relay, never a phone) 404s, since a robot dials in on the
-LAN. A signed-in phone's `/d/` passes, so a persona opened away still wears its body at home
-through the relay. Cloudflare sees this site's traffic (chat, voice, camera frames), as it
-does the PWA's.
+LAN. Caddy only sniffs for a cookie named `gb_session`, so the sidecar is the real gate: a relay
+socket without a valid session that came through the tunnel is 403, keeping the robots'
+unauthenticated budget and their key guesses on the LAN. A signed-in phone's `/d/` passes, so a
+persona opened away still wears its body at home through the relay. Cloudflare sees this site's
+traffic (chat, voice, camera frames), as it does the PWA's. One thing the LAN origin never had:
+the jcode previews (`<slug>-preview.<host>`, the owner's own sandboxed dev apps) are same-site
+with it, so a hostile preview the phone opened could toss a `Domain=<host>` `gb_session` that
+signs the phone out there, or spend `/open`'s backoff. Neither reaches a session, the relay or a
+response (exact-Origin checks, `frame-ancestors 'self'`, no CORS); a `__Host-` cookie name would
+close the first, at the cost of signing every phone out once.
 
 The api picks the link: a ticket minted from the PWA on the LAN site opens on `:8444`, one
 minted from anywhere else on the away name (`growbot.opens_away`; `GET /api/growbot/status`

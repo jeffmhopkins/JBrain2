@@ -287,6 +287,7 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
         endpoint_url="http://endpoint:8000",
         lan_addr="https://jbrain.local",
         jcode_preview_base_host="",
+        site_addr="http://example.com",
         growbot_firmware_dir=str(_firmware(tmp_path / "fw")),
         growbot_url="http://growbot:8810",
         adguard_url="http://adguard",

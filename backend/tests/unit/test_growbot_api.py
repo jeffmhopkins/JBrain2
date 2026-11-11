@@ -91,7 +91,9 @@ def _app(
     app.include_router(growbot.router, prefix="/api")
     app.include_router(growbot.debug_router, prefix="/api")
     app.include_router(growbot.internal_router, prefix="/internal")
-    app.state.settings = SimpleNamespace(lan_addr=lan_addr, jcode_preview_base_host=away)
+    app.state.settings = SimpleNamespace(
+        lan_addr=lan_addr, jcode_preview_base_host=away, site_addr="http://x.com"
+    )
     app.state.growbot_repo = repo
     secrets = FsInternalSecrets(tmp_path)
     app.state.growbot_secrets = secrets
@@ -164,8 +166,15 @@ def test_an_away_link_needs_no_lan_site(tmp_path: Path, repo: FakeRepo) -> None:
 @pytest.mark.parametrize("base", ["", "  ", "bad host", "x.com/evil", "a{b}.com"])
 def test_no_away_name_without_a_base_the_proxy_would_render(base: str) -> None:
     # deploy/proxy-preview-conf.sh renders no away site for these, so no link may name one.
-    settings = cast(Settings, SimpleNamespace(jcode_preview_base_host=base))
+    settings = cast(Settings, SimpleNamespace(jcode_preview_base_host=base, site_addr="http://x"))
     assert growbot.away_host(settings) == ""
+
+
+def test_no_away_name_unless_caddy_runs_behind_the_tunnel() -> None:
+    # A box fetching its own certificate renders no away site (it would have no certificate).
+    for addr, want in (("hopkins.test", ""), ("", ""), ("http://hopkins.test", "growbot.x.com")):
+        settings = cast(Settings, SimpleNamespace(jcode_preview_base_host="x.com", site_addr=addr))
+        assert growbot.away_host(settings) == want
 
 
 def test_robots_mint_rotate_list_and_forget(tmp_path: Path, repo: FakeRepo) -> None:

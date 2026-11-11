@@ -111,6 +111,8 @@ def test_the_away_name_shuts_the_home_only_doors(stack: _Stack) -> None:  # noqa
     # A robot dials the relay on the LAN; through the tunnel only a signed-in phone may.
     assert _away(stack, "/d/gb-abc123", None).startswith(b"HTTP/1.1 404")
     assert _Echo.hits == before
+    # Any cookie named gb_session passes Caddy, so the sidecar refuses a session-less socket
+    # that came through the tunnel (test_growbot_server).
     assert _away(stack, "/d/gb-abc123", "gb_session=x").startswith(b"HTTP/1.1 200")
     # A session-less door the phone needs to sign in still opens.
     assert _away(stack, "/open?ticket=t", None).startswith(b"HTTP/1.1 200")
