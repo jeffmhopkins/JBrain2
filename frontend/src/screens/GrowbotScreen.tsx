@@ -270,7 +270,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
       .then(({ url }) => {
         if (tab && !tab.closed) {
           // `noopener` would cost the handle the tab is steered with, so the link is cut by
-          // hand: the vendored page on :8444 must not be able to navigate the PWA.
+          // hand: the vendored page must not be able to navigate the PWA.
           tab.opener = null;
           tab.location.href = url;
           say(done);
@@ -301,7 +301,8 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
       say(`${robotName(code, pl)}'s key is revoked — reflash it before a persona can wear it.`);
       return;
     }
-    if (!certNoted()) {
+    // The away name has a public certificate: only the LAN site needs the box's own.
+    if (!status?.away && !certNoted()) {
       setSheet({ kind: "cert", pid, code });
       return;
     }

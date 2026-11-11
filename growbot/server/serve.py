@@ -2,7 +2,7 @@
 """The GrowBot sidecar: the creature's web app, its /api shim and the robot relay, on the box.
 
 One asyncio process behind Caddy's LAN site `https://<lan host>:8444` (docs/plans/GROWBOT_PLAN.md
-§2). It serves `GROWBOT_SITE` as the web root, answers the upstream app's `/api/*` calls from the
+§2), and its away-from-home name `growbot.<host>` through the tunnel (growbot/README.md). It serves `GROWBOT_SITE` as the web root, answers the upstream app's `/api/*` calls from the
 box (the api's model lane, tts-stt's Kokoro and whisper, and fixed answers for the cloud-only
 routes), and relays WebSocket frames between the phone and the robot at `/d/<code>`.
 
@@ -233,6 +233,14 @@ def _warn_once(key: str, message: str) -> None:
         print(f"growbot: {message}", flush=True)
 
 
+def _ip(value: str) -> str | None:
+    """`value` as a canonical IP address, or None when it is not one."""
+    try:
+        return str(ipaddress.ip_address(value.strip()))
+    except ValueError:
+        return None
+
+
 # ── configuration ─────────────────────────────────────────────────────────────
 
 
@@ -247,6 +255,8 @@ class Config:
     default_model: str = "qwen3-vl-30b"
     # The one peer whose X-Real-IP is believed (Caddy sets it from the client it saw).
     trusted_proxy: str = "proxy"
+    # The tunnel connector: when Caddy saw it, Cloudflare's Cf-Connecting-IP names the client.
+    trusted_tunnel: str = "cloudflared"
 
     @classmethod
     def from_env(cls) -> Config:
@@ -264,6 +274,7 @@ class Config:
             ),
             default_model=env("GROWBOT_DEFAULT_MODEL", "qwen3-vl-30b"),
             trusted_proxy=env("GROWBOT_TRUSTED_PROXY", "proxy"),
+            trusted_tunnel=env("GROWBOT_TRUSTED_TUNNEL", "cloudflared"),
         )
 
 
@@ -990,6 +1001,7 @@ class GrowBot:
         self._rider_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-rider")
         self.rider_backoff = Backoff()
         self._proxy_addrs: set[str] = set()
+        self._tunnel_addrs: set[str] = set()
         self._proxy_at = -math.inf
         self._models: list[dict[str, Any]] = []
         self._root_cert = b""
@@ -1009,25 +1021,38 @@ class GrowBot:
 
     async def client_ip(self, req: Request) -> str:
         """The client a request is for: Caddy's X-Real-IP when it came from Caddy, else the
-        peer itself (anything else on the network could otherwise name any address)."""
+        peer itself (anything else on the network could otherwise name any address). When the
+        client Caddy saw is the tunnel connector, Cloudflare's Cf-Connecting-IP: otherwise
+        everyone away from home shares the connector's backoff bucket, and a few bad tickets
+        from anywhere would lock the owner out of the away address."""
         if time.monotonic() - self._proxy_at > 60.0:
             self._proxy_at = time.monotonic()
-            try:
-                infos = await asyncio.to_thread(
-                    socket.getaddrinfo, self.config.trusted_proxy, None
-                )
-                self._proxy_addrs = {str(i[4][0]) for i in infos}
-            except OSError:
-                # Keep the last good answer: an empty set would fold every client behind the
-                # proxy into one backoff bucket, and a few bad tickets would lock the owner out.
-                pass
-        if req.peer in self._proxy_addrs:
-            real = req.header("x-real-ip")
-            try:
-                return str(ipaddress.ip_address(real))
-            except ValueError:
-                pass
-        return req.peer
+            self._proxy_addrs = await self._resolve(
+                self.config.trusted_proxy, self._proxy_addrs
+            )
+            self._tunnel_addrs = await self._resolve(
+                self.config.trusted_tunnel, self._tunnel_addrs
+            )
+        if req.peer not in self._proxy_addrs:
+            return req.peer
+        real = _ip(req.header("x-real-ip"))
+        if real is None:
+            return req.peer
+        if real in self._tunnel_addrs:
+            return _ip(req.header("cf-connecting-ip")) or real
+        return real
+
+    @staticmethod
+    async def _resolve(name: str, last: set[str]) -> set[str]:
+        """`name`'s addresses. A failed lookup keeps the last good answer: an empty proxy set
+        would fold every client into one backoff bucket, and a few bad tickets would lock the
+        owner out. The tunnel connector is off on a box without the tunnel, which resolves to
+        nothing and so trusts no Cf-Connecting-IP."""
+        try:
+            infos = await asyncio.to_thread(socket.getaddrinfo, name, None)
+        except OSError:
+            return last
+        return {str(i[4][0]) for i in infos}
 
     def _auth(self) -> dict[str, str]:
         try:

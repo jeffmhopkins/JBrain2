@@ -286,6 +286,7 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
     settings = SimpleNamespace(
         endpoint_url="http://endpoint:8000",
         lan_addr="https://jbrain.local",
+        jcode_preview_base_host="",
         growbot_firmware_dir=str(_firmware(tmp_path / "fw")),
         growbot_url="http://growbot:8810",
         adguard_url="http://adguard",
@@ -871,6 +872,18 @@ def test_status_reports_the_relay_and_each_robot(rig: Rig) -> None:
     assert robots == out["robots"]
     token = rig.app.state.growbot_secrets.read("growbot").decode()
     assert set(rig.relay.auth) == {f"Bearer {token}"}
+
+
+def test_status_says_whether_a_persona_opens_on_the_away_name(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The PWA skips the box-certificate sheet for the away name, which has a public one.
+    with TestClient(rig.app) as client:
+        assert client.get("/api/growbot/status").json()["away"] is False
+        rig.settings.jcode_preview_base_host = "example.com"
+        assert client.get("/api/growbot/status").json()["away"] is True
+        monkeypatch.setattr(growbot.client_ip, "ingress", lambda _conn: "lan")
+        assert client.get("/api/growbot/status").json()["away"] is False
 
 
 @pytest.mark.parametrize(

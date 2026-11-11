@@ -9,6 +9,11 @@ local network, and want more control over the settings."* The robot is a GrowBot
 servos, whose "creature" brain is a web app on a phone. Stock, every thought, word, leg
 command and diary line leaves the house. This plan brings all of it onto the box.
 
+**Away from home (owner, 2026-11-11).** Asked whether a persona could open from the PWA at work,
+the owner chose an away-from-home address knowing Cloudflare would carry its traffic, as it does
+the PWA's: `growbot.<host>` through the tunnel, behind the same ticket and session. The robot
+still dials in on the LAN. See growbot/README.md "Away from home".
+
 ## 1. What upstream is, measured
 
 Read from `github.com/britcruise9/GrowBot` (the `app/` folder is a byte-for-byte copy of the

@@ -424,7 +424,9 @@ def _client(maker: async_sessionmaker) -> TestClient:
         app.include_router(module.router, prefix="/api")
         app.include_router(module.debug_router, prefix="/api")
         app.include_router(module.internal_router, prefix="/internal")
-    app.state.settings = SimpleNamespace(lan_addr="https://jbrain.local")
+    app.state.settings = SimpleNamespace(
+        lan_addr="https://jbrain.local", jcode_preview_base_host=""
+    )
     app.state.growbot_repo = SqlGrowbotRepo(maker)
     app.state.growbot_personas = SqlPersonaRepo(maker)
     app.dependency_overrides[owner_only] = lambda: OWNER_P

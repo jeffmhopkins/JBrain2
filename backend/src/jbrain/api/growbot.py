@@ -4,10 +4,10 @@
 Three routers over one repo (`jbrain.growbot.repo`):
 
 - `router` — the owner (`OwnerDep`): `POST /growbot/ticket` mints a one-time, 120 s ticket and
-  the `:8444` link that spends it; `POST`/`GET`/`DELETE /growbot/robots` mint or rotate a
-  robot's device key (shown once), list the robots (with whether each is on the relay now),
-  and forget one; `POST /growbot/sessions/reset` signs every phone out. Flashing, revoking and
-  the status card are `api/growbot_flash.py` (G2).
+  the link that spends it (`:8444` at home, `growbot.<host>` away); `POST`/`GET`/`DELETE
+  /growbot/robots` mint or rotate a robot's device key (shown once), list the robots (with
+  whether each is on the relay now), and forget one; `POST /growbot/sessions/reset` signs
+  every phone out. Flashing, revoking and the status card are `api/growbot_flash.py` (G2).
 - `debug_router` — a debug token (`DebugDep`, mounted only with debug access on): the same
   five, because the owner runs the box with no terminal (CLAUDE.md #10).
 - `internal_router` — the GrowBot sidecar (`growbot.token`, mounted under `/internal`, which
@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 import secrets
 from datetime import datetime
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -30,7 +30,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from pydantic import BaseModel, Field
 
-from jbrain.api import endpoint
+from jbrain.api import client_ip, endpoint
 from jbrain.api.deps import DebugDep, OwnerDep, SettingsDep
 from jbrain.api.internal_auth import require_growbot
 from jbrain.config import Settings
@@ -78,6 +78,8 @@ class TicketIn(BaseModel):
     code: str | None = Field(default=None, pattern=_CODE)
     # The persona the phone opens as (G4). None: the phone's own soul, as before G4.
     persona: str | None = Field(default=None, pattern=_UUID)
+    # "lan" for the robot's own phone: its setup page on :8444 follows only that origin's link.
+    where: Literal["here", "lan"] = "here"
 
 
 class TicketOut(BaseModel):
@@ -180,10 +182,35 @@ def _lan_host(settings: Settings) -> str:
     return host
 
 
+# The base names a full hostname exactly as deploy/proxy-preview-conf.sh accepts it; a base
+# that script refuses renders no away site, so it must give no away link either.
+_AWAY_BASE = re.compile(r"[A-Za-z0-9.-]+")
+
+
+def away_host(settings: Settings) -> str:
+    """The creature's away-from-home name, `growbot.<base>` (deploy/proxy-preview-conf.sh), or
+    "" when the box has none. It rides the jcode previews' wildcard tunnel route, so it exists
+    exactly when they do."""
+    base = settings.jcode_preview_base_host.strip()
+    return f"growbot.{base.lower()}" if _AWAY_BASE.fullmatch(base) else ""
+
+
+def opens_away(request: Request, settings: Settings) -> bool:
+    """Whether a link minted for this request should be the away name. Only a PWA on the LAN
+    site stays home: one reached by its public name may be anywhere, and the away name works
+    from home too (through the tunnel), while :8444 works nowhere else."""
+    return bool(away_host(settings)) and client_ip.ingress(request) != "lan"
+
+
 async def _ticket(
     request: Request, settings: Settings, ctx: SessionContext, body: TicketIn | None
 ) -> TicketOut:
-    host = _lan_host(settings)
+    away = (body is None or body.where == "here") and opens_away(request, settings)
+    origin = (
+        f"https://{away_host(settings)}"
+        if away
+        else f"https://{_lan_host(settings)}:{GROWBOT_PORT}"
+    )
     code = body.code if body is not None and body.code else ""
     persona = body.persona.lower() if body is not None and body.persona else None
     if persona is not None and await _personas(request).get_persona(ctx, persona) is None:
@@ -191,7 +218,7 @@ async def _ticket(
     # The ticket itself names the robot and the persona: the sidecar signs what redeem answers
     # into the phone's session, so editing `id` on the link reaches no other robot.
     minted = await _repo(request).mint_ticket(ctx, code, persona)
-    url = f"https://{host}:{GROWBOT_PORT}/open?ticket={quote(minted.ticket, safe='')}"
+    url = f"{origin}/open?ticket={quote(minted.ticket, safe='')}"
     if code:
         url += f"&id={quote(code, safe='')}"
     return TicketOut(ticket=minted.ticket, url=url, expires_at=minted.expires_at)

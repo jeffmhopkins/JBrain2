@@ -71,3 +71,48 @@ def test_the_growbot_site_does_not_serve_the_app(stack: _Stack) -> None:  # noqa
     head, body = _get(stack, "/api/auth/session", "gb_session=x")
     assert head.startswith(b"HTTP/1.1 200")
     assert "x-jbrain-ingress" not in json.loads(body)
+
+
+def _away(s: _Stack, path: str, cookie: str | None, host: str = "growbot.preview.test") -> bytes:
+    """A request as the tunnel delivers it: plain HTTP on Caddy's HTTP port, by name."""
+    raw = socket.create_connection(("127.0.0.1", s.ports["http"]), timeout=5)
+    sent = f"Cookie: {cookie}\r\n" if cookie is not None else ""
+    with raw:
+        raw.sendall(
+            f"GET {path} HTTP/1.1\r\nHost: {host}\r\n{sent}Connection: close\r\n\r\n".encode()
+        )
+        data = b""
+        while chunk := raw.recv(65536):
+            data += chunk
+    return data
+
+
+def test_the_away_name_serves_growbot_with_its_cookie_alone(stack: _Stack) -> None:  # noqa: F811
+    stack.start()
+    data = _away(stack, "/v3/next.html", "jbrain_x=owner-secret; gb_session=abc.def.ghi")
+    head, _, body = data.partition(b"\r\n\r\n")
+    assert head.startswith(b"HTTP/1.1 200"), head
+    seen = json.loads(body)
+    assert seen["cookie"] == "gb_session=abc.def.ghi"
+    # growbot's same-origin check compares Origin with this Host.
+    assert seen["host"] == "growbot.preview.test"
+    assert "x-jbrain-ingress" not in seen
+    head, _, body = _away(stack, "/", "jbrain_x=owner-secret").partition(b"\r\n\r\n")
+    assert head.startswith(b"HTTP/1.1 200") and "cookie" not in json.loads(body)
+
+
+def test_the_away_name_shuts_the_home_only_doors(stack: _Stack) -> None:  # noqa: F811
+    stack.start()
+    before = _Echo.hits
+    # The setup page and certificate are for a phone at home, and /internal is never routed.
+    for path in ("/internal/growbot/ticket/redeem", "/setup.html", "/setup.js", "/box-root.crt"):
+        for cookie in (None, "gb_session=x"):
+            assert _away(stack, path, cookie).startswith(b"HTTP/1.1 404"), (path, cookie)
+    # A robot dials the relay on the LAN; through the tunnel only a signed-in phone may.
+    assert _away(stack, "/d/gb-abc123", None).startswith(b"HTTP/1.1 404")
+    assert _Echo.hits == before
+    assert _away(stack, "/d/gb-abc123", "gb_session=x").startswith(b"HTTP/1.1 200")
+    # A session-less door the phone needs to sign in still opens.
+    assert _away(stack, "/open?ticket=t", None).startswith(b"HTTP/1.1 200")
+    # The wildcard still answers every other name with nothing.
+    assert _away(stack, "/", None, host="other.preview.test").startswith(b"HTTP/1.1 404")

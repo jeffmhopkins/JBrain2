@@ -691,6 +691,36 @@ def test_a_failed_proxy_lookup_keeps_the_last_good_address(
     assert app._proxy_addrs == {"127.0.0.1"}
 
 
+def test_through_the_tunnel_the_client_is_cloudflares_answer(
+    gb: types.ModuleType, site: Path, tmp_path: Path
+) -> None:
+    # Everyone away from home reaches Caddy from the connector: without this they would share
+    # one backoff bucket, and a few bad tickets from anywhere would lock the owner out.
+    config = gb.Config(
+        site=site,
+        api_url="http://127.0.0.1:9",
+        tts_url="http://127.0.0.1:9",
+        stt_url="http://127.0.0.1:9",
+        token_file=tmp_path / "none",
+        trusted_proxy="127.0.0.1",
+        trusted_tunnel="127.0.0.5",
+    )
+    app = gb.GrowBot(config)
+
+    def ip(peer: str, headers: list[tuple[str, str]]) -> str:
+        req = gb.Request("GET", "/", "/", {}, "HTTP/1.1", headers, peer=peer)
+        return str(asyncio.run(app.client_ip(req)))
+
+    cf = ("cf-connecting-ip", "203.0.113.9")
+    assert ip("127.0.0.1", [("x-real-ip", "127.0.0.5"), cf]) == "203.0.113.9"
+    # A malformed claim is no address: the connector's own bucket, never a made-up one.
+    assert ip("127.0.0.1", [("x-real-ip", "127.0.0.5"), ("cf-connecting-ip", "x")]) == "127.0.0.5"
+    # Only when Caddy saw the connector: a LAN client naming any address is that client.
+    assert ip("127.0.0.1", [("x-real-ip", "10.0.0.7"), cf]) == "10.0.0.7"
+    # And only from Caddy: anything else on the network is its own socket address.
+    assert ip("127.0.0.9", [("x-real-ip", "127.0.0.5"), cf]) == "127.0.0.9"
+
+
 def test_backoff_window(gb: types.ModuleType) -> None:
     backoff = gb.Backoff()
     for t in range(gb.BACKOFF_LIMIT):

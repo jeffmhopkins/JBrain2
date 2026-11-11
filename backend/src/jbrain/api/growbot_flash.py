@@ -298,6 +298,8 @@ class StatusOut(BaseModel):
     service: Literal["up", "down"]
     connected: int
     robots: list[growbot.RobotOut]
+    # A persona opened from here lands on the away-from-home name, which needs no certificate.
+    away: bool = False
 
 
 # -- the firmware on the mount ---------------------------------------------------------------
@@ -886,7 +888,7 @@ async def _revoke(request: Request, ctx: SessionContext, code: str) -> growbot.R
     return growbot.robot_out(info, set())
 
 
-async def _status(request: Request, ctx: SessionContext) -> StatusOut:
+async def _status(request: Request, settings: Settings, ctx: SessionContext) -> StatusOut:
     robots = await growbot._repo(request).list_robots(ctx)
     connected = await growbot.relay_robots(request)
     rows = [growbot.robot_out(r, connected or set()) for r in robots]
@@ -894,6 +896,7 @@ async def _status(request: Request, ctx: SessionContext) -> StatusOut:
         service="down" if connected is None else "up",
         connected=sum(1 for r in rows if r.connected),
         robots=rows,
+        away=growbot.opens_away(request, settings),
     )
 
 
@@ -907,9 +910,9 @@ def _code(code: str) -> str:
 
 
 @router.get("/status")
-async def growbot_status(request: Request, owner: OwnerDep) -> StatusOut:
+async def growbot_status(request: Request, owner: OwnerDep, settings: SettingsDep) -> StatusOut:
     """The GrowBot card: whether the relay is up, and each robot with whether it is on it."""
-    return await _status(request, growbot._owner_ctx(owner))
+    return await _status(request, settings, growbot._owner_ctx(owner))
 
 
 @router.get("/flash/setup")

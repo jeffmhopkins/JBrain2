@@ -3890,6 +3890,9 @@ export interface GrowbotStatus {
   service: "up" | "down";
   connected: number;
   robots: GrowbotRobot[];
+  /** A persona opened from here lands on the box's away-from-home name, which needs no
+   *  certificate (absent from an older box: the LAN site). */
+  away?: boolean;
 }
 
 /** What is on the box's USB that the GrowBot flasher can use. A blank Pico in its loader has
@@ -4071,6 +4074,8 @@ export type GrowbotRegion = "persona" | "expression" | "meta" | "dream" | "harne
 export interface GrowbotTicketFor {
   code?: string;
   persona?: string;
+  /** "lan" for the robot's own phone, whose setup page follows only the LAN site's link. */
+  where?: "here" | "lan";
 }
 
 /** One saved view of a visual memory (`i` from 0), as a plain `<img src>`: same-origin cookie
