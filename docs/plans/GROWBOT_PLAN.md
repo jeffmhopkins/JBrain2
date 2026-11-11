@@ -145,7 +145,7 @@ The owner's ask (2026-11-10): *"make sure we're using our tts stt containers for
 - A test scans every served file and asserts there is no reachable `speechSynthesis.speak` or
   meSpeak call, and that every speak goes to `/api/fish-tts`.
 
-### 2a′. The face is the panels' ostrich
+### 2a′. The faces: lantern by default, the panels' ostrich among them
 
 The owner (2026-11-10) did not like upstream's face and chose the panels' ostrich from three
 mocks (`docs/mocks/growbot-face/`; binding spec in `docs/reference/DESIGN.md` "GrowBot — the

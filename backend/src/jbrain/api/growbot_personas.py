@@ -375,13 +375,16 @@ async def persona_detail(request: Request, owner: OwnerDep, pid: Pid) -> Persona
 async def rename_persona(request: Request, owner: OwnerDep, pid: Pid, body: RenameIn) -> WrittenOut:
     """A new name (a soul write, so its phone reloads on it), a new face (not a soul write: the
     phone's poll carries it and the creature changes face where it stands), or both."""
+    if body.name is None and body.face is None:
+        raise HTTPException(status_code=422, detail="Give it a name or a face.")
+    # Checked before the face is saved, so a bad name writes nothing at all.
+    name = _name(body.name) if body.name is not None else None
     ctx = _owner_ctx(owner)
     if body.face is not None and not await _repo(request).set_face(ctx, pid, body.face):
         raise HTTPException(status_code=404, detail="no such persona")
     p = await _get(request, ctx, pid)
-    if body.name is None:
+    if name is None:
         return WrittenOut(persona=await _detail(request, ctx, p), checkpoint=None)
-    name = _name(body.name)
     return await _written(
         request, ctx, pid, souls.renamed(p.soul or {}, name), None, name, p.version
     )

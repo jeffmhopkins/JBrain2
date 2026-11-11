@@ -512,6 +512,10 @@ async def test_routes_seed_duplicate_rename_reset_and_delete(maker: async_sessio
     assert c.patch(f"/api/growbot/personas/{dup['id']}", json={"face": "cat"}).status_code == 422
     nobody = "/api/growbot/personas/00000000-0000-4000-8000-000000000000"
     assert c.patch(nobody, json={"face": "robot"}).status_code == 404
+    # A bad name refuses the whole edit, face included; an empty edit is refused too.
+    bad = c.patch(f"/api/growbot/personas/{dup['id']}", json={"face": "pixel", "name": "  "})
+    assert bad.status_code == 422
+    assert c.patch(f"/api/growbot/personas/{dup['id']}", json={}).status_code == 422
     assert c.post(f"/api/growbot/personas/{dup['id']}/duplicate").json()["face"] == "robot"
 
     reset = c.post(f"/api/growbot/personas/{pid}/reset").json()

@@ -478,16 +478,16 @@ export function clip(s: string, n: number): string {
   return one.length > n ? `${one.slice(0, n - 1).trimEnd()}…` : one;
 }
 
-/** The creature's own memories, read-only here: it writes them itself. */
 /** The faces a persona's creature can wear (growbot/patches/growbot-face.js), in the order
  *  the picker shows them. */
 export const FACES: { id: GrowbotFace; name: string; what: string }[] = [
   { id: "lantern", name: "Lantern", what: "Two glowing eyes, no body." },
-  { id: "ostrich", name: "Ostrich", what: "The panels' ostrich: crest, eyes and a long neck." },
+  { id: "ostrich", name: "Ostrich", what: "The panels' ostrich: crest, eyes and a ringed neck." },
   { id: "robot", name: "Robot", what: "Square robot eyes." },
   { id: "pixel", name: "Pixel", what: "The original pixel eyes." },
 ];
 
+/** The creature's own memories, read-only here: it writes them itself. */
 export const MEMORY = [
   { id: "identity", label: "Who it is", up: "identity" },
   { id: "bond", label: "Bond line", up: "identityCore" },

@@ -3345,8 +3345,8 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   - *Manage*: *Face* first (owner, 2026-11-11): a radio list, *Lantern* (the default),
     *Ostrich*, *Robot*, *Pixel*, each with a one-line description, saved as it is tapped. It is
     not a soul write, so no checkpoint and no reload: the toast says it changes on its phone in
-    a few seconds (its poll), or next time it opens. Then *Rename* (the list's name; the creature still calls itself by its own name until
-    told otherwise), *Duplicate* (memories and visual memories, no checkpoints), *Export soul
+    a few seconds (its poll), or next time it opens. Then *Rename* (the list's name; the
+    creature still calls itself by its own name until told otherwise), *Duplicate* (memories and visual memories, no checkpoints), *Export soul
     file* (its memories but not its visual memories, which stay on the box), *Import over it*
     (the file is checked first: too big or not a soul says so with *Nothing changed*; a
     checkpoint is saved before it lands), *Reset to a fresh creature* (armed, saves *Before
@@ -3370,8 +3370,9 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
 
 ## GrowBot — the creature's face (owner, 2026-11-10 — binding mock: `docs/mocks/growbot-face/a-ostrich.html`, variant A; rivals B "the panels' robot" and C "lantern eyes" retained in `docs/mocks/growbot-face/README.md`; built in `growbot/patches/growbot-face.js`)
 
-The creature on a GrowBot's phone is the panels' ostrich, so a GrowBot and a JPanel in the same
-room are visibly the same family.
+A persona wears one of four faces, the lantern by default (owner, 2026-11-11; picked under
+*Manage*). This section specifies the ostrich face: the panels' ostrich, so a GrowBot wearing it
+and a JPanel in the same room are visibly the same family.
 
 - **Head, ringed neck, body.** The panels' ostrich head at its own proportions, a short neck of
   rings (the owner: a long ringed neck with no body under it, and a solid neck, both read wrong),
