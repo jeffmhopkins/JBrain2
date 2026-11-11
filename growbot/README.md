@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-10
+> **Status:** Living · **Last verified:** 2026-11-11
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -164,7 +164,8 @@ page, so getting it back is one scan.
   minutes and that client gets 429 until the window passes. Tickets and hellos keep separate
   counts, and so do cross-site `/open` navigations, so a page the owner visits cannot lock out
   the PWA's own link; an `/open` that is not a top-level navigation (`Sec-Fetch-Dest` other than
-  `document`) is 403 and never counted, and a cookieless socket that sends an `Origin` (a
+  `document`, unless `Sec-Fetch-Mode` is `navigate`, as the installed app's service worker sends
+  it) is 403 and never counted, and a cookieless socket that sends an `Origin` (a
   browser, never the chip) is 403. The counts are only per client while Docker hands Caddy the
   real source address; behind a userland proxy every client shares one count. Socket slots are taken at the
   admission check, so a burst cannot overshoot them. Outbound calls run on pools apart from
