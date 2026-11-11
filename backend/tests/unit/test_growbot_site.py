@@ -246,6 +246,7 @@ def test_the_service_worker_is_registered_and_caches_nothing() -> None:
     worker = (_SITE / "sw.js").read_text(encoding="utf-8")
     assert 'event.request.mode !== "navigate"' in worker
     assert 'pathname === "/open") return;' in worker
+    assert (_SITE.parent / "patches" / "pwa" / "sw.js").read_text(encoding="utf-8") == worker
     assert "caches." not in worker and "cache.put" not in worker
 
 

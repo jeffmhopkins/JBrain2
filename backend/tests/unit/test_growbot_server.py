@@ -1744,7 +1744,9 @@ def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
 ) -> None:
     monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
     # An <img> or fetch from any page: refused before the api, never counted.
-    for dest, mode in [("image", "no-cors"), ("empty", "cors")] * 2:
+    # A frame is a navigation too, but only the top level is the PWA's link: a same-site page
+    # framing /open must neither spend the owner's tries nor plant a session.
+    for dest, mode in [("image", "no-cors"), ("empty", "cors"), ("iframe", "navigate")] * 2:
         resp = run.request(
             "GET",
             "/open?ticket=bad&id=gb-abc123",
