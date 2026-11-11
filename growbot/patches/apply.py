@@ -610,6 +610,42 @@ SPEED_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += SPEED_PATCHES
 
+# Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
+# clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off
+# only re-sends the same clip to the queue it is waiting in (whisper-server finishes an
+# abandoned job before the next); the box's own limit (serve.py STT_TIMEOUT_S) and its reason
+# (gbBoxEars) decide instead.
+STT_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "var _pri=!!STT_GROQ, _lease=_pri?8000:12000;   // 0827: SHORT leash on the primary,"
+        " LONG on the backstop.",
+        "var _pri=!!STT_GROQ, _lease=65000;   // the box's whisper; it times itself out at 60 s."
+        " (0827 upstream: SHORT leash on the primary, LONG on the backstop.)",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var _pri=!STT_GROQ, _lease=_pri?8000:12000;   // 0827: same role-based rule as the"
+        " groq lane above",
+        "var _pri=!STT_GROQ, _lease=65000;   // the box's whisper, as the groq lane above",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "if(STT_GROQ){ diTranscribe(blob,type,meta); return; }",
+        "",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "if(!STT_GROQ){ groqTranscribe(blob,type,meta); return; }",
+        "",
+        1,
+    ),
+]
+PATCHES += STT_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

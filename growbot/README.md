@@ -271,6 +271,12 @@ another slot, where that checkpoint does not exist, and is freed only after ever
 slot. The cost: a second phone (or persona) open at once waits behind the first and replaces
 its cached prompt, so two creatures talking together are each slow.
 
+Speech is the same lesson as the panels': whisper encodes a fixed 30 s window, so a 3 s clip
+cost 10-30 s on the box and outran upstream's 8 s / 12 s transcriber leashes every time (the
+mic never produced text). `serve.py` sizes `audio_ctx` to a WAV clip's own length (the room
+panels' 9.5 s to 2.3 s cut), and `STT_PATCHES` drop the cloud leashes and the hand-off to a
+backstop lane, which only re-sent the same clip to the same whisper.
+
 ### Visual memories (wave G4d)
 
 The saved views upstream keeps in IndexedDB (`v3/visual-memory.js`) live on the box with the

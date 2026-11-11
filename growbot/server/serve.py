@@ -1630,6 +1630,9 @@ class GrowBot:
                 r"(0|1)(\.\d{1,3})?", value
             ):
                 fields["temperature"] = value
+        # Always sent, 0 (the full window) when unsized: whisper-server restores its defaults
+        # only after a successful request, so a failed one's small window would cut the next.
+        fields["audio_ctx"] = str(audio_window(audio.data) or 0)
         body, ctype = build_multipart(fields, audio)
         up = await self._call(
             http_call,
@@ -2294,6 +2297,35 @@ def parse_multipart(body: bytes, ctype: str) -> list[Part]:
         if name:
             parts.append(Part(name, _param(disposition, "filename"), part_type, data))
     return parts
+
+
+def wav_seconds(data: bytes) -> float | None:
+    """A WAV clip's length from its own header, or None for anything else."""
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return None
+    rate, at = 0, 12
+    while at + 8 <= len(data):
+        tag, size = data[at : at + 4], int.from_bytes(data[at + 4 : at + 8], "little")
+        if tag == b"fmt " and size >= 12:
+            rate = int.from_bytes(data[at + 16 : at + 20], "little")
+        elif tag == b"data":
+            # A streamed WAV may carry a placeholder size; the bytes present are the clip.
+            size = min(size, len(data) - at - 8)
+            return size / rate if rate > 0 else None
+        at += 8 + size + (size & 1)
+    return None
+
+
+# Whisper encodes a fixed 30 s window, padding a short clip with silence, so a 3 s clip costs
+# what 30 s does: the creature's measured 10-30 s per clip. A window sized to the clip (~50
+# encoder frames a second, half again for margin, the room panels' floor of 160) is the panels'
+# cut from 9.5 s to 2.3 s (backend api/endpoint.py). Only a WAV, whose length its header
+# states; anything else keeps the full window rather than risk truncating it.
+def audio_window(data: bytes) -> int | None:
+    seconds = wav_seconds(data)
+    if seconds is None or seconds <= 0 or seconds > 30:
+        return None
+    return max(160, min(1500, int(seconds * 75)))
 
 
 def build_multipart(fields: dict[str, str], audio: Part) -> tuple[bytes, str]:
