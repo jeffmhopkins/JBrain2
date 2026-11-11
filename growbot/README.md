@@ -269,7 +269,9 @@ backing off to 5 minutes while the box will not answer. Each side's change wins 
 `known` (what both last agreed on, in `gb_box_vm/<persona>`); a record the phone lacks is
 forgotten on the box only when the phone has unsent writes (`dirty`, a count shared by its
 tabs), otherwise the box's copy comes back. An owner's change (the poll's `memories` moved)
-reloads the page when idle, at most once per box version. Other
+reloads the page when idle, unless this load already merged that version (what it could not
+fetch waits for the next load). Moved, deleted or a G2 session: every persona's faces leave the
+phone, except, for a G2 answer (which may be a lapsed session), while some are unsent. Other
 personas' records leave the phone at load.
 
 The body has one rider. A phone's relay socket asks the api's `/internal/growbot/body/<code>`

@@ -857,6 +857,10 @@ class SqlPersonaRepo:
             return False
         freed: set[str] = set()
         async with scoped_session(self._maker, ctx) as session:
+            # The persona's row first, the order every other memory write takes its locks in.
+            await session.execute(
+                text("SELECT 1 FROM app.growbot_personas WHERE id = :p FOR UPDATE"), {"p": key}
+            )
             gone = (
                 await session.execute(
                     text(

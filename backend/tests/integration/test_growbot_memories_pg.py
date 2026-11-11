@@ -517,3 +517,16 @@ async def test_checkpoints_racing_forgets_never_name_a_swept_picture(
         if cp.memories:
             assert await blobs.exists(_sha(FACE))
         await repo.phone_keep(SYSTEM_OWNER, sprout, PHONE_A, _saved("r1", FACE))
+
+
+async def test_an_owners_delete_racing_the_phones_writes_never_deadlocks(
+    maker: async_sessionmaker, blobs: FsBlobStore
+) -> None:
+    repo, sprout, _ = await _world(maker, blobs)
+    for _ in range(5):
+        await asyncio.gather(
+            repo.forget_memory(OWNER, sprout, "r1"),
+            repo.phone_keep(SYSTEM_OWNER, sprout, PHONE_A, _saved("r1", FACE, name="renamed")),
+            repo.phone_forget(SYSTEM_OWNER, sprout, PHONE_A, ["r1"]),
+        )
+        await repo.phone_keep(SYSTEM_OWNER, sprout, PHONE_A, _saved("r1", FACE))

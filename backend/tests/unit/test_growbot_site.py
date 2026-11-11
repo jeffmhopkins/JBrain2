@@ -308,7 +308,7 @@ def test_visual_memories_follow_the_persona() -> None:
     assert "var leaving = !!(soul.g2 || soul.away);" in mem and 'purge(d, "")' in mem
     assert "window.__gbBoxSoul = { away: true };" in shim
     # A record the merge could not fetch never reloads the page, nor does one version twice.
-    assert "missing[id] !== fp(box.rows[id])" in mem and "m.reloadedFor === box.version" in mem
+    assert "missing[id] !== fp(box.rows[id])" in mem and "m.mergedAt === box.version" in mem
     # Writes name the persona this tab runs as, for the sidecar to check.
     assert mem.count("{ persona: persona, ") == 2
     # Only a phone with unsent writes forgets on the box what it lacks.

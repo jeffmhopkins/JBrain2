@@ -436,7 +436,7 @@
    - `dirty` marks writes not yet on the box. Only then is a record the phone lacks one it
      forgot; otherwise the phone's store lost it, and the box's copy comes back.
    gb_box_vm/<persona> is {known: {id: fingerprint}, version, dirty (a count), missing (records
-   the merge could not fetch), reloadedFor}. */
+   the merge could not fetch), mergedAt (the box version the last merge finished)}. */
 (function () {
   "use strict";
   if (location.pathname !== "/v3/next.html") return;
@@ -529,8 +529,14 @@
     });
   }
   if (leaving) {
-    // Moved to another phone, deleted, or a G2 session: no persona's faces stay here.
-    open().then(function (d) { if (d) return purge(d, ""); }).catch(function () {});
+    // Moved to another phone, deleted, or a G2 session: no persona's faces stay here. A G2
+    // answer can also be a session that lapsed, so faces not yet on the box wait for the
+    // persona to be opened again.
+    var unsent = soul.g2 && Object.keys(store).some(function (k) {
+      if (k.indexOf(PREFIX) !== 0) return false;
+      try { return +(JSON.parse(store.getItem(k) || "{}").dirty) > 0; } catch (e) { return false; }
+    });
+    if (!unsent) open().then(function (d) { if (d) return purge(d, ""); }).catch(function () {});
     return;
   }
   // Per tab, never shared: a tab still open on the persona this phone held before keeps
@@ -568,7 +574,7 @@
 
   // 1. The merge, before the creature reads its store. Each record lands, and is known, as
   //    soon as its pictures are in, so a slow box never costs a load all of its work.
-  var late = false, merging = true;
+  var late = false, merging = true, wroteLate = false;
   function put(d, r) {
     var tx = d.transaction(["refs", "meta"], "readwrite");
     tx.objectStore("refs").put(r.ref);
@@ -578,10 +584,7 @@
       now.known[r.meta.id] = fp(r.meta);
       delete (now.missing || {})[r.meta.id];
       save(now);
-      if (late) {
-        // The creature has read its store already: it reads it again.
-        try { window._vmLoaded = false; window._vmStoreEpoch = (window._vmStoreEpoch || 0) + 1; } catch (e) {}
-      }
+      if (late) wroteLate = true;
     });
   }
   function merge() {
@@ -606,6 +609,8 @@
         drop.forEach(function (id) { tx.objectStore("refs").delete(NS + "/" + id); tx.objectStore("meta").delete(NS + "/" + id); });
         return finished(tx).then(function () {
           drop.forEach(function (id) { delete known[id]; });
+          m.missing = m.missing || {};
+          Object.keys(m.missing).forEach(function (id) { if (!box.rows[id]) delete m.missing[id]; });
           m.version = box.version;
           save(m);
           // Another persona's faces are on the box, not this phone's to keep.
@@ -628,10 +633,25 @@
                 save(now);
               });
             });
-          }, Promise.resolve());
+          }, Promise.resolve()).then(function () {
+            // This version was merged: what it could not bring is no reason to reload.
+            var now = mine();
+            now.mergedAt = box.version;
+            save(now);
+          });
         });
       });
-    }).catch(function () {}).then(function () { merging = false; });
+    }).catch(function () {}).then(function () {
+      merging = false;
+      if (wroteLate) {
+        // The creature read its store before these landed: it reads it again, once.
+        try {
+          window._vmLoaded = false;
+          window._vmStoreEpoch = (window._vmStoreEpoch || 0) + 1;
+          if (typeof window.vmLoad === "function") window.vmLoad().catch(function () {});
+        } catch (e) {}
+      }
+    });
   }
   var merged = merge();
   window.gbBoxMemReady = Promise.race([
@@ -677,10 +697,9 @@
           else if (!merging && missing[id] !== fp(box.rows[id])) theirs = true;
         });
         m.version = box.version;
-        // One reload per change of the box's: whatever it brought that this load could not
-        // take waits for the next one, never a loop.
-        if (theirs && m.reloadedFor === box.version) theirs = false;
-        else if (theirs) m.reloadedFor = box.version;
+        // A version this load merged has nothing more to bring (what it could not fetch waits
+        // for the next load), so it never reloads the page; a newer one does.
+        if (m.mergedAt === box.version) theirs = false;
         save(m);
         return puts.reduce(function (p, id) {
           return p.then(function () {
