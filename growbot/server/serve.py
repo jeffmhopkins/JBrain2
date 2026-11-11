@@ -1262,8 +1262,13 @@ class GrowBot:
         # page spending the owner's tries for them, so it is refused uncounted. A cross-site
         # navigation still opens (the PWA may be reached by another name), but counts in its
         # own bucket, so a page the owner visits cannot lock out the PWA's own link.
+        # The installed app's service worker passes a navigation on with dest `empty` but
+        # mode `navigate`, which no page's fetch, <img> or frame can claim: without this the
+        # second open, the first one the worker controls, was refused. A frame is a
+        # navigation too, but never the PWA's link, so its dest still refuses it.
         dest = req.header("sec-fetch-dest")
-        if dest and dest != "document":
+        worker = dest == "empty" and req.header("sec-fetch-mode") == "navigate"
+        if dest and dest != "document" and not worker:
             return Response(403, b"open from the PWA", headers=[("Cache-Control", "no-store")])
         if req.header("sec-fetch-site") == "cross-site":
             # The session cookie is SameSite=Strict, so a cross-site navigation (the PWA reached
