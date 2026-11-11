@@ -897,12 +897,15 @@
     var k = touch && screenW > 0 ? window.innerWidth / screenW : 1;
     return k > 1.25 ? Math.min(k, 3) : 1;
   }
-  var lastW = 0, lastK = 1;
+  var lastKey = "", lastK = 1;
   function paint() {
-    // Re-measure only when the width changes: an Android keyboard shortens the window past
-    // its width, which would read as landscape and drop the zoom mid-typing.
-    var k = window.innerWidth === lastW ? lastK : scale();
-    lastW = window.innerWidth;
+    // Re-measure only on a width change or a rotation: an Android keyboard shortens the
+    // window past its width, which would read as landscape and drop the zoom mid-typing,
+    // while a desktop-site window keeps its ~980px width when the phone turns.
+    var turn = (screen.orientation && screen.orientation.type) || String(window.orientation);
+    var key = window.innerWidth + "|" + screen.width + "|" + turn;
+    var k = key === lastKey ? lastK : scale();
+    lastKey = key;
     lastK = k;
     style.textContent =
       "#say{font-size:" + 15 * k + "px!important;line-height:1.6!important}" +
