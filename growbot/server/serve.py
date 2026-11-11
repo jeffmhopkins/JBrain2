@@ -1630,9 +1630,9 @@ class GrowBot:
                 r"(0|1)(\.\d{1,3})?", value
             ):
                 fields["temperature"] = value
-        window = audio_window(audio.data)
-        if window is not None:
-            fields["audio_ctx"] = str(window)
+        # Always sent, 0 (the full window) when unsized: whisper-server restores its defaults
+        # only after a successful request, so a failed one's small window would cut the next.
+        fields["audio_ctx"] = str(audio_window(audio.data) or 0)
         body, ctype = build_multipart(fields, audio)
         up = await self._call(
             http_call,

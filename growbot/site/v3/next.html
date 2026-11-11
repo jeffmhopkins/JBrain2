@@ -2200,7 +2200,7 @@ function groqTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext
   _languageForm(fd,meta); // 0909: only explicit input intent pins language; Automatic may carry bounded person transcript context. Never navigator.language.
   var h={}; if(pbDevTok) h["x-pb-device"]=pbDevTok;   // 0802: token on audio = per-device AUDIO_DAILY_CALLS allowance (server skips the money meter for audio); tokenless audio rode a shared per-IP bucket one long session could exhaust
   var _ac=(typeof AbortController!=="undefined")?new AbortController():null;   // 0815: same tail-cut as diTranscribe; the backstop gets a longer leash (it is the LAST resort)
-  var _pri=!!STT_GROQ, _lease=65000;   // 0827: SHORT leash on the primary, LONG on the backstop. Tied to ROLE, not to provider — flipping the roles without flipping the leashes would make the fallback cohort wait longer than they do today.
+  var _pri=!!STT_GROQ, _lease=65000;   // the box's whisper; it times itself out at 60 s. (0827 upstream: SHORT leash on the primary, LONG on the backstop.) Tied to ROLE, not to provider — flipping the roles without flipping the leashes would make the fallback cohort wait longer than they do today.
   var _tk=Date.now()%1e7;
   var _tm=_ac?setTimeout(function(){ try{ logEv("stt_timeout",{tgt:"groq",ms:Date.now()-_sg0,pri:_pri?1:0,kb:Math.round(blob.size/1024),tok:_tk}); }catch(e){} try{ _ac.abort(); }catch(e){} },_lease):null;
   (soulOwned()?fetch:_heldFetch)("/api/llm?target=groq-audio",_ac?{method:"POST",headers:h,body:fd,signal:_ac.signal}:{method:"POST",headers:h,body:fd})
@@ -2209,7 +2209,7 @@ function groqTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext
     _sttOvl=Math.max(0,_sttOvl-1); var _sp=_sttSnap||{};
     try{ var _sr={ms:Date.now()-_sg0,kb:Math.round(blob.size/1024),tgt:"groq",lane:_sp.lane||_sttLane,mx:Math.round((_sp.mx||0)*1000)/1000,pv:_sp.pv,mean:_sp.mean||0,duty:_sp.duty||0,n:_sp.n||0,pri:STT_GROQ?1:0,ovl:_sttOvl}; try{ _sttConf(d,_sr); }catch(_c){} logEv("stt",_sr); }catch(e){} var _g=_sttGate(d); if(_g.drop){ try{ logEv("stt_drop",{p:_g.p,tgt:"groq"}); }catch(_e){} if(_sttLane==="pcm"){ try{ _listenFire(); }catch(_lf){} } _sttPhase("done"); return; } try{ _sttSoft(meta,d); }catch(_bs){} _sttPhase("done"); heardText((d&&d.text||"").trim(),meta,d&&d.language); })
     .catch(function(e){ if(_tm)clearTimeout(_tm); _sttPhase("done"); if(e&&e.q==="daily_limit"){ toast("my free ears are used up for today. type to me, or feed me and they come back."); return; }   /* 0802 (C): quota = an upgrade moment, not an outage */
-      if(STT_GROQ){ diTranscribe(blob,type,meta); return; }   // 0827: groq is primary for this device -> di is the backstop, same one-hop rule as the di lane
+         // 0827: groq is primary for this device -> di is the backstop, same one-hop rule as the di lane
       _sttOvl=Math.max(0,_sttOvl-1); toast(window.gbBoxEars?window.gbBoxEars(e):"my ears are down on my end. try again in a moment, or type."); }); }   /* Groq (free backstop) failed too -> terminal; DeepInfra is primary above (0729). COPY (0729): this is a TRANSPORT failure, never a mic problem, so it must not say "couldn't hear you" — that wording sent a user hunting through mic permissions for a backend outage ("keep showing that it can not hear me. All mics are on."). "didn't catch that" stays for genuinely empty/garbled audio in heardText below; the two are different events and must read differently. */
 function diTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext=type.indexOf("wav")>=0?"wav":(type.indexOf("mp4")>=0?"mp4":(type.indexOf("ogg")>=0?"ogg":"webm"));   // wav = the 0805 PCM lane
   var fd=new FormData(); fd.append("file",blob,"speech."+ext); fd.append("model","openai/whisper-large-v3-turbo");
@@ -2222,7 +2222,7 @@ function diTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext=t
      the EXISTING transport-failure path. AbortController is guarded (Safari 12.1+; absent = old
      behavior, no timeout). stt_timeout telemetry says how often the tail actually bites. */
   var _ac=(typeof AbortController!=="undefined")?new AbortController():null;
-  var _pri=!STT_GROQ, _lease=65000;   // 0827: same role-based rule as the groq lane above
+  var _pri=!STT_GROQ, _lease=65000;   // the box's whisper, as the groq lane above
   var _tk=Date.now()%1e7;
   var _tm=_ac?setTimeout(function(){ try{ logEv("stt_timeout",{tgt:"di",ms:Date.now()-_st0,pri:_pri?1:0,kb:Math.round(blob.size/1024),tok:_tk}); }catch(e){} try{ _ac.abort(); }catch(e){} },_lease):null;
   (soulOwned()?fetch:_heldFetch)("/api/llm?target=deepinfra-audio",_ac?{method:"POST",headers:h,body:fd,signal:_ac.signal}:{method:"POST",headers:h,body:fd})
@@ -2231,7 +2231,7 @@ function diTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext=t
     _sttOvl=Math.max(0,_sttOvl-1); var _sp=_sttSnap||{};
     try{ var _sr={ms:Date.now()-_st0,kb:Math.round(blob.size/1024),tgt:"di",lane:_sp.lane||_sttLane,mx:Math.round((_sp.mx||0)*1000)/1000,pv:_sp.pv,mean:_sp.mean||0,duty:_sp.duty||0,n:_sp.n||0,pri:STT_GROQ?0:1,ovl:_sttOvl}; try{ _sttConf(d,_sr); }catch(_c){} logEv("stt",_sr); }catch(e){} var _g=_sttGate(d); if(_g.drop){ try{ logEv("stt_drop",{p:_g.p,tgt:"di"}); }catch(_e){} if(_sttLane==="pcm"){ try{ _listenFire(); }catch(_lf){} } _sttPhase("done"); return; } try{ _sttSoft(meta,d); }catch(_bs){} _sttPhase("done"); heardText((d&&d.text||"").trim(),meta,d&&d.language); })
     .catch(function(e){ if(_tm)clearTimeout(_tm); if(e&&e.q==="daily_limit"){ _sttPhase("done"); toast("my free ears are used up for today. type to me, or feed me and they come back."); return; }   /* 0802: the allowance is per-device across BOTH engines — falling back to groq would burn a call to hit the same 429 */
-      if(!STT_GROQ){ groqTranscribe(blob,type,meta); return; }
+      
       _sttOvl=Math.max(0,_sttOvl-1); _sttPhase("done"); toast(window.gbBoxEars?window.gbBoxEars(e):"my ears are down on my end. try again in a moment, or type."); }); }   /* di failed OR timed out -> groq backstop. GUARDED: only the PRIMARY hands off; when groq is primary, di IS the backstop and must TERMINATE here — 0829: it used to terminate SILENTLY (no phase close, no toast), leaving the thinking spinner up and the person unanswered (the :957 phase-leak). */
 function looksLikeMeta(t){ var s=t.toLowerCase();                                                  // a chat model's refusal masquerading as a transcript
   return /\b(audio|transcrib|attach|provide the|as an ai|language model|i don'?t see|i do not see|i cannot|i can'?t|i'?m sorry|i am sorry|no (audio|speech|sound|file)|i don'?t have|share the)\b/.test(s)

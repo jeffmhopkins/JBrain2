@@ -1015,8 +1015,8 @@ def test_stt_rewrites_the_upload_for_whisper(
     assert parts["language"].data == b"en"
     assert parts["file"].data == audio
     assert parts["file"].filename == "speech.webm"
-    # A webm states no length, so whisper keeps its full window.
-    assert "audio_ctx" not in parts
+    # A webm states no length, so whisper keeps its full window, said out loud (0).
+    assert parts["audio_ctx"].data == b"0"
 
 
 def _wav(seconds: float, rate: int = 16000) -> bytes:
