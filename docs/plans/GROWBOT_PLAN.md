@@ -372,6 +372,29 @@ ends upstream's 12 s cap, which silently dropped the rest of a longer message. A
 (upstream: 8 s), so the creature never cuts in just after the person stops talking
 (`QUIET_PATCHES`).
 
+**Talk style (owner, 2026-11-12).** Upstream's creature is written for small children: ~18-word
+lines, its last 4 exchanges and 5 diary lines in view, and an adult could not hold a conversation
+with it. A persona's talk style (its `gb_talk` setting, picked on JBrain's persona page under
+Manage) is Kid, upstream's creature unchanged, or Grown-up: replies of up to ~45 words, its last
+12 exchanges replayed (the ring now keeps 16), and a standing ask to log what the person tells
+about their life as they say it. Older memory stays out of the turn: the owner wants it looked
+up when needed, not carried every turn. The page reads the setting every turn; the
+grown-up block sits in the cached system prefix, so a switch costs one cold turn. For every
+persona, the dream's "one tiny thing to try" is tried once rather than every turn, and the
+person's name is no longer a tag on most lines (`TALK_PATCHES`).
+
+**Facts and recall (owner, 2026-11-12).** Stored memory stays out of the turn; the creature looks
+it up. A `fact` reply field files what the person tells about their life in a fact book
+(`soul.facts`, newest 400, merged across tabs like the diary); grown-up personas are asked to use
+it as they hear things. When asked about something it cannot see, the creature answers with
+`recall` (a few search words) and a short thinking-back line; the page searches the fact book,
+the whole diary, bright moments, standing rules and this session's conversation, and a follow-up
+thought answers with what it found. This session's conversation lives in page memory only: raw
+past sessions are never searched, only what was logged, filed or dreamed from them. One search a
+turn, only on a turn that answers someone, never from the follow-up, at most one per 15 s; if the
+person speaks meanwhile or the creature cannot think, the find
+rides their turn (`RECALL_PATCHES`).
+
 **Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
 pick 1, 3 or 6 hours and download one zip with what debugging needs. Upstream's own "brain
 log" is the creature's diary (`flushLog` in next.html posts a rolling window of its inputs,

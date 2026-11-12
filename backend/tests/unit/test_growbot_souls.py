@@ -314,6 +314,12 @@ def test_export_is_a_snapshot_without_the_tabs_bookkeeping() -> None:
     assert souls.for_export({}, "Pip")["meta"]["name"] == "Pip"
 
 
+def test_a_snapshot_keeps_its_fact_book() -> None:
+    facts = [{"t": 1, "txt": "lunch: a taco"}]
+    raw = _grown() | {"facts": facts, "meta": {"kind": "snapshot"}}
+    assert souls.from_file(raw)["facts"] == facts
+
+
 def test_a_snapshots_bond_line_is_capped() -> None:
     raw = _grown() | {"identityCore": "b " * 400, "meta": {"kind": "snapshot"}}
     assert len(souls.from_file(raw)["identityCore"]) == 240
@@ -328,9 +334,11 @@ def test_a_template_is_born_fresh() -> None:
         "meta": {"name": "Gallery Bolt", "kind": "template"},
         "goals": {"wants": list("abcdef"), "selfName": "Bolt", "owner": "Q", "longing": 0.5},
         "scratch": {"rules": ["be brave"], "mood": {"v": 1, "e": 1}, "glows": [1]},
+        "facts": [{"t": 1, "txt": "Q saw the doctor"}],
     }
     soul = souls.from_file(raw)
     assert soul["identityCore"] == "" and soul["log"] == [] and soul["bornAt"] == 0
+    assert soul["facts"] == []
     assert soul["goals"]["wants"] == list("abcd") and soul["goals"]["longing"] == 0.5
     assert "selfName" not in soul["goals"] and "owner" not in soul["goals"]
     assert soul["scratch"]["rules"] == ["be brave"] and soul["scratch"]["mood"] == {"v": 1, "e": 1}

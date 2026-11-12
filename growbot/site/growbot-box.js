@@ -457,7 +457,7 @@
     gb_eye: 1, gb_face_color: 1, gb_face_dir: 1, gb_next_games3: 1, gb_vol: 1, pb2_voice: 1,
     gb_low_power: 1, gb_next_log: 1, pb2_journal: 1, gb_nx_sid: 1, gb_getup: 1, gb_ftdial: 1, gb_ftdial_set: 1,
     gb_fishwa: 1, gb_asfix: 1, gb_judge0: 1, gb_bodysnd: 1, gb_listen: 1, gb_stt: 1,
-    gb_rest: 1, gb_legslew: 1
+    gb_rest: 1, gb_legslew: 1, gb_talk: 1
   };
   // Per persona namespace (visual memory on or off) and per robot (keep tracking me).
   var PREFIXES = ["gb_vismem_native/", "gb_ft_latch:"];

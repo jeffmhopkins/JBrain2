@@ -501,6 +501,23 @@ export function eyeOf(prefs: Record<string, string> | null | undefined): Eye {
   return prefs?.gb_eye === "environment" ? "back" : "front";
 }
 
+export type GrowbotTalk = "kid" | "grownup";
+
+/** How a persona's creature talks (its `gb_talk` setting, growbot/patches/apply.py
+ *  TALK_PATCHES). Kid is upstream's creature, written for small children. */
+export const TALKS: { id: GrowbotTalk; name: string; what: string }[] = [
+  { id: "kid", name: "Kid", what: "Short lines; remembers the last few exchanges." },
+  {
+    id: "grownup",
+    name: "Grown-up",
+    what: "Fuller replies; remembers more of the conversation and notes what you tell it.",
+  },
+];
+
+export function talkOf(prefs: Record<string, string> | null | undefined): GrowbotTalk {
+  return prefs?.gb_talk === "grownup" ? "grownup" : "kid";
+}
+
 /** The creature's own memories. It writes them itself, as it goes and in its dreams; the owner
  *  may correct each one, and `up` is the soul key (and the box's region) it lives in. */
 export const MEMORY = [
