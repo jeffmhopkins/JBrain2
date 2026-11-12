@@ -801,7 +801,9 @@ const location = { pathname: "/v3/next.html" };
 const document = { hidden: false, addEventListener() {} };
 function setTimeout(f) { timers.push(f); return timers.length; }
 function clearTimeout() {}
-function setInterval() {}
+const intervals = [];
+function setInterval(f) { intervals.push(f); }
+function tick() { intervals.forEach(f => f()); }
 async function settle() {
   for (let i = 0; i < 5; i++) {
     const t = timers;
@@ -978,3 +980,61 @@ def test_secrets_never_leave_the_phone_as_settings() -> None:
         "console.log(JSON.stringify({calls}));",
     )
     assert got["calls"][1]["body"]["set"] == {"gb_vol": "0.3"}
+
+
+def test_a_g2_session_on_a_phone_with_none_of_its_own_gets_the_defaults() -> None:
+    meta = json.dumps({"persona": "p1", "dirty": False, "base": {}, "version": 2})
+    got = _prefs_in_node(
+        {"gb_vol": "0.5", "gb_nx_sid": "nx-p1", "gb_box_prefs": meta, "gbk_tab": "s"},
+        {"g2": True},
+        "return [500, null];",
+        "console.log(JSON.stringify({local: local()}));",
+    )
+    assert got["local"] == {"gbk_tab": "s", "gb_box_prefs": "{}"}
+
+
+def test_a_change_whose_resend_fails_is_kept_and_sent_again() -> None:
+    meta = json.dumps({"persona": "p1", "dirty": True, "base": {"gb_vol": "0.5"}, "version": 3})
+    got = _prefs_in_node(
+        {"gb_vol": "0.2", "gb_box_prefs": meta},
+        {"persona": "p1"},
+        "if (method === 'GET') return [200, {version: 3, prefs: {gb_vol: '0.5'}}];"
+        " return calls.filter(c => c.method === 'POST').length > 1"
+        " ? [200, {version: 4}] : [503, {error: 'busy'}];",
+        "const booted = local().gb_vol; await settle();"
+        " console.log(JSON.stringify({booted, calls, meta: JSON.parse(local().gb_box_prefs)}));",
+    )
+    assert got["booted"] == "0.2"
+    posts = [c["body"] for c in got["calls"] if c["method"] == "POST"]
+    assert posts == [{"persona": "p1", "set": {"gb_vol": "0.2"}, "drop": []}] * 2
+    assert got["meta"]["dirty"] is False and got["meta"]["base"] == {"gb_vol": "0.2"}
+
+
+def test_a_busy_box_keeps_the_retrys_backoff() -> None:
+    got = _prefs_in_node(
+        {},
+        {"persona": "p1"},
+        "return method === 'GET' ? [200, {version: 1, prefs: {}}] : [503, {error: 'busy'}];",
+        'store.setItem("gb_vol", "0.4");'
+        " const step = async () => { const t = timers; timers = []; t.forEach(f => f());"
+        " await new Promise(r => global.setImmediate(r)); };"
+        " await step(); const first = timers.length; tick(); tick();"
+        " console.log(JSON.stringify({first, after: timers.length, calls}));",
+    )
+    # One send, then a single backoff timer that the 2 s checks leave alone.
+    assert [c["method"] for c in got["calls"]] == ["GET", "POST"]
+    assert got["first"] == 1 and got["after"] == 1
+
+
+def test_an_owners_edit_between_the_phones_own_writes_is_pulled() -> None:
+    got = _prefs_in_node(
+        {},
+        {"persona": "p1"},
+        "if (method === 'POST') return [200, {version: 5}];"
+        " return calls.length > 1 ? [200, {version: 5, prefs: {gb_face_color: '#ffffff',"
+        " gb_eye: 'environment'}}] : [200, {version: 3, prefs: {}}];",
+        'store.setItem("gb_face_color", "#ffffff"); await settle();'
+        " console.log(JSON.stringify({calls, events, local: local()}));",
+    )
+    assert [c["method"] for c in got["calls"]] == ["GET", "POST", "GET"]
+    assert got["events"] == [{"changed": {"gb_eye": "environment"}}]

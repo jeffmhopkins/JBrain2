@@ -503,8 +503,11 @@
 
   if (soul.g2) {
     // A G2 session: the phone's own come back if a persona had the keys.
+    // A phone that had none of its own before a persona gets the defaults, never the
+    // persona's keys (nor its diary id).
     var own = ownSaved();
-    if (own && typeof own === "object") become(own);
+    if (meta().persona) become(own && typeof own === "object" ? own : {});
+    else if (own && typeof own === "object") become(own);
     if (own || meta().persona) { try { realRemove.call(store, OWN); } catch (e) {} setMeta({}); }
     return;
   }
@@ -542,18 +545,36 @@
   var pulled = sync("GET");
   // A cookie that moved to another persona under this tab: nothing of it is taken.
   if (pulled.json && pulled.json.persona !== persona) pulled = { status: 0, json: null };
+  var keepMine = false;
   if (pulled.status === 200 && pulled.json) {
     var box = pulled.json.prefs;
     version = typeof pulled.json.version === "number" ? pulled.json.version : -1;
-    if (m.persona === persona && m.dirty && m.base && typeof m.base === "object") {
-      // A change the box never got: sent now, against what the box had when it was made.
-      var pending = patchOf(m.base, snap());
-      var got = pending ? sync("POST", body(pending)) : { status: 200, json: { version: version } };
-      if (got.status === 200 && got.json) version = got.json.version;
-      var after = sync("GET");
-      if (after.status === 200 && after.json && after.json.prefs && after.json.persona === persona) { box = after.json.prefs; version = after.json.version; }
+    var pending = m.persona === persona && m.dirty && m.base && typeof m.base === "object"
+      ? patchOf(m.base, snap()) : null;
+    if (pending) {
+      // A change the box never got: sent now, before the box's copy is taken.
+      var got = sync("POST", body(pending));
+      if (got.status === 200 && got.json) {
+        version = got.json.version;
+        var after = sync("GET");
+        if (after.status === 200 && after.json && after.json.prefs && after.json.persona === persona) {
+          box = after.json.prefs;
+          version = after.json.version;
+        } else if (box && typeof box === "object") {
+          var both = {};
+          Object.keys(box).forEach(function (k) { both[k] = box[k]; });
+          Object.keys(pending.set).forEach(function (k) { both[k] = pending.set[k]; });
+          pending.drop.forEach(function (k) { delete both[k]; });
+          box = both;
+        }
+      } else if (got.status !== 400 && got.status !== 413) {
+        // Not taken yet, never refused: the page runs on it and the loop below sends it.
+        keepMine = true;
+      }
     }
-    if (box && typeof box === "object") {
+    if (keepMine) {
+      sent = m.base;
+    } else if (box && typeof box === "object") {
       become(box);
       sent = snap();
     } else {
@@ -565,7 +586,7 @@
       if (all.status === 200 && all.json) { sent = first; version = all.json.version; }
       else sent = {};
     }
-    setMeta({ persona: persona, dirty: false, base: sent, version: version });
+    setMeta({ persona: persona, dirty: keepMine || !!patchOf(sent, snap()), base: sent, version: version });
   } else if (m.persona === persona) {
     // The box did not answer: the creature runs on what this phone last had of it.
     sent = m.base && typeof m.base === "object" ? m.base : {};
@@ -584,7 +605,8 @@
     var now = meta();
     if (now.persona !== persona) { held = true; return; }
     if (!now.dirty) { now.dirty = true; setMeta(now); }
-    if (!inflight) schedule(SEND_AFTER_MS);
+    // A retry already waiting keeps its backoff: a busy box is not asked every check.
+    if (!inflight && !retry) schedule(SEND_AFTER_MS);
   }
   function push(keepalive) {
     if (held) return;
@@ -593,6 +615,7 @@
     if (!p) return;
     if (meta().persona !== persona) { held = true; return; }
     inflight = true;
+    var before = version;
     fetch(PATH, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -606,10 +629,14 @@
         sent = now; retry = 0;
         if (typeof r.json.version === "number") version = r.json.version;
         setMeta({ persona: persona, dirty: !!patchOf(sent, snap()), base: sent, version: version });
+        // Someone else (the owner, another tab) wrote in between: theirs is pulled now, since
+        // the poll's version will not read as newer than this one.
+        if (typeof r.json.version === "number" && r.json.version !== before + 1) pullOwner();
         check();
       } else if (r.status === 400 || r.status === 413) {
-        // The box will never keep this change: it waits for the next one.
-        sent = now;
+        // The box will never keep this change: it is dropped (the next load takes the box's).
+        sent = now; retry = 0;
+        setMeta({ persona: persona, dirty: false, base: sent, version: version });
       } else if (r.status === 404 || r.status === 409) {
         held = true;   // another phone, another persona, or deleted: the soul's poll reloads
       } else {

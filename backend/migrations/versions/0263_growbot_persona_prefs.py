@@ -7,8 +7,8 @@ on the box, but upstream's page kept the rest of what a creature chose or was to
 asked (2026-11-12) for the phone to be only a display: `prefs` holds those keys per persona,
 `growbot-box.js` loads them before the page runs and sends each change back.
 
-- `prefs` — key to string; NULL until a phone first sends its own, so the first phone a persona
-  opens on keeps what it already had.
+- `prefs` — key to string; NULL until a phone sends its own or the owner sets one, so the first
+  phone a persona opens on keeps what it already had.
 - `prefs_version` — bumped by every change, so a running phone notices an owner's edit on its
   poll and applies it where it stands.
 

@@ -354,11 +354,12 @@ duplicate copies the settings but not the diary id, so the two keep separate dia
 | Route | Answer |
 | --- | --- |
 | `GET /api/box/prefs` | `/internal/growbot/prefs/pull`: `{version, prefs, persona}`, `prefs` null until a phone first sent its own. |
-| `POST /api/box/prefs` | `{persona, set, drop}` to `/prefs/push`: `{version}`. Capped at 96 KB before it is read; 409 `other` as the soul's. |
+| `POST /api/box/prefs` | `{persona, set, drop}` to `/prefs/push`: `{version}`. Capped at 320 KB before it is read; 409 `other` as the soul's. |
 
 At load, after the soul, a synchronous pull replaces this phone's copy of those keys with the
 box's (the phone's own wait in `gb_phone_prefs` for a G2 session, as the soul's do). A persona
-with none yet takes the first phone's own, never another persona's. A change (a `setItem`, a
+with none yet takes the first phone's own, never another persona's (an owner edit made before
+any phone opened it is its settings, and the phone takes those instead). A change (a `setItem`, a
 `removeItem`, or upstream's `localStorage.key = v`, which a 2 s check catches) goes back 1.5 s
 later, and when the page hides, as a patch of only the keys that changed, so the owner's edit
 of another key stands. `gb_box_prefs` keeps `{persona, dirty, base, version}`: a change the box

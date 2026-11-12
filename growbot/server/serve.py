@@ -166,9 +166,10 @@ SOUL_PATH = "/api/box/persona"
 # A persona's visual memories (wave G4d): one record with up to three views, each at most
 # upstream's VM_MAX_B64 of base64, and its fields.
 MEMORY_PATH = "/api/box/memories"
-# A persona's settings (the creature's own localStorage keys): the api caps them at 64 KB.
+# A persona's settings (the creature's own localStorage keys): the api caps them at 64K
+# characters, which is up to four bytes each in the page's UTF-8 JSON.
 PREFS_PATH = "/api/box/prefs"
-MAX_PREFS_BODY = 96 * 1024
+MAX_PREFS_BODY = 320 * 1024
 MAX_MEMORY_BODY = 2_500_000
 MEMORY_ID_RE = re.compile(r"r[0-9a-f]{1,32}")
 # The creature's diary (upstream's brain log): a snapshot is at most 70 KB on the page
