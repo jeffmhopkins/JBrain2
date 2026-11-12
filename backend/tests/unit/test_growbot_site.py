@@ -205,6 +205,9 @@ def test_the_mouth_follows_the_voice_not_the_ears_guard() -> None:
     assert not _voiced(vtEngine="device", speechSynthesis={"speaking": True}, guard=False)
     assert _voiced(vtEngine="fish", _songUntil=4e12, guard=False)
     assert _voiced(vtEngine="robot", guard=True)
+    # A dead Kokoro falls back to the larynx, which has no player to ask.
+    assert _voiced(vtEngine="fish", fishDead=True, guard=True)
+    assert _voiced(vtEngine="fish", _fishWaTail=4e12, guard=False)
     assert not _voiced(vtEngine="robot", guard=False)
 
 

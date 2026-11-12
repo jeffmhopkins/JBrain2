@@ -151,17 +151,19 @@
      quick line left it moving in silence (owner, 2026-11-12: the mouth must move whenever it
      talks). So the mouth asks the players: the Web Audio route's line, fishAud, a song, or the
      device synth, which counts only inside the guard because iOS can leave `speaking` stuck
-     true. Only an engine with no player to ask (the larynx) falls back to the guard alone. */
+     true. The Web Audio element lags its line by up to _fishWaTail. Only a voice with no player
+     to ask (the larynx, also what a dead Kokoro falls back to) is left to the guard alone. */
   function voiced(guard) {
     var w = window, now = Date.now();
     if (typeof w._songUntil === "number" && now < w._songUntil) return true;
     var ln = w._fishWaLn;
-    if (ln && ln.st === 1) return true;
+    if ((ln && ln.st === 1) || (typeof w._fishWaTail === "number" && now < w._fishWaTail)) return true;
     var a = w.fishAud;
     if (a && !a.paused && !a.ended && /^blob:/.test(String(a.src || ""))) return true;
     var ss = w.speechSynthesis;
     if (ss && ss.speaking && !ss.paused && guard) return true;
-    return w.vtEngine === "fish" || w.vtEngine === "device" ? false : !!guard;
+    var asked = (w.vtEngine === "fish" && !w.fishDead) || w.vtEngine === "device";
+    return asked ? false : !!guard;
   }
 
   function shade(hex, f) {
