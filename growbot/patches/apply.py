@@ -874,7 +874,7 @@ PATCHES += ROUND2_PATCHES
 # cancelled utterance (the creature's own voice, pause, a hidden tab) sends nothing, as
 # upstream. Pieces skip the phone's sound judge: by then the endpointer has heard seconds of
 # voice, and a streamed utterance is not a hum.
-_GB_STREAM_JS = r'''var _gbPieceNext=null, _gbUtts={}, _gbDead={}, _gbUttSeq=0, GB_ROLL_MIN_S=4, GB_ROLL_GAP_MS=450, GB_UTT_MAX_MS=120000, GB_PIECE_WAIT_MS=25000;
+_GB_STREAM_JS = r'''var _gbPieceNext=null, _gbUtts={}, _gbDead={}, _gbUttSeq=0, GB_ROLL_MIN_S=4, GB_ROLL_GAP_MS=450, GB_UTT_MAX_MS=120000, GB_PIECE_WAIT_MS=25000, GB_LONG_HOLD_MS=2500;
 function _gbRollCheck(d,take){ var u=_pcmUtt; if(!_pcmLive||!u) return;
   var full=u.n>=u.buf.length, gap=Date.now()-vadVoiceT;
   if(!full&&!(u.n>=GB_ROLL_MIN_S*_pcmRate&&gap>=GB_ROLL_GAP_MS&&gap<_vadHold)) return;
@@ -1004,6 +1004,16 @@ STREAM_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "else if(now-vadStartT > 12000){ vadStop(); _vadEndT=0; }",
         "else if(now-vadStartT > (_pcmLive&&_pcmUtt?GB_UTT_MAX_MS:12000)){ vadStop(); _vadEndT=0; }",
+        1,
+    ),
+    # A pause that only splits a piece never ends the turn. Once a message is long enough to
+    # stream, the person also gets a longer pause (2.5 s, upstream adapts 1.5-4 s) before the
+    # turn is over: a long message has thinking pauses.
+    (
+        "v3/next.html",
+        "  if(now-vadVoiceT > _vadHold) vadStop();",
+        "  if(now-vadVoiceT > (_pcmUtt&&_pcmUtt.gbId?Math.max(_vadHold,GB_LONG_HOLD_MS):_vadHold))"
+        " vadStop();",
         1,
     ),
     # No beat of its own while the person is mid-message or their pieces are still landing:

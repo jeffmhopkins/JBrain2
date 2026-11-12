@@ -687,6 +687,10 @@ def test_a_streamed_utterance_outlives_the_old_twelve_second_cap() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "else if(now-vadStartT > (_pcmLive&&_pcmUtt?GB_UTT_MAX_MS:12000)){ vadStop();" in page
     assert "_gbFinal(_gbU,true,0)" in page[page.index("function pcmTapDown(){") :][:300]
+    # A long message gets a longer pause before its turn is over.
+    assert (
+        "if(now-vadVoiceT > (_pcmUtt&&_pcmUtt.gbId?Math.max(_vadHold,GB_LONG_HOLD_MS):_vadHold))"
+    ) in page
     # Its own beats hold while a streamed message is live or its pieces are landing.
     assert (
         "if((vadOn&&(now-vadStartT<6000||(_pcmLive&&_pcmUtt&&_pcmUtt.gbId)))||now<vadHoldUntil"

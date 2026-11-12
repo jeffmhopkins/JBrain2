@@ -5520,7 +5520,7 @@ function _listenMaybe(wav,why){ if(!LISTEN_ON&&why!=="route") return;           
    the field day proved the corruption is not noise: it read close-range piano/taps/whispers at
    m 0.2-0.86 while the contiguous lane read the same clips <=0.13. Both of its jobs (route verdict,
    naming-lane guard) now run through _earJudge — one model run per clip, not two. */
-var _gbPieceNext=null, _gbUtts={}, _gbDead={}, _gbUttSeq=0, GB_ROLL_MIN_S=4, GB_ROLL_GAP_MS=450, GB_UTT_MAX_MS=120000, GB_PIECE_WAIT_MS=25000;
+var _gbPieceNext=null, _gbUtts={}, _gbDead={}, _gbUttSeq=0, GB_ROLL_MIN_S=4, GB_ROLL_GAP_MS=450, GB_UTT_MAX_MS=120000, GB_PIECE_WAIT_MS=25000, GB_LONG_HOLD_MS=2500;
 function _gbRollCheck(d,take){ var u=_pcmUtt; if(!_pcmLive||!u) return;
   var full=u.n>=u.buf.length, gap=Date.now()-vadVoiceT;
   if(!full&&!(u.n>=GB_ROLL_MIN_S*_pcmRate&&gap>=GB_ROLL_GAP_MS&&gap<_vadHold)) return;
@@ -5783,7 +5783,7 @@ function vadTick(){ var now=Date.now();
     return; }
   if(voice) vadVoiceT=now;
   if(suppressed){ if(!paused && !document.hidden && !recording && vadVoiceT-vadStartT>350) vadStop(); else vadCancel(); return; }   // its OWN voice landing mid-utterance must not EAT the person's words (0710 field: goal-switch died while listening) — a real utterance (≥350ms voiced) transcribes; pause/hidden/manual-talk still drop
-  if(now-vadVoiceT > _vadHold) vadStop();                                             // silence >= the ADAPTIVE hold = end of utterance (0730: fixed 900 cut people off; 0810: fixed 1500 still chopped the long-pause thinkers, see _vadHold above)
+  if(now-vadVoiceT > (_pcmUtt&&_pcmUtt.gbId?Math.max(_vadHold,GB_LONG_HOLD_MS):_vadHold)) vadStop();                                             // silence >= the ADAPTIVE hold = end of utterance (0730: fixed 900 cut people off; 0810: fixed 1500 still chopped the long-pause thinkers, see _vadHold above)
   else if(now-vadStartT > (_pcmLive&&_pcmUtt?GB_UTT_MAX_MS:12000)){ vadStop(); _vadEndT=0; } }                          // hard cap on one utterance. _vadEndT cleared on purpose (K3 0810 #3): a capped monologue restarts within ms, and without this three long monologues walk the adaptive hold to 3600 though the person never paused once — only real SILENCE endpoints may teach it
 function vadStart(){ if(!micStream){ try{ if(listenMode) logEv("drop",{w:"nomic"}); }catch(e){} return; }
   if(typeof vmResultHumanActivity==="function")vmResultHumanActivity("vad");
