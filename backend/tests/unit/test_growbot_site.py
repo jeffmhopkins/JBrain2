@@ -1196,39 +1196,36 @@ def test_a_backoff_ends_when_there_is_nothing_left_to_send() -> None:
     posts = [c["body"] for c in got["calls"] if c["method"] == "POST"]
     assert posts[-1] == {"persona": "p1", "set": {"gb_eye": "environment"}, "drop": []}
 @pytest.mark.parametrize(
-    ("search", "stored", "want", "kept"),
+    ("explore", "want"),
     [
-        ("", None, "This time is yours", None),
-        ("?quiet=2", None, "go explore new spaces", "2"),
-        ("", "2", "go explore new spaces", "2"),
-        ("?quiet=0", None, "QUIET COMPANY", "0"),
-        ("?quiet=1", "2", "This time is yours", None),
-        ("?quiet=9", "0", "QUIET COMPANY", "0"),
+        (None, "This time is yours"),
+        ("true", "This time is yours"),
+        ("false", "QUIET COMPANY"),
     ],
 )
-def test_the_quiet_beat_hands_the_creature_its_own_time_unless_the_device_chose_otherwise(
-    search: str, stored: str | None, want: str, kept: str | None
+def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_not(
+    explore: str | None, want: str
 ) -> None:
-    """Upstream's 11-11 quiet-beat text is the default; ?quiet=2 and ?quiet=0 stick per device
-    and ?quiet=1 clears them, and whatever is chosen only changes what the beat says."""
+    """Upstream's 11-11 quiet-beat text unless the persona turned exploring off; a page the
+    box gave no setting (no persona yet) explores too. The choice lives on the box, so the
+    page reads no URL or phone storage for it."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    arm = next(line for line in page.splitlines() if line.startswith("var QUIET_ARM="))
-    beat = re.search(r'think\((QUIET_ARM_TXT\|\|"QUIET COMPANY[^"]*")', page)
+    words = next(line for line in page.splitlines() if line.startswith("var GB_EXPLORE_TXT="))
+    beat = re.search(
+        r'think\((window\.__gbBoxExplore!==false\?GB_EXPLORE_TXT:"QUIET COMPANY[^"]*")', page
+    )
     assert beat is not None
     # The beat's own gates are the ones the 90 s test above pins; only its words are chosen.
-    assert page.index("if(idle>=GB_QUIET_AFTER_MS") < beat.start()
+    assert page.index(words) < page.index("if(idle>=GB_QUIET_AFTER_MS") < beat.start()
+    assert "gb_quiet" not in page and 'get("quiet")' not in page
+    setting = "" if explore is None else f"window.__gbBoxExplore={explore};"
+    # Inside a function, so the page's globals never meet whatever this Node version ships.
     script = (
-        f"var location={{search:{json.dumps(search)}}};"
-        f"var localStorage={{removeItem:function(k){{delete this[k];}}}};"
-        + (f"localStorage.gb_quiet={json.dumps(stored)};" if stored is not None else "")
-        + arm
-        + f"\nconsole.log(JSON.stringify({{said:{beat.group(1)},"
-        + "kept:localStorage.gb_quiet||null}));"
+        f"(function(){{var window={{}};{setting}{words}\n"
+        f"console.log(JSON.stringify({beat.group(1)}));}})();"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
-    got = json.loads(out.stdout)
-    assert want in got["said"]
-    assert got["kept"] == kept
+    assert want in json.loads(out.stdout)

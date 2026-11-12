@@ -63,6 +63,7 @@ function persona(over: Partial<GrowbotPersona>): GrowbotPersona {
     wearing: null,
     face: "lantern",
     voice: "",
+    explore: true,
     ...over,
   };
 }
@@ -1108,6 +1109,33 @@ describe("GrowbotScreen a persona's page", () => {
     ).toBeTruthy();
     expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({ voice: "kokoro-am_puck" });
     expect(box.value).toBe("kokoro-am_puck");
+  });
+
+  it("lets a persona explore on its own when it's quiet, on until the owner turns it off", async () => {
+    const s = serve(
+      UP,
+      pageRoutes((path, init) => {
+        if (path === `/api/growbot/personas/${SPROUT}` && init?.method === "PATCH") {
+          return json({ persona: detail({ explore: false }), checkpoint: null });
+        }
+        return null;
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    const explores = (await screen.findByRole("radio", {
+      name: /Explores on its own/,
+    })) as HTMLInputElement;
+    const company = screen.getByRole("radio", { name: /Keeps you company/ }) as HTMLInputElement;
+    expect(explores.checked).toBe(true);
+
+    fireEvent.click(company);
+    expect(
+      await screen.findByText("Sprout keeps you company from its next quiet moment on Pixel 6a."),
+    ).toBeTruthy();
+    expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({ explore: false });
+    expect(company.checked).toBe(true);
   });
 
   it("renames, duplicates and exports from Manage", async () => {

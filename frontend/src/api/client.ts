@@ -4072,6 +4072,8 @@ export interface GrowbotPersona {
   face: GrowbotFace;
   /** The box voice it speaks in (a /api/brain/voices id), or "" for the box's default. */
   voice: string;
+  /** Whether its quiet moments invite it to explore with its body; on unless turned off. */
+  explore: boolean;
 }
 
 export type GrowbotFace = "lantern" | "ostrich" | "robot" | "pixel";
@@ -8344,6 +8346,15 @@ export const api = {
     const response = await request(
       `/api/growbot/personas/${encodeURIComponent(id)}`,
       jsonInit("PATCH", { voice }),
+    );
+    return (await response.json()) as GrowbotWritten;
+  },
+
+  /** Not a soul write either: its next quiet moment reads it. */
+  async setGrowbotPersonaExplore(id: string, explore: boolean): Promise<GrowbotWritten> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { explore }),
     );
     return (await response.json()) as GrowbotWritten;
   },

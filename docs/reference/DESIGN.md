@@ -3388,7 +3388,11 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     line in the shown voice (*Hi, I'm <name>…*) so it can be heard before it is picked. Saved as
     it is picked and, like the face, not a soul write: the toast says it speaks in it from its
     next line on its phone, or next time it opens. A box with no voices says the creature shows
-    its words instead. Then *Rename* (the list's name; the
+    its words instead. Then *When it's quiet* (owner, 2026-11-12): a radio list like *Face*,
+    *Explores on its own* (the default: its quiet moments invite it to go after its wants with
+    its body) or *Keeps you company* (the old quiet: it stays put, a small sound or remark at
+    most), saved as it is tapped, not a soul write; the toast says it takes effect from its next
+    quiet moment on its phone, or next time it opens. Then *Rename* (the list's name; the
     creature still calls itself by its own name until told otherwise), *Duplicate* (memories and visual memories, no checkpoints), *Export soul
     file* (its memories but not its visual memories, which stay on the box), *Import over it*
     (the file is checked first: too big or not a soul says so with *Nothing changed*; a

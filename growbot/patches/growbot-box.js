@@ -277,6 +277,15 @@
     var v = ev && ev.detail && ev.detail.voice;
     if (typeof v === "string") window.__gbBoxVoice = v;
   });
+  // Whether its quiet moments invite it to explore (apply.py QUIET_TEXT_PATCHES), read at each
+  // quiet moment, so a poll's change is the next one's. Anything but false is on.
+  if (state.status === 200 && state.json && typeof state.json.explore === "boolean") {
+    window.__gbBoxExplore = state.json.explore;
+  }
+  window.addEventListener("gb-box-state", function (ev) {
+    var x = ev && ev.detail && ev.detail.explore;
+    if (typeof x === "boolean") window.__gbBoxExplore = x;
+  });
   if (state.status === 204) {
     window.__gbBoxSoul = { g2: true };
     // A G2 session: the phone's own creature comes back if a persona had the key (or one

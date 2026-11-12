@@ -21,6 +21,7 @@ import {
   MEMORY,
   type MemoryId,
   type Places,
+  QUIET_MOODS,
   REGIONS,
   type RegionInfo,
   SAFETY_NOTE,
@@ -106,6 +107,8 @@ export function GrowbotPersonaPage({
   const [facing, setFacing] = useState<GrowbotFace | null>(null);
   // The voice being saved, shown picked while it is.
   const [voicing, setVoicing] = useState<string | null>(null);
+  // The explore setting being saved, shown picked while it is.
+  const [exploring, setExploring] = useState<boolean | null>(null);
   // The box's voices, read when Manage first opens; null until they answer.
   const [voices, setVoices] = useState<string[] | null>(null);
   const [voicesError, setVoicesError] = useState(false);
@@ -531,6 +534,26 @@ export function GrowbotPersonaPage({
   }
 
   /** Saved as it is picked, like a face: no reload, no checkpoint. */
+  async function pickExplore(explore: boolean) {
+    const was = detail?.explore ?? p.explore;
+    if (explore === was || exploring !== null) return;
+    setExploring(explore);
+    try {
+      took(await api.setGrowbotPersonaExplore(p.id, explore));
+      const how = explore ? "explores on its own" : "keeps you company";
+      say(
+        p.phone
+          ? `${p.name} ${how} from its next quiet moment ${onPhone(p.phone, pl)}.`
+          : `${p.name} ${how} when it's quiet, next time it opens.`,
+      );
+    } catch (e) {
+      say(`That didn't change — ${message(e)}`);
+    } finally {
+      setExploring(null);
+    }
+  }
+
+  /** Saved as it is picked, like a face: no reload, no checkpoint. */
   async function pickVoice(voice: string) {
     const was = detail?.voice ?? p.voice;
     if (voice === was || voicing !== null) return;
@@ -654,6 +677,27 @@ export function GrowbotPersonaPage({
           ))}
         </fieldset>
         {voicePicker()}
+        <fieldset className="gb-choices">
+          <legend>When it's quiet</legend>
+          {QUIET_MOODS.map((m) => {
+            const on = (exploring ?? detail?.explore ?? p.explore) === m.explore;
+            return (
+              <label key={m.name} className={`gb-choice${on ? " sel" : ""}`}>
+                <input
+                  type="radio"
+                  name={`gb-quiet-${p.id}`}
+                  checked={on}
+                  disabled={exploring !== null}
+                  onChange={() => void pickExplore(m.explore)}
+                />
+                <span className="gb-tx">
+                  {m.name}
+                  <em>{m.what}</em>
+                </span>
+              </label>
+            );
+          })}
+        </fieldset>
         <div className="gb-acts two first">
           <button type="button" className="gb-btn" onClick={() => setRenaming(true)}>
             Rename

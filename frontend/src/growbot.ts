@@ -487,6 +487,20 @@ export const FACES: { id: GrowbotFace; name: string; what: string }[] = [
   { id: "pixel", name: "Pixel", what: "The original pixel eyes." },
 ];
 
+/** What its quiet moments invite: exploring with its body, or keeping its person company. */
+export const QUIET_MOODS: { explore: boolean; name: string; what: string }[] = [
+  {
+    explore: true,
+    name: "Explores on its own",
+    what: "When nothing has happened for a while, it goes after its wants with its body.",
+  },
+  {
+    explore: false,
+    name: "Keeps you company",
+    what: "When it's quiet, it stays put and may make a small sound or remark.",
+  },
+];
+
 /** The creature's own memories. It writes them itself, as it goes and in its dreams; the owner
  *  may correct each one, and `up` is the soul key (and the box's region) it lives in. */
 export const MEMORY = [

@@ -119,6 +119,8 @@ class PersonaOut(BaseModel):
     voice: str
     # Its settings (growbot/prefs.py), key to value; None until its phone first sent them.
     prefs: dict[str, str] | None
+    # Whether its quiet moments invite it to explore with its body (on) or keep company.
+    explore: bool
 
 
 class MemoryOut(BaseModel):
@@ -193,6 +195,7 @@ def _persona_out(p: Persona) -> PersonaOut:
         face=p.face,
         voice=p.voice,
         prefs=p.prefs,
+        explore=p.explore,
     )
 
 
@@ -337,6 +340,7 @@ class RenameIn(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     face: Face | None = None
     voice: str | None = Field(default=None, pattern=VOICE_RE)
+    explore: bool | None = None
 
 
 class RegionIn(BaseModel):
@@ -393,11 +397,13 @@ async def persona_detail(request: Request, owner: OwnerDep, pid: Pid) -> Persona
 
 @router.patch("/personas/{pid}")
 async def rename_persona(request: Request, owner: OwnerDep, pid: Pid, body: RenameIn) -> WrittenOut:
-    """A new name (a soul write, so its phone reloads on it), a new face or voice (not soul
-    writes: the phone's poll carries them and the creature changes where it stands), or any
-    mix of them."""
-    if body.name is None and body.face is None and body.voice is None:
-        raise HTTPException(status_code=422, detail="Give it a name, a face or a voice.")
+    """A new name (a soul write, so its phone reloads on it), a new face, voice or explore
+    setting (not soul writes: the phone's poll carries them and the creature changes where it
+    stands), or any mix of them."""
+    if body.name is None and body.face is None and body.voice is None and body.explore is None:
+        raise HTTPException(
+            status_code=422, detail="Give it a name, a face, a voice or an explore setting."
+        )
     # Checked before anything is saved, so a bad name writes nothing at all.
     name = _name(body.name) if body.name is not None else None
     ctx = _owner_ctx(owner)
@@ -405,6 +411,8 @@ async def rename_persona(request: Request, owner: OwnerDep, pid: Pid, body: Rena
     if body.face is not None and not await repo.set_face(ctx, pid, body.face):
         raise HTTPException(status_code=404, detail="no such persona")
     if body.voice is not None and not await repo.set_voice(ctx, pid, body.voice):
+        raise HTTPException(status_code=404, detail="no such persona")
+    if body.explore is not None and not await repo.set_explore(ctx, pid, body.explore):
         raise HTTPException(status_code=404, detail="no such persona")
     p = await _get(request, ctx, pid)
     if name is None:
@@ -487,6 +495,7 @@ async def duplicate_persona(request: Request, owner: OwnerDep, pid: Pid) -> Pers
         memories_from=p.id,
         face=cast(Face, p.face),
         voice=p.voice,
+        explore=p.explore,
     )
     return await _detail(request, ctx, made)
 
@@ -691,6 +700,7 @@ class PulledOut(BaseModel):
     wearing: str | None
     face: str
     voice: str
+    explore: bool
 
 
 class PushedOut(BaseModel):
@@ -722,7 +732,12 @@ async def pull_soul(request: Request, body: PhoneIn) -> PulledOut:
     if isinstance(got, str):
         raise _away(got)
     return PulledOut(
-        version=got.version, soul=got.soul, wearing=got.wearing, face=got.face, voice=got.voice
+        version=got.version,
+        soul=got.soul,
+        wearing=got.wearing,
+        face=got.face,
+        voice=got.voice,
+        explore=got.explore,
     )
 
 
@@ -737,6 +752,8 @@ class StateOut(BaseModel):
     voice: str
     # Bumped by every change to its settings: the phone pulls them when it moves.
     prefs: int
+    # Whether its quiet moments invite it to explore: its next quiet moment reads it.
+    explore: bool
 
 
 @internal_router.post("/soul/state")
@@ -755,6 +772,7 @@ async def soul_state(request: Request, body: PhoneIn) -> StateOut:
         face=got.face,
         voice=got.voice,
         prefs=got.prefs,
+        explore=got.explore,
     )
 
 

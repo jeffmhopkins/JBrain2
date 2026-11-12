@@ -1117,36 +1117,31 @@ QUIET_PATCHES: list[tuple[str, str, str, int]] = [
 PATCHES += QUIET_PATCHES
 
 # What the quiet beat says, from upstream's live page (Brit, 2026-11-11 "QUIET MOMENT TEXT",
-# after GitHub's last snapshot; owner, 2026-11-12). The old text framed quiet as company kept
-# with the person, so a creature left alone sat still; the new one hands it the time to chase
-# its wants with its body. Only the words change: the beat's gates, its spacing and our 90 s
-# wait above stay, and the text rides the turn's own message, so the cached system prefix is
-# untouched. ?quiet=2 (kept per device) is upstream's bolder explore text, ?quiet=0 the old
-# words, ?quiet=1 the default again. Upstream's QUIET SETTLE (beats thin out the longer nobody
-# acts) is left out: it saves cloud credits, a local beat costs none, and it would hold back
-# exactly the exploring a creature left alone is meant to do.
-_QUIET_ARM = (
-    "var QUIET_ARM=(function(){ var _qp=null;"
-    ' try{ _qp=new URLSearchParams(location.search).get("quiet"); }catch(e){}'
-    ' if(_qp==="0"){ try{ localStorage.gb_quiet="0"; }catch(e){} return 0; }'
-    ' if(_qp==="2"){ try{ localStorage.gb_quiet="2"; }catch(e){} return 2; }'
-    ' if(_qp==="1"){ try{ localStorage.removeItem("gb_quiet"); }catch(e){} return 1; }'
-    ' try{ var _qv=localStorage.gb_quiet; return _qv==="0"?0:_qv==="2"?2:1; }catch(e){ return 1; }'
-    " })(), QUIET_ARM_TXT=QUIET_ARM===1?\"QUIET — nothing has happened for a while. This time is"
-    " yours: you may reach for one of your wants with your own body.\":QUIET_ARM===2?\"QUIET —"
-    ' nothing has happened for a while. When in doubt, go explore new spaces in the world.\":\"\";\n'
+# after GitHub's last snapshot). The old text framed quiet as company kept with the person, so
+# a creature left alone sat still; the new one hands it the time to chase its wants with its
+# body. Each persona chooses, on by default (owner, 2026-11-12: a persona setting, not
+# upstream's ?quiet URL switch, because the phone is only a display): growbot-box.js sets
+# __gbBoxExplore from the box and only false brings the old words back. Only the words change:
+# the beat's gates, its spacing and our 90 s wait above stay, and the text rides the turn's own
+# message, so the cached system prefix is untouched. Upstream's QUIET SETTLE (beats thin out
+# the longer nobody acts) is left out: it saves cloud credits, a local beat costs none, and it
+# would hold back exactly the exploring a creature left alone is meant to do.
+GB_EXPLORE_TXT = (
+    "QUIET — nothing has happened for a while. This time is yours: you may reach for one of"
+    " your wants with your own body."
 )
 QUIET_TEXT_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
-        "var JUDGE_ON=(function(){",
-        _QUIET_ARM + "var JUDGE_ON=(function(){",
+        "var GB_QUIET_AFTER_MS=90000;",
+        f'var GB_QUIET_AFTER_MS=90000;\nvar GB_EXPLORE_TXT="{GB_EXPLORE_TXT}";',
         1,
     ),
     (
         "v3/next.html",
         'think("QUIET COMPANY — you are awake together.',
-        'think(QUIET_ARM_TXT||"QUIET COMPANY — you are awake together.',
+        'think(window.__gbBoxExplore!==false?GB_EXPLORE_TXT:"QUIET COMPANY — you are awake'
+        ' together.',
         1,
     ),
 ]
