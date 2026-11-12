@@ -44,7 +44,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from jbrain.api.internal_auth import require_growbot
 from jbrain.db.session import SessionContext
-from jbrain.growbot.calls import CallLog, CallRecord, ReplyCollector, redact_images
+from jbrain.growbot import prefix
+from jbrain.growbot.calls import CallLog, CallRecord, ReplyCollector, is_cold, redact_images
+from jbrain.growbot.prefix import RESTORE_AFTER_QUIET_S
 from jbrain.llm import engine as engines
 from jbrain.llm import gpu_guard, local_catalog
 from jbrain.llm.kv_pool_guard import KvPoolBusyError
@@ -128,6 +130,62 @@ def _quietly(fn: Any, *args: Any) -> None:
         fn(*args)
     except Exception:  # noqa: BLE001 - the log never fails a turn
         log.warning("growbot-llm call log could not read the reply", exc_info=True)
+
+
+def _save_prefix(
+    request: Request,
+    model: str,
+    system: str,
+    level: str,
+    lock: asyncio.Lock | None,
+    pool_guard: Any,
+) -> None:
+    """After a cold turn, put the creature's system prefix on disk once it goes quiet
+    (`jbrain.growbot.prefix`), so the next restart does not cost a cold turn."""
+    state = request.app.state
+    saver: prefix.PrefixSaver | None = getattr(state, "growbot_prefix_saver", None)
+    if saver is None:
+        saver = state.growbot_prefix_saver = prefix.PrefixSaver()
+    gateway_url = getattr(state.settings, "local_llm_url", "") or ""
+    factory = getattr(state, "growbot_llm_client_factory", None) or httpx.AsyncClient
+    saver.schedule(
+        store=getattr(state, "kv_prefix", None),
+        model=model,
+        system=system,
+        key=f"{model}:{hashlib.sha256(system.encode()).hexdigest()}",
+        last_turn=lambda: getattr(state, "growbot_last_turn", None),
+        lock=lock,
+        pool_guard=pool_guard,
+        client_factory=lambda: factory(base_url=gateway_url.rstrip("/"), timeout=_TIMEOUT),
+        apply_level=lambda body: _apply_level(body, level, model),
+    )
+
+
+# How often the lane re-stamps the creature as talking (settings_store GROWBOT_AWAKE_S): a
+# turn a few seconds apart needs no database write each time.
+_AWAKE_RESTAMP_S: Final = 60.0
+
+
+def _mark_awake(request: Request) -> None:
+    """Tell the worker a creature is talking, so it holds its background model work."""
+    state = request.app.state
+    store = getattr(state, "settings_store", None)
+    last = getattr(state, "growbot_awake_stamped", None)
+    now = time.monotonic()
+    if store is None or (isinstance(last, float) and now - last < _AWAKE_RESTAMP_S):
+        return
+    state.growbot_awake_stamped = now
+
+    async def stamp() -> None:
+        try:
+            await store.mark_growbot_awake(_SYSTEM_OWNER)
+        except Exception:  # noqa: BLE001 - priority is a nicety; the turn never waits on it
+            log.warning("growbot-llm could not mark the creature awake", exc_info=True)
+            state.growbot_awake_stamped = None
+
+    task = asyncio.create_task(stamp())
+    _WRITES.add(task)
+    task.add_done_callback(_WRITES.discard)
 
 
 def log_call(request: Request, rec: CallRecord) -> None:
@@ -239,19 +297,25 @@ async def list_models(request: Request) -> Response:
     )
 
 
+def system_text(messages: list[Any]) -> str:
+    """The turn's system message as text, "" when it has none."""
+    first = messages[0] if messages else None
+    if not isinstance(first, dict) or first.get("role") != "system":
+        return ""
+    content = first.get("content")
+    if isinstance(content, list):
+        content = "".join(str(p.get("text") or "") for p in content if isinstance(p, dict))
+    return content if isinstance(content, str) else ""
+
+
 def system_fingerprint(messages: list[Any]) -> tuple[int, int]:
     """The system message's length and a short hash of it. The engine resumes a creature turn
     only where the system message ends, so a turn that re-read it whole either got a changed
     system text (a new hash) or lost its cache (the same hash): the log tells them apart."""
-    first = messages[0] if messages else None
-    content = first.get("content") if isinstance(first, dict) else None
-    if not isinstance(first, dict) or first.get("role") != "system":
+    text = system_text(messages)
+    if not text:
         return 0, 0
-    if isinstance(content, list):
-        content = "".join(str(p.get("text") or "") for p in content if isinstance(p, dict))
-    text = content if isinstance(content, str) else ""
-    digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-    return len(text), int(digest, 16)
+    return len(text), int(hashlib.sha256(text.encode()).hexdigest()[:8], 16)
 
 
 @router.post("/chat/completions")
@@ -326,6 +390,7 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
         image_bytes=image_bytes,
         request={**logged, "reasoning_level": level, **({"replay": True} if replay else {})},
     )
+    system = system_text(payload["messages"])
     rec.timings["system_chars"], rec.timings["system_hash"] = system_fingerprint(
         payload["messages"]
     )
@@ -346,8 +411,10 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
         guard = lock if lock is not None else contextlib.nullcontext()
         # The headers are out by now, so every refusal is written into the body as an OpenAI
         # error: the app shows a cut stream as a broken brain and retries blind.
+        previous: float | None = getattr(state, "growbot_last_turn", None)
         if not replay:
-            request.app.state.growbot_last_turn = time.monotonic()
+            state.growbot_last_turn = time.monotonic()
+            _quietly(_mark_awake, request)
         try:
             async with guard:
                 mark("lock_ms")
@@ -373,6 +440,14 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                         prompt_tokens = fit_openai_request(admitted, payload, GROWBOT_ROLE)
                 mark("admit_ms")
                 model = rec.model = str(payload["model"])
+                # After a long quiet the slot may have lost the prefix to a restart.
+                long_quiet = previous is None or time.monotonic() - previous > RESTORE_AFTER_QUIET_S
+                if (
+                    not replay
+                    and long_quiet
+                    and await prefix.restore(getattr(state, "kv_prefix", None), model, system)
+                ):
+                    mark("restore_ms")
                 # Judged on the model actually sent, after admission, as jcode's proxy does.
                 _apply_level(payload, level, model)
                 async with (
@@ -420,7 +495,9 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
             if not replay:
                 # The quiet window a replay waits for runs from the END of a turn: a cold
                 # turn can outlast it.
-                request.app.state.growbot_last_turn = time.monotonic()
+                state.growbot_last_turn = time.monotonic()
+                if rec.ok and is_cold(rec):
+                    _quietly(_save_prefix, request, rec.model, system, level, lock, pool_guard)
             log_call(request, rec)
             await client.aclose()
 

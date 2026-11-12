@@ -36,6 +36,7 @@ from jbrain.settings_store import (
     BRAIN_READ_ALOUD_KEY,
     BROWSE_LOOP_DEFAULT,
     BROWSE_LOOP_KEY,
+    GROWBOT_PRIORITY_KEY,
     IMAGE_ANALYSIS_KEY,
     LLM_KV_CONVERSATION_CACHE_DEFAULT,
     LLM_KV_PREFIX_BUDGET_GB_DEFAULT,
@@ -74,6 +75,8 @@ class SettingsOut(BaseModel):
     # default — see BRAIN_LLM_STREAM_KEY: it puts owner text on the unauthenticated
     # display, so only enable it for a localhost-bound / box-monitor-only display.
     brain_llm_stream: bool = False
+    # A talking GrowBot creature pauses the worker's background model work (GROWBOT_PRIORITY_KEY).
+    growbot_priority: bool = True
     # Read the streamed wall-display turns aloud (piper TTS on the box). OFF by
     # default — the runtime companion to brain_llm_stream (BRAIN_READ_ALOUD_KEY),
     # same localhost-bound / box-monitor-only caveat.
@@ -148,6 +151,7 @@ class SettingsPatch(BaseModel):
     owner_callsign: str | None = None
     minecraft_gamertag: str | None = None
     brain_llm_stream: bool | None = None
+    growbot_priority: bool | None = None
     brain_read_aloud: bool | None = None
     # A voice id from the live installed picker; bounded so a junk value can't bloat the
     # row. Empty/blank is rejected below rather than stored (it would read as the default).
@@ -203,6 +207,7 @@ async def _read(ctx, store: SqlSettingsStore, kv_prefix: object = None) -> Setti
         owner_callsign=await store.owner_callsign(ctx),
         minecraft_gamertag=await store.minecraft_gamertag(ctx),
         brain_llm_stream=await store.brain_llm_stream(ctx),
+        growbot_priority=await store.growbot_priority(ctx),
         brain_read_aloud=await store.brain_read_aloud(ctx),
         brain_answer_voice=await store.brain_answer_voice(ctx),
         brain_read_aloud_engine=await store.brain_read_aloud_engine(ctx),
@@ -255,6 +260,8 @@ async def update_settings(
         await store.upsert(ctx, MINECRAFT_GAMERTAG_KEY, tag)
     if body.brain_llm_stream is not None:
         await store.upsert(ctx, BRAIN_LLM_STREAM_KEY, body.brain_llm_stream)
+    if body.growbot_priority is not None:
+        await store.upsert(ctx, GROWBOT_PRIORITY_KEY, body.growbot_priority)
     if body.browse_loop is not None:
         await store.upsert(ctx, BROWSE_LOOP_KEY, body.browse_loop)
     if body.brain_read_aloud is not None:

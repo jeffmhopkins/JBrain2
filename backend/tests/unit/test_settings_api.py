@@ -56,6 +56,7 @@ def test_get_settings_defaults_to_full_analysis(
         "owner_callsign": None,
         "minecraft_gamertag": None,
         "brain_llm_stream": False,
+        "growbot_priority": True,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
@@ -84,6 +85,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "owner_callsign": None,
         "minecraft_gamertag": None,
         "brain_llm_stream": False,
+        "growbot_priority": True,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
@@ -107,6 +109,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "owner_callsign": None,
         "minecraft_gamertag": None,
         "brain_llm_stream": False,
+        "growbot_priority": True,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
@@ -130,6 +133,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "owner_callsign": None,
         "minecraft_gamertag": None,
         "brain_llm_stream": False,
+        "growbot_priority": True,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
@@ -160,6 +164,7 @@ def test_put_settings_round_trips_the_timezone(
         "owner_callsign": None,
         "minecraft_gamertag": None,
         "brain_llm_stream": False,
+        "growbot_priority": True,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
@@ -382,6 +387,7 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "owner_callsign": None,
         "minecraft_gamertag": None,
         "brain_llm_stream": False,
+        "growbot_priority": True,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
@@ -545,3 +551,15 @@ def test_the_minecraft_gamertag_is_stored_cleared_and_checked(client) -> None:
     assert (
         c.put("/api/settings", json={"minecraft_gamertag": ""}).json()["minecraft_gamertag"] is None
     )
+
+
+def test_put_settings_round_trips_growbot_priority(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # On by default: a talking creature pauses background model work until turned off.
+    assert c.get("/api/settings").json()["growbot_priority"] is True
+    resp = c.put("/api/settings", json={"growbot_priority": False})
+    assert resp.status_code == 200 and resp.json()["growbot_priority"] is False
+    assert store.values["growbot_priority"] is False
+    assert c.put("/api/settings", json={"growbot_priority": True}).json()["growbot_priority"]

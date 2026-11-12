@@ -209,6 +209,7 @@ function stubSettingsFetch(
       const body = JSON.parse(String(init?.body)) as {
         image_analysis_mode?: "full" | "ocr";
         brain_llm_stream?: boolean;
+        growbot_priority?: boolean;
         browse_loop?: "fast" | "b1";
         brain_read_aloud?: boolean;
         brain_answer_voice?: string;
@@ -362,6 +363,20 @@ describe("SettingsScreen stream-LLM-to-wall-display toggle", () => {
     );
     fireEvent.click(group.getByRole("button", { name: "On" }));
     await waitFor(() => expect(puts).toContainEqual({ brain_llm_stream: true }));
+  });
+});
+
+describe("SettingsScreen GrowBot priority toggle", () => {
+  it("defaults to On and turns off on tap (PUTs growbot_priority: false)", async () => {
+    const { puts } = stubSettingsFetch();
+    setup("Devices");
+    const group = within(screen.getByLabelText("GrowBot priority"));
+    // The stub server omits the field, as an older box would: the switch shows the default.
+    await waitFor(() =>
+      expect(group.getByRole("button", { name: "On" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    fireEvent.click(group.getByRole("button", { name: "Off" }));
+    await waitFor(() => expect(puts).toContainEqual({ growbot_priority: false }));
   });
 });
 

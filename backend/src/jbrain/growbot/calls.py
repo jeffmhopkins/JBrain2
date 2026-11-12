@@ -202,6 +202,19 @@ class ReplyCollector:
             rec.ok = False
 
 
+# Characters per token of the creature's system message, near enough to tell a turn that
+# resumed after the system message from one that re-read it (measured ~4.0 on Flash-Next).
+_CHARS_PER_TOKEN: Final = 4
+
+
+def is_cold(rec: CallRecord) -> bool:
+    """A model turn that re-read its system message instead of resuming after it."""
+    chars = rec.timings.get("system_chars")
+    if rec.cached_tokens is None or not isinstance(chars, int) or chars <= 0:
+        return False
+    return rec.cached_tokens * _CHARS_PER_TOKEN < chars // 2
+
+
 class CallLog(Protocol):
     async def record(self, ctx: SessionContext, rec: CallRecord) -> None: ...
 

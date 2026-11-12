@@ -163,6 +163,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // Stream real prompt/answer text to the on-box wall display (:8800). Off by default;
   // null until the server answers so the toggle doesn't flash the wrong state.
   const [brainStream, setBrainStream] = useState<boolean | null>(null);
+  const [growbotPriority, setGrowbotPriority] = useState<boolean | null>(null);
   const [browseLoop, setBrowseLoop] = useState<"fast" | "b1" | null>(null);
   // Read the streamed wall-display turns aloud (on-box TTS). Off by default;
   // null until the server answers. Companion to the stream toggle above.
@@ -245,6 +246,8 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         if (stale) return;
         setImageMode(s.image_analysis_mode);
         setBrainStream(s.brain_llm_stream);
+        // On unless the server says off, so an older server that omits it shows the default.
+        setGrowbotPriority(s.growbot_priority !== false);
         setBrowseLoop(s.browse_loop ?? "fast");
         applyReadAloud(s);
         setLexicon(s.pronunciation_lexicon ?? {});
@@ -264,6 +267,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         if (!stale) {
           setImageMode("full");
           setBrainStream(false);
+          setGrowbotPriority(true);
           setBrowseLoop("fast");
           setBrainReadAloud(false);
           setBrainAnswerVoice("kokoro-af_heart");
@@ -652,6 +656,11 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       setUpdateFlags((flags) => (flags === null ? flags : { ...flags, [key]: !on }));
       setUpdatesError("Couldn't save that — check the connection to the box, then try again.");
     });
+  }
+
+  function pickGrowbotPriority(on: boolean) {
+    setGrowbotPriority(on); // optimistic
+    void api.updateSettings({ growbot_priority: on }).catch(() => setGrowbotPriority(!on));
   }
 
   function pickBrainStream(on: boolean) {
@@ -1946,7 +1955,33 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               </section>
             </>
           )}
-          {category === "devices" && <DevicesSettings />}
+          {category === "devices" && (
+            <>
+              <section className="settings-card">
+                <h2 className="settings-label">GrowBot priority</h2>
+                <p className="settings-meta">
+                  while a GrowBot creature is talking, the box pauses its background model work
+                  (note analysis, scheduled jobs) so the creature answers faster. the work picks up
+                  a few minutes after the creature goes quiet. on by default.
+                </p>
+                <div className="theme-picker" aria-label="GrowBot priority">
+                  {[true, false].map((on) => (
+                    <button
+                      key={on ? "on" : "off"}
+                      type="button"
+                      aria-pressed={growbotPriority === on}
+                      className={`seg${growbotPriority === on ? " seg-on" : ""}`}
+                      disabled={growbotPriority === null}
+                      onClick={() => pickGrowbotPriority(on)}
+                    >
+                      {on ? "On" : "Off"}
+                    </button>
+                  ))}
+                </div>
+              </section>
+              <DevicesSettings />
+            </>
+          )}
           {category === "updates" && (
             <>
               <p className="settings-meta">

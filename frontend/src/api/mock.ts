@@ -1339,6 +1339,7 @@ const SETTINGS: AppSettings = {
   owner_callsign: null,
   minecraft_gamertag: null,
   brain_llm_stream: false,
+  growbot_priority: true,
   brain_read_aloud: false,
   brain_answer_voice: "kokoro-af_heart",
   // The opaque "on-box" engine marker (Kokoro on the box, native fallback).
@@ -6294,6 +6295,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
           return json({ detail: "that is not a gamertag" }, 422);
         }
         SETTINGS.minecraft_gamertag = tag || null;
+      } else if (key === "growbot_priority") {
+        if (typeof value !== "boolean") return json({ detail: "bad growbot_priority" }, 422);
+        SETTINGS.growbot_priority = value;
       } else if (key === "brain_llm_stream") {
         if (typeof value !== "boolean") return json({ detail: "bad brain_llm_stream" }, 422);
         SETTINGS.brain_llm_stream = value;

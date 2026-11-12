@@ -330,8 +330,14 @@ logged request through the lane so a layout is tried on real turns before the pa
 (1) the fixed rules the page sends every turn (gait library, picture-memory contract, the
 fixed self-description) move into the cached system message, every state-dependent sentence
 staying live under a RIGHT NOW line (apply.py `FIXED_PATCHES`; done); (2) the picture floor and frame count measured live against quality; (3) the
-system prefix saved to disk and restored after a model load, and a creature-awake mode that
-keeps the model and its slot warm and holds background model work while a creature talks;
+system prefix saved to disk and restored after a restart (`jbrain.growbot.prefix`, done: after a
+cold turn, once the creature is quiet 20 s, the lane primes its slot with the system message and
+a one-character turn and saves it through the jerv prompt cache's per-role store, so only the
+system text reaches disk; a turn after 5 minutes' quiet asks the store to restore it into the
+slot if the slot is empty), and creature priority (done: each turn stamps
+`growbot_awake_until`, and while it has not lapsed, 3 minutes after the last turn, the worker
+pauses its background model work as it does for the code-mode hold; Settings → Devices →
+*GrowBot priority* turns it off);
 (4) history made reusable. Thinking stays off.
 
 **Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
