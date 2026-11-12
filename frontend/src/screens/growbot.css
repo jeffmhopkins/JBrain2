@@ -1324,6 +1324,7 @@ details.gb-help[open] summary::after {
 .gb-pad-b:disabled,
 .gb-pad-b:disabled span,
 .gb-pad-stop:disabled {
+  opacity: 1;
   color: var(--text-3);
   background: var(--surface);
   border-color: var(--border);
@@ -1413,6 +1414,7 @@ details.gb-help[open] summary::after {
   color: var(--text);
 }
 .gb-chip:disabled {
+  opacity: 1;
   color: var(--text-3);
   background: var(--surface);
 }

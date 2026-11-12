@@ -446,7 +446,7 @@ export function GrowbotBodyControls({
     <section className="gb-card gb-ctl" aria-label={`Controls for ${name}`}>
       <div className="gb-card-head">
         <h3>Controls for {name}</h3>
-        <span className="gb-state">
+        <span className={`gb-state${state.dot === "warn" ? " gb-warn-t" : ""}`}>
           <span className={`gb-dot ${state.dot}`} aria-hidden="true" />
           {state.word}
         </span>
