@@ -136,6 +136,8 @@ MODELS_CACHE_S = 30.0
 # A creature polls its robot's calibration every few seconds; one api read serves them all.
 CAL_CACHE_S = 2.0
 CAL_PATH = "/api/box/cal"
+# Whether a persona's phone wears a robot, for its calibration polls; a hand-over shows within.
+WEARS_CACHE_S = 15.0
 # The PWA's direct leg moves (api/growbot_body.py), checked again here since they go straight
 # to the chip: a few keyframes, inside the servo's travel, none long enough to stall it.
 ACT_MAX_STEPS = 12
@@ -1070,6 +1072,9 @@ class GrowBot:
         self._root_cert_at = -math.inf
         self._models_at = -math.inf
         self._cals: dict[str, tuple[float, Any]] = {}
+        self._wears: dict[tuple[str, str, str], tuple[float, bool]] = {}
+        # Apart from the soul sync, so a slow api answering these polls never holds a soul.
+        self._cal_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-cal")
         self._act_rid = ACT_RID_BASE
         self.did = hashlib.sha256(b"growbot-on-the-box").hexdigest()[:16]
 
@@ -1545,15 +1550,36 @@ class GrowBot:
     async def cal_route(self, req: Request) -> Response:
         """`GET ?id=<code>`: the robot's calibration as the PWA saved it, which growbot-box.js
         copies into `gb_walk_cal`; `{cal: null}` when never saved, or when the api cannot say,
-        so the phone keeps what it has. Not a secret (it says how crooked two legs hang), so
-        any signed-in page may read any robot's."""
+        so the phone keeps what it has. Only the robot this phone drives: `gb_walk_cal` is one
+        key per phone, so a link naming another robot must not leave that robot's trims on it
+        (that also gets `{cal: null}`)."""
         if req.method != "GET":
             return json_response(405, {"error": "method not allowed"})
         code = req.arg("id")
         headers = [("Cache-Control", "no-store")]
         if not CODE_RE.fullmatch(code):
             return json_response(400, {"error": "id"}, headers)
+        claims = self._claims(req)
+        if claims is None or not await self._drives(claims, code):
+            return json_response(200, {"cal": None}, headers)
         return json_response(200, {"cal": await self._cal(code)}, headers)
+
+    async def _drives(self, claims: Claims, code: str) -> bool:
+        """The robot its ticket named, or the one its persona wears now (asked of the api,
+        and remembered a while, since the page asks every few seconds)."""
+        if claims.robot == code:
+            return True
+        if not claims.persona:
+            return False
+        key = (claims.persona, claims.phone, code)
+        hit = self._wears.get(key)
+        if hit is not None and time.monotonic() - hit[0] < WEARS_CACHE_S:
+            return hit[1]
+        may = await self._call(self.may_drive, claims, code, pool=self._cal_pool)
+        if len(self._wears) > 64:
+            self._wears.clear()
+        self._wears[key] = (time.monotonic(), may is True)
+        return may is True
 
     async def _cal(self, code: str) -> Any:
         now = time.monotonic()
@@ -1561,7 +1587,9 @@ class GrowBot:
         if hit is not None and now - hit[0] < CAL_CACHE_S:
             return hit[1]
         url = f"{self.config.api_url}/internal/growbot/robots/{code}/cal"
-        up = await self._call(http_call, url, None, self._auth(), pool=self._soul_pool)
+        up = await self._call(
+            http_call, url, None, self._auth(), "GET", 5.0, pool=self._cal_pool
+        )
         got = _parse(up.body) if up.status == 200 else None
         cal = got.get("cal") if got is not None else None
         cal = cal if isinstance(cal, dict) else None

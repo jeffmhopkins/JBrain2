@@ -2161,8 +2161,10 @@ def test_a_pwa_move_goes_straight_to_the_chip(run: _Running) -> None:
     steps = [{"l": 95, "r": 85, "ms": 300}]
     # No chip on the relay: nothing is sent, and the api says so to the PWA.
     assert _act(run, {"t": "act", "steps": steps}) == (200, {"sent": False})
-    chip = _chip(run)
     phone = _phone(run)
+    assert phone.message() == {"t": "status", "awake": 0}
+    chip = _chip(run)
+    # Awake once the api has verified its key: only then is it the code's chip.
     assert phone.message() == {"t": "status", "awake": 1}
     assert _act(run, {"t": "act", "steps": steps, "extra": "dropped"}) == (200, {"sent": True})
     got = chip.message()
@@ -2211,8 +2213,9 @@ def test_a_pwa_move_needs_a_real_code_and_the_token(run: _Running) -> None:
     assert run.request("POST", "/internal/robots/act", body).status == 401
 
 
-def _cal_get(run: _Running, query: str) -> tuple[int, Any]:
-    resp = run.request("GET", "/api/box/cal" + query)
+def _cal_get(run: _Running, query: str, cookie: str | None = None) -> tuple[int, Any]:
+    headers = {"Cookie": cookie} if cookie else None
+    resp = run.request("GET", "/api/box/cal" + query, headers=headers)
     data = resp.read()
     assert resp.getheader("Cache-Control") == "no-store"
     return resp.status, (json.loads(data) if data else None)
@@ -2221,13 +2224,37 @@ def _cal_get(run: _Running, query: str) -> tuple[int, Any]:
 def test_the_creature_reads_its_robots_calibration_from_the_box(run: _Running) -> None:
     _Fake.cals = {"gb-abc123": {"L_OFF": 4, "R_OFF": -3, "SWAP": 1}}
     assert _cal_get(run, "?id=gb-abc123") == (200, {"cal": {"L_OFF": 4, "R_OFF": -3, "SWAP": 1}})
-    # Never saved, or the api not answering: null, so the phone keeps its own.
-    assert _cal_get(run, "?id=gb-other") == (200, {"cal": None})
     reads = [r for r in _Fake.seen if r["path"].endswith("/cal")]
     assert reads[0]["path"] == "/internal/growbot/robots/gb-abc123/cal"
     assert reads[0]["auth"] == f"Bearer {_TOKEN}"
+
+
+def test_a_never_saved_or_unreadable_calibration_is_null(run: _Running) -> None:
+    # Null, so the phone keeps its own.
+    assert _cal_get(run, "?id=gb-abc123") == (200, {"cal": None})
+    _Fake.cals = {"gb-abc123": {"L_OFF": 4}}
     _Fake.cal_status = 503
-    assert _cal_get(run, "?id=gb-third") == (200, {"cal": None})
+    run.app._cals.clear()
+    assert _cal_get(run, "?id=gb-abc123") == (200, {"cal": None})
+
+
+def test_a_phone_reads_only_the_calibration_of_the_robot_it_drives(run: _Running) -> None:
+    # gb_walk_cal is one key per phone: a link naming another robot must not leave that
+    # robot's trims on this one, so the api is never even asked.
+    _Fake.cals = {"gb-other": {"L_OFF": 9}, "gb-worn": {"R_OFF": 2}}
+    assert _cal_get(run, "?id=gb-other") == (200, {"cal": None})
+    assert not [r for r in _Fake.seen if r["path"].endswith("/cal")]
+    # A persona's phone reads the robot its persona wears now, whatever its ticket named.
+    _Fake.riders = {"gb-worn": (_PERSONA, _PHONE)}
+    cookie = _persona_cookie(run, robot="")
+    assert _cal_get(run, "?id=gb-worn", cookie) == (200, {"cal": {"R_OFF": 2}})
+    assert _cal_get(run, "?id=gb-other", cookie) == (200, {"cal": None})
+    other_phone = _persona_cookie(run, robot="", phone="phone-" + "b" * 20)
+    assert _cal_get(run, "?id=gb-worn", other_phone) == (200, {"cal": None})
+    # Asked once a while, not at every poll.
+    for _ in range(3):
+        _cal_get(run, "?id=gb-worn", cookie)
+    assert len([r for r in _Fake.seen if r["path"] == "/internal/growbot/body/gb-worn"]) == 2
 
 
 def test_the_calibration_read_is_cached_briefly(run: _Running) -> None:

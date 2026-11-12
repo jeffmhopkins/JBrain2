@@ -1,9 +1,9 @@
-"""A GrowBot body's calibration and the PWA's direct leg moves (the Body tab's Calibrate
-section), so nothing upstream's own tester page did needs the original app.
+"""A GrowBot body's calibration and the PWA's direct leg moves (the Body tab's Legs pane), so
+nothing upstream's own tester page did needs the original app.
 
 - `router` — the owner: `GET`/`PUT /growbot/robots/{code}/cal` read and save the robot's
-  calibration (trims, left/right swap, leg and IMU signs, walk gain), and `POST
-  /growbot/robots/{code}/act` sends the chip a keyframe move, its canned wiggle, or a stop,
+  calibration (trims, left/right swap, leg and IMU signs, walk gain; a `PUT` saves the keys it
+  names, over those saved before), and `POST /growbot/robots/{code}/act` sends the chip a keyframe move, its canned wiggle, or a stop,
   through the sidecar's relay. Each move is what upstream's tester sends to check a trim or a
   leg, so a move here goes straight to the chip, past any persona riding it, as there.
 - `debug_router` — the same reads and writes through the debug token (CLAUDE.md #10).
@@ -50,8 +50,9 @@ class Cal(BaseModel):
 
 
 class CalOut(BaseModel):
+    # Unsaved keys read as the stock body's, though each phone keeps its own for them.
     cal: Cal
-    # False until the owner saves one: the robot's phones still use what they each hold.
+    # False until the owner saves a key: the robot's phones still use what they each hold.
     saved: bool
 
 
@@ -92,19 +93,36 @@ async def _read(request: Request, ctx: SessionContext, code: str) -> CalOut:
     found, stored = await _repo(request).get_cal(ctx, code)
     if not found:
         raise _no_robot()
-    if stored is None:
+    known = _known(stored or {})
+    if not known:
         return CalOut(cal=Cal(), saved=False)
     # A row written by an older shape still reads: what fits is kept, the rest is default.
-    try:
-        return CalOut(cal=Cal.model_validate(stored), saved=True)
-    except ValueError:
-        return CalOut(cal=Cal(), saved=False)
+    return CalOut(cal=Cal.model_validate(known), saved=True)
+
+
+def _known(stored: dict[str, Any]) -> dict[str, Any]:
+    """The stored keys that still read, as stored: an older shape's misfits are dropped."""
+    out: dict[str, Any] = {}
+    for key, value in stored.items():
+        if key in Cal.model_fields:
+            try:
+                Cal.model_validate({key: value})
+            except ValueError:
+                continue
+            out[key] = value
+    return out
 
 
 async def _write(request: Request, ctx: SessionContext, code: str, cal: Cal) -> CalOut:
-    if not await _repo(request).set_cal(ctx, code, cal.model_dump(mode="json")):
+    # Only the keys the PWA sent are the box's: the rest stay each phone's own, so a first
+    # change to one setting never wipes a trim a phone set in upstream's tester.
+    found, stored = await _repo(request).get_cal(ctx, code)
+    if not found:
         raise _no_robot()
-    return CalOut(cal=cal, saved=True)
+    merged = {**_known(stored or {}), **cal.model_dump(mode="json", exclude_unset=True)}
+    if not await _repo(request).set_cal(ctx, code, merged):
+        raise _no_robot()
+    return CalOut(cal=Cal.model_validate(merged), saved=True)
 
 
 def _frame(body: ActIn, swap: bool) -> dict[str, Any]:
@@ -166,7 +184,9 @@ async def debug_put_cal(request: Request, _p: DebugDep, code: Code, body: Cal) -
 
 @internal_router.get("/robots/{code}/cal")
 async def internal_cal(request: Request, code: Code) -> InternalCalOut:
-    """What the creature page copies into `gb_walk_cal`: null when never saved, so the phone
-    keeps its own."""
-    got = await _read(request, _SYSTEM_OWNER, code)
-    return InternalCalOut(cal=got.cal.model_dump(mode="json") if got.saved else None)
+    """What the creature page copies into `gb_walk_cal`, key by key: only the keys saved from
+    the PWA, so the phone keeps its own for the rest; null when none were."""
+    found, stored = await _repo(request).get_cal(_SYSTEM_OWNER, code)
+    if not found:
+        raise _no_robot()
+    return InternalCalOut(cal=_known(stored or {}) or None)

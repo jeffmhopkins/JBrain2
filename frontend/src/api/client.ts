@@ -8188,7 +8188,8 @@ export const api = {
     return (await response.json()) as GrowbotCalOut;
   },
 
-  async saveGrowbotCal(code: string, cal: GrowbotCal): Promise<GrowbotCalOut> {
+  /** Saves the keys given, over those saved before; the rest stay each phone's own. */
+  async saveGrowbotCal(code: string, cal: Partial<GrowbotCal>): Promise<GrowbotCalOut> {
     const response = await request(
       `/api/growbot/robots/${encodeURIComponent(code)}/cal`,
       jsonInit("PUT", cal),

@@ -1,9 +1,11 @@
-/** The Body tab's one controls card per robot: Move (the policies and the remote, passed in as
- *  `move`) and Legs, upstream's tester leg check (tester/motor.html) rebuilt here so nothing
- *  needs the original app: which leg is which and the swap, the by-eye trims, each leg's
- *  sweep and sign, the IMU signs and the walk gain. The calibration is saved on the box for
- *  this robot and every creature that wears it copies it in; each change also moves the legs
- *  so it can be judged by eye, as upstream's sliders do. One Stop sits under both. */
+/** The Body tab's one controls card per robot: Legs, and Move (the policies and the remote,
+ *  passed in as `move` once that pane lands; until then the card is Legs alone). Legs is
+ *  upstream's tester leg check (tester/motor.html) rebuilt here so nothing needs the original
+ *  app: which leg is which and the swap, the by-eye trims, each leg's sweep and sign, the IMU
+ *  signs and the walk gain. Each setting changed here is saved on the box for this robot and
+ *  every creature that wears it copies it in; a change also moves the legs so it can be
+ *  judged by eye, as upstream's sliders do. One Stop sits under both: the chip's stop, plus
+ *  `onStop` for a creature walking it. */
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotCal, type GrowbotRobot, type GrowbotStep, api } from "../api/client";
 import { GrowbotTabs } from "./GrowbotPersonaSheets";
@@ -54,6 +56,12 @@ export const gbMoves = {
     { l: 90, r: 90, ms: 400 },
   ],
 };
+
+const ALL_KEYS = Object.keys(GB_CAL_DEFAULTS) as (keyof GrowbotCal)[];
+
+function pick(c: GrowbotCal, keys: (keyof GrowbotCal)[]): Partial<GrowbotCal> {
+  return Object.fromEntries(keys.map((k) => [k, c[k]])) as Partial<GrowbotCal>;
+}
 
 function clampTrim(n: number): number {
   return Math.max(-TRIM_MAX, Math.min(TRIM_MAX, Math.round(n)));
@@ -111,7 +119,11 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
   const { isArmed, arm } = useArm();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pending = useRef<GrowbotCal | null>(null);
+  const dirty = useRef(new Set<keyof GrowbotCal>());
+  const chain = useRef<Promise<void>>(Promise.resolve());
   const live = robot.connected && !robot.revoked_at;
+  const liveRef = useRef(live);
+  liveRef.current = live;
 
   useEffect(() => {
     let gone = false;
@@ -132,13 +144,20 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
-      if (pending.current) void api.saveGrowbotCal(code, pending.current).catch(() => {});
+      const left = pending.current;
+      if (left) void api.saveGrowbotCal(code, pick(left, [...dirty.current])).catch(() => {});
     },
     [code],
   );
 
-  async function send(steps: GrowbotStep[], what: string) {
-    if (!live) return;
+  // Saves and moves run one after another, in the order asked: a move right after a swap
+  // is made with that swap, and the last click is the last write.
+  function queue(job: () => Promise<void>) {
+    chain.current = chain.current.then(job, job);
+  }
+
+  async function act(steps: GrowbotStep[], what: string) {
+    if (!liveRef.current) return;
     try {
       await api.growbotAct(code, { kind: "act", steps });
       setNote({ text: what });
@@ -147,43 +166,56 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
     }
   }
 
-  // Saves `next`, says `what`, and with `steps` then moves the legs so it can be judged.
-  async function save(next: GrowbotCal, what: string, steps?: GrowbotStep[]) {
-    pending.current = null;
-    try {
-      const out = await api.saveGrowbotCal(code, next);
-      setSaved(out.saved);
-    } catch (e) {
-      setNote({ text: message(e), bad: true });
-      return;
-    }
-    if (steps && live) await send(steps, what);
-    else setNote({ text: what });
+  function send(steps: GrowbotStep[], what: string) {
+    queue(() => act(steps, what));
   }
 
-  function change(next: GrowbotCal, what: string) {
+  // Saves only `keys` of `next` (the rest stays each phone's own until set here), says
+  // `what`, and with `steps` then moves the legs so it can be judged.
+  function save(next: GrowbotCal, keys: (keyof GrowbotCal)[], what: string, steps?: GrowbotStep[]) {
+    queue(async () => {
+      try {
+        const out = await api.saveGrowbotCal(code, pick(next, keys));
+        setSaved(out.saved);
+      } catch (e) {
+        setNote({ text: message(e), bad: true });
+        return;
+      }
+      if (steps && liveRef.current) await act(steps, what);
+      else setNote({ text: what });
+    });
+  }
+
+  // Takes over a slider's unsaved keys, so cancelling its timer never loses them.
+  function takePending(): (keyof GrowbotCal)[] {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
+    pending.current = null;
+    const keys = [...dirty.current];
+    dirty.current.clear();
+    return keys;
+  }
+
+  function change(next: GrowbotCal, keys: (keyof GrowbotCal)[], what: string) {
+    const held = takePending();
     setCal(next);
-    void save(next, what);
+    save(next, [...held, ...keys], what);
   }
 
   // A slider saves once the hand stops; a trim then stands the legs at it to be judged.
-  function later(next: GrowbotCal, what: string, steps?: GrowbotStep[]) {
+  function later(next: GrowbotCal, key: keyof GrowbotCal, what: string, steps?: GrowbotStep[]) {
     setCal(next);
     pending.current = next;
+    dirty.current.add(key);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      timer.current = null;
-      void save(next, what, steps);
-    }, SAVE_AFTER_MS);
+    timer.current = setTimeout(() => save(next, takePending(), what, steps), SAVE_AFTER_MS);
   }
 
   function setTrim(key: "L_OFF" | "R_OFF", n: number) {
     if (!cal) return;
     const next = { ...cal, [key]: n };
     const what = `Saved. Legs at rest, trim left ${next.L_OFF}°, right ${next.R_OFF}°.`;
-    later(next, what, gbMoves.trim(next));
+    later(next, key, what, gbMoves.trim(next));
   }
 
   if (!cal) {
@@ -199,7 +231,7 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
       <p className="gb-hint">
         {saved
           ? "Saved on the box for this robot: every phone that wears it uses it."
-          : "Not set from here yet: each phone uses what it holds until you change something."}
+          : "Not set from here yet: each phone uses what it holds. A change saves just that setting for every phone."}
       </p>
       {!live && <p className="gb-hint dim">{OFF_HINT}</p>}
 
@@ -213,7 +245,7 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
           type="button"
           className="gb-btn"
           disabled={!live}
-          onClick={() => void send(gbMoves.left(), "Moved the left leg.")}
+          onClick={() => send(gbMoves.left(), "Moved the left leg.")}
         >
           Move left leg
         </button>
@@ -221,7 +253,7 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
           type="button"
           className="gb-btn"
           disabled={!live}
-          onClick={() => void send(gbMoves.right(), "Moved the right leg.")}
+          onClick={() => send(gbMoves.right(), "Moved the right leg.")}
         >
           Move right leg
         </button>
@@ -233,6 +265,7 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
           onChange={(e) =>
             change(
               { ...cal, SWAP: e.target.checked ? 1 : 0 },
+              ["SWAP"],
               `Left/right swap ${e.target.checked ? "on" : "off"}. Test each leg again.`,
             )
           }
@@ -258,7 +291,7 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
           type="button"
           className="gb-btn"
           disabled={!live}
-          onClick={() => void send(gbMoves.sweepL(cal), "Swept the left leg forward.")}
+          onClick={() => send(gbMoves.sweepL(cal), "Swept the left leg forward.")}
         >
           Sweep left forward
         </button>
@@ -266,7 +299,7 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
           type="button"
           className="gb-btn"
           disabled={!live}
-          onClick={() => void send(gbMoves.sweepR(cal), "Swept the right leg forward.")}
+          onClick={() => send(gbMoves.sweepR(cal), "Swept the right leg forward.")}
         >
           Sweep right forward
         </button>
@@ -284,6 +317,7 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
               onClick={() =>
                 change(
                   { ...cal, [k]: cal[k] < 0 ? 1 : -1 },
+                  [k],
                   `${k === "L_SIGN" ? "Left" : "Right"} leg sign is now ${cal[k] < 0 ? "+1" : "−1"}.`,
                 )
               }
@@ -309,7 +343,7 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
                 onClick={() => {
                   const flipped = [...imu] as GrowbotCal["IMU_SIGN"];
                   flipped[i] = flippedNow ? 1 : -1;
-                  change({ ...cal, IMU_SIGN: flipped }, `IMU ${axis} sign flipped.`);
+                  change({ ...cal, IMU_SIGN: flipped }, ["IMU_SIGN"], `IMU ${axis} sign flipped.`);
                 }}
               >
                 IMU {axis} {flippedNow ? "−" : "+"}
@@ -328,7 +362,7 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
             value={Math.round(cal.gain * 100)}
             onChange={(e) => {
               const gain = Number(e.target.value) / 100;
-              later({ ...cal, gain }, `Saved. Walk gain ${gain.toFixed(2)}.`);
+              later({ ...cal, gain }, "gain", `Saved. Walk gain ${gain.toFixed(2)}.`);
             }}
           />
           <output htmlFor={`gb-gain-${code}`} className="gb-mono">
@@ -342,7 +376,7 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
         className={`gb-btn block${isArmed(`cal:${code}`) ? " armed" : ""}`}
         onClick={() => {
           if (!arm(`cal:${code}`)) return;
-          change({ ...GB_CAL_DEFAULTS }, "Calibration reset to the stock body's.");
+          change({ ...GB_CAL_DEFAULTS }, ALL_KEYS, "Calibration reset to the stock body's.");
         }}
       >
         {isArmed(`cal:${code}`) ? "Tap again to reset" : "Reset calibration"}

@@ -110,9 +110,9 @@ def test_the_owner_saves_a_calibration_and_reads_it_back(tmp_path: Path) -> None
     assert put.json() == {"cal": cal, "saved": True}
     assert body.cals[CODE] == cal
     assert client.get(f"/api/growbot/robots/{CODE}/cal").json() == {"cal": cal, "saved": True}
-    # A partial save fills the rest with the defaults, as the creature would.
+    # A save names only what changed; the rest saved before stays.
     part = client.put(f"/api/growbot/robots/{CODE}/cal", json={"R_OFF": 2}).json()
-    assert part["cal"] == {**DEFAULTS, "R_OFF": 2}
+    assert part["cal"] == {**cal, "R_OFF": 2}
     assert body.contexts[0] == SessionContext(principal_id=OWNER.id, principal_kind="owner")
 
 
@@ -145,6 +145,32 @@ def test_an_unknown_robot_is_404_and_a_bad_code_422(tmp_path: Path) -> None:
     assert client.get("/api/growbot/robots/gb-zzz/cal").status_code == 404
     assert client.put("/api/growbot/robots/gb-zzz/cal", json={}).status_code == 404
     assert client.get("/api/growbot/robots/nope/cal").status_code == 422
+
+
+def test_only_the_keys_saved_here_become_the_boxs(tmp_path: Path) -> None:
+    # A phone trimmed in upstream's tester keeps its trims when the owner first flips one
+    # setting here: the box hands the creature that one key alone.
+    body = FakeBody()
+    app, auth = _app(tmp_path, body)
+    client = TestClient(app)
+    out = client.put(f"/api/growbot/robots/{CODE}/cal", json={"IMU_SIGN": [1, 1, 1]}).json()
+    assert out == {"cal": {**DEFAULTS, "IMU_SIGN": [1, 1, 1]}, "saved": True}
+    assert body.cals[CODE] == {"IMU_SIGN": [1, 1, 1]}
+    internal = client.get(f"/internal/growbot/robots/{CODE}/cal", headers=auth).json()
+    assert internal == {"cal": {"IMU_SIGN": [1, 1, 1]}}
+    client.put(f"/api/growbot/robots/{CODE}/cal", json={"L_OFF": -3})
+    assert body.cals[CODE] == {"IMU_SIGN": [1, 1, 1], "L_OFF": -3}
+
+
+def test_a_stored_key_that_no_longer_reads_is_dropped(tmp_path: Path) -> None:
+    body = FakeBody(cals={CODE: {"L_OFF": 99, "R_OFF": 4, "old": 1}})
+    app, auth = _app(tmp_path, body)
+    client = TestClient(app)
+    got = client.get(f"/api/growbot/robots/{CODE}/cal").json()
+    assert got == {"cal": {**DEFAULTS, "R_OFF": 4}, "saved": True}
+    internal = client.get(f"/internal/growbot/robots/{CODE}/cal", headers=auth).json()
+    assert internal == {"cal": {"R_OFF": 4}}
+    assert client.get("/internal/growbot/robots/gb-zzz/cal", headers=auth).status_code == 404
 
 
 def test_a_stored_row_of_an_older_shape_reads_as_unsaved_defaults(tmp_path: Path) -> None:

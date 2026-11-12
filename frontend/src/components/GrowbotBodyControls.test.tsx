@@ -33,7 +33,7 @@ function serve(cal: GrowbotCal = GB_CAL_DEFAULTS, saved = false, actStatus = 200
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       calls.push({ method, path, body });
       if (path.endsWith("/cal") && method === "PUT") {
-        now = { cal: body as GrowbotCal, saved: true };
+        now = { cal: { ...now.cal, ...(body as Partial<GrowbotCal>) }, saved: true };
         return Response.json(now);
       }
       if (path.endsWith("/cal")) return Response.json(now);
@@ -104,7 +104,8 @@ describe("GrowbotBodyControls", () => {
     });
     vi.useRealTimers();
     await screen.findByText("Saved. Legs at rest, trim left 5°, right -1°.");
-    expect(puts(calls)).toEqual([{ ...GB_CAL_DEFAULTS, L_OFF: 5, R_OFF: -1 }]);
+    // Only what changed: the rest stays each phone's own until set here.
+    expect(puts(calls)).toEqual([{ L_OFF: 5, R_OFF: -1 }]);
     expect(acts(calls)).toEqual([{ kind: "act", steps: [{ l: 95, r: 89, ms: 300 }] }]);
     expect(screen.getByText(/Saved on the box for this robot/)).toBeTruthy();
   });
@@ -126,12 +127,7 @@ describe("GrowbotBodyControls", () => {
     await screen.findByText("Left leg sign is now +1.");
     fireEvent.click(screen.getByRole("button", { name: "IMU pitch −" }));
     await screen.findByText("IMU pitch sign flipped.");
-    expect(puts(calls).at(-1)).toEqual({
-      ...GB_CAL_DEFAULTS,
-      SWAP: 1,
-      L_SIGN: 1,
-      IMU_SIGN: [1, 1, 1],
-    });
+    expect(puts(calls)).toEqual([{ SWAP: 1 }, { L_SIGN: 1 }, { IMU_SIGN: [1, 1, 1] }]);
     fireEvent.click(screen.getByRole("button", { name: "Sweep left forward" }));
     await screen.findByText("Swept the left leg forward.");
     expect(acts(calls).at(-1)).toEqual({
@@ -143,6 +139,36 @@ describe("GrowbotBodyControls", () => {
     });
   });
 
+  it("moves a leg only after the swap tapped before it is saved", async () => {
+    const calls = serve();
+    render(<GrowbotBodyControls robot={QUORRA} />);
+    fireEvent.click(await screen.findByLabelText(/Swap left and right/));
+    fireEvent.click(screen.getByRole("button", { name: "Move left leg" }));
+    await screen.findByText("Moved the left leg.");
+    expect(calls.filter((c) => c.method !== "GET").map((c) => c.method)).toEqual(["PUT", "POST"]);
+  });
+
+  it("saves a drag that never settled when the card goes away", async () => {
+    const calls = serve();
+    const view = render(<GrowbotBodyControls robot={QUORRA} />);
+    const slider = await screen.findByRole("slider", { name: "Left trim" });
+    fireEvent.change(slider, { target: { value: "-4" } });
+    view.unmount();
+    await waitFor(() => expect(puts(calls)).toEqual([{ L_OFF: -4 }]));
+    expect(acts(calls)).toEqual([]);
+  });
+
+  it("keeps a slider's unsaved trim when another setting is changed first", async () => {
+    const calls = serve();
+    render(<GrowbotBodyControls robot={QUORRA} />);
+    fireEvent.change(await screen.findByRole("slider", { name: "Right trim" }), {
+      target: { value: "3" },
+    });
+    fireEvent.click(screen.getByLabelText(/Swap left and right/));
+    await screen.findByText("Left/right swap on. Test each leg again.");
+    expect(puts(calls)).toEqual([{ R_OFF: 3, SWAP: 1 }]);
+  });
+
   it("resets to the stock body only on a second tap", async () => {
     const calls = serve({ ...GB_CAL_DEFAULTS, L_OFF: 7, SWAP: 1 }, true);
     render(<GrowbotBodyControls robot={QUORRA} />);
@@ -151,6 +177,7 @@ describe("GrowbotBodyControls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tap again to reset" }));
     await screen.findByText("Calibration reset to the stock body's.");
     expect(puts(calls)).toEqual([GB_CAL_DEFAULTS]);
+    expect(screen.getByRole("slider", { name: "Left trim" })).toHaveProperty("value", "0");
   });
 
   it("lets a robot that is off be calibrated but not moved", async () => {

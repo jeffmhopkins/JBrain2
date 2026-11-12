@@ -847,7 +847,11 @@ async function mockGrowbot(
       return json({ cal: saved ?? MOCK_GB_CAL, saved: !!saved });
     }
     if (cal[2] === "cal" && method === "PUT") {
-      const next = { ...MOCK_GB_CAL, ...(JSON.parse(String(init?.body ?? "{}")) as GrowbotCal) };
+      const next = {
+        ...MOCK_GB_CAL,
+        ...mockGb.cals[code],
+        ...(JSON.parse(String(init?.body ?? "{}")) as Partial<GrowbotCal>),
+      };
       mockGb.cals[code] = next;
       return json({ cal: next, saved: true });
     }
