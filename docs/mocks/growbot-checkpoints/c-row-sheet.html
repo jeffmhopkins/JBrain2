@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot checkpoints — C — a row opens a sheet</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+// C: no swipe. Compact rows with the date and why under the name; a tap opens the sheet with
+// what it keeps and Restore · New persona from it · Delete. Slower, but nothing is hidden.
+G.why = "C — no swipe: two-line rows (name, date and why); tapping one opens its sheet with Restore, New persona and Delete.";
+G.list = () => {
+  const S = G.S;
+  const two = (c) => `<div class="wrap${c.auto ? " auto-row" : ""}"><div class="slide">
+      <button class="tap" style="min-height:58px" data-act="open" data-arg="${c.id}">
+        <span class="dot${c.auto ? " auto" : ""}"></span>
+        <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+          <span class="m-title">${G.esc(c.name)}</span>
+          <span class="m-meta" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${G.when(c.t)}${c.auto ? ` · ${G.esc(c.why)}` : ""}${c.vm ? ` · <span class="vm">${c.vm} vm</span>` : ""}</span>
+        </span>${G.ICON.car}</button></div></div>`;
+  return `<button class="new-row" data-act="newcp">＋ Save a checkpoint</button>
+    ${S.cps.length ? `<div class="group">${S.cps.map(two).join("")}</div>`
+      : `<div class="empty">No checkpoints yet. One is made on its own before every edit, restore and reset.</div>`}
+    <p class="hint">Tap a checkpoint to restore it, start a new persona from it, or delete it.</p>`;
+};
+G.render();
+</script>
+</body>
+</html>

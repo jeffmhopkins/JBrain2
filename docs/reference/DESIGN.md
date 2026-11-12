@@ -3323,9 +3323,10 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   one-time ticket naming the persona and, optionally, the body, re-minted every 100 s). *Copy
   code 2 as a link instead* copies the same one-time, two-minute link: that is "launch a
   persona from a link" (owner, 2026-11-10); there is no standing link.
-- **A persona's page** (tapping its row) has its name with where it is under it, its own tabs
-  (*Soul* · *Memories* · *Checkpoints* · *Manage*), and *Open <name>…* in the foot, which raises
-  the launch sheet.
+- **A persona's page** (tapping its row) has a ‹ back chevron, its name with where it is under
+  it, its own tabs (*Soul* · *Memories* · *Checkpoints* · *Manage*, the counted ones with a count
+  pill as on the Chats panel's segments), and *Open <name>…* in the foot, which raises the launch
+  sheet.
   - *Soul*: *Personality and settings — tap to edit* as rows (Personality, Expression, Name and
     description, Dreams, Thinking, Body, each with a one-line preview and ›). A row opens the
     editor sheet (a text box, or monospace for the JSON regions) with *Save*. Every save makes
@@ -3347,10 +3348,20 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     it forget that face or thing; a checkpoint made before still has it.* A checkpoint row says
     how many visual memories it keeps; a restore brings them back, and *Reset* and *Import over
     it* clear them (the checkpoint made first keeps them).
-  - *Checkpoints*: *Name it* plus *Save*, then the list, newest first (name, date, *automatic*
-    and why for the ones made before an edit, restore, reset or import), each with *Restore* (a
-    centre confirm that names the date and says the current state is saved first; its toast has
-    *Undo*) and *New persona from it*.
+  - *Checkpoints* (owner, 2026-11-12 — binding mock `docs/mocks/growbot-checkpoints/b-by-day.html`,
+    variant B "grouped by day"; rivals in that set's README): the Chats panel's look. A dashed
+    *＋ Save a checkpoint* row opens a sheet (*Name it*, *Save*). Then the checkpoints newest
+    first, grouped under *Today*, *Yesterday* or the date, each day a card of compact rows: a
+    filled steel dot for one the owner named and a hollow one for an automatic one (made before
+    an edit, restore, reset or import), the name, *N vm* when it keeps visual memories, the time
+    and ›. A row swipes left (the shared `SwipeRow`, as the Chats rows do) for **restore** (steel),
+    **new persona** (violet) and **delete** (rose, armed: *tap again*); tapping it opens its sheet
+    with the date, why, what it keeps, *Restore <name> to this*, *New persona from it* and
+    *Delete checkpoint* (armed: *Tap again — this can't be undone*), so nothing lives only
+    behind the gesture. *Restore* is the centre confirm that names the date and says the
+    current state is saved first; its toast has *Undo*. A delete makes no checkpoint, so its
+    toast (*Deleted “Day 1”.*) has none. Under the days, *Delete the N automatic ones* (danger,
+    armed: *Tap again — deletes N, keeps the named ones*) clears every automatic one at once.
   - *Manage*: *Face* first (owner, 2026-11-11): a radio list, *Lantern* (the default),
     *Ostrich*, *Robot*, *Pixel*, each with a one-line description, saved as it is tapped. It is
     not a soul write, so no checkpoint and no reload: the toast says it changes on its phone in

@@ -562,6 +562,49 @@ button.vitals:focus-visible {
   color: var(--bg);
 }
 
+/* SwipeRow (components/SwipeRow.tsx): the Chats panel's compact swipe row, for any list. The
+   list's card draws the border and the hairlines; the row is the slide and its rail. */
+.swipe-row {
+  position: relative;
+  overflow: hidden;
+}
+.swipe-row + .swipe-row {
+  border-top: 1px solid var(--border);
+}
+.swipe-rail {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  overflow: hidden;
+}
+.swipe-slide {
+  position: relative;
+  background: var(--surface);
+  transition: transform 150ms ease-out;
+}
+.swipe-tap {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 13px;
+  background: none;
+  border: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.swipe-tap > svg {
+  flex: none;
+  color: var(--text-3);
+}
+@media (prefers-reduced-motion: reduce) {
+  .swipe-slide {
+    transition: none;
+  }
+}
+
 .note-body-clamp {
   display: -webkit-box;
   -webkit-line-clamp: 3;

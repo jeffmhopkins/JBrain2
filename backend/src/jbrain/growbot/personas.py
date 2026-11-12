@@ -155,6 +155,8 @@ class PersonaRepo(Protocol):
     async def save_checkpoint(
         self, ctx: SessionContext, pid: str, name: str, auto: bool = False, why: str = ""
     ) -> Checkpoint | None: ...
+    async def delete_checkpoint(self, ctx: SessionContext, pid: str, cid: str) -> bool: ...
+    async def delete_automatic(self, ctx: SessionContext, pid: str) -> int | None: ...
     async def list_phones(self, ctx: SessionContext) -> list[Phone]: ...
     async def riders(self, ctx: SessionContext) -> list[Rider]: ...
     async def set_rider(self, ctx: SessionContext, code: str, pid: str | None) -> bool: ...
@@ -590,6 +592,46 @@ class SqlPersonaRepo:
             cp = await self._checkpoint_now(session, key, name, auto, why, freed)
         await self._sweep(freed)
         return cp
+
+    async def _drop_checkpoints(
+        self, ctx: SessionContext, pid: str, where: str, params: dict[str, Any]
+    ) -> int | None:
+        """Delete the persona's checkpoints matching `where`, sweeping the pictures only they
+        named; None when there is no such persona."""
+        if (key := _uuid(pid)) is None:
+            return None
+        freed: set[str] = set()
+        async with scoped_session(self._maker, ctx) as session:
+            # The row, then the blob lock, the order every write that frees pictures takes them.
+            held = await session.execute(
+                text("SELECT 1 FROM app.growbot_personas WHERE id = :p FOR UPDATE"), {"p": key}
+            )
+            if held.first() is None:
+                return None
+            await _lock_blobs(session)
+            gone = (
+                await session.execute(
+                    text(
+                        f"DELETE FROM app.growbot_checkpoints WHERE persona_id = :p AND {where}"
+                        " RETURNING memories"
+                    ),
+                    {"p": key, **params},
+                )
+            ).all()
+            for row in gone:
+                freed |= _kept_shas(row.memories)
+        await self._sweep(freed)
+        return len(gone)
+
+    async def delete_checkpoint(self, ctx: SessionContext, pid: str, cid: str) -> bool:
+        """Forget one checkpoint, named or automatic."""
+        if (ckey := _uuid(cid)) is None:
+            return False
+        return bool(await self._drop_checkpoints(ctx, pid, "id = :c", {"c": ckey}))
+
+    async def delete_automatic(self, ctx: SessionContext, pid: str) -> int | None:
+        """Forget every automatic checkpoint; the ones the owner named stay."""
+        return await self._drop_checkpoints(ctx, pid, "auto", {})
 
     async def list_phones(self, ctx: SessionContext) -> list[Phone]:
         async with scoped_session(self._maker, ctx) as session:

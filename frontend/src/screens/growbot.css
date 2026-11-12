@@ -495,6 +495,9 @@
 .gb-seg button {
   flex: 1;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 44px;
   border: 0;
   border-radius: 10px;
@@ -508,8 +511,23 @@
   background: var(--accent-tint);
   color: var(--text);
 }
+/* Labels never squeeze into each other: past the phone's width the row scrolls instead. */
+.gb-seg.inner {
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin-top: 4px;
+  padding: 3px;
+  gap: 2px;
+}
+/* Sized by their words, so a label and its count pill stay on one line at any text size. */
 .gb-seg.inner button {
+  flex: 1 0 auto;
+  min-width: auto;
+  padding: 0 6px;
+  white-space: nowrap;
+  min-height: 40px;
   font-size: var(--fs-secondary);
+  border-radius: 11px;
 }
 /* The brain log's window: the same control, as a pick inside a sheet. */
 .gb-seg.pick {
@@ -525,9 +543,20 @@
   outline-offset: 2px;
 }
 .gb-n {
-  margin-left: 4px;
+  margin-left: 6px;
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 7px;
+  box-sizing: border-box;
+  border-radius: var(--r-pill);
+  background: var(--surface);
   font-size: var(--fs-micro);
   color: var(--text-3);
+  text-align: center;
+}
+.gb-seg button.on .gb-n {
+  background: var(--steel-tint);
+  color: var(--steel-text);
 }
 .gb-screen > * {
   flex-shrink: 0;
@@ -827,6 +856,18 @@ details.gb-help[open] summary::after {
   gap: 12px;
   padding: 8px 16px 0;
 }
+.gb-page-back {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-left: -10px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-2);
+}
 .gb-page-ttl {
   flex: 1;
   min-width: 0;
@@ -923,36 +964,80 @@ details.gb-help[open] summary::after {
   font-size: var(--fs-secondary);
   color: var(--text-2);
 }
-.gb-inline-save {
-  display: flex;
-  gap: 8px;
-}
-.gb-inline-save input {
-  flex: 1;
-  min-width: 0;
-  min-height: 44px;
-  box-sizing: border-box;
-}
-.gb-cp {
-  border-top: 1px solid var(--border);
-  padding: 12px 14px;
-}
-.gb-cp:first-child {
-  border-top: 0;
-}
-.gb-cp-head {
+/* Checkpoints (mock growbot-checkpoints/b-by-day.html): the Chats panel's pieces — a dashed
+   new row, then a card of compact swipe rows per day. */
+.gb-new-row {
   display: flex;
   align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--steel-text);
+  font-size: var(--fs-note);
+}
+.gb-cp-day {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
-.gb-cp-head .gb-t1 {
+.gb-cp-group {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  overflow: hidden;
+}
+.gb-cp-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--steel);
+}
+.gb-cp-dot.auto {
+  background: transparent;
+  border: 1.5px solid var(--text-3);
+}
+.gb-cp-name {
   flex: 1;
   min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  font-size: var(--fs-note);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.gb-cp .gb-acts {
-  margin-top: 8px;
+.swipe-row.auto .gb-cp-name {
+  color: var(--text-2);
+}
+.gb-cp-meta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.gb-cp-meta .vm {
+  color: var(--steel-text);
+}
+.rail-restore {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.rail-seed {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+.gb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .gb-field textarea {
   display: block;

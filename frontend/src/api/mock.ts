@@ -787,6 +787,17 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
     const { soul: _s, vms: _v, ...cp } = made;
     return json(cp);
   }
+  if (rest === "checkpoints/automatic" && method === "DELETE") {
+    const before = p.cps.length;
+    p.cps = p.cps.filter((c) => !c.auto);
+    return json({ deleted: before - p.cps.length });
+  }
+  const gone = /^checkpoints\/([^/]+)$/.exec(rest)?.[1];
+  if (gone && method === "DELETE") {
+    if (!p.cps.some((c) => c.id === gone)) return json({ detail: "no such checkpoint" }, 404);
+    p.cps = p.cps.filter((c) => c.id !== gone);
+    return new Response(null, { status: 204 });
+  }
   const restore = /^checkpoints\/([^/]+)\/restore$/.exec(rest)?.[1];
   if (restore && method === "POST") {
     const cp = p.cps.find((c) => c.id === restore);

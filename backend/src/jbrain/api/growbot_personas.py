@@ -4,8 +4,8 @@ screen").
 
 - `router` — the owner (`OwnerDep`): list everything the three tabs show in one call; add a
   persona from a seed; rename, duplicate, reset, delete; edit one config region of its soul;
-  export and import a soul file; save, list and restore checkpoints; and pick who wears the
-  body (B's *Who wears Fish*, for a persona open on any phone).
+  export and import a soul file; save, list, restore and delete checkpoints; and pick who wears
+  the body (B's *Who wears Fish*, for a persona open on any phone).
 - `debug_router` — a debug token (`DebugDep`): read everything, save a checkpoint and restore
   one, so a persona can be recovered with no terminal (CLAUDE.md #10).
 - `internal_router` — the GrowBot sidecar (`growbot.token`): pull and push the soul of the
@@ -503,6 +503,28 @@ async def save_checkpoint(
 async def restore_checkpoint(request: Request, owner: OwnerDep, pid: Pid, cid: Cid) -> WrittenOut:
     """The checkpoint becomes the persona; the soul as it was is checkpointed first."""
     return await _restore(request, _owner_ctx(owner), pid, cid)
+
+
+class DeletedOut(BaseModel):
+    deleted: int
+
+
+# Before the `{cid}` route, which would otherwise take "automatic" and refuse it as no uuid.
+@router.delete("/personas/{pid}/checkpoints/automatic")
+async def delete_automatic(request: Request, owner: OwnerDep, pid: Pid) -> DeletedOut:
+    """Every automatic checkpoint at once; the named ones stay."""
+    n = await _repo(request).delete_automatic(_owner_ctx(owner), pid)
+    if n is None:
+        raise HTTPException(status_code=404, detail="no such persona")
+    return DeletedOut(deleted=n)
+
+
+@router.delete("/personas/{pid}/checkpoints/{cid}", status_code=204)
+async def delete_checkpoint(request: Request, owner: OwnerDep, pid: Pid, cid: Cid) -> Response:
+    """Gone for good: unlike every other write, nothing is checkpointed first."""
+    if not await _repo(request).delete_checkpoint(_owner_ctx(owner), pid, cid):
+        raise HTTPException(status_code=404, detail="no such checkpoint")
+    return Response(status_code=204)
 
 
 @router.get("/personas/{pid}/memories")
