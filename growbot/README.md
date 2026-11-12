@@ -380,6 +380,9 @@ so every call goes through it; `?status=off` leaves the page untouched.
 
 `CHROME_PATCHES` fit upstream's chrome to a box-run creature (owner, 2026-11-12). The bottom bar
 (brain, pause, mute and the type box) never fades: upstream hid it 9 s after the last touch.
+When the keyboard opens, Android Chrome shrinks the page to the space above it
+(`interactive-widget=resizes-content`) instead of panning it up, so the face redraws smaller and
+the status strip stays on screen; iOS ignores that key and still pans.
 The wake gate drops upstream's store card under the wake button ("adopted, i'm yours", the
 members area and a soul download, or *adopt me · $20*): the box answers `/api/device` with a
 pass, there is no store, and the soul lives on the box.
