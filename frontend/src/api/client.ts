@@ -3884,6 +3884,27 @@ export interface GrowbotRobot {
   revoked_at: string | null;
   last_seen_at: string | null;
   connected: boolean;
+  /** Its rider's creature page is open and takes the Body tab's moves (absent: an older box). */
+  creature?: boolean;
+}
+
+/** What the Body tab can ask the creature wearing a robot to do: walks and spins run the
+ *  creature's own policies on its phone's motion sensors, gestures are its named keyframes. */
+export type GrowbotMove =
+  | "forward"
+  | "back"
+  | "spin_left"
+  | "spin_right"
+  | "wiggle"
+  | "bow"
+  | "sway"
+  | "stop";
+
+/** The creature's answer: whether it started the move, and if not, why in its own words. */
+export interface GrowbotMoveResult {
+  ok: boolean;
+  state: string;
+  why: string;
 }
 
 export interface GrowbotStatus {
@@ -8150,6 +8171,16 @@ export const api = {
       method: "POST",
     });
     return (await response.json()) as GrowbotRobot;
+  },
+
+  /** One move for the creature wearing `code`; `secs` (1-15, 0 for its own pick) for a walk
+   *  or spin. Refused with words when nobody drives it or its page is not on screen. */
+  async moveGrowbotRobot(code: string, move: GrowbotMove, secs = 0): Promise<GrowbotMoveResult> {
+    const response = await request(
+      `/api/growbot/robots/${encodeURIComponent(code)}/move`,
+      jsonInit("POST", { move, secs }),
+    );
+    return (await response.json()) as GrowbotMoveResult;
   },
 
   /** Ends every phone's GrowBot session (a lost phone, say); each opens again from here. */

@@ -885,13 +885,13 @@ async def _revoke(request: Request, ctx: SessionContext, code: str) -> growbot.R
     if info is None:
         raise HTTPException(status_code=404, detail="There is no robot with that code on this box.")
     await growbot.drop_robot(request, code)
-    return growbot.robot_out(info, set())
+    return growbot.robot_out(info, {})
 
 
 async def _status(request: Request, settings: Settings, ctx: SessionContext) -> StatusOut:
     robots = await growbot._repo(request).list_robots(ctx)
     connected = await growbot.relay_robots(request)
-    rows = [growbot.robot_out(r, connected or set()) for r in robots]
+    rows = [growbot.robot_out(r, connected or {}) for r in robots]
     return StatusOut(
         service="down" if connected is None else "up",
         connected=sum(1 for r in rows if r.connected),

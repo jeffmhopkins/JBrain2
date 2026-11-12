@@ -3289,8 +3289,16 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   radio list: *Nobody* (*Fish stands still.*), then every persona with where it is. Picking a
   persona open on a phone hands it the legs there; picking one that is not open opens it on
   this phone wearing Fish (through the first-time note when it applies). *The one it leaves
-  carries on alone on its phone.* Last, *Add a robot* (secondary). With no robot yet, the tab is
-  *Add a robot*.
+  carries on alone on its phone.* Then **Move <name>**, the robot's remote (owner,
+  2026-11-12), laid out like upstream's Policy Remote: a segmented policy pick (*Forward*,
+  *Backward*, *Spin ↻*, *Spin ↺*), *Seconds* (1-15, 5 by default) beside the primary *Walk
+  forward 5 s* (its label names the pick and the time), a row of gestures (*Wiggle*, *Bow*,
+  *Sway*), and a rose *Stop*. Under them, what the creature said: *Walking forward for 5 s.*, or
+  its own words for why not, in rose. The walk runs on the rider phone's motion sensors, so
+  every button is disabled, with the reason in words above them, until the robot is on (*Turn
+  the robot on to move it.*) and a creature wearing it is open on screen (*Open a persona
+  wearing it and keep the creature on screen. Its phone's motion sensors run the walk.*). Last,
+  *Add a robot* (secondary). With no robot yet, the tab is *Add a robot*.
 - **Phones.** One row per phone that has opened GrowBot (a phone outline, its name, what it
   holds: *Captain Bolt · wearing Fish*, *Sprout · alone*, *nothing open*), with a violet *Fish*
   tag on the one wearing the body. *A phone holds one persona at a time, and a persona is open on

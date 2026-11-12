@@ -2101,6 +2101,136 @@ def test_the_creature_page_on_the_side_channel_is_no_robot(run: _Running) -> Non
     page.shut()
 
 
+def test_the_robot_list_says_whether_its_creature_listens(run: _Running) -> None:
+    phone = _phone(run)
+    assert phone.message() == {"t": "status", "awake": 0}
+    chip = _chip(run)
+    assert phone.message() == {"t": "status", "awake": 1}
+    status, body = _internal(run, "GET", "/internal/robots")
+    assert status == 200 and body["robots"][0]["creature"] is False
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    status, body = _internal(run, "GET", "/internal/robots")
+    assert [(r["code"], r["creature"]) for r in body["robots"]] == [("gb-abc123", True)]
+    page.shut()
+    chip.shut()
+    phone.shut()
+
+
+def _move(run: _Running, body: object) -> tuple[int, Any]:
+    return _internal(run, "POST", "/internal/robots/move", json.dumps(body).encode())
+
+
+def _answering(page: _Ws, reply: dict[str, Any]) -> threading.Thread:
+    """The creature page: takes one box_move and answers it with `reply` under its rid."""
+
+    def answer() -> None:
+        msg = page.message()
+        assert msg["t"] == "box_move"
+        page.text({"t": "box_ack", "rid": msg["rid"], **reply})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    return t
+
+
+def test_a_move_reaches_the_creature_and_brings_back_its_answer(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    seen: list[dict[str, Any]] = []
+
+    def answer() -> None:
+        msg = page.message()
+        seen.append(msg)
+        page.text({"t": "box_ack", "rid": msg["rid"], "ok": True, "state": "started"})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    got = _move(run, {"code": "gb-abc123", "move": "forward", "secs": 4})
+    t.join(5)
+    assert got == (200, {"ok": True, "state": "started", "why": ""})
+    assert seen[0]["move"] == "forward" and seen[0]["secs"] == 4
+    assert isinstance(seen[0]["rid"], str) and seen[0]["rid"]
+    page.shut()
+
+
+def test_a_refused_move_carries_the_creatures_words(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    why = "no orientation readings from this phone" + "!" * 300
+    t = _answering(page, {"ok": "yes", "state": "blocked", "why": why})
+    status, body = _move(run, {"code": "gb-abc123", "move": "spin_left"})
+    t.join(5)
+    # Only a literal true is ok, and its words are capped.
+    assert status == 200 and body["ok"] is False and body["state"] == "blocked"
+    assert body["why"].startswith("no orientation") and len(body["why"]) == 220
+    page.shut()
+
+
+def test_a_move_with_no_creature_listening_is_409(run: _Running) -> None:
+    chip = _chip(run)
+    assert _move(run, {"code": "gb-abc123", "move": "stop"}) == (409, {"error": "no_creature"})
+    chip.shut()
+
+
+def test_a_creature_that_never_answers_is_504(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "MOVE_ACK_S", 0.3)
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    assert _move(run, {"code": "gb-abc123", "move": "wiggle"}) == (504, {"error": "no_answer"})
+    assert page.message()["t"] == "box_move"
+    page.shut()
+
+
+def test_a_late_ack_after_the_wait_reaches_no_one(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "MOVE_ACK_S", 0.3)
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    agent = _phone(run, "/d/gb-abc123-agent")
+    agent.text({"t": "attach"})
+    assert agent.message() == {"t": "status", "awake": 1}
+    assert page.message() == {"t": "attach"}
+    assert _move(run, {"code": "gb-abc123", "move": "bow"})[0] == 504
+    msg = page.message()
+    page.text({"t": "box_ack", "rid": msg["rid"], "ok": True})
+    # With nothing waiting it is the page's frame like any other, bridged to its agents.
+    assert agent.message()["t"] == "box_ack"
+    agent.shut()
+    page.shut()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"code": "../x", "move": "stop"},
+        {"move": "stop"},
+        {"code": "gb-abc123", "move": "dance"},
+        {"code": "gb-abc123", "move": 3},
+        {"code": "gb-abc123", "move": "forward", "secs": 0.5},
+        {"code": "gb-abc123", "move": "forward", "secs": 16},
+        {"code": "gb-abc123", "move": "forward", "secs": True},
+        {"code": "gb-abc123", "move": "forward", "secs": "4"},
+        [],
+    ],
+)
+def test_a_bad_move_is_400(run: _Running, body: object) -> None:
+    assert _move(run, body)[0] == 400
+
+
+def test_a_move_is_post_only_and_needs_the_token(run: _Running) -> None:
+    assert _internal(run, "GET", "/internal/robots/move")[0] == 405
+    body = b'{"code":"gb-abc123","move":"stop"}'
+    assert _internal(run, "POST", "/internal/robots/move", body, token="wrong")[0] == 401
+
+
 def test_dropping_a_robot_closes_its_socket(run: _Running) -> None:
     phone = _phone(run)
     assert phone.message() == {"t": "status", "awake": 0}
@@ -2716,3 +2846,7 @@ def test_a_memory_bigger_than_three_views_is_refused_before_its_upload(
     assert out.startswith(b"HTTP/1.1 413"), out[:80]
     req = gb.Request("POST", "/api/box/memories", "/api/box/memories", {}, "HTTP/1.1", [])
     assert gb.body_limit(req) == gb.MAX_MEMORY_BODY >= 3 * 800_000
+
+
+def test_a_deeply_nested_frame_is_no_message(gb: types.ModuleType) -> None:
+    assert gb._parse(b"[" * 100_000 + b"]" * 100_000) is None

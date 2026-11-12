@@ -416,7 +416,12 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
     Fish*, the hand-over banners, *On another phone* with a persona and the body, and the
     persona page with its tabs (soul and editor, checkpoints, manage). "This phone" is learned
     from a launch here that lands (the creature's phone id is another origin's), and the
-    launcher tile says who wears the body.
+    launcher tile says who wears the body. Since 2026-11-12 the Body tab also moves the robot
+    (owner: *"if the body is turned on … call the policies directly to have it try and do
+    movements from my pwa commands"*): a remote laid out like upstream's Policy Remote
+    (`tester/policy.html`) sends each move to the creature on the rider's phone over the
+    side channel, since the policies run on that phone's motion sensors (README "Moves from
+    JBrain").
   - **G4d — visual memories.** ✅ Migration 0258 (`growbot_memories`, owner-only under RLS
     with its isolation test); the pictures in the blob store's own `growbot-memories`
     namespace, deleted only once no memory or checkpoint names them. The phone syncs record by

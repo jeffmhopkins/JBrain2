@@ -191,6 +191,7 @@ const mockGb = {
       revoked_at: null,
       last_seen_at: new Date(Date.now() - 20_000).toISOString(),
       connected: true,
+      creature: true,
     },
     {
       code: "gb-91d0e4",
@@ -806,7 +807,10 @@ async function mockGrowbot(
   if (personas) return personas;
   const up = mockGbServiceUp();
   const robots = () =>
-    mockGb.robots.map((r) => ({ ...r, connected: up && r.connected && !r.revoked_at }));
+    mockGb.robots.map((r) => {
+      const on = up && r.connected && !r.revoked_at;
+      return { ...r, connected: on, creature: on && !!r.creature };
+    });
   if (path === "/api/growbot/status" && method === "GET") {
     const list = robots();
     return json({
@@ -823,6 +827,21 @@ async function mockGrowbot(
     r.revoked_at = new Date().toISOString();
     r.connected = false;
     return json({ ...r });
+  }
+  const move = /^\/api\/growbot\/robots\/([^/]+)\/move$/.exec(path);
+  if (move && method === "POST") {
+    const r = robots().find((x) => x.code === decodeURIComponent(move[1] ?? ""));
+    if (!r || r.revoked_at) return json({ detail: "no such robot" }, 404);
+    if (!r.creature) {
+      return json(
+        {
+          detail:
+            "Nobody is driving it: open a persona wearing it, and keep the creature on screen.",
+        },
+        409,
+      );
+    }
+    return json({ ok: true, state: "started", why: "" });
   }
   if (path === "/api/growbot/sessions/reset" && method === "POST") {
     return new Response(null, { status: 204 });

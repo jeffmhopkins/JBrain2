@@ -132,6 +132,15 @@ OPENING_MAX = 16
 BACKOFF_LIMIT = 8
 BACKOFF_WINDOW_S = 300.0
 MAX_PEERS_PER_CHANNEL = 8
+# What the PWA's Body tab may ask the creature on the robot to do, and for how long a walk or
+# spin runs. The creature runs its own policies with its phone's IMU (growbot-box.js).
+MOVES = frozenset(
+    {"forward", "back", "spin_left", "spin_right", "wiggle", "bow", "sway", "stop"}
+)
+MOVE_SECS = (1.0, 15.0)
+# A creature answers at once (it acks what it started, not what it finished); one that has not
+# by then is busy or gone, and the api's own call to here is 5 s.
+MOVE_ACK_S = 3.0
 MODELS_CACHE_S = 30.0
 # How often a phone on the relay is asked again whether its persona still wears the body.
 RIDER_RECHECK_S = 10.0
@@ -924,6 +933,8 @@ class Channel:
     peers: set[WebSocket] = field(default_factory=set)
     # When the chip now on it was admitted (wall clock), for the api's robot list.
     body_since: float = 0.0
+    # The PWA's moves sent to the creature on a side channel, awaiting its box_ack, by rid.
+    acks: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
 
     def status(self) -> dict[str, object]:
         return {"t": "status", "awake": 1 if self.body is not None else 0}
@@ -936,7 +947,8 @@ class Channel:
 def _parse(data: bytes) -> dict[str, Any] | None:
     try:
         msg = json.loads(data)
-    except ValueError:
+    except (ValueError, RecursionError):
+        # Deep nesting under the frame cap would otherwise escape the socket's task.
         return None
     return msg if isinstance(msg, dict) else None
 
@@ -1213,6 +1225,7 @@ class GrowBot:
                     "since": time.strftime(
                         "%Y-%m-%dT%H:%M:%SZ", time.gmtime(chan.body_since)
                     ),
+                    "creature": self._creature(chan.name) is not None,
                 }
                 for chan in sorted(self.channels.values(), key=lambda c: c.name)
                 if chan.body is not None and not chan.name.endswith("-agent")
@@ -1230,6 +1243,58 @@ class GrowBot:
                 chan.body.close(1008, "revoked")
             return json_response(200, {"dropped": dropped})
         return json_response(404, {"error": "no such route"})
+
+    def _creature(self, code: str) -> WebSocket | None:
+        """The creature page on `code`'s side channel: the rider's phone, which runs the
+        walk and spin policies on its own IMU, so only it can take a move."""
+        chan = self.channels.get(f"{code}-agent")
+        return chan.body if chan is not None else None
+
+    async def move(self, req: Request) -> Response:
+        """The PWA's Body tab: one move for the creature wearing `code`, answered with what the
+        creature said it did (`ok`, its move `state`, and `why` in its own words)."""
+        if not self._internal_ok(req):
+            return json_response(401, {"error": "unauthorized"})
+        if req.method != "POST":
+            return json_response(405, {"error": "post only"})
+        msg = _parse(req.body)
+        code = msg.get("code") if msg else None
+        what = msg.get("move") if msg else None
+        secs = msg.get("secs", 0) if msg else None
+        if not isinstance(code, str) or not CODE_RE.fullmatch(code):
+            return json_response(400, {"error": "code"})
+        if not isinstance(what, str) or what not in MOVES:
+            return json_response(400, {"error": "move"})
+        if (
+            isinstance(secs, bool)
+            or not isinstance(secs, int | float)
+            or not (secs == 0 or MOVE_SECS[0] <= secs <= MOVE_SECS[1])
+        ):
+            return json_response(400, {"error": "secs"})
+        chan = self.channels.get(f"{code}-agent")
+        creature = chan.body if chan is not None else None
+        if chan is None or creature is None:
+            return json_response(409, {"error": "no_creature"})
+        rid = secrets.token_hex(8)
+        waiter: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        chan.acks[rid] = waiter
+        try:
+            creature.send_json({"t": "box_move", "rid": rid, "move": what, "secs": secs})
+            ack = await asyncio.wait_for(waiter, MOVE_ACK_S)
+        except TimeoutError:
+            return json_response(504, {"error": "no_answer"})
+        finally:
+            chan.acks.pop(rid, None)
+        state = ack.get("state")
+        why = ack.get("why")
+        return json_response(
+            200,
+            {
+                "ok": ack.get("ok") is True,
+                "state": state[:40] if isinstance(state, str) else "",
+                "why": why[:220] if isinstance(why, str) else "",
+            },
+        )
 
     def _same_origin(self, req: Request) -> bool:
         """A request a browser sent from another origin (the PWA on :443 is same-site, so
@@ -1289,6 +1354,8 @@ class GrowBot:
             return self.start_page(req)
         if req.path == ROOT_CERT_PATH:
             return await self.root_cert_route(req)
+        if req.path == "/internal/robots/move":
+            return await self.move(req)
         if req.path.startswith("/internal/"):
             return self.internal(req)
         if req.path in PUBLIC_PATHS and req.method in ("GET", "HEAD"):
@@ -2072,7 +2139,14 @@ class GrowBot:
                 kind, data = await ws.recv()
                 if kind != 0x1:
                     continue
-                msg = _parse(data) if chip else None
+                msg = _parse(data) if chip or chan.acks else None
+                if not chip:
+                    if msg is not None and msg.get("t") == "box_ack":
+                        waiter = chan.acks.pop(str(msg.get("rid")), None)
+                        if waiter is not None and not waiter.done():
+                            waiter.set_result(msg)
+                        continue
+                    msg = None
                 if msg is not None and msg.get("t") == "hb":
                     ws.send_text('{"t":"hb_ack"}')
                 elif msg is not None and msg.get("t") == "hello":
