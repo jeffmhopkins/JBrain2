@@ -16,8 +16,8 @@ import {
   api,
 } from "../api/client";
 import { GrowbotAddSheet } from "../components/GrowbotAddSheet";
-import { GrowbotBrainLogSheet } from "../components/GrowbotBrainLogSheet";
 import { GrowbotBodyControls } from "../components/GrowbotBodyControls";
+import { GrowbotBrainLogSheet } from "../components/GrowbotBrainLogSheet";
 import { GrowbotFail, GrowbotLog, GrowbotPhases } from "../components/GrowbotJob";
 import { GrowbotMovePanel, stopCreature } from "../components/GrowbotMovePanel";
 import { GrowbotPersonaPage } from "../components/GrowbotPersonaPage";
