@@ -448,10 +448,11 @@
   if (location.pathname !== "/v3/next.html") return;
   var PATH = "/api/box/prefs", META = "gb_box_prefs", OWN = "gb_phone_prefs";
   var SEND_AFTER_MS = 1500, CHECK_MS = 2000, RETRY_MS = 15000;
+  // Never a secret: pb2_voicetest holds a fish.audio key and gb_travel_cards_v1 a robot's
+  // Wi-Fi password, and the box shows a persona's settings to a debug token.
   var KEYS = {
     gb_eye: 1, gb_face_color: 1, gb_face_dir: 1, gb_next_games3: 1, gb_vol: 1, pb2_voice: 1,
-    pb2_voicetest: 1, gb_low_power: 1, gb_travel_cards_v1: 1, gb_travel_fw_v1: 1,
-    gb_next_log: 1, pb2_journal: 1, gb_nx_sid: 1, gb_getup: 1, gb_ftdial: 1, gb_ftdial_set: 1,
+    gb_low_power: 1, gb_next_log: 1, pb2_journal: 1, gb_nx_sid: 1, gb_getup: 1, gb_ftdial: 1, gb_ftdial_set: 1,
     gb_fishwa: 1, gb_asfix: 1, gb_judge0: 1, gb_bodysnd: 1, gb_listen: 1, gb_stt: 1,
     gb_rest: 1, gb_legslew: 1
   };
@@ -539,6 +540,8 @@
     if (Object.keys(mine).length && !ownSaved()) { try { realSet.call(store, OWN, JSON.stringify(mine)); } catch (e) {} }
   }
   var pulled = sync("GET");
+  // A cookie that moved to another persona under this tab: nothing of it is taken.
+  if (pulled.json && pulled.json.persona !== persona) pulled = { status: 0, json: null };
   if (pulled.status === 200 && pulled.json) {
     var box = pulled.json.prefs;
     version = typeof pulled.json.version === "number" ? pulled.json.version : -1;
@@ -548,7 +551,7 @@
       var got = pending ? sync("POST", body(pending)) : { status: 200, json: { version: version } };
       if (got.status === 200 && got.json) version = got.json.version;
       var after = sync("GET");
-      if (after.status === 200 && after.json && after.json.prefs) { box = after.json.prefs; version = after.json.version; }
+      if (after.status === 200 && after.json && after.json.prefs && after.json.persona === persona) { box = after.json.prefs; version = after.json.version; }
     }
     if (box && typeof box === "object") {
       become(box);
@@ -625,6 +628,7 @@
   function pullOwner() {
     fetch(PATH, { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
       if (!j || !j.prefs || typeof j.prefs !== "object" || held) return;
+      if (j.persona !== persona) { held = true; return; }
       var mineNow = snap(), mineP = patchOf(sent, mineNow) || { set: {}, drop: [] };
       var want = {}, changed = {}, any = false;
       Object.keys(j.prefs).forEach(function (k) { if (ours(k) && typeof j.prefs[k] === "string") want[k] = j.prefs[k]; });

@@ -354,11 +354,13 @@ class SqlPersonaRepo:
                     ),
                     {"p": pid, "src": src},
                 )
-                # A duplicate is the same creature, so it keeps the same settings.
+                # A duplicate is the same creature, so it keeps the same settings, but not
+                # the diary id: two creatures writing one diary would muddle both.
                 await session.execute(
                     text(
                         "UPDATE app.growbot_personas SET prefs ="
-                        " (SELECT prefs FROM app.growbot_personas WHERE id = :src) WHERE id = :p"
+                        " (SELECT prefs - 'gb_nx_sid' FROM app.growbot_personas WHERE id = :src)"
+                        " WHERE id = :p"
                     ),
                     {"p": pid, "src": src},
                 )

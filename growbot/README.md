@@ -341,13 +341,15 @@ the poll carry it, `growbot-box.js` hands it to `growbot-face.js` before the fac
 The phone is only a display (owner, 2026-11-12). What upstream keeps outside the soul, each in a
 localStorage key of its own, is the persona's too when it is the creature's: its coat colour,
 its games guide, volume and speech speed, which camera it looks through (`gb_eye`), low power,
-visual memory on or off, *keep tracking me* per robot, the travel cards, whether it keeps a
-brain log and its diary id, and every remembered `?flag` (`getup`, `ftdial`, `fishwa`, `asfix`,
+visual memory on or off, *keep tracking me* per robot, whether it keeps a brain log and its
+diary id, and every remembered `?flag` (`getup`, `ftdial`, `fishwa`, `asfix`,
 `judge0`, `bodysnd`, `listen`, `stt`, `rest`, `legslew`). The list is `KEYS` and `PREFIXES` in
 `growbot-box.js`; the box keeps them in `growbot_personas.prefs` and bounds only their shape
-(64 keys, 16 KB each, 64 KB in all). What stays on the phone is about the phone: its tilt
-calibration (`gb_up_vec`), the consent it gave, upstream's tokens and keys, the open tab, the
-sync's own bookkeeping, and the diary's rolling window (its rows are on the box already).
+(64 keys, 16 KB each, 64 KB in all). What stays on the phone is about the phone, or a secret: its tilt
+calibration (`gb_up_vec`), the consent it gave, upstream's tokens and keys (a fish.audio key in
+`pb2_voicetest` among them), robots' Wi-Fi passwords (`gb_travel_cards_v1`), the open tab, the
+sync's own bookkeeping, and the diary's rolling window (its rows are on the box already). A
+duplicate copies the settings but not the diary id, so the two keep separate diaries.
 
 | Route | Answer |
 | --- | --- |

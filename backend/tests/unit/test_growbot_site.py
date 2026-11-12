@@ -779,7 +779,9 @@ const window = {
 };
 function answer(method, body) {
   calls.push({ method, body: body ? JSON.parse(body) : null });
-  return box(method, body ? JSON.parse(body) : null);
+  const [s, j] = box(method, body ? JSON.parse(body) : null);
+  // The sidecar names the session's persona on every answer.
+  return [s, j && typeof j === "object" && !("persona" in j) ? { ...j, persona: SOUL.persona } : j];
 }
 class XMLHttpRequest {
   open(m, p) { this.m = m; }
@@ -948,3 +950,31 @@ def test_a_box_that_does_not_answer_never_overwrites_a_persona() -> None:
     )
     assert [c["method"] for c in got["calls"]] == ["GET"]
     assert json.loads(got["local"]["gb_box_prefs"])["persona"] == "p0"
+
+
+def test_settings_answered_for_another_persona_are_never_taken() -> None:
+    got = _prefs_in_node(
+        {"gb_vol": "0.3"},
+        {"persona": "p1"},
+        "return method === 'GET' ? [200, {version: 3, persona: 'p2', prefs: {gb_vol: '0.9'}}]"
+        " : [200, {version: 4}];",
+        'store.setItem("gb_vol", "0.4"); await settle();'
+        " console.log(JSON.stringify({calls, local: local()}));",
+    )
+    assert got["local"]["gb_vol"] == "0.4"
+    assert [c["method"] for c in got["calls"]] == ["GET"]
+
+
+def test_secrets_never_leave_the_phone_as_settings() -> None:
+    got = _prefs_in_node(
+        {
+            "pb2_voicetest": json.dumps({"fish": {"key": "sk-fish"}}),
+            "gb_travel_cards_v1": json.dumps([{"ssid": "x", "setup_key": "pw"}]),
+            "pb_byok": "sk-or-x",
+            "gb_vol": "0.3",
+        },
+        {"persona": "p1"},
+        'return method === "GET" ? [200, {version: 0, prefs: null}] : [200, {version: 1}];',
+        "console.log(JSON.stringify({calls}));",
+    )
+    assert got["calls"][1]["body"]["set"] == {"gb_vol": "0.3"}

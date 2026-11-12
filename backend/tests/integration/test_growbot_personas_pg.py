@@ -783,7 +783,7 @@ async def test_a_phone_keeps_its_personas_settings_and_the_owner_edits_them(
     repo, sprout, _ = await _world(maker)
     # Nothing yet: the first phone sends its own.
     assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A) == (0, None)
-    seed = prefs.patch_from({"gb_vol": "0.5", "gb_eye": "environment"}, [])
+    seed = prefs.patch_from({"gb_vol": "0.5", "gb_eye": "environment", "gb_nx_sid": "nx-a1"}, [])
     assert await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, seed) == 1
     # The owner's edit and the creature's change to another key both land.
     assert await repo.patch_prefs(OWNER, sprout, prefs.patch_from(None, ["gb_eye"])) == 2
@@ -791,7 +791,7 @@ async def test_a_phone_keeps_its_personas_settings_and_the_owner_edits_them(
     assert await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, mine) == 3
     assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A) == (
         3,
-        {"gb_vol": "0.5", "gb_face_color": "#ffffff"},
+        {"gb_vol": "0.5", "gb_face_color": "#ffffff", "gb_nx_sid": "nx-a1"},
     )
     pulled = await repo.pull(SYSTEM_OWNER, sprout, PHONE_A, with_soul=False)
     assert isinstance(pulled, Pulled) and pulled.prefs == 3 and pulled.version == 1
@@ -809,7 +809,7 @@ async def test_a_phone_keeps_its_personas_settings_and_the_owner_edits_them(
         await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, big)
     got = await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A)
     assert isinstance(got, tuple) and got[0] == 3
-    # A duplicate is the same creature, settings and all.
+    # A duplicate is the same creature, settings and all, but keeps a diary of its own.
     made = await repo.create(OWNER, "Copy", souls.fresh("Copy"), "copy", memories_from=sprout)
     assert made.prefs == {"gb_vol": "0.5", "gb_face_color": "#ffffff"}
 
