@@ -69,11 +69,14 @@
     return true;
   }
   /* GrowBot's seven emotions on the panels' Cozmo-style lid geometry (frontend/src/pet/face.ts
-     SPECS): uy/ly are lid cover 0-1, ua the upper lid's tilt, lb the cheek-raise bend. */
+     SPECS): uy/ly are lid cover 0-1, ua the upper lid's tilt, lb the cheek-raise bend. Curious
+     is symmetric here, unlike the panels': it is the creature's resting emotion (upstream starts
+     on it and falls back to it), and lopsided lids at rest read as one scrunched eye (owner,
+     2026-11-12). */
   function e(uy, ua, ly, lb, sx, sy) { return { uy: uy, ua: ua, ly: ly, lb: lb, sx: sx, sy: sy }; }
   var LIDS = {
     calm: { l: e(0.12, 0, 0.14, 0.18, 1, 1), tilt: 0, mouth: "small", crest: 0 },
-    curious: { l: e(0.3, -10, 0.2, 0.2, 1, 1), r: e(0.05, 12, 0, 0, 1.08, 1.08), tilt: -7, mouth: "small", crest: 0.5 },
+    curious: { l: e(0, 0, 0.06, 0.1, 1.02, 1.02), tilt: 0, mouth: "small", crest: 0.5 },
     happy: { l: e(0, 0, 0.4, 0.4, 1, 1), tilt: 0, mouth: "smile", crest: 0.6 },
     alert: { l: e(0, 0, 0, 0, 1.1, 1.15), tilt: 0, mouth: "o", crest: 1 },
     scared: { l: e(0, 26, 0.35, 0.1, 1.2, 1.3), tilt: 0, mouth: "o", crest: 1 },
@@ -90,6 +93,7 @@
   /* Easing lives here, not in upstream's P: P carries only eye and smile, and its numbers feed
      other code, so the shapes this file adds are eased beside it rather than written into it. */
   var cur = null, lastEmo = "", talk = 0, startle = 0, blush = 0, lastTouch = 0;
+  var pup = { x: 0, y: 0 }, gaze = { x: 0, y: 0 }, lastT = 0;
 
   function shade(hex, f) {
     var n = parseInt(hex.slice(1), 16);
@@ -433,13 +437,24 @@
     if (s.think && !s.blink) open = Math.max(open, 0.6);
     if (s.looking && !s.blink) open = 0.42 + 0.04 * Math.sin(s.t / 500);
 
+    /* Upstream's think pupil jumps round an 8-step orbit every 150 ms and its touch glance moves
+       in whole pixels; at this size both read as darting (owner, 2026-11-12). So thinking and
+       looking become a slow left-right wander the whole eye follows a little, and every move is
+       eased by time, not per frame, because LOW_POWER draws at 15 fps. */
+    var dt = lastT && s.t > lastT ? Math.min(250, s.t - lastT) : 16;
+    lastT = s.t;
+    var wander = s.think || s.looking ? Math.sin(s.t / 1600) * 0.7 : 0;
+    var aim = s.think || s.looking ? { x: wander, y: 0 } : { x: s.gx, y: s.gy };
+    var ease = 1 - Math.exp(-dt / 320);
+    pup.x += (aim.x - pup.x) * ease;
+    pup.y += (aim.y - pup.y) * ease;
+    gaze.x += (s.gx + wander * 0.4 - gaze.x) * ease;
+    gaze.y += (s.gy - gaze.y) * ease;
     var glance = Math.abs(s.gx) + Math.abs(s.gy) > 0.05;
-    var pupil = s.think ? { x: Math.cos(s.orbit), y: Math.sin(s.orbit) * 0.8 }
-      : s.looking ? { x: Math.sin(s.t / 600), y: 0 } : { x: s.gx, y: s.gy };
     var bob = (s.paused || s.dreaming ? 6 * Math.sin(s.t / 900) : 3 * Math.sin(s.t / 1300)) + Math.sin(s.t * 0.05) * s.shake * 8;
     var d = {
-      t: s.t, open: open, lids: cur, pupil: pupil, showPupil: s.think || s.looking || glance,
-      gaze: { x: s.gx + Math.sin(s.t * 0.045) * s.shake * 0.6, y: s.gy }, think: s.think,
+      t: s.t, open: open, lids: cur, pupil: pup, showPupil: s.think || s.looking || glance,
+      gaze: { x: gaze.x + Math.sin(s.t * 0.045) * s.shake * 0.6, y: gaze.y }, think: s.think,
       dreaming: s.dreaming, talking: talking, talk: talk, smile: s.smile, mouth: sp.mouth,
       tilt: cur.tilt, crest: cur.crest, startle: startle, blush: blush,
       /* The lantern has no body, so a chosen colour is its eyes' colour; unchosen, the mood's. */
