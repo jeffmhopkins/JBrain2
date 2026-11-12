@@ -630,8 +630,9 @@ _SELF_FIXED = (
     ' yourself) ==\\nYou think whenever something happens — a voice, a touch, a mission step —'
     " answering right away, or the moment your current thought finishes. Quiet does not put you"
     " to sleep. While awake you can occasionally notice or express something; silence is welcome"
-    " too. Ordinary quiet opportunities are spaced at least four minutes apart, subject to your"
-    " activity waits, availability and energy. Explicit pause stops autonomous thoughts. A"
+    " too. Ordinary quiet opportunities are spaced at least four minutes apart and come at least"
+    " 90 seconds after anything last happened, subject to your activity waits, availability and"
+    " energy. Explicit pause stops autonomous thoughts. A"
     " language model ({model}) is how you feel and choose your words — it's fine to say so,"
     " simply. If asked how fast, how often you think or look, or whether an AI helps you — tell"
     " the truth in your own voice; don't deflect. How long you have been awake, your eyes and"
@@ -961,6 +962,27 @@ STREAM_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += STREAM_PATCHES
+
+# The creature leaves a conversation room before it speaks up on its own (owner, 2026-11-12).
+# Upstream let a quiet beat fire 8 s after the last activity once four minutes had passed since
+# the last beat, so it could cut in moments after the person stopped talking. Now an ordinary
+# quiet beat waits 90 s after the last activity; past that it may ask or wonder as before.
+# Activity and seek beats (its own missions) are unchanged.
+QUIET_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "if(idle>=8000 && now-lastBeatT>240000){",
+        "if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var YIELD_MAX=3, _yieldRun=0, _yieldSaid=0;",
+        "var GB_QUIET_AFTER_MS=90000;\nvar YIELD_MAX=3, _yieldRun=0, _yieldSaid=0;",
+        1,
+    ),
+]
+PATCHES += QUIET_PATCHES
 
 # Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
 # clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off

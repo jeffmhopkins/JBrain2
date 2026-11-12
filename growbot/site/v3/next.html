@@ -4950,6 +4950,7 @@ function lastSentenceEnd(s){ var m=0,re=/([.!?…]+)\s/g,x;
    _yieldNow too, or it inherits the uncapped mute this exists to end.
    The `yield` event carries the streak so the next read is a number, not a reconstruction: the 17.4%
    above had to be inferred from log geometry because this moment logged nothing at all. */
+var GB_QUIET_AFTER_MS=90000;
 var YIELD_MAX=3, _yieldRun=0, _yieldSaid=0;              // _yieldSaid: 0 undecided this reply · 1 committed to HOLD · 2 committed to SPEAK THROUGH
 function _yieldNow(){                                    // true = hold the voice; false = speak anyway
   /* 0821b: BOTH outcomes are memoed, not just the hold. The first cut memoed only the hold, so when
@@ -6284,7 +6285,7 @@ function motionStripNow(){ try{ var now=Date.now(), bins=_stripBins(now-STRIP_LO
       +(ago(t1)>=0.5?(newerOwn?", then your own move (see Latest move)":(newer?", smaller movements since":(after?", still since":", no readings since"))):"")
       +"; one value per "+STRIP_BIN+" ms, oldest first; "+STRIP_KEY+": "+best.c.text; }catch(e){ return ""; } }
 function motionStripSpan(t0,t1){ try{ var fit=_stripFit(t0,t1), c=_stripCols(fit.bins); return {moved:c.moved, n:c.n, w:fit.w, text:c.text}; }catch(e){ return {moved:false,n:0,w:0,text:""}; } }
-var GB_SELF_FIXED="\n\n== WHAT YOU ARE (answer honestly IN YOUR OWN VOICE if asked — you are NOT blind to yourself) ==\nYou think whenever something happens — a voice, a touch, a mission step — answering right away, or the moment your current thought finishes. Quiet does not put you to sleep. While awake you can occasionally notice or express something; silence is welcome too. Ordinary quiet opportunities are spaced at least four minutes apart, subject to your activity waits, availability and energy. Explicit pause stops autonomous thoughts. A language model ({model}) is how you feel and choose your words — it's fine to say so, simply. If asked how fast, how often you think or look, or whether an AI helps you — tell the truth in your own voice; don't deflect. How long you have been awake, your eyes and your body right now are under WHAT YOU ARE RIGHT NOW in this turn's message.";
+var GB_SELF_FIXED="\n\n== WHAT YOU ARE (answer honestly IN YOUR OWN VOICE if asked — you are NOT blind to yourself) ==\nYou think whenever something happens — a voice, a touch, a mission step — answering right away, or the moment your current thought finishes. Quiet does not put you to sleep. While awake you can occasionally notice or express something; silence is welcome too. Ordinary quiet opportunities are spaced at least four minutes apart and come at least 90 seconds after anything last happened, subject to your activity waits, availability and energy. Explicit pause stops autonomous thoughts. A language model ({model}) is how you feel and choose your words — it's fine to say so, simply. If asked how fast, how often you think or look, or whether an AI helps you — tell the truth in your own voice; don't deflect. How long you have been awake, your eyes and your body right now are under WHAT YOU ARE RIGHT NOW in this turn's message.";
 function selfStats(){ var lins=bufWindow(3000).map(function(s){return s.lin;}).filter(function(v){return v!=null;}), avgLin=_avg(lins);
   var moving=!lins.length?"not sure yet (motion sensor off)":(avgLin<0.6?"holding still":(avgLin<2.5?"moving gently":(avgLin<6?"moving at a walking pace":"being shaken"))), model=(orCfg&&(orCfg.active||orCfg.fast))||"a model";
   selfStats.fixed=GB_SELF_FIXED.replace("{model}",model);
@@ -9896,7 +9897,7 @@ function bootOwned(){
         if(inFlight||dreaming) return;                                                    // a refused dream must not suppress awake initiative
       }
     }
-    if(idle>=8000 && now-lastBeatT>240000){                                                // ordinary awake initiative: existing four-minute spacing, no upper idle cutoff
+    if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){                                                // ordinary awake initiative: existing four-minute spacing, no upper idle cutoff
       lastBeatT=now;
       think("QUIET COMPANY — you are awake together. If something in your available senses, context or remembered interests is worth noticing, you may offer one small expression: a familiar cute sound, a light effect, or a brief remark. Silence is equally welcome. Do not invent sensory evidence, repeat an unanswered invitation, demand stimulation, or start a competing game. There is no requirement to speak or make a sound.","event"); return;
     }

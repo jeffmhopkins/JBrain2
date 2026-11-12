@@ -351,7 +351,9 @@ scene, the carried phone or the body is moving (3 then), ~2 s less prefill a tur
 (`ROUND2_PATCHES`). Speech is transcribed in pieces while the person talks (`STREAM_PATCHES`): after 4 s of
 audio, each short pause or a full buffer sends what is held and listening goes on, and the end
 of speech sends only the last piece; the creature gets one turn with the pieces joined. This also
-ends upstream's 12 s cap, which silently dropped the rest of a longer message.
+ends upstream's 12 s cap, which silently dropped the rest of a longer message. An ordinary quiet beat now waits 90 s after the last activity
+(upstream: 8 s), so the creature never cuts in just after the person stops talking
+(`QUIET_PATCHES`).
 
 **Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
 pick 1, 3 or 6 hours and download one zip with what debugging needs. Upstream's own "brain

@@ -678,3 +678,12 @@ def test_a_lost_or_silent_piece_never_holds_the_turn() -> None:
     """
     got = _run_stream(page, cancelled)
     assert got["sent"] == ["hello there"]
+
+
+def test_an_ordinary_quiet_beat_waits_ninety_seconds_after_the_last_activity() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "var GB_QUIET_AFTER_MS=90000;" in page
+    assert "if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){" in page
+    assert "idle>=8000 && now-lastBeatT" not in page
+    assert page.index("var GB_QUIET_AFTER_MS") < page.index("if(idle>=GB_QUIET_AFTER_MS")
+    assert "90 seconds after anything last happened" in page
