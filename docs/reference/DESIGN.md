@@ -3474,6 +3474,9 @@ and a JPanel in the same room are visibly the same family.
 - **It feels the phone tilt** (owner, 2026-11-12). Past a hand-held wobble the pupils roll to
   the low side, the head leans back toward level and the face swings a little downhill, eased
   slowly so a walking body does not shake it.
+- **Its eyes follow you** (owner, 2026-11-12). With its front camera open, the pupils and the
+  whole eye ease toward the nearest face the on-phone detector sees, and settle back about
+  1.3 s after losing it. A touch's glance, thinking, looking, resting and sleep outrank the face.
 - **The beak talks.** The lower three beak segments drop while it speaks; the crest perks when
   alert or happy and droops when tired or sleepy.
 - **Upstream's sky stays.** The pixel sky, its mood hue, the stars, the sparks and the dream
