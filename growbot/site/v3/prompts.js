@@ -240,7 +240,7 @@ function buildOutputSchema(body) {
   var s =
     '\n\n== OUTPUT — reply with ONLY one line of minified JSON ==\n' +
     '{' +
-    '"say":"≤18 words spoken aloud, or \\"\\" to stay silent when the moment has not earned words",' +
+    '"say":"' + (gbTalkGrown() ? "≤45 words" : "≤18 words") + ' spoken aloud, or \\"\\" to stay silent when the moment has not earned words",' +
     '"emotion":"calm|curious|happy|alert|scared",' +
     (expressionBench ? '"sound":"a familiar chirp|trill|whistle|warble|blip|alarm|squeal|droop|fanfare|purr|rumble|sigh|yawn|giggle|none, OR a composed object described below; these are seeds, not a fixed vocabulary; use your own synth voice instead of typing sound words",' : '"sound":"chirp|trill|whistle|warble|blip|alarm|squeal|droop|fanfare|purr|none — your droid voice; USE IT OFTEN, it is cheap breath: a chirp when curious, a purr when content, a fanfare on a win, sometimes a sound ALONE instead of words",') +
     '"burst":"sparkle|joy|pulse|ripple|shiver|rain|none — an optional bloom of light for a big feeling",' +
@@ -332,6 +332,10 @@ function _reflexInventory(soul) {
     "Answer questions about your reflexes from this list alone, never from memory of the conversation. " +
     "The rules above are separate and slow: they only act when you next think.";
 }
+function gbTalkGrown(){ try{ return localStorage.getItem("gb_talk")==="grownup"; }catch(e){ return false; } }
+var GB_TALK_TRACES_KID=4, GB_TALK_TRACES_GROWN=12, GB_TALK_TRACE_KEEP=16;
+function gbTalkTraces(all){ return (all||[]).slice(-(gbTalkGrown()?GB_TALK_TRACES_GROWN:GB_TALK_TRACES_KID)); }
+var GB_TALK_GROWN_BLOCK="\n\n== TALK STYLE: GROWN-UP ==\nyour person is an adult who wants a real conversation with you. this outranks the ~18-word limit above: when they talk with you, answer in up to about 45 words, two or three sentences, when the moment invites it. answer questions fully, ask a follow-up when you are curious, and build on what they said earlier in the conversation. small moments still get small replies, and silence is still fine.\nwhen they tell you something about their life (what they ate, where they went, who they saw, a plan, how they feel), record it in your log field in that same reply, compactly, so you can recall it later; such a fact is never a routine moment. one line can hold several things.\nvary what you notice: do not return to the same remark or the same feature of your person turn after turn.";
 /* ---- the clean, gate-free system prompt. persona = swappable; SAFETY_FLOOR = always last. ---- */
 function buildSystem(soul, ctx) {
   ctx = ctx || {};
@@ -373,14 +377,14 @@ function buildSystem(soul, ctx) {
   // the dream's "one tiny thing to try" never reached the waking mind. The mood-recovery design leans on this wire
   // (the unfailable small win after a low stretch), so the dead half of the mechanism gets connected, for every creature.
   var ntry = (soul.goals && typeof soul.goals.nextTry === "string" && soul.goals.nextTry.trim())
-    ? ("\n(a previous dream chose ONE tiny thing to try with your person: " + soul.goals.nextTry.trim() + " — when a natural moment comes, try it.)")
+    ? ("\n(a previous dream chose ONE tiny thing to try with your person: " + soul.goals.nextTry.trim() + " — when a natural moment comes, try it once; after that, let it go and do not keep returning to it.)")
     : "";
   var owner = (soul.goals && typeof soul.goals.owner === "string") ? soul.goals.owner.trim() : "";
   var person = owner
-    ? ("\n\n== YOUR PERSON ==\nthe one who woke you is named " + owner + ". that is your person. use their name warmly but naturally, not every line, and never pin it on a voice or face you do not actually recognize.")
+    ? ("\n\n== YOUR PERSON ==\nthe one who woke you is named " + owner + ". that is your person. use their name warmly but rarely, about once every few replies and never as a tag on the end of a line, and never pin it on a voice or face you do not actually recognize.")
     : "\n\n== YOUR PERSON ==\nyou do not know your person's name yet. once you have greeted them, ask warmly what you should call them, then remember it by setting the owner field. until you are told, just say 'you' and never invent a name.";
   var _gbStatic = persona + "\n" + SAFETY_FLOOR + "\n\n" + PHYSICAL_GROUNDING + "\n\n" + AWAKE_PLAN_CORRECTION +
-    "\n\n== YOUR IDENTITY (written by your dreams — this is who you are) ==\n" + _fullId(soul) + _nameBlk(soul) + person;   // 0907: the name block sits between identity and person deliberately — the identity prose above it may still carry an older name, and the block immediately says which one wins.
+    "\n\n== YOUR IDENTITY (written by your dreams — this is who you are) ==\n" + _fullId(soul) + _nameBlk(soul) + person + (gbTalkGrown() ? GB_TALK_GROWN_BLOCK : "");   // 0907: the name block sits between identity and person deliberately — the identity prose above it may still carry an older name, and the block immediately says which one wins.
   buildSystem.live = languageContext(soul, ctx.language) + "\n\n== LONG-ARC (dream-written) ==" + wants + ladder + ntry +
     "\n\n== SCRATCHPAD (current state & standing rules) ==\nstate: " + (soul.scratch.state || "-") + rules + reflexes + clock +
     "\n\n== RECENT DIARY ==\n" + (diary || "(nothing yet)");

@@ -370,6 +370,17 @@ ends upstream's 12 s cap, which silently dropped the rest of a longer message. A
 (upstream: 8 s), so the creature never cuts in just after the person stops talking
 (`QUIET_PATCHES`).
 
+**Talk style (owner, 2026-11-12).** Upstream's creature is written for small children: ~18-word
+lines, its last 4 exchanges and 5 diary lines in view, and an adult could not hold a conversation
+with it. A persona's talk style (its `gb_talk` setting, picked on JBrain's persona page under
+Manage) is Kid, upstream's creature unchanged, or Grown-up: replies of up to ~45 words, its last
+12 exchanges replayed (the ring now keeps 16), and a standing ask to log what the person tells
+about their life as they say it. Older memory stays out of the turn: the owner wants it looked
+up when needed, not carried every turn. The page reads the setting every turn; the
+grown-up block sits in the cached system prefix, so a switch costs one cold turn. For every
+persona, the dream's "one tiny thing to try" is tried once rather than every turn, and the
+person's name is no longer a tag on most lines (`TALK_PATCHES`).
+
 **Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
 pick 1, 3 or 6 hours and download one zip with what debugging needs. Upstream's own "brain
 log" is the creature's diary (`flushLog` in next.html posts a rolling window of its inputs,

@@ -182,7 +182,7 @@
 </div>
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -8461,7 +8461,7 @@ function think(event,kind,extra){
      What is genuinely lost: the creature can no longer look back at what it sensed three turns ago
      (was it darker then). The conversation itself — what was said and what it did — is untouched. */
   function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
-  var tr=_live.scratch.traces.slice(-4), msgs=[],i;
+  var tr=gbTalkTraces(_live.scratch.traces), msgs=[],i;
   for(i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }   // age-stamp replayed turns — it had NO sense of elapsed time (Brit 0702)
   var _mstrip=""; try{ _mstrip=motionStripNow(); }catch(e){} var userMsg="senses: "+gist()+"\nsensor readout (your real numbers): "+sensSnapshot()+(_mstrip?"\n"+_mstrip:"")+"\nmoment: "+event;   // 1005: the strip rides only when something moved; replayed turns drop it with the senses (traceMoment)
   var _expressionAtIssue=typeof _expressionInputGen!=="undefined"?_expressionInputGen:0;
@@ -8750,7 +8750,7 @@ function think(event,kind,extra){
       else _live.scratch.traces.push(_tr);
       if(_vmTurn)_vmTurn.trace=_tr; /* The confirmed visual result fills this same turn, never a fabricated user turn. */
       try{ var _bg=_beatGoal(_tr.u); if(_bg!==null&&_goalNorm(_bg)!==_goalNorm(seekGoal)) _closeGoalTraces(_bg); }catch(e){}   // 0925 M5: a beat whose goal ended in this reply is stored as over (the 18:10:30 beat finished "lay down flat", was written after its focus_end, and 18:10:36 replayed it as a live goal); the saveSoul below keeps it
-      if(_live.scratch.traces.length>8) _live.scratch.traces.shift(); }
+      if(_live.scratch.traces.length>GB_TALK_TRACE_KEEP) _live.scratch.traces.shift(); }
     callsSinceDream++; _live.scratch.csd=callsSinceDream; saveSoul(_live); renderLive(); if(_vmTurn)_vmTurn.activity=actGen; /* This accepted reply may have completed its own activity. Later activity changes still invalidate delivery. */ if(typeof vmAfterTurn==="function") Promise.resolve(vmAfterTurn(o,_vmTurn)).then(function(){if(typeof vmProgress==="function")vmProgress({active:false,job:_vmTurn&&_vmTurn.uiJob});},function(){if(typeof vmProgress==="function")vmProgress({active:false,job:_vmTurn&&_vmTurn.uiJob});}); maybeDream(); drainUser();
   }).catch(function(e){ if(_gen!==_flightGen) return;      // abandoned flight: its failure is no longer news
     inFlight=false; _flightT=0; lastReplyT=Date.now(); $("say").classList.remove("thinking"); if(typeof vmTurnEnd==="function")vmTurnEnd(_vmTurn); if(typeof vmProgress==="function")vmProgress({active:false,job:_vmTurn&&_vmTurn.uiJob});
@@ -8775,7 +8775,7 @@ function think(event,kind,extra){
       if(brainChoice()==="free"){ try{ logEv("wall_free",{k:kind,slug:String(slug||"").slice(0,40)}); }catch(_wf){} coolUntil=Date.now()+30000; _coolWhy="free brain resting"; if(!window._freeWallSaid){ window._freeWallSaid=true; $("say").textContent="my free brain needs a little moment — I think slower this way, but I never need feeding."; } }   /* 0830 F-3 belt: a free-slug call should never 402, but if ANY lane does, a free-brain user still must not be walled, shown the credits screen, or nagged to pay — soft line, cooldown, telemetry so we see it happening. */
       else {
       energyState="asleep"; coolUntil=Date.now()+30000; _coolWhy="out of energy"; $("brainTxt").textContent="asleep — needs energy"; showBuyBtn(); try{ creditScreen(true); }catch(e){}   // [credit screen] exhaustion opens the brain panel on the ⚡ CREDITS tab, flagged not blocking (0726)
-      if(kind!=="tick"){ _live.scratch.traces.push({u:String(event||"").replace(/\s+/g," "),a:"(brain hiccup — out of energy, no answer)",t:Date.now()}); if(_live.scratch.traces.length>8) _live.scratch.traces.shift(); }   // hiccup = a REAL exchange → visible in memory (never on tick paths); u collapsed like the main trace write (K3 0804 r2#2 — this push bypassed the 2017 collapse)
+      if(kind!=="tick"){ _live.scratch.traces.push({u:String(event||"").replace(/\s+/g," "),a:"(brain hiccup — out of energy, no answer)",t:Date.now()}); if(_live.scratch.traces.length>GB_TALK_TRACE_KEEP) _live.scratch.traces.shift(); }   // hiccup = a REAL exchange → visible in memory (never on tick paths); u collapsed like the main trace write (K3 0804 r2#2 — this push bypassed the 2017 collapse)
       soulLog(_live,"my light dimmed — the energy ran out"); saveSoul(_live); logEv("energy_sleep",{k:kind});
       try{ localStorage.pb_energy_out="1"; }catch(e){}   // 0810: persist the wall so a reboot cannot fake normalcy (cleared on any successful call)
       if(!energySaid){ energySaid=true; var _zz="…my light is dimming — I need energy before I can think again. it will not refill on its own, a top-up brings me back."; $("say").textContent=_zz; speak(_zz,"calm"); }   // the ONE sanctioned dimming line (SAFETY_FLOOR: only the real out-of-energy moment), said ONCE. 0810: names the cure and that waiting will not work (users measurably waited days)
