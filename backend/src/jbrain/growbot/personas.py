@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.growbot.memories import MAX_MEMORIES, Saved
-from jbrain.growbot.prefs import Patch, merged
+from jbrain.growbot.prefs import OWNER_ONLY, Patch, for_phone, merged
 from jbrain.storage import BlobStore
 
 NAME_MAX = 40
@@ -201,7 +201,7 @@ class PersonaRepo(Protocol):
     async def patch_prefs(self, ctx: SessionContext, pid: str, patch: Patch) -> int | None: ...
     async def phone_prefs(
         self, ctx: SessionContext, pid: str, phone_id: str
-    ) -> tuple[int, dict[str, str] | None] | Away: ...
+    ) -> tuple[int, dict[str, str] | None, bool] | Away: ...
     async def phone_patch_prefs(
         self, ctx: SessionContext, pid: str, phone_id: str, patch: Patch
     ) -> int | Away: ...
@@ -242,7 +242,7 @@ def _persona(r: Any, soul: bool = False) -> Persona:
         memories=int(r.memories),
         face=r.face,
         voice=r.voice,
-        prefs=dict(r.prefs) if r.prefs is not None else None,
+        prefs=for_phone(r.prefs)[0],
     )
 
 
@@ -1115,13 +1115,17 @@ class SqlPersonaRepo:
 
     # -- settings -----------------------------------------------------------------------------
 
-    async def _patch(self, session: AsyncSession, pid: str, patch: Patch) -> int:
+    async def _patch(self, session: AsyncSession, pid: str, patch: Patch, phone: bool) -> int:
         # The row is locked by the caller, so two patches merge one after the other.
         had = (
             await session.execute(
                 text("SELECT prefs FROM app.growbot_personas WHERE id = :p"), {"p": pid}
             )
         ).scalar_one()
+        if phone:
+            had = for_phone(had)[0]
+        elif had is None:
+            had = {OWNER_ONLY: "1"}
         return int(
             (
                 await session.execute(
@@ -1149,12 +1153,13 @@ class SqlPersonaRepo:
             ).first()
             if row is None:
                 return None
-            return await self._patch(session, key, patch)
+            return await self._patch(session, key, patch, phone=False)
 
     async def phone_prefs(
         self, ctx: SessionContext, pid: str, phone_id: str
-    ) -> tuple[int, dict[str, str] | None] | Away:
-        """The settings for the phone holding `pid`: None when no phone has sent any yet."""
+    ) -> tuple[int, dict[str, str] | None, bool] | Away:
+        """The settings for the phone holding `pid`: None when nobody set any yet, and whether
+        no phone has sent its own (the owner's are there, and the phone keeps its own under)."""
         if (key := _uuid(pid)) is None:
             return "gone"
         async with scoped_session(self._maker, ctx) as session:
@@ -1166,7 +1171,8 @@ class SqlPersonaRepo:
                     {"p": key},
                 )
             ).one()
-            return int(row.prefs_version), dict(row.prefs) if row.prefs is not None else None
+            shown, adopt = for_phone(row.prefs)
+            return int(row.prefs_version), shown, adopt
 
     async def phone_patch_prefs(
         self, ctx: SessionContext, pid: str, phone_id: str, patch: Patch
@@ -1177,4 +1183,4 @@ class SqlPersonaRepo:
         async with scoped_session(self._maker, ctx) as session:
             if (away := await self._held(session, key, phone_id, lock=True)) is not None:
                 return away
-            return await self._patch(session, key, patch)
+            return await self._patch(session, key, patch, phone=True)

@@ -4072,6 +4072,9 @@ export interface GrowbotPersona {
   face: GrowbotFace;
   /** The box voice it speaks in (a /api/brain/voices id), or "" for the box's default. */
   voice: string;
+  /** Its creature's settings kept on the box (the phone's localStorage keys), or null until
+   *  its phone first sent them. `gb_eye` is the camera: "environment" is the back one. */
+  prefs: Record<string, string> | null;
 }
 
 export type GrowbotFace = "lantern" | "ostrich" | "robot" | "pixel";
@@ -8346,6 +8349,19 @@ export const api = {
       jsonInit("PATCH", { voice }),
     );
     return (await response.json()) as GrowbotWritten;
+  },
+
+  /** Not a soul write: its phone takes the change at its next poll, where it stands. */
+  async setGrowbotPersonaPrefs(
+    id: string,
+    set: Record<string, string>,
+    drop: string[] = [],
+  ): Promise<{ version: number }> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}/prefs`,
+      jsonInit("PATCH", { set, drop }),
+    );
+    return (await response.json()) as { version: number };
   },
 
   async editGrowbotRegion(

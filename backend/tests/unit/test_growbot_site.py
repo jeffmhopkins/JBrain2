@@ -181,6 +181,95 @@ def test_every_face_keeps_the_pupil_open_in_every_mood() -> None:
     assert "showPupil" not in face
 
 
+def _voiced(**g: Any) -> bool:
+    setup = "".join(f"window.{k}={json.dumps(v)};" for k, v in g.items() if k != "guard")
+    out = _face_in_node(
+        f"{setup}console.log(JSON.stringify(window.gbFace.voiced({json.dumps(g['guard'])})));"
+    )
+    return bool(json.loads(out))
+
+
+def test_the_mouth_follows_the_voice_not_the_ears_guard() -> None:
+    """speakingUntil is dated when a line is queued, at 140 ms a character, so a slow Kokoro
+    line outlived it with the mouth still, and a fetch moved it in silence (owner, 2026-11-12).
+    The players decide; the device synth only inside the guard, since iOS can stick `speaking`."""
+    playing = {"paused": False, "ended": False, "src": "blob:x"}
+    assert _voiced(vtEngine="fish", fishAud=playing, guard=False)
+    assert _voiced(vtEngine="fish", _fishWaLn={"st": 1}, guard=False)
+    assert not _voiced(vtEngine="fish", _fishWaLn={"st": 0}, guard=True)
+    assert not _voiced(vtEngine="fish", fishAud={**playing, "paused": True}, guard=True)
+    assert not _voiced(vtEngine="fish", fishAud={**playing, "ended": True}, guard=True)
+    # fishPrime's silent unlock clip is a data: URL, never a line.
+    assert not _voiced(vtEngine="fish", fishAud={**playing, "src": "data:audio/wav"}, guard=True)
+    assert _voiced(vtEngine="device", speechSynthesis={"speaking": True}, guard=True)
+    assert not _voiced(vtEngine="device", speechSynthesis={"speaking": True}, guard=False)
+    assert _voiced(vtEngine="fish", _songUntil=4e12, guard=False)
+    assert _voiced(vtEngine="robot", guard=True)
+    # A dead Kokoro falls back to the larynx, which has no player to ask.
+    assert _voiced(vtEngine="fish", fishDead=True, guard=True)
+    assert _voiced(vtEngine="fish", _fishWaTail=4e12, guard=False)
+    assert not _voiced(vtEngine="robot", guard=False)
+
+
+_FAKE_CANVAS = """
+var log=[];
+function ctx(){ var o={canvas:{width:720,height:1480}};
+  return new Proxy(o,{get:function(t,k){ if(k in t) return t[k];
+    if(k==="getTransform") return function(){ return {a:2,b:0,c:0,d:2,e:0,f:0}; };
+    return function(){ log.push(k+"("+Array.prototype.map.call(arguments,function(v){
+      return typeof v==="number"?v.toFixed(2):typeof v; }).join(",")+")"); }; },
+    set:function(t,k,v){ log.push(k+"="+v); return true; }}); }
+var document={createElement:function(){ var c=ctx();
+  return {width:0,height:0,getContext:function(){ return c; }}; }};
+"""
+
+
+def _frames(face: str, voice: bool) -> dict[str, list[str]]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    js = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    shim = f"var window={{addEventListener:function(){{}}}},location={{search:'?face={face}'}};"
+    # The guard is the opposite of the player, so only the player can be moving the mouth.
+    player = "true" if voice else "false"
+    run = f"""
+    window.vtEngine="fish";
+    window.fishAud={{paused:!{player},ended:false,src:"blob:x"}};
+    var out={{}};
+    ["calm","curious","happy","alert","scared","sleepy","tired"].forEach(function(emo){{
+      [false,true].forEach(function(dream){{
+        var frames=[];
+        for(var i=0;i<30;i++){{ log=[];
+          window.gbFace.draw(ctx(),360,740,{{t:1000+i*66,emotion:emo,eye:1,smile:0.3,
+            energy:0.4,blink:false,paused:false,dreaming:dream,think:false,orbit:0,
+            looking:false,gx:0,gy:0,touchT:0,shake:0,talking:!{player},glow:"#fff"}});
+          frames.push(log.join(";")); }}
+        out[emo+"/"+dream]=frames; }}); }});
+    console.log(JSON.stringify(out));
+    """
+    out = subprocess.run(
+        [node, "-e", f"{_FAKE_CANVAS}{shim}\n{js}\n{run}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(out.stdout)
+
+
+@pytest.mark.parametrize("face", ["lantern", "ostrich", "robot"])
+def test_every_face_moves_its_mouth_in_every_mood_while_it_talks(face: str) -> None:
+    """The same frames drawn with and without a voice playing differ only in the mouth, so a
+    face and mood whose mouth stood still while it talked would draw them identically; and the
+    talking mouth keeps changing from frame to frame (owner, 2026-11-12: critical)."""
+    quiet, talking = _frames(face, voice=False), _frames(face, voice=True)
+    assert set(quiet) == set(talking) and len(quiet) == 14
+    for key in quiet:
+        differ = sum(q != t for q, t in zip(quiet[key][5:], talking[key][5:], strict=True))
+        assert differ == 25, (face, key, differ)
+        mouths = {t.replace(q, "") for q, t in zip(quiet[key][5:], talking[key][5:], strict=True)}
+        assert len(mouths) > 5, (face, key)
+
+
 def test_the_face_feels_the_phone_tilt() -> None:
     """Gravity's roll in the screen's plane rolls the pupils downhill and leans the head back
     toward level, through upstream's learned accel sign."""
@@ -668,7 +757,7 @@ def test_the_fixed_rules_ride_the_system_message_and_the_state_stays_live() -> N
     assert 'vmPrompt.fixed=vmOn()?vmContract():"";' in prompt
     assert "VISUAL MEMORY overrides" in contract and "vmCatalogLine" not in contract
     assert "vmCatalogLine()" in prompt and "VM_PROMPT_OFF" in prompt
-    assert '<script src="/v3/visual-memory.js?v=1005-mem-box-fixed"' in page
+    assert '<script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"' in page
 
 
 def test_the_brain_panel_keeps_only_what_a_box_creature_uses() -> None:
@@ -1195,3 +1284,38 @@ def test_a_backoff_ends_when_there_is_nothing_left_to_send() -> None:
     )
     posts = [c["body"] for c in got["calls"] if c["method"] == "POST"]
     assert posts[-1] == {"persona": "p1", "set": {"gb_eye": "environment"}, "drop": []}
+
+
+def test_the_box_creature_keeps_no_cloud_rooms_or_their_leftovers() -> None:
+    """Owner, 2026-11-12: remove what does not apply to a box-run creature. The soul download,
+    the move to a new phone, the watch link and the cloud notes are hidden, the visual
+    memories say where they live, and a model, key or credits pick left on a phone is dropped
+    before the page reads it."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert 'if(!window.__gbBox)h+=bCard(bHead("soul file")+' in page
+    assert '(window.__gbBox?"Visual memories":"Visual memories · on this device")' in page
+    vm = (_SITE / "v3" / "visual-memory.js").read_text(encoding="utf-8")
+    assert vm.count("window.__gbBox?") == 2 and "Saved on the box for this creature." in vm
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "#bpmDownloadSoul,#bpmXfer,#bpmXferBox,#bpmWatch,#bpData{display:none!important}" in shim
+    assert '["gb_next_log", "pb2_journal"].forEach' in shim
+    for key in ("gb_brain", "gb_effort", "pb_byok", "pb_llm_url", "pb_llm_key", "pb_energy_out"):
+        assert f'"{key}"' in shim[shim.index("window.__gbBox = true;") :]
+
+
+def test_the_owners_settings_set_before_any_phone_go_over_the_phones_own() -> None:
+    got = _prefs_in_node(
+        {"gb_vol": "0.8", "gb_face_color": "#ffffff"},
+        {"persona": "p1"},
+        "return method === 'GET' ? [200, {version: 2, adopt: true, prefs: {gb_eye:"
+        " 'environment', gb_vol: '0.4'}}] : [200, {version: 3}];",
+        "console.log(JSON.stringify({calls, local: local()}));",
+    )
+    mine = {"gb_vol": "0.4", "gb_face_color": "#ffffff", "gb_eye": "environment"}
+    assert {k: got["local"][k] for k in mine} == mine
+    # Only what the box lacked, so an owner edit landing meanwhile is not undone.
+    assert got["calls"][1]["body"] == {
+        "persona": "p1",
+        "set": {"gb_face_color": "#ffffff"},
+        "drop": [],
+    }

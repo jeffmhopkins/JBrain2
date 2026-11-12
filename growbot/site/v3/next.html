@@ -184,7 +184,7 @@
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
 <script src="/v3/prompts.js?v=1008-motion-box-lang-eye" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
-<script src="/v3/visual-memory.js?v=1005-mem-box-fixed"></script>
+<script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
 <script src="/v3/soul.js?v=0624c" onerror="window.__loadErr=(window.__loadErr||'')+'soul.js '"></script>
 <script src="/v3/agent_kernel.js?v=0703d" onerror="window.__loadErr=(window.__loadErr||'')+'agent_kernel.js '"></script>
@@ -10851,8 +10851,8 @@ function roomHTML(){ var h="";
    h+=bCard(bHead("lately")+(log.length?log.slice(-8).map(function(e2){ var t=(e2&&(e2.txt||e2.t||e2.ev||JSON.stringify(e2)))||""; return "&middot; "+esc(String(t).slice(0,90)); }).join("<br>"):"nothing written down yet."));
    h+=lastDreamCard(lv);   // 0929: when it last dreamed, what it said on waking, and the dream now button (moved here from Settings)
   }
-  h+=bCard(bHead("soul file")+'everything on this page plus my memories, as one file. keep it, or load it on another phone.<div style="margin-top:8px"><button type="button" class="gbkWbtn" onclick="if(typeof gbkSoulDl===\'function\')gbkSoulDl()">download my soul file</button></div>');   // 0920 (Brit): the soul file was reachable only from the adopter card and the credits move flow; a person reading their creature\'s thoughts should find it here too
-  h+=bCard('<button type="button" class="gbkWbtn" onclick="if(typeof vmManage===\'function\')vmManage()">Visual memories · on this device</button>');
+  if(!window.__gbBox)h+=bCard(bHead("soul file")+'everything on this page plus my memories, as one file. keep it, or load it on another phone.<div style="margin-top:8px"><button type="button" class="gbkWbtn" onclick="if(typeof gbkSoulDl===\'function\')gbkSoulDl()">download my soul file</button></div>');   // 0920 (Brit): the soul file was reachable only from the adopter card and the credits move flow; a person reading their creature\'s thoughts should find it here too
+  h+=bCard('<button type="button" class="gbkWbtn" onclick="if(typeof vmManage===\'function\')vmManage()">'+(window.__gbBox?"Visual memories":"Visual memories · on this device")+'</button>');
   h+=brainLogsSection();
  } else if(bTab==="c"){
   /* The original controls live inside this shell. Their handlers and results stay attached. */
