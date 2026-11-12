@@ -182,7 +182,7 @@
 </div>
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -8493,7 +8493,7 @@ function think(event,kind,extra){
   var _recall=null; try{ if(_hreqAtIssue&&typeof diaryRecall==="function"&&extra&&typeof extra.visualUser==="string"&&extra.visualUser.trim()) _recall=diaryRecall(_live.log,extra.visualUser,now,[(_live.goals&&_live.goals.selfName)||"",typeof ownerTok==="function"?ownerTok():""]); }catch(e){ _recall=null; }   /* 1005 WHOLE-DIARY RECALL (prompts.js diaryRecall): a person's words can pull up to 3 OLDER diary lines into this prompt, only when they cue a memory or share 2+ rare words with a line. Human turns only; the creature's and owner's own names never count as a match (review: the creature's name was the top false trigger). */
   var sys=buildSystem(soulView,{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText(), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+selfStats()+(typeof vmPrompt==="function"?vmPrompt(_vmTurn):"");    // + short-term self-knowledge (introspection); speech-style rule appended HERE because buildSystem/constitution live in /v3/prompts.js (Brit 0726, item 5)
   if(_imitationAtIssue&&_imitationCtl)_gbLive+=_imitationCtl.guide(_imitationAtIssue);
-  if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
+  if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; } if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
   var slug=brainOverride((kind==="tick")?orCfg.fast:(orCfg.active||orCfg.fast),false);   // [credit screen] honor the chosen brain: free mode or an explicit dial pick
   var _decisionTokens=typeof vmHeadroomTokens==="function"?vmHeadroomTokens(_vmTurn,kind,slug):512;
   if(slug!==_slugSeen){ _slugSeen=slug; try{ logEv("model_used",{slug:slug,pick:brainChoice()||""}); }catch(e){} }   /* 0813 THE OUTCOME FIELD. The boot `model` event records the CONFIG default and, since today, the user's INTENT (`pick`) — but neither is the model the request is actually billed against, and the gap between intent and outcome is precisely where the free-brain leak lived: pick said "free", the bill said kimi. Four times this week a field reported what we MEANT rather than what HAPPENED (nf before vs, model before this, the dial theory, the fd rate). Logged only when the resolved slug CHANGES, so it is one entry per session in the normal case and it names the moment any silent substitution occurs. Without this we cannot verify the leak is actually fixed — only that we intended to fix it. */
@@ -8604,6 +8604,7 @@ function think(event,kind,extra){
     if(!(o.scratchpad&&o.scratchpad.mood)){                                                            // no mood written this turn → emotion gently colors the weather (never stale)
       var _mm=_live.scratch.mood||(_live.scratch.mood={v:0,e:0.4}), _tgt=EMO2MOOD[emotion];
       if(_tgt){ _mm.v+=(_tgt.v-_mm.v)*0.15; _mm.e+=(_tgt.e-_mm.e)*0.15; } }                            // persisted by the turn's own saveSoul — no extra save
+    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string") gbRecallAsk(o.recall,kind,extra); }catch(_fe){}
     var _dl=0; if(o.log&&String(o.log).replace(/^\s+/,"").indexOf("📷")!==0){ soulLog(_live,o.log); _dl=_live.log[_live.log.length-1]!==_lgAt?1:0; }   // 1005 review: "📷 ..." is the ENGINE's picture-memory line (visual-memory.js vmDiaryResult); a model copying that format would be a save claim nobody confirmed
     if(typeof o.glow==="string"&&o.glow.trim()){ var _gls=(_live.scratch.glows=_live.scratch.glows||[]), _glsHad=_gls.length; _gls.push({t:Date.now(),g:String(o.glow).replace(/\s+/g," ").trim().slice(0,120)}); _live.scratch.glows=soulRoll(_live,"glows",_gls,_glsHad); _epGlow=true; }   // [P5] felt-reward: mark a delightful/identity-shaping moment; the dream weighs these most (v2:1672). whitespace collapsed (K3 0804 r2#2): glows render line-per-entry in the dream prompt — same line-anchor spoof class as traces/rules
     if(kind==="event"&&typeof o.owner==="string"&&o.owner.trim()){ var _nm=o.owner.trim().replace(/[\n\r{}"'<>|]+/g," ").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,32);
@@ -8748,6 +8749,7 @@ function think(event,kind,extra){
       var _lastTr=_live.scratch.traces[_live.scratch.traces.length-1];
       if(_tr.b&&_lastTr&&_lastTr.b) _live.scratch.traces[_live.scratch.traces.length-1]=_tr;   // PURSUE beats occupy ONE ring slot — 4 spoken beats were evicting the user's pre-seek words in ~30s (audit lobotomy vector)
       else _live.scratch.traces.push(_tr);
+      gbSessAdd(_tr.u,_tr.a);
       if(_vmTurn)_vmTurn.trace=_tr; /* The confirmed visual result fills this same turn, never a fabricated user turn. */
       try{ var _bg=_beatGoal(_tr.u); if(_bg!==null&&_goalNorm(_bg)!==_goalNorm(seekGoal)) _closeGoalTraces(_bg); }catch(e){}   // 0925 M5: a beat whose goal ended in this reply is stored as over (the 18:10:30 beat finished "lay down flat", was written after its focus_end, and 18:10:36 replayed it as a live goal); the saveSoul below keeps it
       if(_live.scratch.traces.length>GB_TALK_TRACE_KEEP) _live.scratch.traces.shift(); }
@@ -8804,6 +8806,40 @@ function think(event,kind,extra){
    the sensor-readout marker. Anything else — an event, a plain sentence, a line already migrated —
    is returned untouched but still whitespace-collapsed, as the ring has always done.
    It lives inside the think() block because that is the range the harness fixtures slice. */
+var _gbSess=[], _gbRecallT=0, _gbRecallCarry="", GB_SESS_MAX=400, GB_RECALL_GAP_MS=15000;
+function gbSessAdd(u,a){ try{
+  var s=String(u||""), m=/they just said to you: "([\s\S]*)" — answer THEM/.exec(s), said=String(a||""), got;
+  if(m) got="they said: "+m[1].slice(0,240)+(said&&said.charAt(0)!=="("?" | you said: "+said.slice(0,200):"");
+  else if(s.indexOf("you looked back through your memory")===0&&said&&said.charAt(0)!=="(") got="you remembered: "+said.slice(0,200);
+  if(!got) return;
+  _gbSess.push({t:Date.now(),txt:got});
+  if(_gbSess.length>GB_SESS_MAX) _gbSess.shift();
+}catch(e){} }
+/* Called from inside the reply handler, so the follow-up is never started there: the turn that
+   asked must finish first (its trace, its speech, its visual work), and a follow-up that cannot
+   run hands its find to the person's next turn instead of leaving "let me think back" unanswered. */
+function gbRecallAsk(q,kind,extra){
+  var now=Date.now(), r, ev, tries=0, words=String(q||"").replace(/["\s]+/g," ").trim().slice(0,60);
+  if(!words||/^omit\b/i.test(words)) return;
+  if(kind!=="event"){ logEv("recall_skip",{why:"kind"}); return; }
+  if(extra&&extra.recallFollow){ logEv("recall_skip",{why:"follow"}); return; }
+  if(now-_gbRecallT<GB_RECALL_GAP_MS){ logEv("recall_skip",{why:"gap"}); return; }
+  _gbRecallT=now;
+  try{ r=gbRecall(_live,_gbSess,words,now); }catch(e){ r={n:0,text:""}; }
+  logEv("recall",{n:r.n});
+  var found="you looked back through your memory for \""+words+"\" and "+(r.n?"found:"+r.text:"found nothing about it.");
+  ev="you looked back through your memory for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer your person with it, in your own voice; if it does not answer what they asked, say plainly that you do not remember.";
+  function carry(why){ _gbRecallCarry=found; logEv("recall_carry",{why:why}); }
+  function go(){
+    if(pendingUser) return carry("person");
+    var busy=inFlight||paused||document.hidden||Date.now()<coolUntil||(typeof vmBusy==="function"&&vmBusy())||energyState==="asleep";
+    if(busy){ if(++tries<120) setTimeout(go,250); else carry("timeout"); return; }
+    _gbRecallCarry=found;
+    think(ev,"event",{recallFollow:true});
+    if(!inFlight) carry("refused");
+  }
+  setTimeout(go,0);
+}
 function traceMoment(u){
   var s=String(u||"").replace(/\s+/g," ");
   if(s.indexOf("senses: ")!==0) return s;
