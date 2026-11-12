@@ -491,3 +491,117 @@ def test_the_sidecar_route_drops_nan_and_refuses_long_detail(tmp_path: Path) -> 
         long = {"kind": "tts", "ok": True, "total_ms": 1, "detail": {"x": "y" * 501}}
         assert client.post("/internal/growbot/calls", json=long, headers=auth).status_code == 422
     assert rec.timings == {"y": 2} and rec.request == {}
+
+
+# --- cold turns and replays ---------------------------------------------------------------
+
+
+def test_a_turn_records_its_system_messages_fingerprint(tmp_path: Path) -> None:
+    log = _Log()
+    app, auth = _app(tmp_path, log)
+    body = _chat(content="hi")
+    body["messages"].insert(0, {"role": "system", "content": "be small"})
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=body, headers=auth).status_code == 200
+        (rec,) = _wait(log)
+    assert rec.timings["system_chars"] == len("be small")
+    assert rec.timings["system_hash"] == growbot_llm.system_fingerprint(body["messages"])[1]
+    assert "replay" not in rec.request
+
+
+def test_a_system_fingerprint_reads_parts_and_skips_a_missing_system() -> None:
+    parts = [{"role": "system", "content": [{"type": "text", "text": "be small"}]}]
+    plain = [{"role": "system", "content": "be small"}]
+    assert growbot_llm.system_fingerprint(parts) == growbot_llm.system_fingerprint(plain)
+    assert growbot_llm.system_fingerprint([{"role": "user", "content": "x"}]) == (0, 0)
+    assert growbot_llm.system_fingerprint([]) == (0, 0)
+
+
+def _llm(cached: int | None, sha: int, *, replay: bool = False) -> CallRecord:
+    return CallRecord(
+        kind="llm",
+        ok=True,
+        total_ms=1000,
+        robot="gb-a",
+        cached_tokens=cached,
+        request={"replay": True} if replay else {},
+        timings={"system_chars": 28000, "system_hash": sha},
+    )
+
+
+def test_cold_turns_and_replays_are_their_own_groups_with_a_reason() -> None:
+    calls = [
+        LoggedCall(i, datetime.now(UTC), rec)
+        for i, rec in enumerate(
+            [
+                _llm(0, 1),  # first in the window: unknown
+                _llm(7000, 1),  # warm
+                _llm(0, 1),  # same system, nothing cached: the cache was lost
+                _llm(0, 2),  # a new system text
+                _llm(0, 2, replay=True),  # a replay never counts
+                _llm(None, 2),  # no cache figure: not judged
+            ]
+        )
+    ]
+    groups = growbot_calls.summarize(calls)
+    assert groups["llm_cold"]["total_ms"]["n"] == 3
+    assert groups["llm_text"]["total_ms"]["n"] == 2
+    assert groups["llm_replay"]["total_ms"]["n"] == 1
+    assert growbot_calls.cold_reasons(calls) == {
+        "system_changed": 1,
+        "cache_lost": 1,
+        "unknown": 1,
+    }
+
+
+def test_the_summary_reports_cold_reasons(tmp_path: Path) -> None:
+    log = _Log()
+    _seed(log)
+    app, _ = _app(tmp_path, log)
+    got = TestClient(app).get("/api/debug/growbot/calls/summary").json()
+    assert set(got["cold"]) == {"system_changed", "cache_lost", "unknown"}
+
+
+def test_a_replay_runs_the_lane_unstreamed_and_is_marked(tmp_path: Path) -> None:
+    log = _Log()
+    gateway = _Gateway()
+    app, _ = _app(tmp_path, log, gateway)
+    with TestClient(app) as client:
+        r = client.post("/api/debug/growbot/replay", json=_chat(content="hi", stream=True))
+        assert r.status_code == 200
+        (rec,) = _wait(log)
+    assert rec.request["replay"] is True
+    assert rec.request["stream"] is False
+
+
+def test_a_replay_waits_for_the_creature_to_go_quiet(tmp_path: Path) -> None:
+    log = _Log()
+    app, auth = _app(tmp_path, log)
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=_chat(), headers=auth).status_code == 200
+        r = client.post("/api/debug/growbot/replay", json=_chat())
+    assert r.status_code == 409
+    app.state.growbot_last_turn = time.monotonic() - growbot_calls.REPLAY_QUIET_S - 1
+    assert TestClient(app).post("/api/debug/growbot/replay", json=_chat()).status_code == 200
+
+
+def test_a_replay_refuses_a_bad_body_and_needs_a_debug_token(tmp_path: Path) -> None:
+    from fastapi import HTTPException
+
+    app, _ = _app(tmp_path, _Log())
+    client = TestClient(app)
+    assert client.post("/api/debug/growbot/replay", content=b"{nope").status_code == 400
+    assert client.post("/api/debug/growbot/replay", json=["x"]).status_code == 400
+
+    def refuse() -> PrincipalInfo:
+        raise HTTPException(status_code=401)
+
+    app.dependency_overrides[current_debug_principal] = refuse
+    assert client.post("/api/debug/growbot/replay", json=_chat()).status_code == 401
+
+
+def test_a_turn_with_no_system_message_never_reads_as_a_changed_one() -> None:
+    first = _llm(7000, 0)
+    first.timings["system_hash"] = 0
+    calls = [LoggedCall(1, datetime.now(UTC), first), LoggedCall(2, datetime.now(UTC), _llm(0, 5))]
+    assert growbot_calls.cold_reasons(calls)["unknown"] == 1

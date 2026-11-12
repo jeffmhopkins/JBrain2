@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import re
@@ -238,18 +239,40 @@ async def list_models(request: Request) -> Response:
     )
 
 
+def system_fingerprint(messages: list[Any]) -> tuple[int, int]:
+    """The system message's length and a short hash of it. The engine resumes a creature turn
+    only where the system message ends, so a turn that re-read it whole either got a changed
+    system text (a new hash) or lost its cache (the same hash): the log tells them apart."""
+    first = messages[0] if messages else None
+    content = first.get("content") if isinstance(first, dict) else None
+    if not isinstance(first, dict) or first.get("role") != "system":
+        return 0, 0
+    if isinstance(content, list):
+        content = "".join(str(p.get("text") or "") for p in content if isinstance(p, dict))
+    text = content if isinstance(content, str) else ""
+    digest = hashlib.sha256(text.encode()).hexdigest()[:8]
+    return len(text), int(digest, 16)
+
+
 @router.post("/chat/completions")
 async def chat_completions(request: Request) -> Response:
     """Forward the app's chat completion to the on-box gateway, admitted by residency, held
     to the GrowBot slot and streamed back verbatim (SSE when the body sets `stream`)."""
-    started = time.monotonic()
-    gateway_url = getattr(request.app.state.settings, "local_llm_url", "") or ""
-    if not gateway_url:
-        raise HTTPException(status_code=503, detail="on-box LLM is not configured")
     try:
         payload = json.loads(await request.body() or b"{}")
     except (json.JSONDecodeError, ValueError):
         raise HTTPException(status_code=400, detail="invalid JSON body") from None
+    return await serve_turn(request, payload)
+
+
+async def serve_turn(request: Request, payload: Any, *, replay: bool = False) -> Response:
+    """One creature turn through the lane. `replay` is a debug re-run of a logged turn
+    (api/growbot_calls.py): it runs exactly the same way, and its row is marked so it never
+    counts as the creature's own latency."""
+    started = time.monotonic()
+    gateway_url = getattr(request.app.state.settings, "local_llm_url", "") or ""
+    if not gateway_url:
+        raise HTTPException(status_code=503, detail="on-box LLM is not configured")
     if not isinstance(payload, dict) or not isinstance(payload.get("messages"), list):
         raise HTTPException(status_code=400, detail="body must be a chat completion request")
 
@@ -301,7 +324,10 @@ async def chat_completions(request: Request) -> Response:
         model=served,
         images=images,
         image_bytes=image_bytes,
-        request={**logged, "reasoning_level": level},
+        request={**logged, "reasoning_level": level, **({"replay": True} if replay else {})},
+    )
+    rec.timings["system_chars"], rec.timings["system_hash"] = system_fingerprint(
+        payload["messages"]
     )
     collector = ReplyCollector(stream, started)
 
@@ -320,6 +346,8 @@ async def chat_completions(request: Request) -> Response:
         guard = lock if lock is not None else contextlib.nullcontext()
         # The headers are out by now, so every refusal is written into the body as an OpenAI
         # error: the app shows a cut stream as a broken brain and retries blind.
+        if not replay:
+            request.app.state.growbot_last_turn = time.monotonic()
         try:
             async with guard:
                 mark("lock_ms")
@@ -389,6 +417,10 @@ async def chat_completions(request: Request) -> Response:
             _quietly(collector.finish)
             _quietly(collector.fill, rec)
             rec.total_ms = round((time.monotonic() - started) * 1000)
+            if not replay:
+                # The quiet window a replay waits for runs from the END of a turn: a cold
+                # turn can outlast it.
+                request.app.state.growbot_last_turn = time.monotonic()
             log_call(request, rec)
             await client.aclose()
 

@@ -320,6 +320,20 @@ rows past 32 waiting rather than queueing without end. A failed write never fail
 with the debug API: `GET /api/debug/growbot/calls` and `…/calls/summary`, which splits picture
 turns from text ones (`../runbooks/DEBUG_ACCESS.md`).
 
+**Speed work (owner, 2026-11-12: "shorten response time while keeping good results").** A warm
+creature turn re-reads everything after its ~7k-token system message (~1,800 tokens text,
+~3,150 with three frames, at ~310 tokens/s), and a turn whose system text changed or whose
+cache was lost re-reads all of it (~21 s). The plan, reviewed by an independent agent: (0)
+instruments first: each `llm` row carries its system message's length and hash, the summary
+splits out cold turns with their reason, and `POST /api/debug/growbot/replay` runs an edited
+logged request through the lane so a layout is tried on real turns before the page ships it;
+(1) the fixed rules the page sends every turn (gait library, picture-memory contract, the
+fixed self-description) move into the cached system message, every state-dependent sentence
+staying live; (2) the picture floor and frame count measured live against quality; (3) the
+system prefix saved to disk and restored after a model load, and a creature-awake mode that
+keeps the model and its slot warm and holds background model work while a creature talks;
+(4) history made reusable. Thinking stays off.
+
 **Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
 pick 1, 3 or 6 hours and download one zip with what debugging needs. Upstream's own "brain
 log" is the creature's diary (`flushLog` in next.html posts a rolling window of its inputs,

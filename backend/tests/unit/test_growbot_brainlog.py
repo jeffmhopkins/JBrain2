@@ -569,3 +569,12 @@ async def test_prompts_past_their_cap_are_not_kept(monkeypatch: pytest.MonkeyPat
 def test_known_names_are_deduplicated() -> None:
     metas = [{"kind": "person", "name": "Quorra"}] * 300 + [{"kind": "person", "name": "QUORRA"}]
     assert brainlog.known_names([], metas) == ["Quorra"]
+
+
+async def test_a_debug_replay_stays_out_of_the_creatures_latency() -> None:
+    replay = _call(2)
+    replay.record.request["replay"] = True
+    files, _ = await _build([_call(1), replay])
+    summary = json.loads(files["summary.json"])
+    assert summary["llm_image"]["total_ms"]["n"] == 1
+    assert summary["llm_replay"]["total_ms"]["n"] == 1

@@ -12,14 +12,16 @@ from __future__ import annotations
 
 import math
 import statistics
+import time
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Final, Literal, cast
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from jbrain.api.deps import DebugDep
-from jbrain.api.growbot_llm import log_call
+from jbrain.api.growbot_llm import log_call, serve_turn
 from jbrain.api.internal_auth import require_growbot
 from jbrain.db.session import SessionContext
 from jbrain.growbot.calls import CallLog, CallRecord, LoggedCall
@@ -29,6 +31,12 @@ debug_router = APIRouter(prefix="/debug/growbot")
 
 _DEBUG_OWNER = SessionContext(principal_id="debug-console", principal_kind="owner")
 _UUID = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+# A replay re-runs a logged turn on the creature's own slot, which throws away the live
+# creature's cached prompt; it waits until the creature has been quiet this long.
+REPLAY_QUIET_S: Final = 120
+# Characters per token of the creature's system message, near enough to tell a turn that
+# resumed after the system message from one that re-read it (measured ~4.0 on Flash-Next).
+_CHARS_PER_TOKEN: Final = 4
 # The stages a summary reports, in the order a turn passes through them.
 _STAGES = (
     "lock_ms",
@@ -169,14 +177,53 @@ def _spread(values: list[float]) -> dict[str, float | int]:
     }
 
 
+def _cold(rec: CallRecord) -> bool:
+    """A model turn that re-read its system message instead of resuming after it."""
+    chars = rec.timings.get("system_chars")
+    if rec.cached_tokens is None or not isinstance(chars, int) or chars <= 0:
+        return False
+    return rec.cached_tokens * _CHARS_PER_TOKEN < chars // 2
+
+
+def _group(rec: CallRecord) -> str:
+    if rec.kind != "llm":
+        return rec.kind
+    if rec.request.get("replay"):
+        return "llm_replay"
+    if _cold(rec):
+        return "llm_cold"
+    return "llm_image" if rec.images else "llm_text"
+
+
+def cold_reasons(calls: list[LoggedCall]) -> dict[str, int]:
+    """Why each cold turn was cold: its system text differed from the robot's turn before
+    (`system_changed`), was the same (`cache_lost`: a restart, an eviction), or it was the
+    first turn in the window (`unknown`)."""
+    out = {"system_changed": 0, "cache_lost": 0, "unknown": 0}
+    last: dict[str, Any] = {}
+    for call in sorted(calls, key=lambda c: c.id):
+        rec = call.record
+        if rec.kind != "llm" or rec.request.get("replay"):
+            continue
+        sha = rec.timings.get("system_hash") or None
+        if _cold(rec):
+            before = last.get(rec.robot)
+            if before is None or sha is None:
+                out["unknown"] += 1
+            else:
+                out["system_changed" if before != sha else "cache_lost"] += 1
+        last[rec.robot] = sha
+    return out
+
+
 def summarize(calls: list[LoggedCall]) -> dict[str, Any]:
     """Each group's count, failures, total and per-stage spread; model turns split by whether
-    they carried a picture, since a frame's prefill is the suspect."""
+    they carried a picture, since a frame's prefill is the suspect, with cold turns (the
+    whole prompt re-read) and debug replays apart so neither skews the warm numbers."""
     groups: dict[str, list[CallRecord]] = {}
     for call in calls:
         rec = call.record
-        name = rec.kind if rec.kind != "llm" else ("llm_image" if rec.images else "llm_text")
-        groups.setdefault(name, []).append(rec)
+        groups.setdefault(_group(rec), []).append(rec)
     out: dict[str, Any] = {}
     for name, recs in sorted(groups.items()):
         stages: dict[str, Any] = {}
@@ -208,4 +255,30 @@ async def debug_calls_summary(
     minutes: Annotated[int, Query(ge=1, le=10_080)] = 60,
 ) -> dict[str, Any]:
     calls = await _calls(request).recent(_DEBUG_OWNER, since=_since(minutes), limit=5000)
-    return {"minutes": minutes, "calls": len(calls), "groups": summarize(calls)}
+    return {
+        "minutes": minutes,
+        "calls": len(calls),
+        "groups": summarize(calls),
+        "cold": cold_reasons(calls),
+    }
+
+
+@debug_router.post("/replay")
+async def debug_replay(request: Request, _p: DebugDep) -> Response:
+    """Run one chat request through the creature's lane, unstreamed, and answer with the
+    engine's reply. For trying a prompt layout against logged turns (a row's `request` from
+    `calls?full=true`, edited) before the page ships it. Refused while the creature is
+    talking: the replay shares its slot and would cost its next turn a cold re-read."""
+    last = getattr(request.app.state, "growbot_last_turn", None)
+    if isinstance(last, float) and time.monotonic() - last < REPLAY_QUIET_S:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": f"the creature spoke in the last {REPLAY_QUIET_S} s"},
+        )
+    try:
+        payload = await request.json()
+    except ValueError:
+        return JSONResponse(status_code=400, content={"detail": "invalid JSON body"})
+    if isinstance(payload, dict):
+        payload["stream"] = False
+    return await serve_turn(request, payload, replay=True)
