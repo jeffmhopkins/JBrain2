@@ -487,7 +487,8 @@ export const FACES: { id: GrowbotFace; name: string; what: string }[] = [
   { id: "pixel", name: "Pixel", what: "The original pixel eyes." },
 ];
 
-/** The creature's own memories, read-only here: it writes them itself. */
+/** The creature's own memories. It writes them itself, as it goes and in its dreams; the owner
+ *  may correct each one, and `up` is the soul key (and the box's region) it lives in. */
 export const MEMORY = [
   { id: "identity", label: "Who it is", up: "identity" },
   { id: "bond", label: "Bond line", up: "identityCore" },
@@ -495,6 +496,22 @@ export const MEMORY = [
   { id: "goals", label: "Wants", up: "goals" },
   { id: "log", label: "Diary", up: "log" },
 ] as const;
+
+export type MemoryId = (typeof MEMORY)[number]["id"];
+
+/** The creature's own caps on what it keeps (soul.js), which the box holds a correction to. */
+export const MEMORY_CAPS = {
+  identityMin: 20,
+  identity: 1600,
+  bond: 240,
+  state: 90,
+  rule: 90,
+  rules: 24,
+  want: 80,
+  wants: 4,
+  selfName: 32,
+  line: 140,
+} as const;
 
 /** The name the creature calls itself, which is its own (upstream's `goals.selfName`). */
 export function selfName(soul: GrowbotSoul, fallback: string): string {

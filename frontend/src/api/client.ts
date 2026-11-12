@@ -4144,7 +4144,18 @@ export interface GrowbotWritten {
   checkpoint: GrowbotCheckpoint | null;
 }
 
-export type GrowbotRegion = "persona" | "expression" | "meta" | "dream" | "harness" | "body";
+export type GrowbotRegion =
+  | "persona"
+  | "expression"
+  | "meta"
+  | "dream"
+  | "harness"
+  | "body"
+  | "identity"
+  | "identityCore"
+  | "scratch"
+  | "goals"
+  | "log";
 
 /** What a ticket opens: a persona (the phone opens as it) and/or a robot (it wears that body). */
 export interface GrowbotTicketFor {

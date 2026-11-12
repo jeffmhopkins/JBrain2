@@ -83,10 +83,9 @@ These land whichever direction is picked.
 - **The child-safety floor is shown, and locked.** Under the personality, and in its editor:
   *Child-safety rules are always added after the personality. They can't be edited here, in a
   soul file or in the creature.* (`prompts.js` appends `SAFETY_FLOOR` after any persona.)
-- **What the creature writes itself is read-only, and says why.** Identity, the bond line
-  (append-once, written in a dream), scratch, wants and the diary carry *Sprout writes these
-  itself … To take one back, restore a checkpoint.* Restoring a checkpoint is the way to undo
-  them.
+- **What the creature writes itself is the owner's to correct** (owner, 2026-11-12, replacing
+  the first read-only design). Identity, the bond line, scratch, wants and the diary each have an
+  *Edit*; every save checkpoints first, so a restore still undoes it.
 - **Harness and body say who wins.** Plan §2b keeps models and leg calibration with the robot.
   So their editors say *While it wears Fish, the robot's own settings win over these.*
 - **Rename is the list's name, not the creature's.** It also writes `meta.name`. The sheet

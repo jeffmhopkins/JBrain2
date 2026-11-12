@@ -60,7 +60,7 @@ Cid = Annotated[str, Path(pattern=_UUID)]
 Mid = Annotated[str, Path(pattern="^r[0-9a-f]{1,32}$")]
 View = Annotated[int, Path(ge=0, lt=memories.MAX_VIEWS)]
 Code = Annotated[str, Path(pattern=_CODE)]
-Region = Annotated[str, Path(pattern="^(" + "|".join(souls.REGIONS) + ")$")]
+Region = Annotated[str, Path(pattern="^(" + "|".join(souls.EDITABLE) + ")$")]
 
 # What the region labels read as in an automatic checkpoint's name (the screen's words).
 _REGION_LABEL = {
@@ -70,6 +70,11 @@ _REGION_LABEL = {
     "dream": "dreams",
     "harness": "thinking",
     "body": "body",
+    "identity": "who it is",
+    "identityCore": "the bond line",
+    "scratch": "right now",
+    "goals": "wants",
+    "log": "the diary",
 }
 
 
@@ -324,7 +329,8 @@ class RenameIn(BaseModel):
 
 
 class RegionIn(BaseModel):
-    # Text for persona and dream, {name, description} for meta, an object for the rest.
+    # Text for persona, dream, identity and identityCore; {name, description} for meta; a list
+    # of {t, txt} for log; an object for the rest.
     value: Any
 
 

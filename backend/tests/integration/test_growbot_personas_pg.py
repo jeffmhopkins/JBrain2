@@ -496,7 +496,19 @@ async def test_routes_add_edit_undo_and_restore(maker: async_sessionmaker) -> No
     assert edited["persona"]["version"] == 2
     bad = c.put(f"/api/growbot/personas/{pid}/regions/persona", json={"value": " "})
     assert bad.status_code == 422 and "Nothing was saved" in bad.json()["detail"]
-    assert c.put(f"/api/growbot/personas/{pid}/regions/log", json={"value": []}).status_code == 422
+    assert c.put(f"/api/growbot/personas/{pid}/regions/mood", json={"value": {}}).status_code == 422
+    who = c.put(
+        f"/api/growbot/personas/{pid}/regions/identity",
+        json={"value": "I am Sprout and I live by the window."},
+    ).json()
+    assert who["persona"]["soul"]["identity"] == "I am Sprout and I live by the window."
+    assert who["checkpoint"]["name"] == "Before editing who it is"
+    wants = c.put(
+        f"/api/growbot/personas/{pid}/regions/goals",
+        json={"value": {"selfName": "Fish", "wants": ["walk to my person"]}},
+    )
+    assert wants.status_code == 200, wants.text
+    assert wants.json()["persona"]["soul"]["goals"]["selfName"] == "Fish"
     undo = c.post(
         f"/api/growbot/personas/{pid}/checkpoints/{edited['checkpoint']['id']}/restore"
     ).json()
@@ -515,7 +527,7 @@ async def test_routes_add_edit_undo_and_restore(maker: async_sessionmaker) -> No
     ).json()
     assert meta["persona"]["name"] == "Pip"
     detail = c.get(f"/api/growbot/personas/{pid}").json()
-    assert [cp["auto"] for cp in detail["checkpoint_list"]] == [True, True, True]
+    assert [cp["auto"] for cp in detail["checkpoint_list"]] == [True, True, True, True, True]
 
 
 async def test_routes_seed_duplicate_rename_reset_and_delete(maker: async_sessionmaker) -> None:
