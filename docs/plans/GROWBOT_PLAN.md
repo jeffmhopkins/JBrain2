@@ -156,9 +156,15 @@ The owner (2026-11-10) did not like upstream's face and chose the panels' ostric
 mocks (`docs/mocks/growbot-face/`; binding spec in `docs/reference/DESIGN.md` "GrowBot — the
 creature's face"). `patches/growbot-face.js` draws it at full resolution over upstream's pixel
 sky from the same state upstream drew its own eyes from, so the brain still sets only
-`emotion`; the one new brain verb is `coat`, which recolours it. Since 2026-11-11 the face is
+`emotion`; the first new brain verb is `coat`, which recolours it. Since 2026-11-11 the face is
 each persona's own (migration 0259, `growbot_personas.face`), lantern by default (owner): picked
 on the persona's *Manage* tab, read by the phone with the soul and changed at its next poll.
+
+The second brain verb is `eye` (owner, 2026-11-12: switch between the front and back camera
+when the phone is off the body): `front` or `back`, heeded only on a turn that answers something
+the person said, since upstream retired a free `look` verb after the model flipped lenses
+constantly. The lens is upstream's `gb_eye` key, which the persona's settings record (§2b) keeps
+on the box; an owner change reaching the page as `gb-box-prefs` flips the camera where it stands.
 
 ### 2b. Settings live on the box, and the PWA owns them
 
@@ -202,6 +208,14 @@ change made on one phone is invisible everywhere else.
   `api/growbot_body.py`) and `growbot-box.js` copies it into each page, the box winning key by
   key. The pane's check moves go chip-direct (`POST /internal/robots/act`). See
   growbot/README.md "Leg calibration".
+- **The rest of the creature's keys followed, per persona** (owner, 2026-11-12: *"the cell
+  phone should just be a display, not a data storage device"*). Rather than the report-and-queue
+  table above, every localStorage key that is the creature's (coat colour, games guide, volume,
+  speech speed, camera, low power, remembered `?flags`; `growbot-box.js` `KEYS`) lives in
+  `growbot_personas.prefs` (migration 0263): pulled into the page before it runs, each change
+  sent back as a per-key patch, and an owner's `PATCH …/prefs` taken where the creature stands
+  on the next poll. Model and effort pickers are cloud-only and are being removed from the
+  page rather than synced. See growbot/README.md "Settings".
 
 ### 2c. The creature lives on the box, as profiles the owner can switch
 

@@ -180,6 +180,15 @@ class _Fake(BaseHTTPRequestHandler):
                 default = (200, {"version": 2, "memories": []})
             status, reply = _Fake.soul.get(self.path, default)
             self._reply(status, json.dumps(reply).encode())
+        elif self.path.startswith("/internal/growbot/prefs/"):
+            if not authed:
+                self._reply(401, b"{}")
+                return
+            default = (200, {"version": 4})
+            if self.path.endswith("/pull"):
+                default = (200, {"version": 4, "prefs": {"gb_vol": "0.5"}})
+            status, reply = _Fake.soul.get(self.path, default)
+            self._reply(status, json.dumps(reply).encode())
         elif self.path == "/internal/growbot/robot/verify":
             ok = authed and json.loads(body) == {"code": "gb-abc123", "key": "right-key"}
             self._reply(200 if ok else 401, json.dumps({"ok": ok}).encode())
@@ -3047,6 +3056,57 @@ def test_a_memory_api_that_cannot_answer_is_a_retry(run: _Running) -> None:
     _Fake.soul = {"/internal/growbot/memories/forget": (400, ["no"])}  # type: ignore[dict-item]
     body = {"persona": _PERSONA, "ids": []}
     assert _soul_call(run, "POST", "/api/box/memories/forget", body) == (400, {"error": "refused"})
+
+
+# --- a persona's settings ----------------------------------------------------------------
+
+
+def test_the_settings_routes_reach_the_api_as_this_phone(run: _Running) -> None:
+    assert _soul_call(run, "GET", "/api/box/prefs") == (
+        200,
+        {"version": 4, "prefs": {"gb_vol": "0.5"}, "persona": _PERSONA},
+    )
+    pulled = [s for s in _Fake.seen if s["path"] == "/internal/growbot/prefs/pull"][-1]
+    assert pulled["auth"] == f"Bearer {_TOKEN}"
+    assert json.loads(pulled["body"]) == {"persona": _PERSONA, "phone": _PHONE}
+    change = {"persona": _PERSONA, "set": {"gb_eye": "environment"}, "drop": ["gb_vol"]}
+    assert _soul_call(run, "POST", "/api/box/prefs", change) == (
+        200,
+        {"version": 4, "persona": _PERSONA},
+    )
+    pushed = [s for s in _Fake.seen if s["path"] == "/internal/growbot/prefs/push"][-1]
+    assert json.loads(pushed["body"]) == {
+        "persona": _PERSONA,
+        "phone": _PHONE,
+        "set": {"gb_eye": "environment"},
+        "drop": ["gb_vol"],
+    }
+
+
+def test_a_g2_session_keeps_its_settings_on_the_phone(run: _Running) -> None:
+    for method in ("GET", "POST"):
+        body = {"persona": _PERSONA} if method == "POST" else None
+        assert _soul_call(run, method, "/api/box/prefs", body, cookie=run.cookie) == (204, None)
+    assert not [s for s in _Fake.seen if s["path"].startswith("/internal/growbot/prefs/")]
+
+
+def test_settings_name_the_persona_they_came_from_and_pass_refusals(run: _Running) -> None:
+    for named in ("", "1" + _PERSONA[1:], None):
+        body = {"persona": named, "set": {}}
+        assert _soul_call(run, "POST", "/api/box/prefs", body) == (409, {"error": "other"})
+    assert _soul_call(run, "POST", "/api/box/prefs", ["no"]) == (
+        400,
+        {"error": "a settings change"},
+    )
+    assert _soul_call(run, "DELETE", "/api/box/prefs")[0] == 405
+    for status, detail in ((404, "gone"), (409, "moved"), (413, "settings too big")):
+        _Fake.soul = {"/internal/growbot/prefs/push": (status, {"detail": detail})}
+        body = {"persona": _PERSONA, "set": {"gb_vol": "1"}}
+        assert _soul_call(run, "POST", "/api/box/prefs", body) == (status, {"error": detail})
+    _Fake.soul = {"/internal/growbot/prefs/pull": (500, {"detail": "x"})}
+    assert _soul_call(run, "GET", "/api/box/prefs")[0] == 503
+    _Fake.soul = {"/internal/growbot/prefs/pull": (200, ["no"])}  # type: ignore[dict-item]
+    assert _soul_call(run, "GET", "/api/box/prefs")[0] == 503
 
 
 def test_the_memory_routes_take_only_their_methods(run: _Running) -> None:

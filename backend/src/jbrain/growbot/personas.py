@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.growbot.memories import MAX_MEMORIES, Saved
+from jbrain.growbot.prefs import Patch, merged
 from jbrain.storage import BlobStore
 
 NAME_MAX = 40
@@ -62,6 +63,8 @@ class Persona:
     memories: int = 0
     face: str = "lantern"
     voice: str = ""
+    # The creature's settings (growbot/prefs.py); None until its phone first sent them.
+    prefs: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -109,12 +112,14 @@ class Pulled:
     memories: int = 0
     face: str = "lantern"
     voice: str = ""
+    # Bumped by every change to its settings: the phone pulls them when it moves.
+    prefs: int = 0
 
 
 PushResult = int | Literal["moved", "newer", "gone"]
 # The faces growbot-face.js draws (migration 0259's CHECK); lantern is the default.
 Face = Literal["lantern", "ostrich", "robot", "pixel"]
-# A tts-stt voice id (migration 0263's CHECK, and the shape the sidecar's /api/fish-tts
+# A tts-stt voice id (migration 0264's CHECK, and the shape the sidecar's /api/fish-tts
 # accepts), or "" for the box's default voice.
 VOICE_RE: Final = r"^(kokoro-[a-z0-9_]{1,40})?$"
 Away = Literal["moved", "gone"]
@@ -193,11 +198,18 @@ class PersonaRepo(Protocol):
     async def phone_forget(
         self, ctx: SessionContext, pid: str, phone_id: str, ids: list[str]
     ) -> int | Away: ...
+    async def patch_prefs(self, ctx: SessionContext, pid: str, patch: Patch) -> int | None: ...
+    async def phone_prefs(
+        self, ctx: SessionContext, pid: str, phone_id: str
+    ) -> tuple[int, dict[str, str] | None] | Away: ...
+    async def phone_patch_prefs(
+        self, ctx: SessionContext, pid: str, phone_id: str, patch: Patch
+    ) -> int | Away: ...
 
 
 _PERSONA = (
     "p.id::text AS id, p.name, p.version, p.made_from, p.phone_id, p.last_phone_id,"
-    " p.opened_at, p.created_at, p.updated_at, p.face, p.voice,"
+    " p.opened_at, p.created_at, p.updated_at, p.face, p.voice, p.prefs,"
     " (SELECT count(*) FROM app.growbot_checkpoints c WHERE c.persona_id = p.id) AS checkpoints,"
     " (SELECT b.code FROM app.growbot_body b WHERE b.persona_id = p.id LIMIT 1) AS wearing,"
     " (SELECT count(*) FROM app.growbot_memories m WHERE m.persona_id = p.id) AS memories"
@@ -230,6 +242,7 @@ def _persona(r: Any, soul: bool = False) -> Persona:
         memories=int(r.memories),
         face=r.face,
         voice=r.voice,
+        prefs=dict(r.prefs) if r.prefs is not None else None,
     )
 
 
@@ -353,6 +366,16 @@ class SqlPersonaRepo:
                         "INSERT INTO app.growbot_memories (persona_id, id, meta, views)"
                         " SELECT :p, id, meta, views FROM app.growbot_memories"
                         " WHERE persona_id = :src"
+                    ),
+                    {"p": pid, "src": src},
+                )
+                # A duplicate is the same creature, so it keeps the same settings, but not
+                # the diary id: two creatures writing one diary would muddle both.
+                await session.execute(
+                    text(
+                        "UPDATE app.growbot_personas SET prefs ="
+                        " (SELECT prefs - 'gb_nx_sid' FROM app.growbot_personas WHERE id = :src)"
+                        " WHERE id = :p"
                     ),
                     {"p": pid, "src": src},
                 )
@@ -824,7 +847,7 @@ class SqlPersonaRepo:
             row = (
                 await session.execute(
                     text(
-                        f"SELECT p.version, p.memories_version, p.face, p.voice,"
+                        f"SELECT p.version, p.memories_version, p.face, p.voice, p.prefs_version,"
                         f" {'p.soul' if with_soul else 'NULL'} AS soul,"
                         " (SELECT b.code FROM app.growbot_body b WHERE b.persona_id = p.id"
                         "  LIMIT 1) AS wearing"
@@ -848,6 +871,7 @@ class SqlPersonaRepo:
                 row.memories_version,
                 row.face,
                 row.voice,
+                row.prefs_version,
             )
 
     async def push(
@@ -1088,3 +1112,69 @@ class SqlPersonaRepo:
                 )
         await self._sweep(freed)
         return version
+
+    # -- settings -----------------------------------------------------------------------------
+
+    async def _patch(self, session: AsyncSession, pid: str, patch: Patch) -> int:
+        # The row is locked by the caller, so two patches merge one after the other.
+        had = (
+            await session.execute(
+                text("SELECT prefs FROM app.growbot_personas WHERE id = :p"), {"p": pid}
+            )
+        ).scalar_one()
+        return int(
+            (
+                await session.execute(
+                    text(
+                        "UPDATE app.growbot_personas SET prefs = CAST(:s AS jsonb),"
+                        " prefs_version = prefs_version + 1 WHERE id = :p"
+                        " RETURNING prefs_version"
+                    ),
+                    {"p": pid, "s": _json(merged(had, patch))},
+                )
+            ).scalar_one()
+        )
+
+    async def patch_prefs(self, ctx: SessionContext, pid: str, patch: Patch) -> int | None:
+        """The owner's edit of the creature's settings; its phone's poll carries it there.
+        Raises PrefsTooBig when the merged settings would pass the caps."""
+        if (key := _uuid(pid)) is None:
+            return None
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text("SELECT 1 FROM app.growbot_personas WHERE id = :p FOR UPDATE"),
+                    {"p": key},
+                )
+            ).first()
+            if row is None:
+                return None
+            return await self._patch(session, key, patch)
+
+    async def phone_prefs(
+        self, ctx: SessionContext, pid: str, phone_id: str
+    ) -> tuple[int, dict[str, str] | None] | Away:
+        """The settings for the phone holding `pid`: None when no phone has sent any yet."""
+        if (key := _uuid(pid)) is None:
+            return "gone"
+        async with scoped_session(self._maker, ctx) as session:
+            if (away := await self._held(session, key, phone_id, lock=False)) is not None:
+                return away
+            row = (
+                await session.execute(
+                    text("SELECT prefs, prefs_version FROM app.growbot_personas WHERE id = :p"),
+                    {"p": key},
+                )
+            ).one()
+            return int(row.prefs_version), dict(row.prefs) if row.prefs is not None else None
+
+    async def phone_patch_prefs(
+        self, ctx: SessionContext, pid: str, phone_id: str, patch: Patch
+    ) -> int | Away:
+        """The creature's own change to its settings, kept only while this phone holds it."""
+        if (key := _uuid(pid)) is None:
+            return "gone"
+        async with scoped_session(self._maker, ctx) as session:
+            if (away := await self._held(session, key, phone_id, lock=True)) is not None:
+                return away
+            return await self._patch(session, key, patch)

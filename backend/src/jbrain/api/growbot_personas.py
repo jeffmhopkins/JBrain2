@@ -34,7 +34,7 @@ from jbrain.api.deps import DebugDep, OwnerDep
 from jbrain.api.growbot import PHONE_RE
 from jbrain.api.internal_auth import require_growbot
 from jbrain.db.session import SessionContext
-from jbrain.growbot import memories, souls
+from jbrain.growbot import memories, prefs, souls
 from jbrain.growbot.personas import (
     NAME_MAX,
     VOICE_RE,
@@ -117,6 +117,8 @@ class PersonaOut(BaseModel):
     face: str
     # The voice it speaks in: a tts-stt voice id, or "" for the box's default.
     voice: str
+    # Its settings (growbot/prefs.py), key to value; None until its phone first sent them.
+    prefs: dict[str, str] | None
 
 
 class MemoryOut(BaseModel):
@@ -190,6 +192,7 @@ def _persona_out(p: Persona) -> PersonaOut:
         memories=p.memories,
         face=p.face,
         voice=p.voice,
+        prefs=p.prefs,
     )
 
 
@@ -411,6 +414,46 @@ async def rename_persona(request: Request, owner: OwnerDep, pid: Pid, body: Rena
     )
 
 
+class PrefsIn(BaseModel):
+    # Lenient, as the sidecar's: growbot/prefs.py says what a setting may be.
+    set: Any = None
+    drop: Any = None
+
+
+class PrefsVersionOut(BaseModel):
+    version: int
+
+
+def _patch(body: PrefsIn) -> prefs.Patch:
+    try:
+        return prefs.patch_from(body.set, body.drop)
+    except prefs.PrefsTooBig as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except prefs.PrefsRefused as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def _patch_prefs(
+    request: Request, ctx: SessionContext, pid: str, body: PrefsIn
+) -> PrefsVersionOut:
+    try:
+        got = await _repo(request).patch_prefs(ctx, pid, _patch(body))
+    except prefs.PrefsTooBig as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    if got is None:
+        raise HTTPException(status_code=404, detail="no such persona")
+    return PrefsVersionOut(version=got)
+
+
+@router.patch("/personas/{pid}/prefs")
+async def patch_prefs(
+    request: Request, owner: OwnerDep, pid: Pid, body: PrefsIn
+) -> PrefsVersionOut:
+    """Set (`set`, key to value) or clear (`drop`) the creature's settings. Not a soul write:
+    its phone's poll carries the change, and the creature takes it where it stands."""
+    return await _patch_prefs(request, _owner_ctx(owner), pid, body)
+
+
 @router.put("/personas/{pid}/regions/{region}")
 async def edit_region(
     request: Request, owner: OwnerDep, pid: Pid, region: Region, body: RegionIn
@@ -603,6 +646,14 @@ async def debug_memories(request: Request, _p: DebugDep, pid: Pid) -> MemoriesOu
     return await _memories(request, _DEBUG_OWNER, pid)
 
 
+@debug_router.patch("/personas/{pid}/prefs")
+async def debug_patch_prefs(
+    request: Request, _p: DebugDep, pid: Pid, body: PrefsIn
+) -> PrefsVersionOut:
+    request.state.debug_detail = f"growbot prefs {pid}"
+    return await _patch_prefs(request, _DEBUG_OWNER, pid, body)
+
+
 @debug_router.post("/personas/{pid}/checkpoints")
 async def debug_save_checkpoint(
     request: Request, _p: DebugDep, pid: Pid, body: CheckpointIn
@@ -684,6 +735,8 @@ class StateOut(BaseModel):
     face: str
     # The voice it speaks in ("" is the box's default): its next line is in it.
     voice: str
+    # Bumped by every change to its settings: the phone pulls them when it moves.
+    prefs: int
 
 
 @internal_router.post("/soul/state")
@@ -701,6 +754,7 @@ async def soul_state(request: Request, body: PhoneIn) -> StateOut:
         memories=got.memories,
         face=got.face,
         voice=got.voice,
+        prefs=got.prefs,
     )
 
 
@@ -844,3 +898,42 @@ async def phone_forget(request: Request, body: ForgetIn) -> MemoriesVersionOut:
     if isinstance(got, str):
         raise _away(got)
     return MemoriesVersionOut(version=got)
+
+
+class PhonePrefsIn(PhoneIn):
+    set: Any = None
+    drop: Any = None
+
+
+class PhonePrefsOut(BaseModel):
+    version: int
+    # None: no phone has sent its settings yet, so this one keeps its own and sends them.
+    prefs: dict[str, str] | None
+
+
+@internal_router.post("/prefs/pull")
+async def phone_prefs(request: Request, body: PhoneIn) -> PhonePrefsOut:
+    """The settings of the persona this phone holds. 409 `moved` and 404 `gone` as the soul's
+    pull."""
+    if not _phone_ok(body):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    got = await _repo(request).phone_prefs(_SYSTEM_OWNER, body.persona, body.phone)
+    if isinstance(got, str):
+        raise _away(got)
+    return PhonePrefsOut(version=got[0], prefs=got[1])
+
+
+@internal_router.post("/prefs/push")
+async def phone_patch_prefs(request: Request, body: PhonePrefsIn) -> PrefsVersionOut:
+    """The creature's own change to its settings. 400 for a patch the box will not keep, 413
+    past the caps; 409 `moved` and 404 `gone` as the soul's push."""
+    if not _phone_ok(body):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    patch = _patch(PrefsIn(set=body.set, drop=body.drop))
+    try:
+        got = await _repo(request).phone_patch_prefs(_SYSTEM_OWNER, body.persona, body.phone, patch)
+    except prefs.PrefsTooBig as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    if isinstance(got, str):
+        raise _away(got)
+    return PrefsVersionOut(version=got)

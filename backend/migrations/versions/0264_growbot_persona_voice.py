@@ -8,15 +8,15 @@ included; anything else is a tts-stt voice id, the shape the sidecar's /api/fish
 
 The column rides `growbot_personas`' owner-only RLS; no new table, so no new isolation test.
 
-Revision ID: 0263
-Revises: 0262
+Revision ID: 0264
+Revises: 0263
 Create Date: 2026-11-12
 """
 
 from alembic import op
 
-revision = "0263"
-down_revision = "0262"
+revision = "0264"
+down_revision = "0263"
 branch_labels = None
 depends_on = None
 
