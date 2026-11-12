@@ -1046,3 +1046,54 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", open);
   else open();
 })();
+
+/* GrowBot on the box: the robot's leg calibration lives on the box, set from the PWA's Body tab
+   (backend api/growbot_body.py), and is copied into this page's gb_walk_cal, where upstream's
+   creature, walks, spins and tester pages all read it (calNow(), relay-transport's SWAP). The
+   box's copy wins key by key, so a second phone or a reset browser drives the legs the same
+   way; a robot nobody calibrated from the PWA (cal null) leaves the phone's own alone. The
+   first read is synchronous so a page that reads gb_walk_cal once at load sees it. */
+(function () {
+  "use strict";
+  var PATH = "/api/box/cal", POLL_MS = 5000, KEY = "gb_walk_cal";
+  var store;
+  try { store = window.localStorage; store.getItem(KEY); } catch (e) { return; }
+
+  function code() {
+    var id = "";
+    try { id = new URLSearchParams(location.search).get("id") || store.getItem("gb_walk_id") || ""; } catch (e) {}
+    id = String(id).trim();
+    return /^gb-[A-Za-z0-9]{1,32}$/.test(id) ? id : "";
+  }
+  function apply(cal) {
+    if (!cal || typeof cal !== "object" || Array.isArray(cal)) return;
+    var now = {};
+    try { now = JSON.parse(store.getItem(KEY) || "{}"); } catch (e) { now = {}; }
+    if (!now || typeof now !== "object" || Array.isArray(now)) now = {};
+    var changed = false;
+    Object.keys(cal).forEach(function (k) {
+      if (JSON.stringify(now[k]) !== JSON.stringify(cal[k])) { now[k] = cal[k]; changed = true; }
+    });
+    if (changed) { try { store.setItem(KEY, JSON.stringify(now)); } catch (e) {} }
+  }
+  function url(id) { return PATH + "?id=" + encodeURIComponent(id); }
+
+  var first = code();
+  if (first) {
+    try {
+      var x = new XMLHttpRequest();
+      x.open("GET", url(first), false);
+      x.send();
+      if (x.status === 200) apply((JSON.parse(x.responseText) || {}).cal);
+    } catch (e) {}
+  }
+  function poll() {
+    var id = code();
+    if (!id) return;
+    fetch(url(id), { cache: "no-store" }).then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (j) { if (j) apply(j.cal); }).catch(function () {});
+  }
+  setInterval(function () { if (!document.hidden) poll(); }, POLL_MS);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) poll(); });
+})();

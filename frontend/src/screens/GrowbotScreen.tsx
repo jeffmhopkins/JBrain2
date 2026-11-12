@@ -16,8 +16,9 @@ import {
   api,
 } from "../api/client";
 import { GrowbotAddSheet } from "../components/GrowbotAddSheet";
+import { GrowbotBodyControls } from "../components/GrowbotBodyControls";
 import { GrowbotFail, GrowbotLog, GrowbotPhases } from "../components/GrowbotJob";
-import { GrowbotMovePanel } from "../components/GrowbotMovePanel";
+import { GrowbotMovePanel, stopCreature } from "../components/GrowbotMovePanel";
 import { GrowbotPersonaPage } from "../components/GrowbotPersonaPage";
 import {
   GrowbotAvatar,
@@ -663,12 +664,11 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           <div key={r.code} className="gb-stack">
             {bodyCard(r)}
             {riderPick(r)}
-            {!r.revoked_at && (
-              <section className="gb-card" aria-label={`Move ${r.name || r.code}`}>
-                <h3>Move {r.name || r.code}</h3>
-                <GrowbotMovePanel robot={r} />
-              </section>
-            )}
+            <GrowbotBodyControls
+              robot={r}
+              move={<GrowbotMovePanel robot={r} withStop={false} />}
+              onStop={() => stopCreature(r)}
+            />
           </div>
         ))}
         {flashing || (

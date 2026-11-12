@@ -3289,11 +3289,11 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   radio list: *Nobody* (*Fish stands still.*), then every persona with where it is. Picking a
   persona open on a phone hands it the legs there; picking one that is not open opens it on
   this phone wearing Fish (through the first-time note when it applies). *The one it leaves
-  carries on alone on its phone.* Then **Move <name>**, the robot's remote (owner,
-  2026-11-12), laid out like upstream's Policy Remote: a segmented policy pick (*Forward*,
+  carries on alone on its phone.* Then **Controls for <name>** (below), whose *Move* pane is the
+  robot's remote (owner, 2026-11-12), laid out like upstream's Policy Remote: a segmented policy pick (*Forward*,
   *Backward*, *Spin ↻*, *Spin ↺*), *Seconds* (1-15, 5 by default) beside the primary *Walk
   forward 5 s* (its label names the pick and the time), a row of gestures (*Wiggle*, *Bow*,
-  *Sway*), and a rose *Stop*. Under them, what the creature said: *Walking forward for 5 s.*, or
+  *Sway*), with the card's one *Stop* under it. Under them, what the creature said: *Walking forward for 5 s.*, or
   its own words for why not, in rose. The walk runs on the rider phone's motion sensors, so
   every button is disabled, with the reason in words above them, until the robot is on (*Turn
   the robot on to move it.*) and a creature wearing it is open on screen (*Open a persona
@@ -3368,6 +3368,20 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   reach the box, the log behind *Show the log* until something fails) → *<name> is paired*.
   Closing the sheet mid-flash leaves *Flashing — tap to watch* on the Body tab. Each failure
   says what happened and the recovery, never "see the log".
+- **Controls for <name>** (owner, 2026-11-12: *"anything they could do in the original
+  application"*) is one card under each robot's *Who wears* on the Body tab
+  (`components/GrowbotBodyControls.tsx`, owner 2026-11-12: the remote and the leg trim in one
+  GUI): a *Move | Legs* segmented strip, *Move* first (the remote above), and one full-width
+  rose *Stop* under both that stops the chip and the creature walking it together. *Legs* is upstream's tester leg check in its own
+  three steps: *1 · Which leg* (*Move left leg* / *Move right leg*, then the *Swap left and
+  right* checkbox), *2 · Straighten* (a *Left trim* and *Right trim* row each: −, slider ±30°,
+  +, the value; the legs stand at the new trim once the hand stops), *3 · Direction* (*Sweep
+  left/right forward*), then *Advanced* (each leg's sign, the IMU's roll/pitch/yaw signs, the
+  walk gain) and an armed *Reset calibration*. Every change saves that one setting on the box
+  at once (the line above step 1 says whether anything is saved there yet; a setting never
+  changed here stays each phone's own), and a status line under it says what was
+  done or why a move did not go. A robot that is off keeps its calibration editable but its
+  moves and *Stop* disabled, with *Turn the robot on to move it.*
 - **Motion.** Sheets slide up, the restore confirm scales in, the persona page slides in from
   the right, banners drop in and toasts rise, 160–200 ms ease-out, each only when it first
   appears, all off under `prefers-reduced-motion`.

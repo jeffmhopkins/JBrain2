@@ -1175,3 +1175,78 @@ details.gb-help[open] summary::after {
 .gb-card .gb-hint.gb-move-said:empty {
   display: none;
 }
+
+/* The Body tab's controls card (components/GrowbotBodyControls.tsx): Move | Legs over one Stop. */
+.gb-ctl .gb-seg {
+  margin: 10px 0 4px;
+}
+.gb-step {
+  margin: 16px 0 2px;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  color: var(--text);
+}
+.gb-trim {
+  display: grid;
+  grid-template-columns: 5.5em 44px minmax(0, 1fr) 44px 3.2em;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.gb-trim .gb-btn {
+  padding: 0;
+}
+.gb-trim input[type="range"] {
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.gb-trim output {
+  text-align: right;
+  color: var(--text);
+}
+.gb-adv .gb-trim {
+  grid-template-columns: 5.5em minmax(0, 1fr) 3.2em;
+}
+.gb-switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  min-height: 44px;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+  cursor: pointer;
+}
+.gb-switch input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+.gb-switch em {
+  display: block;
+  font-style: normal;
+  color: var(--text-3);
+}
+details.gb-adv {
+  margin-top: 14px;
+}
+details.gb-adv summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.gb-legs > .gb-btn.block {
+  margin-top: 16px;
+}
+.gb-stop {
+  margin-top: 14px;
+}

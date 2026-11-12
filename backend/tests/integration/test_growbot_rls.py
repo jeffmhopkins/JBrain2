@@ -22,6 +22,7 @@ from jbrain.db.session import (
     jshare_context,
     scoped_session,
 )
+from jbrain.growbot.body import SqlBodyRepo
 from jbrain.growbot.repo import Redeemed, SqlGrowbotRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
@@ -270,3 +271,27 @@ async def test_the_schema_holds_a_name_to_40_characters(maker: async_sessionmake
     with pytest.raises(DBAPIError):
         async with scoped_session(maker, OWNER) as session:
             await session.execute(text("UPDATE app.growbot_robots SET key_hash = 'plain'"))
+
+
+async def test_a_robots_calibration_is_stored_on_its_row_owner_only(
+    maker: async_sessionmaker,
+) -> None:
+    # Migration 0261: the calibration rides the owner-only row, so it inherits its RLS.
+    repo, body = SqlGrowbotRepo(maker), SqlBodyRepo(maker)
+    await repo.put_robot(OWNER, "gb-a1")
+    assert await body.get_cal(OWNER, "gb-a1") == (True, None)
+    assert await body.get_cal(OWNER, "gb-none") == (False, None)
+    cal = {"L_OFF": 5, "R_OFF": -2, "IMU_SIGN": [1, -1, 1], "gain": 0.9}
+    assert await body.set_cal(OWNER, "gb-a1", cal)
+    assert await body.get_cal(SYSTEM_OWNER, "gb-a1") == (True, cal)
+    assert not await body.set_cal(OWNER, "gb-none", cal)
+    for ctx in NON_OWNERS:
+        assert await body.get_cal(ctx, "gb-a1") == (False, None), ctx
+        assert not await body.set_cal(ctx, "gb-a1", {"L_OFF": 30}), ctx
+    assert await body.get_cal(OWNER, "gb-a1") == (True, cal)
+    # A re-key keeps it: the calibration is the body's, not the key's.
+    await repo.put_robot(OWNER, "gb-a1")
+    assert await body.get_cal(OWNER, "gb-a1") == (True, cal)
+    async with scoped_session(maker, OWNER) as session:
+        with pytest.raises(DBAPIError):
+            await session.execute(text("UPDATE app.growbot_robots SET cal = '[1]'::jsonb"))

@@ -74,6 +74,9 @@ class _Fake(BaseHTTPRequestHandler):
     body_status = 200
     # The soul routes' answer: (status, body) per path, or the default below.
     soul: dict[str, tuple[int, dict[str, Any]]] = {}
+    # Each robot's saved calibration (None: never saved), and the status the api answers.
+    cals: dict[str, dict[str, Any] | None] = {}
+    cal_status = 200
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         return None
@@ -117,6 +120,12 @@ class _Fake(BaseHTTPRequestHandler):
                 return
             persona, phone = _Fake.riders.get(path.rsplit("/", 1)[1], (None, None))
             self._reply(200, json.dumps({"persona": persona, "phone": phone}).encode())
+        elif path.startswith("/internal/growbot/robots/") and path.endswith("/cal"):
+            if not authed_get(self) or _Fake.cal_status != 200:
+                self._reply(_Fake.cal_status if authed_get(self) else 401, b"{}")
+                return
+            code = path.split("/")[4]
+            self._reply(200, json.dumps({"cal": _Fake.cals.get(code)}).encode())
         elif path == "/tts":
             if _Fake.tts_status != 200:
                 self._reply(_Fake.tts_status, b"down", "text/plain")
@@ -285,6 +294,8 @@ def fake() -> Iterator[str]:
     _Fake.riders = {}
     _Fake.body_status = 200
     _Fake.soul = {}
+    _Fake.cals = {}
+    _Fake.cal_status = 200
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Fake)
     threading.Thread(target=server.serve_forever, args=(0.02,), daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
@@ -2269,6 +2280,129 @@ def test_no_token_on_disk_believes_no_caller(run: _Running) -> None:
 def test_an_unknown_internal_route_is_404(run: _Running) -> None:
     assert _internal(run, "GET", "/internal/nope")[0] == 404
     assert _internal(run, "POST", "/internal/robots")[0] == 404
+
+
+def _act(run: _Running, frame: object, code: str = "gb-abc123") -> tuple[int, Any]:
+    body = json.dumps({"code": code, "frame": frame}).encode()
+    return _internal(run, "POST", "/internal/robots/act", body)
+
+
+def test_a_pwa_move_goes_straight_to_the_chip(run: _Running) -> None:
+    steps = [{"l": 95, "r": 85, "ms": 300}]
+    # No chip on the relay: nothing is sent, and the api says so to the PWA.
+    assert _act(run, {"t": "act", "steps": steps}) == (200, {"sent": False})
+    phone = _phone(run)
+    assert phone.message() == {"t": "status", "awake": 0}
+    chip = _chip(run)
+    # Awake once the api has verified its key: only then is it the code's chip.
+    assert phone.message() == {"t": "status", "awake": 1}
+    assert _act(run, {"t": "act", "steps": steps, "extra": "dropped"}) == (200, {"sent": True})
+    got = chip.message()
+    assert got["rid"] >= 1_500_000_000
+    assert {k: v for k, v in got.items() if k != "rid"} == {
+        "t": "act",
+        "steps": steps,
+        "mode": "replace",
+    }
+    assert _act(run, {"t": "routine", "name": "wiggle"}) == (200, {"sent": True})
+    assert chip.message()["name"] == "wiggle"
+    assert _act(run, {"t": "stop"}) == (200, {"sent": True})
+    stop = chip.message()
+    assert stop["t"] == "stop" and stop["rid"] > got["rid"]
+    chip.shut()
+    phone.shut()
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        None,
+        [],
+        {"t": "pose", "lr": "90,90"},
+        {"t": "routine", "name": "dance"},
+        {"t": "act", "steps": []},
+        {"t": "act", "steps": [{"l": 90, "r": 90, "ms": 300}] * 13},
+        {"t": "act", "steps": [{"l": 181, "r": 90, "ms": 300}]},
+        {"t": "act", "steps": [{"l": 90, "r": -1, "ms": 300}]},
+        {"t": "act", "steps": [{"l": 90, "r": 90, "ms": 10}]},
+        {"t": "act", "steps": [{"l": 90, "r": 90, "ms": 9000}]},
+        {"t": "act", "steps": [{"l": 90.5, "r": 90, "ms": 300}]},
+        {"t": "act", "steps": [{"l": True, "r": 90, "ms": 300}]},
+        {"t": "act", "steps": [{"l": 90, "r": 90}]},
+        {"t": "act", "steps": ["x"]},
+    ],
+)
+def test_a_pwa_move_is_held_to_the_chips_safe_shape(run: _Running, frame: object) -> None:
+    assert _act(run, frame)[0] == 400
+
+
+def test_a_pwa_move_needs_a_real_code_and_the_token(run: _Running) -> None:
+    assert _act(run, {"t": "stop"}, code="../x")[0] == 400
+    body = json.dumps({"code": "gb-abc123", "frame": {"t": "stop"}}).encode()
+    assert _internal(run, "POST", "/internal/robots/act", body, token="wrong")[0] == 401
+    assert run.request("POST", "/internal/robots/act", body).status == 401
+
+
+def _cal_get(run: _Running, query: str, cookie: str | None = None) -> tuple[int, Any]:
+    headers = {"Cookie": cookie} if cookie else None
+    resp = run.request("GET", "/api/box/cal" + query, headers=headers)
+    data = resp.read()
+    assert resp.getheader("Cache-Control") == "no-store"
+    return resp.status, (json.loads(data) if data else None)
+
+
+def test_the_creature_reads_its_robots_calibration_from_the_box(run: _Running) -> None:
+    _Fake.cals = {"gb-abc123": {"L_OFF": 4, "R_OFF": -3, "SWAP": 1}}
+    assert _cal_get(run, "?id=gb-abc123") == (200, {"cal": {"L_OFF": 4, "R_OFF": -3, "SWAP": 1}})
+    reads = [r for r in _Fake.seen if r["path"].endswith("/cal")]
+    assert reads[0]["path"] == "/internal/growbot/robots/gb-abc123/cal"
+    assert reads[0]["auth"] == f"Bearer {_TOKEN}"
+
+
+def test_a_never_saved_or_unreadable_calibration_is_null(run: _Running) -> None:
+    # Null, so the phone keeps its own.
+    assert _cal_get(run, "?id=gb-abc123") == (200, {"cal": None})
+    _Fake.cals = {"gb-abc123": {"L_OFF": 4}}
+    _Fake.cal_status = 503
+    run.app._cals.clear()
+    assert _cal_get(run, "?id=gb-abc123") == (200, {"cal": None})
+
+
+def test_a_phone_reads_only_the_calibration_of_the_robot_it_drives(run: _Running) -> None:
+    # gb_walk_cal is one key per phone: a link naming another robot must not leave that
+    # robot's trims on this one, so the api is never even asked.
+    _Fake.cals = {"gb-other": {"L_OFF": 9}, "gb-worn": {"R_OFF": 2}}
+    assert _cal_get(run, "?id=gb-other") == (200, {"cal": None})
+    assert not [r for r in _Fake.seen if r["path"].endswith("/cal")]
+    # A persona's phone reads the robot its persona wears now, whatever its ticket named.
+    _Fake.riders = {"gb-worn": (_PERSONA, _PHONE)}
+    cookie = _persona_cookie(run, robot="")
+    assert _cal_get(run, "?id=gb-worn", cookie) == (200, {"cal": {"R_OFF": 2}})
+    assert _cal_get(run, "?id=gb-other", cookie) == (200, {"cal": None})
+    other_phone = _persona_cookie(run, robot="", phone="phone-" + "b" * 20)
+    assert _cal_get(run, "?id=gb-worn", other_phone) == (200, {"cal": None})
+    # Asked once a while, not at every poll.
+    for _ in range(3):
+        _cal_get(run, "?id=gb-worn", cookie)
+    assert len([r for r in _Fake.seen if r["path"] == "/internal/growbot/body/gb-worn"]) == 2
+
+
+def test_the_calibration_read_is_cached_briefly(run: _Running) -> None:
+    _Fake.cals = {"gb-abc123": {"L_OFF": 1}}
+    for _ in range(3):
+        assert _cal_get(run, "?id=gb-abc123")[1] == {"cal": {"L_OFF": 1}}
+    assert len([r for r in _Fake.seen if r["path"].endswith("/cal")]) == 1
+
+
+def test_the_calibration_read_wants_a_code_a_get_and_a_session(run: _Running) -> None:
+    assert _cal_get(run, "?id=../x")[0] == 400
+    assert _cal_get(run, "")[0] == 400
+    resp = run.request("POST", "/api/box/cal?id=gb-abc123", b"{}")
+    resp.read()
+    assert resp.status == 405
+    resp = run.request("GET", "/api/box/cal?id=gb-abc123", cookie=False)
+    resp.read()
+    assert resp.status == 401
 
 
 def test_handle_checks_the_bearer_too(run: _Running, gb: types.ModuleType) -> None:
