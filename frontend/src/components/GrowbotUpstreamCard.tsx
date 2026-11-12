@@ -153,8 +153,7 @@ export function GrowbotUpstreamCard() {
           on the robot.
         </p>
       )}
-      {up.error && <p className="gb-hint gb-bad-t">{up.error}</p>}
-      {failed && <p className="gb-hint gb-bad-t">{failed}</p>}
+      {(failed || up.error) && <p className="gb-hint gb-bad-t">{failed || up.error}</p>}
       <dl className="gb-facts">
         {up.pinned && (
           <>

@@ -528,7 +528,8 @@ def test_a_pin_gone_from_upstream_says_a_sync_is_needed() -> None:
     box.feed = feed((NEW, "x"))
     box.compare = WebFetchError("not found", status=404)
     status = asyncio.run(box.watch().check())
-    assert "no longer on upstream's main" in status.error
+    assert "can't compare your copy" in status.error
+    assert status.compare_final
 
 
 def test_a_notification_nobody_heard_is_sent_again() -> None:
@@ -596,3 +597,48 @@ def test_upstream_names_are_tamed_in_the_notification() -> None:
 def test_read_pin_wants_the_whole_value(tmp_path: Path, repo: str, commit: str) -> None:
     (tmp_path / "upstream.json").write_text(json.dumps({"repo": repo, "commit": commit}))
     assert read_pin(tmp_path) is None
+
+
+def test_a_final_compare_failure_is_not_asked_again() -> None:
+    box = Box()
+    box.feed = feed((NEW, "x"), (PIN, "y"))
+    box.compare = compare([{"filename": f"f{i}", "status": "added"} for i in range(300)])
+    watch = box.watch()
+    first = asyncio.run(watch.check())
+    assert first.compare_final
+    for hours in (1, 2, 13, 26):
+        box.later(hours=hours)
+        again = asyncio.run(watch.check())
+        assert "too much" in again.error
+    assert len([u for u in box.asked if "api.github.com" in u]) == 1
+
+
+def test_a_long_way_behind_still_lists_policies() -> None:
+    box = Box()
+    box.feed = feed((NEW, "x"), (PIN, "y"))
+    data = json.loads(compare(FILES, ahead=260))
+    data["commits"] = data["commits"][:2] * 125
+    box.compare = json.dumps(data).encode()
+    status = asyncio.run(box.watch().check())
+    assert status.ahead_by == 260
+    assert status.policies is not None and len(status.policies) == 4
+    assert len(status.commits) == upstream.MAX_COMMITS
+
+
+def test_a_failed_save_after_telling_the_owner_is_logged() -> None:
+    box = Box()
+    box.feed = feed((NEW, "x"), (PIN, "y"))
+    saves = 0
+    real = box.save
+
+    async def save(record: dict[str, object]) -> None:
+        nonlocal saves
+        saves += 1
+        if saves == 2:
+            raise RuntimeError("db down")
+        await real(record)
+
+    box.save = save  # type: ignore[method-assign]
+    status = asyncio.run(box.watch().check())
+    assert status.notified_head == NEW
+    assert len(box.notes) == 1

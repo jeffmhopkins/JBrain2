@@ -42,10 +42,10 @@ RETRY_AFTER_FAILURE = timedelta(hours=1)
 COMPARE_BACKOFF = timedelta(minutes=30)
 MAX_COMMITS = 20
 MAX_PATH = 200
-# GitHub's compare lists at most 300 files and 250 commits; a full page may be cut short.
+# GitHub's compare lists at most 300 files, so a full list may be missing a policy. (Its
+# 250-commit cap only shortens the commit list; the files and `ahead_by` stay whole.)
 COMPARE_MAX_FILES = 300
-COMPARE_MAX_COMMITS = 250
-MAX_COMPARE_BYTES = 8_000_000
+MAX_COMPARE_BYTES = 32_000_000
 NOTIFY_KIND = "growbot_policies"
 
 _REPO_RE = re.compile(r"https://github\.com/([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100})/?")
@@ -144,6 +144,9 @@ class UpstreamStatus(BaseModel):
     error: str = ""
     # The upstream head the owner was last told about, so each version notifies once.
     notified_head: str | None = None
+    # The compare for this (pin, head) failed in a way asking again cannot change (too many
+    # files, or no comparison at all), so it is not asked again until one of them moves.
+    compare_final: bool = False
 
 
 class UpstreamUnavailable(Exception):
@@ -186,7 +189,7 @@ def _parse_compare(raw: bytes) -> tuple[int, list[UpstreamCommit], list[Upstream
                 date=str(committer.get("date", ""))[:25],
             )
         )
-    if len(data["files"]) >= COMPARE_MAX_FILES or len(commits) >= COMPARE_MAX_COMMITS:
+    if len(data["files"]) >= COMPARE_MAX_FILES:
         raise CompareTruncated("too many changes for GitHub to list")
     policies: list[UpstreamPolicy] = []
     other = 0
@@ -258,7 +261,8 @@ class UpstreamWatch:
         # keep saying "sync" for hours after the sync.
         same_pin = (pin.commit if pin else None) == prev.pinned
         if prev.checked_at is not None and same_pin:
-            wait = MIN_RECHECK if force else RETRY_AFTER_FAILURE if prev.error else CHECK_EVERY
+            retry = prev.error and not prev.compare_final
+            wait = MIN_RECHECK if force else RETRY_AFTER_FAILURE if retry else CHECK_EVERY
             if now - prev.checked_at < wait:
                 return prev
         if pin is None:
@@ -274,7 +278,10 @@ class UpstreamWatch:
         await self._save(status.model_dump(mode="json"))
         if self._should_notify(status) and self._send(status):
             status = status.model_copy(update={"notified_head": status.head})
-            await self._save(status.model_dump(mode="json"))
+            try:
+                await self._save(status.model_dump(mode="json"))
+            except Exception as exc:  # noqa: BLE001 — the owner was told; a retry tells again
+                log.warning("growbot.upstream.save_notified_failed", error=repr(exc))
         return status
 
     async def _check(self, pin: Pin, prev: UpstreamStatus, now: datetime) -> UpstreamStatus:
@@ -301,11 +308,13 @@ class UpstreamWatch:
         base.state = "behind"
         base.compare_url = f"{pin.url}/compare/{pin.commit[:12]}...{head[:12]}"
         same = prev.pinned == pin.commit and prev.head == head
-        if same and prev.policies is not None:
+        if same and (prev.policies is not None or prev.compare_final):
             base.ahead_by = prev.ahead_by
             base.commits = prev.commits
             base.policies = prev.policies
             base.other_files = prev.other_files
+            base.error = prev.error if prev.compare_final else ""
+            base.compare_final = prev.compare_final
             return base
         backing_off = (
             same
@@ -330,6 +339,7 @@ class UpstreamWatch:
                 for s, it in pairs[: before_pin or MAX_COMMITS]
             ]
             base.error = _compare_error(exc)
+            base.compare_final = isinstance(exc, CompareTruncated) or _status(exc) == 404
             return base
         base.ahead_by = ahead
         base.commits = commits[:MAX_COMMITS]
@@ -372,9 +382,16 @@ class UpstreamWatch:
 def _compare_error(exc: Exception) -> str:
     if isinstance(exc, CompareTruncated):
         return "Upstream changed too much for GitHub to list; see the changes on GitHub."
-    if getattr(exc, "status", None) == 404:
-        return "Your copy's commit is no longer on upstream's main, so a sync is needed."
+    if _status(exc) == 404:
+        return (
+            "GitHub can't compare your copy with upstream's main any more (its commit may be "
+            "gone), so a sync is needed."
+        )
     return "Upstream has moved, but GitHub wouldn't list the changed files."
+
+
+def _status(exc: Exception) -> object:
+    return getattr(exc, "status", None)
 
 
 def _notice_name(path: str) -> str:
