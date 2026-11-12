@@ -238,10 +238,12 @@ def from_file(raw: Any) -> dict[str, Any]:
 def _as_template(soul: dict[str, Any]) -> None:
     """soul.js `soulFromFile`'s template branch: a character to be born fresh. Its bond has not
     happened yet (keeping the uploader's would shut the append-once door from birth), it has no
-    diary, and the person's own choices (its name, their name, languages) belong to the
+    diary or fact book, and the person's own choices (its name, their name, languages) belong to the
     creature whose person made them."""
     soul["identityCore"] = ""
     soul["log"] = []
+    # The fact book is about the uploader's person (growbot/patches/apply.py RECALL_PATCHES).
+    soul["facts"] = []
     soul["bornAt"] = 0
     scratch = obj(soul.get("scratch"))
     soul["scratch"] = {

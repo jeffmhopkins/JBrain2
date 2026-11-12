@@ -473,6 +473,7 @@ function unionByTime(a, b, field) {
   return out;
 }
 function mergeSoulInto(newer, s) {
+  if (Array.isArray(newer.facts)) s.facts = unionByTime(newer.facts, Array.isArray(s.facts) ? s.facts : [], "txt");
   s.log = unionByTime(newer.log, s.log, "txt");   // 0928: a merge keeps every line; the next diary write rolls it back under the cap (soulRoll)
   if ((+newer.identityAt || 0) > (+s.identityAt || 0) && typeof newer.identity === "string" && newer.identity.length >= 20) {
     s.identity = newer.identity; s.identityCore = (typeof newer.identityCore === "string") ? newer.identityCore : s.identityCore; s.identityAt = newer.identityAt;
@@ -805,6 +806,7 @@ function soulFromFile(raw) {
   } else {                                   // snapshot — restore as-is
     s.bornAt = 1;
     if (scrIn && typeof scrIn === "object") s.scratch = normalizeSoul({ identity: s.identity, scratch: scrIn }).scratch;
+    if (Array.isArray(raw.facts)) s.facts = inTimeOrder(raw.facts);
     if (Array.isArray(logIn)) s.log = inTimeOrder(logIn);   // 0928: the whole diary (was the last 200), oldest first, so "keep the newest" means the newest by time
     if (s.scratch && Array.isArray(s.scratch.glows)) s.scratch.glows = inTimeOrder(s.scratch.glows);
     if (goalsIn && typeof goalsIn === "object") { s.goals = goalsIn; if (!s.goals.ladder) s.goals.ladder = { for: "", rungs: [] }; }
@@ -838,7 +840,7 @@ function currentSoul(kind, rt, meta) {
   };
   if (SOUL.body || (rt && rt.body)) soul.body = SOUL.body || rt.body;
   if (SOUL.expression) soul.expression = SOUL.expression;
-  if (kind === "snapshot" && rt) { soul.goals = rt.goals; soul.scratch = rt.scratch; soul.log = rt.log; soul.bornAt = 1; }
+  if (kind === "snapshot" && rt) { soul.goals = rt.goals; soul.scratch = rt.scratch; soul.log = rt.log; soul.bornAt = 1; if (Array.isArray(rt.facts)) soul.facts = rt.facts; }
   return soul;
 }
 

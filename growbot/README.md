@@ -349,7 +349,8 @@ of any voice the phone kept, so a new pick is the next line's voice.
 
 The phone is only a display (owner, 2026-11-12). What upstream keeps outside the soul, each in a
 localStorage key of its own, is the persona's too when it is the creature's: its coat colour,
-its games guide, volume and speech speed, which camera it looks through (`gb_eye`), low power,
+its games guide, volume and speech speed, which camera it looks through (`gb_eye`), how it
+talks (`gb_talk`: kid, or grown-up), low power,
 visual memory on or off, *keep tracking me* per robot, whether it keeps a brain log and its
 diary id, and every remembered `?flag` (`getup`, `ftdial`, `fishwa`, `asfix`,
 `judge0`, `bodysnd`, `listen`, `stt`, `rest`, `legslew`). The list is `KEYS` and `PREFIXES` in
