@@ -450,6 +450,15 @@ upstream's panel. What stays: the body, *follow my face*, the eye, the voice and
 saved credits tab and the full panel's key and credits tabs are closed off the same way, and
 *My thoughts* loses its cloud logs link.
 
+The rest went the same way (owner, 2026-11-12: *"remove all the stuff that doesn't apply to our
+implementation"*): *My thoughts* loses its soul download (the box keeps the soul; JBrain exports
+it), and its *Visual memories* no longer say "on this device"; the full panel's MIND tab loses
+the soul download, *move him to a new phone*, the cloud watch link and the cloud notes card
+(whose delete erased nothing here). What those rooms left on a phone (`gb_brain`,
+`gb_free_pick`, `gb_effort`, `pb_byok`, `pb_llm_*`, `pb_energy_out`, `pb2_erase`,
+`gb_nx_watch`) is dropped by `growbot-box.js` before the page reads it, so no model pick, key or
+custom endpoint steers a box creature.
+
 Upstream sets the spoken line at 11px and the brain panel at 11-12.5px; `growbot-box.js` raises
 them to phone sizes. A phone in desktop-site mode (Safari's *Request Desktop Website*, Chrome's
 *Desktop site*) ignores the viewport tag and lays the page out ~980px wide; the shim detects that

@@ -443,6 +443,29 @@ VISUAL_MEMORY_PATCHES: list[tuple[str, str, str, int]] = [
         "catch(e){} } res(",
         1,
     ),
+    # They live on the box, not on this device, and no brain here costs credits.
+    (
+        "v3/visual-memory.js",
+        'toast("With your eye open, I can keep useful visual memories on this device.'
+        " Comparisons use your selected brain and credits. Brain → My thoughts → Visual"
+        ' memories lets you review, forget or turn this off.",12000);',
+        'toast(window.__gbBox?"With your eye open, I can keep useful visual memories, saved'
+        " on the box for this creature. Brain → My thoughts → Visual memories lets you"
+        ' review, forget or turn this off.":"With your eye open, I can keep useful visual'
+        " memories on this device. Comparisons use your selected brain and credits. Brain →"
+        ' My thoughts → Visual memories lets you review, forget or turn this off.",12000);',
+        1,
+    ),
+    (
+        "v3/visual-memory.js",
+        '"Saved on this device for this creature. Remembering uses the eye already open;'
+        " comparisons send saved views to your selected brain and use its usual credits.",
+        '(window.__gbBox?"Saved on the box for this creature. Remembering uses the eye already'
+        ' open; comparisons send saved views to the box\'s own brain.":"Saved on this device'
+        " for this creature. Remembering uses the eye already open; comparisons send saved"
+        ' views to your selected brain and use its usual credits.")+"',
+        1,
+    ),
     # A phone that cached the old file loads this one.
     (
         "v3/next.html",
@@ -774,7 +797,7 @@ FIXED_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         '<script src="/v3/visual-memory.js?v=1005-mem-box"',
-        '<script src="/v3/visual-memory.js?v=1005-mem-box-fixed"',
+        '<script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"',
         1,
     ),
     # The fixed parts join the system message, after the movement guide they belong to.
@@ -1204,6 +1227,24 @@ SCRUB_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         'if(_t==="s"||_t==="c"||_t==="t") bTab=_t;',
         'if(_t==="s"||(_t==="c"&&!window.__gbBox)||_t==="t") bTab=_t;',
+        1,
+    ),
+]
+# More of the same (owner, 2026-11-12: "the cell phone should just be a display", and "remove
+# all the stuff that doesn't apply to our implementation"): My thoughts' soul download (the box
+# keeps the soul, and JBrain exports it) and its visual memories "on this device". The full
+# panel's MIND rows are hidden by growbot-box.js's style.
+SCRUB_PATCHES += [
+    (
+        "v3/next.html",
+        '  h+=bCard(bHead("soul file")+',
+        "  " + _BOX + 'h+=bCard(bHead("soul file")+',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "Visual memories · on this device</button>');",
+        "'+(window.__gbBox?\"Visual memories\":\"Visual memories · on this device\")+'</button>');",
         1,
     ),
 ]

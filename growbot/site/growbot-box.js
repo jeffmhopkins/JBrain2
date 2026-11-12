@@ -1167,6 +1167,14 @@
 (function () {
   // The page is run by the box: apply.py hides upstream's cloud-only settings behind this.
   window.__gbBox = true;
+  // What those settings left on a phone: a model or effort pick (the box picks the model), an
+  // OpenRouter or custom-endpoint key and URL, the credits wall, and the cloud journal's erase
+  // and watch link. Dropped before the page reads them, so none of it steers the creature.
+  try {
+    ["gb_brain", "gb_free_pick", "gb_effort", "pb_byok", "pb_llm_url", "pb_llm_model",
+      "pb_llm_key", "pb_llm_vision", "pb_llm_json", "pb_energy_out", "pb2_erase",
+      "gb_nx_watch"].forEach(function (k) { window.localStorage.removeItem(k); });
+  } catch (e) {}
   var style = document.createElement("style");
   function scale() {
     var portrait = window.innerHeight >= window.innerWidth;
@@ -1198,6 +1206,10 @@
       // The same cloud rooms reached another way: the money-code badge, and the full
       // panel's key and credits tabs behind the voice row's hand-off.
       "#giftBtn,#bpTabByok,#bpTabCredits{display:none!important}" +
+      // The full panel's MIND tab: the soul download and the move to a new phone (the box
+      // keeps the soul, and JBrain moves it), the cloud watch link, and the cloud notes card
+      // whose delete erased nothing here.
+      "#bpmDownloadSoul,#bpmXfer,#bpmXferBox,#bpmWatch,#bpData{display:none!important}" +
       "div:has(>[data-gb-cloud]){grid-template-columns:repeat(2,1fr)!important}" +
       (k > 1 ? "body>*:not(#wrap){zoom:" + k.toFixed(3) + "}" : "");
   }

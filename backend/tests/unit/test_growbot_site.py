@@ -655,7 +655,7 @@ def test_the_fixed_rules_ride_the_system_message_and_the_state_stays_live() -> N
     assert 'vmPrompt.fixed=vmOn()?vmContract():"";' in prompt
     assert "VISUAL MEMORY overrides" in contract and "vmCatalogLine" not in contract
     assert "vmCatalogLine()" in prompt and "VM_PROMPT_OFF" in prompt
-    assert '<script src="/v3/visual-memory.js?v=1005-mem-box-fixed"' in page
+    assert '<script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"' in page
 
 
 def test_the_brain_panel_keeps_only_what_a_box_creature_uses() -> None:
@@ -1182,3 +1182,19 @@ def test_a_backoff_ends_when_there_is_nothing_left_to_send() -> None:
     )
     posts = [c["body"] for c in got["calls"] if c["method"] == "POST"]
     assert posts[-1] == {"persona": "p1", "set": {"gb_eye": "environment"}, "drop": []}
+
+
+def test_the_box_creature_keeps_no_cloud_rooms_or_their_leftovers() -> None:
+    """Owner, 2026-11-12: remove what does not apply to a box-run creature. The soul download,
+    the move to a new phone, the watch link and the cloud notes are hidden, the visual
+    memories say where they live, and a model, key or credits pick left on a phone is dropped
+    before the page reads it."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert 'if(!window.__gbBox)h+=bCard(bHead("soul file")+' in page
+    assert '(window.__gbBox?"Visual memories":"Visual memories · on this device")' in page
+    vm = (_SITE / "v3" / "visual-memory.js").read_text(encoding="utf-8")
+    assert vm.count("window.__gbBox?") == 2 and "Saved on the box for this creature." in vm
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "#bpmDownloadSoul,#bpmXfer,#bpmXferBox,#bpmWatch,#bpData{display:none!important}" in shim
+    for key in ("gb_brain", "gb_effort", "pb_byok", "pb_llm_url", "pb_llm_key", "pb_energy_out"):
+        assert f'"{key}"' in shim[shim.index("window.__gbBox = true;") :]
