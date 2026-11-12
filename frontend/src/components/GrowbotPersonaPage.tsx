@@ -4,7 +4,7 @@
  *
  *  The Memories tab reads its visual memories when it opens rather than with the persona: they
  *  are pictures, and most visits never look at them. */
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type GrowbotCheckpoint,
   type GrowbotFace,
@@ -322,68 +322,29 @@ export function GrowbotPersonaPage({
   const robot = p.wearing ?? pl.robots.find((r) => !r.revoked_at)?.code ?? null;
 
   function soulTab() {
-    const log = [...(soul.log ?? [])]
+    const last = [...(soul.log ?? [])]
       .filter((l) => typeof l?.txt === "string")
-      .sort((a, b) => (b.t ?? 0) - (a.t ?? 0))
-      .slice(0, 4);
+      .sort((a, b) => (b.t ?? 0) - (a.t ?? 0))[0];
     const mood = typeof soul.scratch?.mood === "string" ? soul.scratch.mood : "";
     const rules = (soul.scratch?.rules ?? []).map(words).filter(Boolean);
     const wants = (soul.goals?.wants ?? []).map(words).filter(Boolean);
-    const memory: Record<(typeof MEMORY)[number]["id"], ReactNode> = {
-      identity: soul.identity ? (
-        <p className="gb-pv">{soul.identity}</p>
-      ) : (
-        <p className="gb-pv dim">Not written yet — it writes this as it wakes up.</p>
-      ),
-      bond: soul.identityCore ? (
-        <p className="gb-pv">{soul.identityCore}</p>
-      ) : (
-        <p className="gb-pv dim">
-          Not written yet. The creature writes this once, in a dream, and never changes it.
-        </p>
-      ),
-      scratch: (
-        <>
-          <p className="gb-pv">
-            {soul.scratch?.state || "nothing yet"}
-            {mood ? ` · feeling ${mood}` : ""}
-          </p>
-          {rules.length > 0 && (
-            <ul>
-              {rules.map((x) => (
-                <li key={x}>{x}</li>
-              ))}
-            </ul>
-          )}
-        </>
-      ),
-      goals: (
-        <>
-          <p className="gb-pv">
-            Calls itself <strong>{me}</strong>.
-          </p>
-          {wants.length > 0 && (
-            <ul>
-              {wants.map((x) => (
-                <li key={x}>{x}</li>
-              ))}
-            </ul>
-          )}
-        </>
-      ),
-      log: log.length ? (
-        <ul>
-          {log.map((l) => (
-            <li key={`${l.t}-${l.txt}`}>
-              {l.txt}
-              {l.t ? <span className="gb-dim-t"> · {ago(new Date(l.t).toISOString())}</span> : null}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="gb-pv dim">No diary lines yet.</p>
-      ),
+    // One line each, as the settings rows above show theirs; the sheet holds the whole of it.
+    const memory: Record<MemoryId, string> = {
+      identity: soul.identity || "Not written yet — it writes this as it wakes up.",
+      bond: soul.identityCore || "Not written yet — it writes this once, in a dream.",
+      scratch: `${soul.scratch?.state || "nothing yet"}${mood ? ` · feeling ${mood}` : ""}${
+        rules.length ? ` · ${rules.length} rule${rules.length === 1 ? "" : "s"}` : ""
+      }`,
+      goals: [`Calls itself ${me}`, ...wants].join(" · "),
+      log: last?.txt
+        ? `${last.txt}${last.t ? ` · ${ago(new Date(last.t).toISOString())}` : ""}`
+        : "No diary lines yet.",
     };
+    // Before it first wakes, the creature's seed fills these in on the phone.
+    const woke = (m: (typeof MEMORY)[number]) =>
+      m.id === "identity" ||
+      m.id === "bond" ||
+      (m.up === "log" ? Array.isArray(soul.log) : isObject(soul[m.up]));
     return (
       <>
         <div className="gb-sec-h">
@@ -406,32 +367,35 @@ export function GrowbotPersonaPage({
         </div>
         <Floor />
         <div className="gb-sec-h">
-          What it remembers<span className="r">tap Edit to correct</span>
+          What it remembers<span className="r">tap to edit</span>
         </div>
-        <section className="gb-card">
-          {MEMORY.map((m) => (
-            <div key={m.id} className="gb-region">
-              <div className="gb-rh">
-                <h3>{m.label}</h3>
-                <span className="gb-up">{m.up}</span>
-                {/* Before it first wakes, the creature's seed fills these in on the phone. */}
-                {(m.id === "identity" ||
-                  m.id === "bond" ||
-                  (m.up === "log" ? Array.isArray(soul.log) : isObject(soul[m.up]))) && (
-                  <button
-                    type="button"
-                    className="gb-linkbtn"
-                    aria-label={`Edit ${m.label.toLowerCase()}`}
-                    onClick={() => setRemembering(m.id)}
-                  >
-                    Edit
-                  </button>
-                )}
+        <div className="gb-list">
+          {MEMORY.map((m) =>
+            woke(m) ? (
+              <button
+                key={m.id}
+                type="button"
+                className="gb-li"
+                onClick={() => setRemembering(m.id)}
+              >
+                <span className="gb-tx">
+                  <span className="gb-t1">{m.label}</span>
+                  <span className="gb-t2">{clip(memory[m.id], 80)}</span>
+                </span>
+                <span className="gb-chev" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+            ) : (
+              <div key={m.id} className="gb-li">
+                <span className="gb-tx">
+                  <span className="gb-t1">{m.label}</span>
+                  <span className="gb-t2">It writes this when it first wakes on a phone.</span>
+                </span>
               </div>
-              {memory[m.id]}
-            </div>
-          ))}
-        </section>
+            ),
+          )}
+        </div>
         <p className="gb-hint dim">
           {me} writes these itself, as it goes and in its dreams, and goes on from whatever you
           correct. Every edit saves a checkpoint first.

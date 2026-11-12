@@ -918,35 +918,6 @@ details.gb-help[open] summary::after {
   color: var(--text-3);
   font-family: var(--font-mono);
 }
-.gb-region {
-  border-top: 1px solid var(--border);
-  padding: 12px 0;
-}
-.gb-region:first-child {
-  border-top: 0;
-  padding-top: 0;
-}
-.gb-region:last-child {
-  padding-bottom: 0;
-}
-.gb-rh {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-}
-.gb-rh h3 {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  font-size: var(--fs-body);
-  font-weight: 500;
-}
-.gb-up {
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-}
 .gb-pv {
   margin: 4px 0 0;
   font-size: var(--fs-secondary);
@@ -954,15 +925,8 @@ details.gb-help[open] summary::after {
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.gb-pv.dim,
-.gb-dim-t {
+.gb-pv.dim {
   color: var(--text-3);
-}
-.gb-region ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
-  font-size: var(--fs-secondary);
-  color: var(--text-2);
 }
 /* Checkpoints (mock growbot-checkpoints/b-by-day.html): the Chats panel's pieces — a dashed
    new row, then a card of compact swipe rows per day. */

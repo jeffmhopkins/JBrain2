@@ -746,7 +746,7 @@ describe("GrowbotScreen a persona's page", () => {
     );
     render(<GrowbotScreen />);
     await openSprout();
-    fireEvent.click(screen.getByRole("button", { name: "Edit who it is" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Who it is/ }));
     const editor = screen.getByRole("dialog", { name: "Who it is — Sprout" });
     const box = within(editor).getByRole("textbox");
     expect((box as HTMLTextAreaElement).value).toBe(
@@ -778,7 +778,7 @@ describe("GrowbotScreen a persona's page", () => {
     );
     render(<GrowbotScreen />);
     await openSprout();
-    fireEvent.click(screen.getByRole("button", { name: "Edit wants" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Wants/ }));
     let editor = screen.getByRole("dialog", { name: "Wants — Sprout" });
     fireEvent.change(within(editor).getByLabelText("Calls itself"), { target: { value: "Fish" } });
     const wants = within(editor).getByLabelText("Wants");
@@ -793,7 +793,7 @@ describe("GrowbotScreen a persona's page", () => {
       base: 1,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit diary" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Diary/ }));
     editor = screen.getByRole("dialog", { name: "Diary — Sprout" });
     fireEvent.change(within(editor).getByDisplayValue("Saw the blue mug again."), {
       target: { value: "" },
