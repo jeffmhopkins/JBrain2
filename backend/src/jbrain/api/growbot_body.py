@@ -3,9 +3,10 @@ nothing upstream's own tester page did needs the original app.
 
 - `router` — the owner: `GET`/`PUT /growbot/robots/{code}/cal` read and save the robot's
   calibration (trims, left/right swap, leg and IMU signs, walk gain; a `PUT` saves the keys it
-  names, over those saved before), and `POST /growbot/robots/{code}/act` sends the chip a keyframe move, its canned wiggle, or a stop,
-  through the sidecar's relay. Each move is what upstream's tester sends to check a trim or a
-  leg, so a move here goes straight to the chip, past any persona riding it, as there.
+  names, over those saved before), and `POST /growbot/robots/{code}/act` sends the chip a
+  keyframe move, its canned wiggle, or a stop, through the sidecar's relay. Each move is what
+  upstream's tester sends to check a trim or a leg, so it goes straight to the chip, past any
+  persona riding it, as there.
 - `debug_router` — the same reads and writes through the debug token (CLAUDE.md #10).
 - `internal_router` — the sidecar (`growbot.token`): the calibration the creature page copies
   into its `gb_walk_cal`.
