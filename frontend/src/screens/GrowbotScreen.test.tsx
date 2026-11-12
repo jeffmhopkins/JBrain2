@@ -295,6 +295,14 @@ describe("GrowbotScreen tabs", () => {
     expect(screen.getByRole("button", { name: "Add a robot" })).toHaveClass("primary");
   });
 
+  it("shares a brain log from the Body tab, with or without a robot", async () => {
+    serve({ service: "up", connected: 0, robots: [] }, undefined, null, overview({ body: [] }));
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    fireEvent.click(screen.getByRole("button", { name: "Share a brain log…" }));
+    expect(screen.getByRole("button", { name: "Download brain log (.zip)" })).toBeInTheDocument();
+  });
+
   it("still shows the robots on a box that has no personas yet", async () => {
     serve(UP, undefined, null, null);
     render(<GrowbotScreen />);

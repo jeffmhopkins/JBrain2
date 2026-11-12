@@ -224,6 +224,7 @@ What the upstream app calls, and what answers on the box:
 | `/api/redeem`, `/api/transfer` | 410: no credits on the box. |
 | `DELETE /api/journal`, `DELETE /api/episodes` | 200 `{"ok":true}` (the app's erase flow reads JSON); nothing is stored to erase. |
 | `/api/gallery?…&download=1` | 404: no soul or policy gallery on the box. |
+| `POST /api/journal` (a diary snapshot: `sid` and `log`) | its rows to the api's `POST /internal/growbot/journal` off the page's path (soul peek and join key left behind), kept a week for the brain log (`../docs/plans/GROWBOT_PLAN.md` §2 "Brain log"); 200 `{"ok":true}`. A watch-id registration (`op`) or anything else is 204, stored nowhere. |
 | `/api/journal`, `episodes`, `gallery`, `ev`, `hit`, `feedback` | otherwise 204, stored nowhere. |
 | `/api/box/cal?id=<code>` | The box's own route: `{cal}`, the robot's leg calibration as the PWA saved it (the api's `/internal/growbot/robots/<code>/cal`, cached 2 s), or `{cal: null}` when never saved, the api cannot say, or the robot is not the one this phone drives (its ticket's, or the one its persona wears), since `gb_walk_cal` is one key per phone. |
 

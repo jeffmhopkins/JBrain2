@@ -868,6 +868,16 @@ async function mockGrowbot(
     r.connected = false;
     return json({ ...r });
   }
+  if (path === "/api/growbot/brain-log" && method === "POST") {
+    const { hours } = JSON.parse(String(init?.body ?? "{}")) as { hours?: number };
+    if (![1, 3, 6].includes(Number(hours))) return json({ detail: "hours is 1, 3 or 6" }, 422);
+    return new Response(new Blob(["PK"], { type: "application/zip" }), {
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="growbot-brain-log-20261112-0300-${hours}h.zip"`,
+      },
+    });
+  }
   const move = /^\/api\/growbot\/robots\/([^/]+)\/move$/.exec(path);
   if (move && method === "POST") {
     const r = robots().find((x) => x.code === decodeURIComponent(move[1] ?? ""));

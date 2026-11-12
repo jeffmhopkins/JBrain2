@@ -540,3 +540,24 @@ export function memoryForgot(m: GrowbotMemory): string {
 export function memoriesCount(n: number): string {
   return n > 0 ? `${n} visual memor${n === 1 ? "y" : "ies"}` : "";
 }
+
+// The names the brain log hides (GrowbotBrainLogSheet), kept on this phone only: they are the
+// household's, so the box never stores them and the list is typed once per phone.
+export const BRAIN_LOG_NAMES_KEY = "growbot.brainLogNames";
+
+export function storedBrainLogNames(): string {
+  return readStore(BRAIN_LOG_NAMES_KEY) ?? "";
+}
+
+export function storeBrainLogNames(names: string): void {
+  writeStore(BRAIN_LOG_NAMES_KEY, names.trim() ? names : null);
+}
+
+/** "Quorra, Tamsin" → ["Quorra", "Tamsin"]: comma- or line-separated, blanks dropped. */
+export function splitNames(names: string): string[] {
+  return names
+    .split(/[,\n]/)
+    .map((n) => n.trim())
+    .filter((n) => n.length >= 2)
+    .slice(0, 20);
+}

@@ -17,6 +17,7 @@ import {
 } from "../api/client";
 import { GrowbotAddSheet } from "../components/GrowbotAddSheet";
 import { GrowbotBodyControls } from "../components/GrowbotBodyControls";
+import { GrowbotBrainLogSheet } from "../components/GrowbotBrainLogSheet";
 import { GrowbotFail, GrowbotLog, GrowbotPhases } from "../components/GrowbotJob";
 import { GrowbotMovePanel, stopCreature } from "../components/GrowbotMovePanel";
 import { GrowbotPersonaPage } from "../components/GrowbotPersonaPage";
@@ -71,6 +72,7 @@ type SheetState =
   | { kind: "other"; pid: string | null; code: string | null }
   | { kind: "new"; seed: string | null }
   | { kind: "import"; over: string | null }
+  | { kind: "brainlog" }
   | null;
 
 interface Toast {
@@ -632,6 +634,17 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     );
   }
 
+  // The brain log covers the creature, not one robot, so it sits under the robots and shows
+  // with none too: a persona alone on a phone still thinks, hears and speaks.
+  const brainLog = (
+    <>
+      <div className="gb-sec-h">For GrowBot's developer</div>
+      <button type="button" className="gb-btn block" onClick={() => setSheet({ kind: "brainlog" })}>
+        Share a brain log…
+      </button>
+    </>
+  );
+
   function bodyTab() {
     if (status === null) return null;
     const flashing = running && (
@@ -655,6 +668,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
               Add a robot
             </button>
           )}
+          {brainLog}
         </>
       );
     }
@@ -680,6 +694,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             Add a robot
           </button>
         )}
+        {brainLog}
       </>
     );
   }
@@ -882,6 +897,10 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           }}
           onClose={() => setSheet(null)}
         />
+      )}
+
+      {sheet?.kind === "brainlog" && (
+        <GrowbotBrainLogSheet say={say} onClose={() => setSheet(null)} />
       )}
 
       {sheet?.kind === "add" && (

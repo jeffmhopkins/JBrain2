@@ -896,6 +896,93 @@ def test_erasing_a_cloud_store_answers_ok(run: _Running, name: str) -> None:
     assert resp.status == 200 and json.loads(resp.read()) == {"ok": True}
 
 
+def _forwarded(path: str, n: int = 1) -> list[dict[str, Any]]:
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        rows = [json.loads(s["body"]) for s in list(_Fake.seen) if s["path"] == path]
+        if len(rows) >= n:
+            return rows
+        time.sleep(0.02)
+    raise AssertionError(f"nothing posted to {path}")
+
+
+def test_the_diary_is_kept_on_the_box(run: _Running) -> None:
+    snap = {
+        "sid": "nx-abc123",
+        "kind": "next-test",
+        "mode": "v3",
+        "redacted": True,
+        "ua": "Pixel",
+        "n": 2,
+        "soul": {"identity": "I am Sprout"},
+        "ep": "0badf00d",
+        "boot": {"t": 1, "bld": "deadbeef"},
+        "reason": "chunk",
+        "log": [{"t": 1, "e": "boot"}, "not a row", {"t": 2, "e": "heard"}],
+    }
+    resp = run.request("POST", "/api/journal", json.dumps(snap).encode())
+    assert resp.status == 200 and json.loads(resp.read()) == {"ok": True}
+    (sent,) = _forwarded("/internal/growbot/journal")
+    assert sent == {
+        "sid": "nx-abc123",
+        "persona": None,
+        "robot": "gb-abc123",
+        "head": {
+            "kind": "next-test",
+            "mode": "v3",
+            "redacted": True,
+            "ua": "Pixel",
+            "reason": "chunk",
+            "boot": {"t": 1, "bld": "deadbeef"},
+        },
+        "rows": [{"t": 1, "e": "boot"}, {"t": 2, "e": "heard"}],
+    }
+    call = [s for s in _Fake.seen if s["path"] == "/internal/growbot/journal"][-1]
+    assert call["auth"] == f"Bearer {_TOKEN}"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"op": "watchid", "sid": "nx-abc", "w": "f" * 32},
+        {"sid": "nx/../x", "log": [{"t": 1}]},
+        {"sid": "nx-a", "log": [{"t": 1}]},
+        {"sid": "nx-abc", "log": "rows"},
+        {"sid": "nx-abc", "log": []},
+        {"log": [{"t": 1}]},
+    ],
+)
+def test_a_diary_post_that_is_not_a_snapshot_is_kept_nowhere(
+    run: _Running, body: dict[str, Any]
+) -> None:
+    resp = run.request("POST", "/api/journal", json.dumps(body).encode())
+    assert resp.status in (200, 204)
+    resp.read()
+    time.sleep(0.1)
+    assert not [s for s in _Fake.seen if s["path"] == "/internal/growbot/journal"]
+
+
+def test_a_phone_looping_its_diary_is_held_to_a_few_snapshots_a_flush(
+    run: _Running,
+) -> None:
+    for t in range(6):
+        snap = {"sid": "nx-abc", "log": [{"t": t, "e": "tick"}]}
+        resp = run.request("POST", "/api/journal", json.dumps(snap).encode())
+        assert resp.status == 200 and json.loads(resp.read()) == {"ok": True}
+    time.sleep(0.2)
+    sent = _forwarded("/internal/growbot/journal", 3)
+    assert [s["rows"][0]["t"] for s in sent] == [0, 1, 2]
+
+
+def test_a_huge_diary_post_is_kept_nowhere(run: _Running) -> None:
+    big = {"sid": "nx-abc", "log": [{"t": 1, "pad": "x" * 300_000}]}
+    resp = run.request("POST", "/api/journal", json.dumps(big).encode())
+    assert resp.status == 204
+    resp.read()
+    time.sleep(0.1)
+    assert not [s for s in _Fake.seen if s["path"] == "/internal/growbot/journal"]
+
+
 def test_a_gallery_download_is_not_found(run: _Running) -> None:
     resp = run.request("GET", "/api/gallery?type=soul&id=x&download=1")
     assert resp.status == 404
