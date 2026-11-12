@@ -1341,14 +1341,25 @@ def test_the_mouth_keeps_time_with_the_web_audio_line() -> None:
     holding a blob: the face reads that buffer at the context's clock from when it first saw
     the line play, and a line still preparing tells it nothing."""
     out = _face_in_node(
-        "var d=new Float32Array(400);for(var i=0;i<400;i++) d[i]=i<200?0.5:0;"
+        "var d=new Float32Array(400);for(var i=0;i<400;i++) d[i]=i<200?0.5:i<300?0:0.125;"
         "var buf={sampleRate:1000,getChannelData:function(){ return d; }};"
-        "window.actx={currentTime:10};"
-        "window._fishWaLn={st:0,src:{buffer:buf}};var r=[window.gbFace.level()];"
+        "window.actx={currentTime:10,outputLatency:0.1};"
+        "window._fishWaLn={st:0,arm:2,src:{buffer:buf}};var r=[window.gbFace.level()];"
         "window._fishWaLn.st=1;r.push(window.gbFace.level());"
-        "window.actx.currentTime=10.25;r.push(window.gbFace.level());"
-        "window.actx.currentTime=11;r.push(window.gbFace.level());"
+        "[10.15,10.35,10.45].forEach(function(t){ window.actx.currentTime=t;"
+        " r.push(window.gbFace.level()); });"
+        "window._fishWaLn=null;window._fishWaTail=Date.now()+1000;r.push(window.gbFace.level());"
+        "window._fishWaTail=0;r.push(window.gbFace.level());"
+        "window.actx.currentTime=20;window._fishWaLn={st:1,arm:1,src:{buffer:buf}};"
+        "r.push(window.gbFace.level());window.actx.currentTime=20.95;"
+        "r.push(window.gbFace.level());"
         "console.log(JSON.stringify(r));"
     )
-    preparing, start, gap, past = json.loads(out)
-    assert preparing is None and start == 1 and gap == 0 and past == 0
+    preparing, early, loud, gap, soft, tail, ended, arm1_early, arm1_heard = json.loads(out)
+    assert preparing is None
+    # Heard only after the output latency: before it nothing, then the line in time.
+    assert early == 0 and loud == 1 and gap == 0 and soft == pytest.approx(0.5)
+    # The line's end is still heard through the tail, then the clock rhythm takes over.
+    assert tail == pytest.approx(0.5) and ended is None
+    # Arm 1's second element holds the line back further still.
+    assert arm1_early == 0 and arm1_heard == 1

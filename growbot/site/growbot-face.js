@@ -174,7 +174,7 @@
      silence the voice itself, and a face a beat late costs nothing where a mute creature costs
      the session. null while unknown (nothing measurable playing, or not decoded yet), and the
      face keeps its own rhythm. */
-  var STEP = 0.02, env = { src: "", data: null }, wa = { src: null, t0: 0, data: null };
+  var WA_EL_LAG = 0.8, STEP = 0.02, env = { src: "", data: null }, wa = { src: null, t0: 0, data: null };
   function envelope(audio) {
     var data = audio.getChannelData(0), n = Math.max(1, Math.round(audio.sampleRate * STEP));
     var out = [], peak = 0, i, j;
@@ -210,13 +210,21 @@
     return i >= 0 && i < data.length ? data[i] : 0;
   }
   function voiceLevel() {
+    /* The context's clock is when a line is RENDERED; it is heard later, by its output latency
+       and, on arm 1, by the second element's MediaStream lag, which upstream's FISH_WA_TAIL
+       note puts near 800 ms on the rig and has not benched on an iPhone. So the line is read
+       that far behind, and read on through the tail after the source ends. */
     var ln = window._fishWaLn, ac = window.actx;
     if (ln && ln.st === 1 && ln.src && ln.src.buffer && ac && typeof ac.currentTime === "number") {
       if (wa.src !== ln.src) {
-        wa = { src: ln.src, t0: ac.currentTime, data: null };
+        var lag = (typeof ac.outputLatency === "number" ? ac.outputLatency : 0) + (ln.arm === 1 ? WA_EL_LAG : 0);
+        wa = { src: ln.src, t0: ac.currentTime + lag, data: null };
         try { wa.data = envelope(ln.src.buffer); } catch (e) {}
       }
       return wa.data ? at(wa.data, ac.currentTime - wa.t0) : null;
+    }
+    if (wa.data && ac && typeof window._fishWaTail === "number" && Date.now() < window._fishWaTail) {
+      return at(wa.data, ac.currentTime - wa.t0);
     }
     var a = playing(window.fishAud) || playing(window.__gbBoxAudio);
     if (!a) return null;
