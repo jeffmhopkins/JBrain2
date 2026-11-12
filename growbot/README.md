@@ -338,9 +338,14 @@ the poll carry it, `growbot-box.js` hands it to `growbot-face.js` before the fac
 Every face's mouth moves while its voice is actually sounding, whatever the mood: the face asks
 the players (the Kokoro line on Web Audio or `fishAud`, a song, the device synth) rather than
 upstream's `speakingUntil`, which is the ear's queue-time estimate and both outlived and fell
-short of real lines.
+short of real lines. The face also measures the line's loudness in 20 ms steps so the mouth
+keeps time with the words: on Web Audio (the iPhone's Kokoro route) from the line's decoded
+buffer at the context's clock, and on `fishAud` or the box voice's own element
+(`window.__gbBoxAudio`) by fetching the `blob:` back and decoding it offline; it never routes
+the element through Web Audio, which a suspended iOS context would mute. The ember face
+(Dave's lens) shows that loudness as its light.
 
-It speaks in its own voice the same way (`growbot_personas.voice`, migration 0264; `""` is the
+It speaks in its own voice the same way (`growbot_personas.voice`, migration 0265; `""` is the
 box's default): `growbot-box.js` keeps it in `__gbBoxVoice` from the state read and every poll,
 and both speech paths (the page's fish lane and the `speechSynthesis` stand-in) send it, ahead
 of any voice the phone kept, so a new pick is the next line's voice.

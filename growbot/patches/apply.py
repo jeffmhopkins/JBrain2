@@ -253,7 +253,7 @@ PATCHES: list[tuple[str, str, str, int]] = [
         1,
     ),
     ("v3/next.html", VOICE_PICKER_OLD, '<option value="fish">box voice</option>', 1),
-    # The persona's own voice (migration 0264, growbot-box.js's __gbBoxVoice) outranks the
+    # The persona's own voice (migration 0265, growbot-box.js's __gbBoxVoice) outranks the
     # phone's; the clip cache is keyed on it too, so a new voice never replays an old clip.
     (
         "v3/next.html",

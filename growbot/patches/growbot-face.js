@@ -6,7 +6,7 @@
    A persona wears the face the owner picks for it in JBrain (migration 0259): growbot-box.js
    reads it with the soul into __gbBoxFace, and its poll's gb-box-state event changes it where
    the creature stands. Without a persona (a G2 session) it is localStorage gb_face, else the
-   lantern (owner, 2026-11-11). ?face=lantern|ostrich|robot|pixel overrides both, and pixel is
+   lantern (owner, 2026-11-11). ?face=lantern|ostrich|robot|ember|pixel overrides both, and pixel is
    upstream's own face, which is also what a throw in draw() falls back to. */
 (function () {
   "use strict";
@@ -14,7 +14,7 @@
   var DEFAULT = "lantern";
   var LW = 360, LH = 740;
 
-  function valid(v) { return v === "pixel" || v === "ostrich" || v === "robot" || v === "lantern"; }
+  function valid(v) { return v === "pixel" || v === "ostrich" || v === "robot" || v === "lantern" || v === "ember"; }
   var asked = "";
   try { asked = new URLSearchParams(location.search).get("face") || ""; } catch (e) {}
   function pick() {
@@ -95,7 +95,7 @@
      centreline the lids together may cover at most 1 - OPEN_MIN of it; past that they are
      scaled back as one, keeping the mood's shape. `bend` is how far each face's lower-lid curve
      peaks above its edge per unit of lb. Only a blink or sleep shuts an eye now. */
-  var OPEN_MIN = 0.36, PANEL_BEND = 0.5, LANTERN_BEND = 1.2;
+  var OPEN_MIN = 0.36, PANEL_BEND = 0.5, LANTERN_BEND = 1.2, EMBER_BEND = 0.35;
   function lidCap(p, bend) {
     var low = p.ly > 0.01 ? p.ly + bend * p.lb : 0, cover = p.uy + low;
     var k = cover > 1 - OPEN_MIN ? (1 - OPEN_MIN) / cover : 1;
@@ -164,6 +164,75 @@
     if (ss && ss.speaking && !ss.paused && guard) return true;
     var asked = (w.vtEngine === "fish" && !w.fishDead) || w.vtEngine === "device";
     return asked ? false : !!guard;
+  }
+
+  /* How loud the line now playing is, 0-1, so a mouth can keep time with the words (Dave's
+     lens burns with his voice), in 20 ms steps. The Kokoro line on Web Audio (the iPhone's
+     route) already holds its decoded buffer, read at the context's clock from when the face
+     first saw it play. The element routes hold a blob: URL, fetched back and decoded offline,
+     rather than routing the element through Web Audio: on iOS a suspended AudioContext would
+     silence the voice itself, and a face a beat late costs nothing where a mute creature costs
+     the session. null while unknown (nothing measurable playing, or not decoded yet), and the
+     face keeps its own rhythm. */
+  var WA_EL_LAG = 0.8, STEP = 0.02, env = { src: "", data: null }, wa = { src: null, t0: 0, data: null };
+  function envelope(audio) {
+    var data = audio.getChannelData(0), n = Math.max(1, Math.round(audio.sampleRate * STEP));
+    var out = [], peak = 0, i, j;
+    for (i = 0; i < data.length; i += n) {
+      var sum = 0, end = Math.min(data.length, i + n);
+      for (j = i; j < end; j++) sum += data[j] * data[j];
+      var rms = Math.sqrt(sum / Math.max(1, end - i));
+      out.push(rms);
+      if (rms > peak) peak = rms;
+    }
+    for (i = 0; i < out.length; i++) {
+      var v = peak > 0 ? Math.sqrt(out[i] / peak) : 0;
+      out[i] = v < 0.15 ? 0 : v;
+    }
+    return out;
+  }
+  function measure(src) {
+    env = { src: src, data: null };
+    var Off = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if (!Off || typeof fetch !== "function") return;
+    fetch(src).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+      var done = function (audio) {
+        if (env.src !== src || !audio) return;
+        env.data = envelope(audio);
+      };
+      var p = new Off(1, 1, 44100).decodeAudioData(buf, done, function () {});
+      if (p && typeof p.catch === "function") p.catch(function () {});
+    }).catch(function () {});
+  }
+  function playing(a) { return a && !a.paused && !a.ended && /^blob:/.test(String(a.src || "")) ? a : null; }
+  function at(data, secs) {
+    var i = Math.floor(secs / STEP);
+    return i >= 0 && i < data.length ? data[i] : 0;
+  }
+  function voiceLevel() {
+    /* The context's clock is when a line is RENDERED; it is heard later, by its output latency
+       and, on arm 1, by the second element's MediaStream lag, which upstream's FISH_WA_TAIL
+       note puts near 800 ms on the rig and has not benched on an iPhone. So the line is read
+       that far behind, and read on through the tail after the source ends; but only after it
+       ENDED (a stop stamps no tail, and a stopped mouth must stop), and never over a line an
+       element is now playing. */
+    var ln = window._fishWaLn, ac = window.actx;
+    if (ln && ln.st === 1 && ln.src && ln.src.buffer && ac && typeof ac.currentTime === "number") {
+      if (wa.src !== ln.src) {
+        var ol = ac.outputLatency, lag = (isFinite(ol) && ol > 0 ? ol : 0) + (ln.arm === 1 ? WA_EL_LAG : 0);
+        wa = { src: ln.src, t0: ac.currentTime + lag, data: null, tail: window._fishWaTail };
+        try { wa.data = envelope(ln.src.buffer); } catch (e) {}
+      }
+      return wa.data ? at(wa.data, ac.currentTime - wa.t0) : null;
+    }
+    var a = playing(window.fishAud) || playing(window.__gbBoxAudio);
+    if (!a) {
+      var tail = window._fishWaTail;
+      return wa.data && ac && typeof tail === "number" && tail !== wa.tail && Date.now() < tail
+        ? at(wa.data, ac.currentTime - wa.t0) : null;
+    }
+    if (a.src !== env.src) measure(a.src);
+    return env.data ? at(env.data, a.currentTime) : null;
   }
 
   function shade(hex, f) {
@@ -475,7 +544,138 @@
     zees(c, d, cx + 110, cy - 90);
   }
 
-  var FACES = { ostrich: ostrich, robot: robot, lantern: lantern };
+  /* D: the ember, Dave's face (owner, 2026-11-12; docs/mocks/growbot-face/d-ember.html): one
+     lens in a steel bezel, its lit core the pupil. Red is his signature, so a mood moves the
+     light's warmth, brightness and size and the lids, never its hue; a coat recolours it. It has
+     no mouth, so the voice is the light: the core swells and burns with his audio and a ring
+     leaves it on each syllable, and while the person speaks faint rings fall inward. */
+  var EMBER = {
+    calm: { core: [255, 40, 24], hot: [255, 236, 196], lum: 0.85, size: 1 },
+    curious: { core: [255, 48, 26], hot: [255, 240, 205], lum: 0.95, size: 1.05 },
+    happy: { core: [255, 92, 30], hot: [255, 246, 214], lum: 1, size: 1.08 },
+    alert: { core: [255, 30, 20], hot: [255, 255, 255], lum: 1.25, size: 0.78 },
+    scared: { core: [255, 34, 40], hot: [255, 255, 255], lum: 1.15, size: 0.62 },
+    sleepy: { core: [170, 18, 10], hot: [255, 150, 110], lum: 0.5, size: 0.9 },
+    tired: { core: [150, 16, 10], hot: [240, 130, 100], lum: 0.45, size: 0.88 }
+  };
+  /* One big eye shows a lid far more than two small ones do, so the moods' lids sit lighter
+     on it: happy's full cheek raise hid the core like a squint. */
+  function emberLids(p) { return { uy: p.uy * 0.85, ua: p.ua * 0.6, ly: p.ly * 0.5, lb: p.lb * 0.6, sx: p.sx, sy: p.sy }; }
+  function rgbOf(hex) { var n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+  function rgba(c, a) { return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + Math.max(0, Math.min(1, a)) + ")"; }
+  function mix(a, b, k) { return [0, 1, 2].map(function (i) { return Math.round(a[i] + (b[i] - a[i]) * k); }); }
+  var emberMood = null, emberRing = 0;
+  function ember(c, d) {
+    var R = 118, Rg = R * 0.8, TAU = Math.PI * 2, rot = d.tilt * Math.PI / 180 * 0.6, i;
+    var to = EMBER[d.emotion] || EMBER.curious;
+    if (custom) to = { core: rgbOf(BODY), hot: mix(rgbOf(BODY), [255, 255, 255], 0.8), lum: to.lum, size: to.size };
+    if (!emberMood) emberMood = { core: to.core.slice(), hot: to.hot.slice(), lum: to.lum, size: to.size };
+    var m = emberMood;
+    m.core = mix(m.core, to.core, 0.08); m.hot = mix(m.hot, to.hot, 0.08);
+    m.lum += (to.lum - m.lum) * 0.08; m.size += (to.size - m.size) * 0.08;
+    var talk = d.talking ? d.talk : 0, hearing = d.hearing && !d.talking;
+    var lum = m.lum * (0.82 + 0.45 * talk) * (hearing ? 1.06 : 1) * (0.94 + 0.06 * Math.sin(d.t / 900));
+    var cx = LW / 2 + d.gaze.x * 10 + d.sway * 30, cy = 300 + d.bob + d.gaze.y * 8;
+    c.save();
+    c.translate(cx, cy);
+    c.rotate(rot);
+    c.save();
+    c.globalCompositeOperation = "lighter";
+    var bl = c.createRadialGradient(0, 0, R * 0.7, 0, 0, R * (1.6 + 0.5 * lum * (1 + talk * 1.5)));
+    bl.addColorStop(0, rgba(m.core, 0.1 * lum * (1 + talk * 1.5)));
+    bl.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = bl; disc(c, 0, 0, R * 2.4);
+    c.restore();
+    /* The bezel's sheen is turned back by the tilt, so the phone rolls the lens under a light
+       that stays put. */
+    c.save();
+    c.shadowColor = "rgba(0,0,0,.8)"; c.shadowBlur = R * 0.25; c.shadowOffsetY = R * 0.06;
+    c.fillStyle = "#1b1d21"; disc(c, 0, 0, R);
+    c.restore();
+    var sheen = c.createRadialGradient(-R * 0.5 * Math.cos(rot) - R * 0.5 * Math.sin(rot), R * 0.5 * Math.sin(rot) - R * 0.5 * Math.cos(rot), R * 0.1, 0, 0, R * 1.3);
+    sheen.addColorStop(0, "#e2e6ea"); sheen.addColorStop(0.45, "#8d939a"); sheen.addColorStop(1, "#33373c");
+    c.fillStyle = sheen; disc(c, 0, 0, R);
+    c.fillStyle = "#020203"; disc(c, 0, 0, R * 0.86);
+    c.save();
+    c.beginPath(); c.arc(0, 0, Rg, 0, TAU); c.clip();
+    var bg = c.createRadialGradient(0, 0, 0, 0, 0, Rg);
+    bg.addColorStop(0, rgba(mix(m.core, [0, 0, 0], 0.92), 1)); bg.addColorStop(1, "#020101");
+    c.fillStyle = bg; c.fillRect(-Rg, -Rg, Rg * 2, Rg * 2);
+    c.strokeStyle = rgba(m.core, 0.1); c.lineWidth = 1;
+    for (i = 0; i < 3; i++) { c.beginPath(); c.arc(0, 0, Rg * [0.35, 0.55, 0.78][i], 0, TAU); c.stroke(); }
+    var p = lidCap(emberLids(d.lids.l), EMBER_BEND), shut = Math.max(0, 1 - Math.min(1, d.open));
+    var top = p.top + (0.5 - p.top) * shut, bottom = p.bottom + (0.5 - p.bottom) * shut, h = Rg * 2;
+    var pu = pupilIn({ top: top, bottom: bottom }, h, Rg * 0.27 * m.size * (1 + 0.28 * talk) * (hearing ? 1.12 : 1), d.pupil.y);
+    var px = d.pupil.x * Rg * 0.26, py = pu.y, r = pu.r;
+    c.save();
+    c.globalCompositeOperation = "lighter";
+    var g = c.createRadialGradient(px, py, 0, px, py, r * 2.4);
+    g.addColorStop(0, rgba(m.hot, lum));
+    g.addColorStop(0.07, rgba(mix(m.hot, m.core, 0.5), lum));
+    g.addColorStop(0.2, rgba(m.core, 0.95 * lum));
+    g.addColorStop(0.42, rgba(mix(m.core, [0, 0, 0], 0.45), 0.8 * lum));
+    g.addColorStop(0.7, rgba(mix(m.core, [0, 0, 0], 0.8), 0.45 * lum));
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = g; disc(c, px, py, r * 2.4);
+    c.restore();
+    if (hearing) {
+      for (i = 0; i < 3; i++) {
+        var k = 1 - ((d.t / 1400 + i / 3) % 1);
+        c.strokeStyle = rgba(m.core, 0.45 * (1 - k) * k * 3);
+        c.lineWidth = 2; c.beginPath(); c.arc(px, py, r * 1.2 + (Rg - r) * k, 0, TAU); c.stroke();
+      }
+    }
+    /* A ring starts at each syllable's rise, so it keeps the voice's time rather than a clock's. */
+    if (d.talking) {
+      emberRing += 0.03;
+      if (talk > 0.55 && emberRing > 0.45) emberRing = 0;
+      if (emberRing < 1) {
+        c.strokeStyle = rgba(mix(m.core, m.hot, 0.4), 0.6 * (1 - emberRing));
+        c.lineWidth = 3; c.beginPath(); c.arc(px, py, r * 1.1 + Rg * 0.8 * emberRing, 0, TAU); c.stroke();
+      }
+    } else emberRing = 1;
+    if (d.think) {
+      var a = d.t / 700;
+      c.save(); c.globalCompositeOperation = "lighter";
+      for (i = 0; i < 14; i++) {
+        c.fillStyle = rgba(m.core, 0.5 * (1 - i / 14));
+        disc(c, px + Math.cos(a - i * 0.09) * r * 2.1, py + Math.sin(a - i * 0.09) * r * 2.1, 3.2 - i * 0.15);
+      }
+      c.restore();
+    }
+    /* Lids are dark shutters with a lit edge; shut, the edges meet as one line, so a blink is a
+       line as on every face. The lower lid bows up in the middle: a raised cheek reads as a smile. */
+    var rim = rgba(m.core, 0.5 * Math.min(1, lum) + 0.4 * shut);
+    var uy = -Rg + h * top, peak = Rg - h * bottom;
+    var rise = shut > 0.9 ? 0 : h * (0.5 * p.ly + EMBER_BEND * p.lb) * (1 - shut);
+    c.fillStyle = "#030304"; c.strokeStyle = rim; c.lineWidth = 1.4 + 2 * shut;
+    if (top > 0.005) {
+      c.save(); c.translate(0, uy); c.rotate(p.ua * Math.PI / 180 * (1 - shut));
+      c.fillRect(-Rg * 1.5, -h * 1.5, Rg * 3, h * 1.5);
+      c.beginPath(); c.moveTo(-Rg, 0); c.lineTo(Rg, 0); c.stroke();
+      c.restore();
+    }
+    if (bottom > 0.005) {
+      c.strokeStyle = shut > 0.85 ? "rgba(0,0,0,0)" : rim;
+      c.beginPath(); c.moveTo(-Rg, peak + rise);
+      c.quadraticCurveTo(0, peak - rise, Rg, peak + rise);
+      c.lineTo(Rg, Rg * 1.5); c.lineTo(-Rg, Rg * 1.5); c.closePath(); c.fill();
+      c.beginPath(); c.moveTo(-Rg, peak + rise); c.quadraticCurveTo(0, peak - rise, Rg, peak + rise); c.stroke();
+    }
+    c.save(); c.rotate(-rot);
+    var gl = c.createLinearGradient(-Rg, -Rg, Rg * 0.2, Rg * 0.2);
+    gl.addColorStop(0, "rgba(255,255,255,.16)"); gl.addColorStop(0.5, "rgba(255,255,255,.03)"); gl.addColorStop(1, "rgba(255,255,255,0)");
+    c.fillStyle = gl;
+    c.beginPath(); c.ellipse(-Rg * 0.28, -Rg * 0.38, Rg * 0.62, Rg * 0.3, -0.6, 0, TAU); c.fill();
+    c.fillStyle = "rgba(255,255,255,.55)";
+    c.beginPath(); c.ellipse(-Rg * 0.44, -Rg * 0.5, Rg * 0.07, Rg * 0.035, -0.6, 0, TAU); c.fill();
+    c.restore();
+    c.restore();
+    c.restore();
+    zees(c, d, cx + 110, cy - 110);
+  }
+
+  var FACES = { ostrich: ostrich, robot: robot, lantern: lantern, ember: ember };
 
   /* One frame. `s` is what upstream's drawFace computed for its own eyes: t, emotion, eye
      (P.eye), smile, energy, blink, paused, dreaming, think, orbit, looking, gx/gy (the glance
@@ -498,9 +698,11 @@
     blush *= 0.97;
     /* Asleep too: a voice that sounds moves the mouth whatever the face is doing. The syllables
        never fully close mid-line, so even a 15 fps frame or a mouth that barely opens (the
-       robot's "o") reads as speech rather than a twitch. */
+       robot's "o") reads as speech rather than a twitch. Where growbot-box.js measured the
+       line, its loudness is the syllable, so the mouth keeps time with the words. */
     var talking = voiced(s.talking);
-    var syll = talking ? 0.2 + 0.8 * Math.max(0, Math.sin(s.t / 85) * 0.6 + Math.sin(s.t / 37) * 0.4) : 0;
+    var heard = talking ? voiceLevel() : null;
+    var syll = !talking ? 0 : 0.2 + 0.8 * (heard != null ? heard : Math.max(0, Math.sin(s.t / 85) * 0.6 + Math.sin(s.t / 37) * 0.4));
     talk += (syll - talk) * 0.45;
 
     /* Upstream's openness runs 0.06-1.3 with the emotion folded in; here the lid shape carries
@@ -542,7 +744,9 @@
     var d = {
       t: s.t, open: open, lids: cur, pupil: pup,
       gaze: { x: gaze.x + Math.sin(s.t * 0.045) * s.shake * 0.6, y: gaze.y }, think: s.think,
-      dreaming: s.dreaming, talking: talking, talk: talk, smile: s.smile, mouth: sp.mouth,
+      dreaming: s.dreaming, talking: talking, talk: talk, smile: s.smile, mouth: sp.mouth, emotion: s.emotion,
+      /* upstream's VAD is on from the person's first word to their last */
+      hearing: window.vadOn === true && !s.dreaming,
       tilt: cur.tilt - lean * 180 / Math.PI * 0.45, sway: lean, crest: cur.crest, startle: startle, blush: blush,
       /* The lantern has no body, so a chosen colour is its eyes' colour; unchosen, the mood's. */
       glow: face === "lantern" && custom ? BODY : s.glow,
@@ -552,6 +756,13 @@
        the canvas: the caption, the text box and the button bar own the rest, and the neck or
        chest below the band runs on behind them. */
     var z = Math.min(W / LW, H * 0.62 / 480);
+    /* The ember is a lens in a dark room: the mood sky shows only as a tint behind it. */
+    if (face === "ember") {
+      c.save();
+      c.fillStyle = "rgba(4,5,6,.86)";
+      c.fillRect(0, 0, W, H);
+      c.restore();
+    }
     c.save();
     c.translate((W - LW * z) / 2, H * 0.02 - 40 * z);
     c.scale(z, z);
@@ -576,16 +787,18 @@
     colour: function () { return BODY; },
     /* Whether the mouth would move now, given upstream's speakingUntil guard; for the tests. */
     voiced: voiced,
+    level: voiceLevel,
     /* What each face's lids leave open at the eye's centreline, per emotion, 0-1: the pupil's
        guarantee, read by the site tests. */
     openings: function () {
       var out = {};
       for (var k in LIDS) {
-        var sp = spec(k), o = { panel: 1, lantern: 1 };
+        var sp = spec(k), o = { panel: 1, lantern: 1, ember: 1 };
         [sp.l, sp.r].forEach(function (p) {
-          var a = lidCap(p, PANEL_BEND), b = lidCap(p, LANTERN_BEND);
+          var a = lidCap(p, PANEL_BEND), b = lidCap(p, LANTERN_BEND), e = lidCap(emberLids(p), EMBER_BEND);
           o.panel = Math.min(o.panel, 1 - a.top - a.bottom);
           o.lantern = Math.min(o.lantern, 1 - b.top - b.bottom);
+          o.ember = Math.min(o.ember, 1 - e.top - e.bottom);
         });
         out[k] = o;
       }

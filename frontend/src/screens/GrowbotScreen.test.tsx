@@ -1046,6 +1046,7 @@ describe("GrowbotScreen a persona's page", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
     const faces = screen.getByRole("group", { name: "Face" });
     expect(within(faces).getByRole("radio", { name: /^Lantern/ })).toHaveProperty("checked", true);
+    expect(within(faces).getByRole("radio", { name: /^Ember/ })).toHaveProperty("checked", false);
     fireEvent.click(within(faces).getByRole("radio", { name: /^Robot/ }));
     expect(
       await screen.findByText(

@@ -20,6 +20,8 @@
     if (!el) {
       el = new Audio();
       el.preload = "auto";
+      // The face measures the line this plays to move with the words (growbot-face.js).
+      window.__gbBoxAudio = el;
     }
     return el;
   }

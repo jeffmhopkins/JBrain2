@@ -117,9 +117,9 @@ class Pulled:
 
 
 PushResult = int | Literal["moved", "newer", "gone"]
-# The faces growbot-face.js draws (migration 0259's CHECK); lantern is the default.
-Face = Literal["lantern", "ostrich", "robot", "pixel"]
-# A tts-stt voice id (migration 0264's CHECK, and the shape the sidecar's /api/fish-tts
+# The faces growbot-face.js draws (migration 0264's CHECK); lantern is the default.
+Face = Literal["lantern", "ostrich", "robot", "ember", "pixel"]
+# A tts-stt voice id (migration 0265's CHECK, and the shape the sidecar's /api/fish-tts
 # accepts), or "" for the box's default voice.
 VOICE_RE: Final = r"^(kokoro-[a-z0-9_]{1,40})?$"
 Away = Literal["moved", "gone"]
