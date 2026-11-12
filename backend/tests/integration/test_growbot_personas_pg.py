@@ -27,7 +27,7 @@ from jbrain.api.deps import current_debug_principal, owner_only
 from jbrain.api.internal_auth import require_growbot
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, device_context, jshare_context, scoped_session
-from jbrain.growbot import souls
+from jbrain.growbot import prefs, souls
 from jbrain.growbot.personas import AUTO_KEEP, Pulled, SqlPersonaRepo
 from jbrain.growbot.repo import Redeemed, SqlGrowbotRepo
 from tests.conftest import docker_available
@@ -704,7 +704,13 @@ async def test_routes_open_hand_over_and_who_wears_fish(maker: async_sessionmake
     )
     assert stale.status_code == 409 and stale.json()["detail"] == "newer"
     state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_A})
-    assert state.json() == {"version": 2, "wearing": None, "memories": 0, "face": "lantern"}
+    assert state.json() == {
+        "version": 2,
+        "wearing": None,
+        "memories": 0,
+        "face": "lantern",
+        "prefs": 0,
+    }
     moved_state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_B})
     assert moved_state.status_code == 409
     assert c.post("/internal/growbot/soul/state", json={}).status_code == 401
@@ -766,3 +772,117 @@ async def test_debug_routes_read_save_and_restore(maker: async_sessionmaker) -> 
         c.post(f"/api/debug/growbot/personas/{pid}/checkpoints", json={"name": ""}).status_code
         == 422
     )
+
+
+# -- settings (migration 0263) --------------------------------------------------------------
+
+
+async def test_a_phone_keeps_its_personas_settings_and_the_owner_edits_them(
+    maker: async_sessionmaker,
+) -> None:
+    repo, sprout, _ = await _world(maker)
+    # Nothing yet: the first phone sends its own.
+    assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A) == (0, None)
+    seed = prefs.patch_from({"gb_vol": "0.5", "gb_eye": "environment"}, [])
+    assert await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, seed) == 1
+    # The owner's edit and the creature's change to another key both land.
+    assert await repo.patch_prefs(OWNER, sprout, prefs.patch_from(None, ["gb_eye"])) == 2
+    mine = prefs.patch_from({"gb_face_color": "#ffffff"}, [])
+    assert await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, mine) == 3
+    assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A) == (
+        3,
+        {"gb_vol": "0.5", "gb_face_color": "#ffffff"},
+    )
+    pulled = await repo.pull(SYSTEM_OWNER, sprout, PHONE_A, with_soul=False)
+    assert isinstance(pulled, Pulled) and pulled.prefs == 3 and pulled.version == 1
+    # Only the phone that holds it, and only a persona that is there.
+    assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_B) == "moved"
+    assert await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_B, mine) == "moved"
+    assert await repo.phone_prefs(SYSTEM_OWNER, "nope", PHONE_A) == "gone"
+    assert await repo.phone_patch_prefs(SYSTEM_OWNER, "nope", PHONE_A, mine) == "gone"
+    assert await repo.patch_prefs(OWNER, "nope", mine) is None
+    missing = "00000000-0000-4000-8000-000000000000"
+    assert await repo.patch_prefs(OWNER, missing, mine) is None
+    # Past the caps as a whole: nothing written.
+    big = prefs.patch_from({f"k{i}": "x" * 15_000 for i in range(5)}, [])
+    with pytest.raises(prefs.PrefsTooBig):
+        await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, big)
+    got = await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A)
+    assert isinstance(got, tuple) and got[0] == 3
+    # A duplicate is the same creature, settings and all.
+    made = await repo.create(OWNER, "Copy", souls.fresh("Copy"), "copy", memories_from=sprout)
+    assert made.prefs == {"gb_vol": "0.5", "gb_face_color": "#ffffff"}
+
+
+async def test_racing_settings_changes_all_land(maker: async_sessionmaker) -> None:
+    repo, sprout, _ = await _world(maker)
+    await asyncio.gather(
+        *(
+            repo.phone_patch_prefs(
+                SYSTEM_OWNER, sprout, PHONE_A, prefs.patch_from({f"k{i}": "1"}, [])
+            )
+            for i in range(6)
+        ),
+        *(repo.patch_prefs(OWNER, sprout, prefs.patch_from({f"o{i}": "1"}, [])) for i in range(4)),
+    )
+    got = await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A)
+    assert isinstance(got, tuple) and got[0] == 10 and len(got[1] or {}) == 10
+
+
+async def test_the_schema_holds_settings_to_a_map(maker: async_sessionmaker) -> None:
+    repo, sprout, _ = await _world(maker)
+    with pytest.raises(DBAPIError):
+        async with scoped_session(maker, OWNER) as session:
+            await session.execute(
+                text("UPDATE app.growbot_personas SET prefs = '[]'::jsonb WHERE id = :p"),
+                {"p": sprout},
+            )
+
+
+async def test_routes_read_and_edit_settings(maker: async_sessionmaker) -> None:
+    c = _client(maker)
+    pid = _make(c)["id"]
+    assert c.get(f"/api/growbot/personas/{pid}").json()["prefs"] is None
+    r = c.patch(f"/api/growbot/personas/{pid}/prefs", json={"set": {"gb_eye": "environment"}})
+    assert r.status_code == 200 and r.json() == {"version": 1}
+    r = c.patch(f"/api/debug/growbot/personas/{pid}/prefs", json={"set": {"gb_vol": "0.4"}})
+    assert r.status_code == 200 and r.json() == {"version": 2}
+    assert c.get(f"/api/growbot/personas/{pid}").json()["prefs"] == {
+        "gb_eye": "environment",
+        "gb_vol": "0.4",
+    }
+    assert c.get("/api/growbot/personas").json()["personas"][0]["prefs"]["gb_vol"] == "0.4"
+    url = f"/api/growbot/personas/{pid}/prefs"
+    assert c.patch(url, json={"set": {"gb_vol": 1}}).status_code == 400
+    assert c.patch(url, json={"set": {"k": "x" * 20_000}}).status_code == 413
+    four = {f"k{i}": "x" * 15_000 for i in range(5)}
+    assert c.patch(url, json={"set": four}).status_code == 413
+    nobody = "/api/growbot/personas/00000000-0000-4000-8000-000000000000/prefs"
+    assert c.patch(nobody, json={"set": {}}).status_code == 404
+
+
+async def test_the_sidecars_settings_routes(maker: async_sessionmaker) -> None:
+    c = _client(maker)
+    pid = _make(c)["id"]
+    repo = SqlPersonaRepo(maker)
+    await SqlGrowbotRepo(maker).put_robot(OWNER, "gb-fish", "Fish")
+    assert await repo.open_on_phone(SYSTEM_OWNER, pid, PHONE_A, "Pixel", "gb-fish")
+    who = {"persona": pid, "phone": PHONE_A}
+    assert c.post("/internal/growbot/prefs/pull", json=who).json() == {
+        "version": 0,
+        "prefs": None,
+    }
+    r = c.post("/internal/growbot/prefs/push", json={**who, "set": {"gb_vol": "0.5"}})
+    assert r.status_code == 200 and r.json() == {"version": 1}
+    assert c.post("/internal/growbot/soul/state", json=who).json()["prefs"] == 1
+    assert c.post("/internal/growbot/prefs/pull", json=who).json()["prefs"] == {"gb_vol": "0.5"}
+    assert c.post("/internal/growbot/prefs/push", json={**who, "set": []}).status_code == 400
+    four = {f"k{i}": "x" * 15_000 for i in range(5)}
+    assert c.post("/internal/growbot/prefs/push", json={**who, "set": four}).status_code == 413
+    other = {"persona": pid, "phone": PHONE_B}
+    assert c.post("/internal/growbot/prefs/pull", json=other).status_code == 409
+    assert c.post("/internal/growbot/prefs/push", json=other).status_code == 409
+    assert c.post("/internal/growbot/prefs/pull", json={**who, "phone": "x"}).status_code == 401
+    assert c.post("/internal/growbot/prefs/push", json={**who, "phone": "x"}).status_code == 401
+    c.delete(f"/api/growbot/personas/{pid}")
+    assert c.post("/internal/growbot/prefs/pull", json=who).status_code == 404

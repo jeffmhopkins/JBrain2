@@ -425,6 +425,247 @@
   });
 })();
 
+/* A persona's settings live on the box too (migration 0263): the phone is only a display (owner,
+   2026-11-12). Upstream keeps what a creature chose or was told to remember outside its soul,
+   each in a localStorage key of its own (its coat colour, its games guide, its volume, which
+   camera it looks through, a remembered ?flag). Those keys, and only those, are the persona's:
+   - At load, before any page code reads them, the box's are written into this phone's
+     localStorage and every other one of them is cleared, so a new or wiped phone comes up as the
+     same creature. A persona the box has none for yet (prefs null) takes this phone's own, the
+     ones it had before personas, never another persona's.
+   - While it runs, a change to one of them (a setItem, a removeItem, or upstream's own
+     `localStorage.key = v`, which no hook sees, so a check every 2 s) is sent a moment later as
+     a patch of just the keys that changed, so an owner's edit to another key is never undone.
+   - An owner's edit (the poll's `prefs` version passes the last one this tab knows) is pulled
+     and written where the creature stands, and announced as `gb-box-prefs` {changed: {key:
+     value or null}} for a page that applies it live (the camera does).
+   gb_box_prefs is {persona, dirty, version}; a change not yet on the box survives a reload and
+   is sent before the box's copy is taken. gb_phone_prefs keeps the phone's own (a G2 session's)
+   while it wears a persona, and gives them back. Things about this phone itself (its tilt
+   calibration, the consent it gave, its upstream tokens) stay on it. */
+(function () {
+  "use strict";
+  if (location.pathname !== "/v3/next.html") return;
+  var PATH = "/api/box/prefs", META = "gb_box_prefs", OWN = "gb_phone_prefs";
+  var SEND_AFTER_MS = 1500, CHECK_MS = 2000, RETRY_MS = 15000;
+  var KEYS = {
+    gb_eye: 1, gb_face_color: 1, gb_face_dir: 1, gb_next_games3: 1, gb_vol: 1, pb2_voice: 1,
+    pb2_voicetest: 1, gb_low_power: 1, gb_travel_cards_v1: 1, gb_travel_fw_v1: 1,
+    gb_next_log: 1, pb2_journal: 1, gb_nx_sid: 1, gb_getup: 1, gb_ftdial: 1, gb_ftdial_set: 1,
+    gb_fishwa: 1, gb_asfix: 1, gb_judge0: 1, gb_bodysnd: 1, gb_listen: 1, gb_stt: 1,
+    gb_rest: 1, gb_legslew: 1
+  };
+  // Per persona namespace (visual memory on or off) and per robot (keep tracking me).
+  var PREFIXES = ["gb_vismem_native/", "gb_ft_latch:"];
+  var store;
+  try { store = window.localStorage; store.getItem(META); } catch (e) { return; }
+  var realSet = Storage.prototype.setItem, realRemove = Storage.prototype.removeItem;
+  var soul = window.__gbBoxSoul || {};
+
+  function ours(k) {
+    if (Object.prototype.hasOwnProperty.call(KEYS, k)) return true;
+    for (var i = 0; i < PREFIXES.length; i++) if (k.indexOf(PREFIXES[i]) === 0) return true;
+    return false;
+  }
+  function snap() {
+    var out = {};
+    try {
+      for (var i = 0; i < store.length; i++) {
+        var k = store.key(i);
+        if (k != null && ours(k)) out[k] = store.getItem(k);
+      }
+    } catch (e) {}
+    return out;
+  }
+  function meta() {
+    try {
+      var m = JSON.parse(store.getItem(META) || "null");
+      return m && typeof m === "object" ? m : {};
+    } catch (e) { return {}; }
+  }
+  function setMeta(m) { try { realSet.call(store, META, JSON.stringify(m)); } catch (e) {} }
+  // Makes this phone's keys exactly `want`, touching nothing else.
+  function become(want) {
+    var had = snap();
+    Object.keys(had).forEach(function (k) {
+      if (!Object.prototype.hasOwnProperty.call(want, k)) { try { realRemove.call(store, k); } catch (e) {} }
+    });
+    Object.keys(want).forEach(function (k) {
+      if (ours(k) && typeof want[k] === "string" && had[k] !== want[k]) {
+        try { realSet.call(store, k, want[k]); } catch (e) {}
+      }
+    });
+  }
+  function ownSaved() {
+    try { return JSON.parse(store.getItem(OWN) || "null"); } catch (e) { return null; }
+  }
+
+  if (soul.g2) {
+    // A G2 session: the phone's own come back if a persona had the keys.
+    var own = ownSaved();
+    if (own && typeof own === "object") become(own);
+    if (own || meta().persona) { try { realRemove.call(store, OWN); } catch (e) {} setMeta({}); }
+    return;
+  }
+  var persona = soul.persona;
+  if (!persona) return;
+
+  // Synchronous on purpose, as the soul's: the keys must hold the box's before the page reads them.
+  function sync(method, body) {
+    var r = new XMLHttpRequest();
+    try {
+      r.open(method, PATH, false);
+      if (body) r.setRequestHeader("content-type", "application/json");
+      r.send(body || null);
+    } catch (e) { return { status: 0, json: null }; }
+    var json = null;
+    try { json = JSON.parse(r.responseText); } catch (e) {}
+    return { status: r.status, json: json };
+  }
+  function patchOf(from, to) {
+    var set = {}, drop = [], n = 0;
+    Object.keys(to).forEach(function (k) { if (from[k] !== to[k]) { set[k] = to[k]; n++; } });
+    Object.keys(from).forEach(function (k) { if (!Object.prototype.hasOwnProperty.call(to, k)) { drop.push(k); n++; } });
+    return n ? { set: set, drop: drop } : null;
+  }
+  function body(p) { return JSON.stringify({ persona: persona, set: p.set, drop: p.drop }); }
+
+  var m = meta();
+  // What the box holds, as far as this tab knows: a change is what differs from it.
+  var sent = null, version = -1;
+  if (!m.persona) {
+    // The phone's own keys are set aside, not lost, before a persona's replace them.
+    var mine = snap();
+    if (Object.keys(mine).length && !ownSaved()) { try { realSet.call(store, OWN, JSON.stringify(mine)); } catch (e) {} }
+  }
+  var pulled = sync("GET");
+  if (pulled.status === 200 && pulled.json) {
+    var box = pulled.json.prefs;
+    version = typeof pulled.json.version === "number" ? pulled.json.version : -1;
+    if (m.persona === persona && m.dirty && m.base && typeof m.base === "object") {
+      // A change the box never got: sent now, against what the box had when it was made.
+      var pending = patchOf(m.base, snap());
+      var got = pending ? sync("POST", body(pending)) : { status: 200, json: { version: version } };
+      if (got.status === 200 && got.json) version = got.json.version;
+      var after = sync("GET");
+      if (after.status === 200 && after.json && after.json.prefs) { box = after.json.prefs; version = after.json.version; }
+    }
+    if (box && typeof box === "object") {
+      become(box);
+      sent = snap();
+    } else {
+      // The first phone this persona opens on: it keeps what it had (its own, not another
+      // persona's), and those become the persona's.
+      if (m.persona && m.persona !== persona) become({});
+      else if (!m.persona && ownSaved()) become(ownSaved());
+      var first = snap(), all = sync("POST", body({ set: first, drop: [] }));
+      if (all.status === 200 && all.json) { sent = first; version = all.json.version; }
+      else sent = {};
+    }
+    setMeta({ persona: persona, dirty: false, base: sent, version: version });
+  } else if (m.persona === persona) {
+    // The box did not answer: the creature runs on what this phone last had of it.
+    sent = m.base && typeof m.base === "object" ? m.base : {};
+    version = typeof m.version === "number" ? m.version : -1;
+  } else {
+    // Nothing of this persona's is known here: it runs on the defaults (never another
+    // persona's keys) and sends nothing, so they never overwrite what the box holds.
+    if (m.persona) become({});
+    return;
+  }
+
+  var timer = 0, inflight = false, held = false, retry = 0;
+  function schedule(ms) { clearTimeout(timer); timer = setTimeout(push, ms); }
+  function check() {
+    if (held || !patchOf(sent, snap())) return;
+    var now = meta();
+    if (now.persona !== persona) { held = true; return; }
+    if (!now.dirty) { now.dirty = true; setMeta(now); }
+    if (!inflight) schedule(SEND_AFTER_MS);
+  }
+  function push(keepalive) {
+    if (held) return;
+    if (inflight) { schedule(SEND_AFTER_MS); return; }
+    var now = snap(), p = patchOf(sent, now);
+    if (!p) return;
+    if (meta().persona !== persona) { held = true; return; }
+    inflight = true;
+    fetch(PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: body(p),
+      keepalive: !!keepalive
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) { return { status: r.status, json: j }; });
+    }).then(function (r) {
+      inflight = false;
+      if (r.status === 200 && r.json) {
+        sent = now; retry = 0;
+        if (typeof r.json.version === "number") version = r.json.version;
+        setMeta({ persona: persona, dirty: !!patchOf(sent, snap()), base: sent, version: version });
+        check();
+      } else if (r.status === 400 || r.status === 413) {
+        // The box will never keep this change: it waits for the next one.
+        sent = now;
+      } else if (r.status === 404 || r.status === 409) {
+        held = true;   // another phone, another persona, or deleted: the soul's poll reloads
+      } else {
+        retry = Math.min(retry ? retry * 2 : RETRY_MS, 300000);
+        schedule(retry);
+      }
+    }).catch(function () {
+      inflight = false;
+      retry = Math.min(retry ? retry * 2 : RETRY_MS, 300000);
+      schedule(retry);
+    });
+  }
+
+  // The owner changed them from JBrain: taken where the creature stands, keys this tab changed
+  // and has not yet sent kept.
+  function pullOwner() {
+    fetch(PATH, { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (!j || !j.prefs || typeof j.prefs !== "object" || held) return;
+      var mineNow = snap(), mineP = patchOf(sent, mineNow) || { set: {}, drop: [] };
+      var want = {}, changed = {}, any = false;
+      Object.keys(j.prefs).forEach(function (k) { if (ours(k) && typeof j.prefs[k] === "string") want[k] = j.prefs[k]; });
+      Object.keys(mineP.set).forEach(function (k) { want[k] = mineP.set[k]; });
+      mineP.drop.forEach(function (k) { delete want[k]; });
+      Object.keys(want).forEach(function (k) { if (mineNow[k] !== want[k]) { changed[k] = want[k]; any = true; } });
+      Object.keys(mineNow).forEach(function (k) { if (!Object.prototype.hasOwnProperty.call(want, k)) { changed[k] = null; any = true; } });
+      become(want);
+      sent = {};
+      Object.keys(j.prefs).forEach(function (k) { if (ours(k)) sent[k] = j.prefs[k]; });
+      version = j.version;
+      setMeta({ persona: persona, dirty: !!patchOf(sent, snap()), base: sent, version: version });
+      if (any) { try { window.dispatchEvent(new CustomEvent("gb-box-prefs", { detail: { changed: changed } })); } catch (e) {} }
+      check();
+    }).catch(function () {});
+  }
+  window.addEventListener("gb-box-state", function (ev) {
+    var v = ev && ev.detail && ev.detail.prefs;
+    if (typeof v === "number" && v > version && !inflight) pullOwner();
+  });
+
+  Storage.prototype.setItem = (function (inner) {
+    return function (key) {
+      var out = inner.apply(this, arguments);
+      if (this === store && ours(String(key))) check();
+      return out;
+    };
+  })(Storage.prototype.setItem);
+  Storage.prototype.removeItem = (function (inner) {
+    return function (key) {
+      var out = inner.apply(this, arguments);
+      if (this === store && ours(String(key))) check();
+      return out;
+    };
+  })(Storage.prototype.removeItem);
+  setInterval(check, CHECK_MS);
+  document.addEventListener("visibilitychange", function () { if (document.hidden) { check(); push(true); } });
+  window.addEventListener("pagehide", function () { check(); push(true); });
+  if (meta().dirty) check();
+})();
+
 /* A persona's visual memories live on the box too (plan §2c, wave G4d). Upstream keeps them in
    IndexedDB (v3/visual-memory.js), under vmNs(); apply.py makes vmNs() read this tab's
    __gbBoxVmNs first, pinned here to the persona, so each persona's saved views are its own on

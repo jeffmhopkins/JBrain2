@@ -406,7 +406,8 @@ def test_the_creature_page_starts_on_the_boxs_soul() -> None:
     # An unsent write goes only into the persona it came from: the page checks, and every push
     # names it for the box to check too.
     assert "m.persona === persona" in sync
-    assert sync.count("JSON.stringify({ persona: ") == 2
+    soul_only = sync[: sync.index("/* A persona's settings live on the box too")]
+    assert soul_only.count("JSON.stringify({ persona: ") == 2
     # The phone's own (G2) creature is set aside while a persona has the key.
     assert 'OWN = "gb_phone_soul"' in sync and "put(OWN, mine)" in sync
 
@@ -750,3 +751,200 @@ def test_an_ordinary_quiet_beat_waits_ninety_seconds_after_the_last_activity() -
     assert "idle>=8000 && now-lastBeatT" not in page
     assert page.index("var GB_QUIET_AFTER_MS") < page.index("if(idle>=GB_QUIET_AFTER_MS")
     assert "90 seconds after anything last happened" in page
+
+
+# A browser just big enough for growbot-box.js's settings sync: a Storage whose prototype the
+# sync hooks, a synchronous XHR and a fetch answered by `box`, and timers run by hand.
+_PREFS_HARNESS = r"""
+const calls = [], events = [];
+let timers = [];
+class Storage {
+  constructor() { this._d = new Map(); }
+  get length() { return this._d.size; }
+  key(i) { return [...this._d.keys()][i] ?? null; }
+  getItem(k) { return this._d.has(k) ? this._d.get(k) : null; }
+  setItem(k, v) { this._d.set(String(k), String(v)); }
+  removeItem(k) { this._d.delete(String(k)); }
+}
+const store = new Storage();
+for (const [k, v] of Object.entries(START)) store.setItem(k, v);
+const listeners = {};
+const window = {
+  localStorage: store, __gbBoxSoul: SOUL,
+  addEventListener(t, f) { (listeners[t] = listeners[t] || []).push(f); },
+  dispatchEvent(ev) {
+    if (ev.type === "gb-box-prefs") events.push(ev.detail);
+    (listeners[ev.type] || []).forEach(f => f(ev));
+  },
+};
+function answer(method, body) {
+  calls.push({ method, body: body ? JSON.parse(body) : null });
+  return box(method, body ? JSON.parse(body) : null);
+}
+class XMLHttpRequest {
+  open(m, p) { this.m = m; }
+  setRequestHeader() {}
+  send(b) {
+    const [s, j] = answer(this.m, b);
+    this.status = s;
+    this.responseText = JSON.stringify(j);
+  }
+}
+function fetch(path, opts) {
+  const [s, j] = answer((opts && opts.method) || "GET", opts && opts.body);
+  return Promise.resolve({ status: s, ok: s === 200, json: () => Promise.resolve(j) });
+}
+class CustomEvent { constructor(type, o) { this.type = type; this.detail = o && o.detail; } }
+const location = { pathname: "/v3/next.html" };
+const document = { hidden: false, addEventListener() {} };
+function setTimeout(f) { timers.push(f); return timers.length; }
+function clearTimeout() {}
+function setInterval() {}
+async function settle() {
+  for (let i = 0; i < 5; i++) {
+    const t = timers;
+    timers = [];
+    t.forEach(f => f());
+    await new Promise(r => global.setImmediate(r));
+  }
+}
+function local() { return Object.fromEntries(store._d); }
+"""
+
+
+def _prefs_in_node(start: dict[str, str], soul: dict[str, Any], box: str, script: str) -> Any:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    begin = shim.index("/* A persona's settings live on the box too")
+    end = shim.index("/* A persona's visual memories live on the box too")
+    program = (
+        f"const START = {json.dumps(start)}; const SOUL = {json.dumps(soul)};\n"
+        f"function box(method, body) {{ {box} }}\n{_PREFS_HARNESS}\n"
+        f"(function(window, Storage, XMLHttpRequest, fetch){{ {shim[begin:end]} }})"
+        "(window, Storage, XMLHttpRequest, fetch);\n"
+        f"(async () => {{ {script} }})();"
+    )
+    out = subprocess.run([node, "-e", program], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def test_a_personas_settings_come_from_the_box_and_its_changes_go_back() -> None:
+    """Migration 0263: the phone is only a display. The box's settings replace this phone's
+    before the page reads them, the phone's own are set aside, keys that are not the
+    creature's are left alone, and a change goes back as a patch of just that key."""
+    got = _prefs_in_node(
+        {"gb_vol": "0.8", "gb_eye": "environment", "gbk_tab": "s", "gb_up_vec": "[0,0,1]"},
+        {"persona": "p1"},
+        'return method === "GET" ? [200, {version: 3, prefs: {gb_vol: "0.5"}}]'
+        " : [200, {version: 4}];",
+        "const loaded = local();"
+        ' store.setItem("gb_face_color", "#ffffff");'
+        ' window.localStorage.removeItem("gb_vol");'
+        " await settle();"
+        " console.log(JSON.stringify({loaded, calls, meta: JSON.parse(local().gb_box_prefs)}));",
+    )
+    loaded = got["loaded"]
+    assert loaded["gb_vol"] == "0.5" and "gb_eye" not in loaded
+    # This phone's tilt calibration and its open tab are the phone's.
+    assert loaded["gbk_tab"] == "s" and loaded["gb_up_vec"] == "[0,0,1]"
+    assert json.loads(loaded["gb_phone_prefs"]) == {"gb_vol": "0.8", "gb_eye": "environment"}
+    posts = [c["body"] for c in got["calls"] if c["method"] == "POST"]
+    assert posts == [{"persona": "p1", "set": {"gb_face_color": "#ffffff"}, "drop": ["gb_vol"]}]
+    assert got["meta"] == {
+        "persona": "p1",
+        "dirty": False,
+        "base": {"gb_face_color": "#ffffff"},
+        "version": 4,
+    }
+
+
+def test_the_first_phone_gives_a_persona_its_own_settings() -> None:
+    got = _prefs_in_node(
+        {"gb_vol": "0.8", "gb_eye": "environment"},
+        {"persona": "p1"},
+        'return method === "GET" ? [200, {version: 0, prefs: null}] : [200, {version: 1}];',
+        "console.log(JSON.stringify({calls, local: local()}));",
+    )
+    assert got["calls"][1] == {
+        "method": "POST",
+        "body": {
+            "persona": "p1",
+            "set": {"gb_vol": "0.8", "gb_eye": "environment"},
+            "drop": [],
+        },
+    }
+    assert got["local"]["gb_eye"] == "environment"
+
+
+def test_another_personas_settings_never_seed_a_new_one() -> None:
+    meta = json.dumps({"persona": "p0", "dirty": False, "base": {}, "version": 2})
+    got = _prefs_in_node(
+        {"gb_vol": "0.3", "gb_box_prefs": meta},
+        {"persona": "p1"},
+        'return method === "GET" ? [200, {version: 0, prefs: null}] : [200, {version: 1}];',
+        "console.log(JSON.stringify({calls, local: local()}));",
+    )
+    assert "gb_vol" not in got["local"]
+    assert got["calls"][1]["body"] == {"persona": "p1", "set": {}, "drop": []}
+
+
+def test_an_owners_edit_lands_where_the_creature_stands() -> None:
+    got = _prefs_in_node(
+        {},
+        {"persona": "p1"},
+        "if (method === 'POST') return [200, {version: 9}];"
+        " return calls.length > 1 ? [200, {version: 8, prefs: {gb_vol: '0.5', gb_eye:"
+        " 'environment'}}] : [200, {version: 7, prefs: {gb_vol: '0.5'}}];",
+        'window.dispatchEvent(new CustomEvent("gb-box-state", {detail: {prefs: 7}}));'
+        'window.dispatchEvent(new CustomEvent("gb-box-state", {detail: {prefs: 8}}));'
+        " await settle();"
+        " console.log(JSON.stringify({calls, events, local: local()}));",
+    )
+    # Only a newer version pulls, and taking the owner's edit sends nothing back.
+    assert [c["method"] for c in got["calls"]] == ["GET", "GET"]
+    assert got["events"] == [{"changed": {"gb_eye": "environment"}}]
+    assert got["local"]["gb_eye"] == "environment"
+
+
+def test_a_change_the_box_never_got_is_sent_before_its_copy_is_taken() -> None:
+    meta = json.dumps({"persona": "p1", "dirty": True, "base": {"gb_vol": "0.5"}, "version": 3})
+    got = _prefs_in_node(
+        {"gb_vol": "0.2", "gb_box_prefs": meta},
+        {"persona": "p1"},
+        "if (method === 'POST') return [200, {version: 4}];"
+        " return [200, {version: calls.length > 1 ? 4 : 3, prefs: {gb_vol: calls.length > 1"
+        " ? '0.2' : '0.5'}}];",
+        "console.log(JSON.stringify({calls, local: local()}));",
+    )
+    assert got["calls"][1]["body"] == {"persona": "p1", "set": {"gb_vol": "0.2"}, "drop": []}
+    assert got["local"]["gb_vol"] == "0.2"
+
+
+def test_a_g2_session_gets_the_phones_own_settings_back() -> None:
+    got = _prefs_in_node(
+        {
+            "gb_vol": "0.5",
+            "gb_phone_prefs": json.dumps({"gb_vol": "0.8"}),
+            "gb_box_prefs": json.dumps({"persona": "p1"}),
+        },
+        {"g2": True},
+        "return [500, null];",
+        "console.log(JSON.stringify({calls, local: local()}));",
+    )
+    assert got["calls"] == []
+    assert got["local"] == {"gb_vol": "0.8", "gb_box_prefs": "{}"}
+
+
+def test_a_box_that_does_not_answer_never_overwrites_a_persona() -> None:
+    meta = json.dumps({"persona": "p0", "dirty": False, "base": {}, "version": 2})
+    got = _prefs_in_node(
+        {"gb_vol": "0.3", "gb_box_prefs": meta},
+        {"persona": "p1"},
+        "return [503, null];",
+        'store.setItem("gb_vol", "0.9"); await settle();'
+        " console.log(JSON.stringify({calls, local: local()}));",
+    )
+    assert [c["method"] for c in got["calls"]] == ["GET"]
+    assert json.loads(got["local"]["gb_box_prefs"])["persona"] == "p0"

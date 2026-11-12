@@ -166,6 +166,9 @@ SOUL_PATH = "/api/box/persona"
 # A persona's visual memories (wave G4d): one record with up to three views, each at most
 # upstream's VM_MAX_B64 of base64, and its fields.
 MEMORY_PATH = "/api/box/memories"
+# A persona's settings (the creature's own localStorage keys): the api caps them at 64 KB.
+PREFS_PATH = "/api/box/prefs"
+MAX_PREFS_BODY = 96 * 1024
 MAX_MEMORY_BODY = 2_500_000
 MEMORY_ID_RE = re.compile(r"r[0-9a-f]{1,32}")
 # The creature's diary (upstream's brain log): a snapshot is at most 70 KB on the page
@@ -715,6 +718,8 @@ def body_limit(req: Request) -> int:
         return MAX_SOUL_BODY
     if req.path in (MEMORY_PATH, MEMORY_PATH + "/forget"):
         return MAX_MEMORY_BODY
+    if req.path == PREFS_PATH:
+        return MAX_PREFS_BODY
     return MAX_BODY
 
 
@@ -1595,6 +1600,8 @@ class GrowBot:
             return await self.cal_route(req)
         if req.path in (MEMORY_PATH, MEMORY_PATH + "/view", MEMORY_PATH + "/forget"):
             return await self.memory_route(req)
+        if req.path == PREFS_PATH:
+            return await self.prefs_route(req)
         if name in ("journal", "episodes") and req.method == "DELETE":
             # The app's erase flow reads a JSON answer; there is nothing here to erase.
             return json_response(200, {"ok": True})
@@ -1716,6 +1723,45 @@ class GrowBot:
                 return json_response(503, {"error": "the box is busy"}, headers)
             # The page keeps which persona its unsent writes belong to, so a phone that was
             # given another persona never pushes the old one's soul into the new one.
+            return json_response(200, {**got, "persona": claims.persona}, headers)
+        if up.status in (400, 404, 409, 413):
+            try:
+                detail = json.loads(up.body).get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            why = detail if isinstance(detail, str) else "refused"
+            return json_response(up.status, {"error": why[:200]}, headers)
+        return json_response(503, {"error": "the box is busy"}, headers)
+
+    async def prefs_route(self, req: Request) -> Response:
+        """The persona's settings, the creature's own localStorage keys: `GET` pulls them
+        (`prefs` null until a phone first sent its own), `POST {persona, set, drop}` sends a
+        change. 204 for a G2 session, whose creature keeps them on the phone; the api's 400,
+        404, 409 and 413 pass through, anything else is a 503 the page retries."""
+        claims = self._claims(req)
+        if claims is None or not claims.persona:
+            return Response(204, headers=[("Cache-Control", "no-store")])
+        who: dict[str, Any] = {"persona": claims.persona, "phone": claims.phone}
+        if req.method == "GET":
+            path, payload = "/internal/growbot/prefs/pull", who
+        elif req.method == "POST":
+            msg = _parse(req.body)
+            if msg is None:
+                return json_response(400, {"error": "a settings change"})
+            if msg.get("persona") != claims.persona:
+                # As the soul's push: a page still on a persona this phone has since swapped
+                # never writes its settings into the new one.
+                return json_response(409, {"error": "other"})
+            path = "/internal/growbot/prefs/push"
+            payload = {**who, "set": msg.get("set"), "drop": msg.get("drop")}
+        else:
+            return json_response(405, {"error": "method not allowed"})
+        up = await self._call(self._api_post, path, payload, pool=self._soul_pool)
+        headers = [("Cache-Control", "no-store")]
+        if up.status == 200:
+            got = _parse(up.body)
+            if got is None:
+                return json_response(503, {"error": "the box is busy"}, headers)
             return json_response(200, {**got, "persona": claims.persona}, headers)
         if up.status in (400, 404, 409, 413):
             try:
