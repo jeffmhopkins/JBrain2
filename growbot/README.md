@@ -353,13 +353,14 @@ duplicate copies the settings but not the diary id, so the two keep separate dia
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/box/prefs` | `/internal/growbot/prefs/pull`: `{version, prefs, persona}`, `prefs` null until a phone first sent its own. |
+| `GET /api/box/prefs` | `/internal/growbot/prefs/pull`: `{version, prefs, adopt, persona}`, `prefs` null until a phone first sent its own or the owner set one; `adopt` true while only the owner has. |
 | `POST /api/box/prefs` | `{persona, set, drop}` to `/prefs/push`: `{version}`. Capped at 320 KB before it is read; 409 `other` as the soul's. |
 
 At load, after the soul, a synchronous pull replaces this phone's copy of those keys with the
 box's (the phone's own wait in `gb_phone_prefs` for a G2 session, as the soul's do). A persona
 with none yet takes the first phone's own, never another persona's (an owner edit made before
-any phone opened it is its settings, and the phone takes those instead). A change (a `setItem`, a
+any phone sent its own is marked, and the pull's `adopt` tells the first phone to lay its own
+under the owner's rather than drop them). A change (a `setItem`, a
 `removeItem`, or upstream's `localStorage.key = v`, which a 2 s check catches) goes back 1.5 s
 later, and when the page hides, as a patch of only the keys that changed, so the owner's edit
 of another key stands. `gb_box_prefs` keeps `{persona, dirty, base, version}`: a change the box
@@ -449,6 +450,17 @@ behind `window.__gbBox`, which `growbot-box.js` sets, so the page without the sh
 upstream's panel. What stays: the body, *follow my face*, the eye, the voice and low power. The money-code badge, a
 saved credits tab and the full panel's key and credits tabs are closed off the same way, and
 *My thoughts* loses its cloud logs link.
+
+The rest went the same way (owner, 2026-11-12: *"remove all the stuff that doesn't apply to our
+implementation"*): *My thoughts* loses its soul download (the box keeps the soul; JBrain exports
+it), and its *Visual memories* no longer say "on this device"; the full panel's MIND tab loses
+the soul download, *move him to a new phone*, the cloud watch link and the cloud notes card
+(whose delete erased nothing here). What those rooms left on a phone (`gb_brain`,
+`gb_free_pick`, `gb_effort`, `pb_byok`, `pb_llm_*`, `pb_energy_out`, `pb2_erase`,
+`gb_nx_watch`) is dropped by `growbot-box.js` before the page reads it, so no model pick, key or
+custom endpoint steers a box creature. The cloud notes card was also the brain log's only
+switch, so an old opt-out (`gb_next_log` / `pb2_journal` "0") is lifted too: the brain log goes
+to the box and is always kept.
 
 Upstream sets the spoken line at 11px and the brain panel at 11-12.5px; `growbot-box.js` raises
 them to phone sizes. A phone in desktop-site mode (Safari's *Request Desktop Website*, Chrome's
