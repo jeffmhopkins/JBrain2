@@ -3369,6 +3369,26 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   robots with their last-seen time and links to the GrowBot screen. Down, it says that no robot
   can connect until it is back.
 
+## GrowBot — the brain log (owner, 2026-11-12 — binding mock: `docs/mocks/growbot-brain-log/a-share-sheet.html`, variant A; rivals B "quick buttons" and C "preview first" retained in `docs/mocks/growbot-brain-log/README.md`; plan `docs/plans/GROWBOT_PLAN.md` §2 "Brain log")
+
+The owner shares a window of the creature's life with GrowBot's developer as one zip. It is a
+rare, deliberate act, so it lives behind one secondary button and asks everything in one sheet.
+
+- **Where.** The Body tab, under the robots and *Add a robot*: a section head *For GrowBot's
+  developer* and *Share a brain log…* (secondary, block). It shows with no robot too, since a
+  persona alone on a phone still thinks, hears and speaks.
+- **The sheet** (*Share a brain log*): a segmented pick *1 hour · 3 hours · 6 hours* (1 hour
+  first); *What people said* as two choices, *Hash what people said* (selected; *Recommended.
+  Transcripts and quoted speech become hashes, the way GrowBot's own diary does. The creature's
+  words stay.*) and *Keep what people said* (*Every transcript as it was heard.*); *Names to
+  hide* (comma-separated, *Replaced with [name] everywhere in the file, in either mode.
+  Remembered on this phone.*); one dim line on what is inside and what never is; then
+  *Download brain log (.zip)* (primary, block), which reads *Gathering the brain log…* while
+  the box builds it.
+- **After.** The sheet closes and a toast says *Saved growbot-brain-log-…-3h.zip to Downloads.
+  Send it to GrowBot's developer as it is.* A refusal stays in the sheet as a rose message,
+  *The brain log didn't download — <why>*.
+
 ## GrowBot — the creature's face (owner, 2026-11-10 — binding mock: `docs/mocks/growbot-face/a-ostrich.html`, variant A; rivals B "the panels' robot" and C "lantern eyes" retained in `docs/mocks/growbot-face/README.md`; built in `growbot/patches/growbot-face.js`)
 
 A persona wears one of four faces, the lantern by default (owner, 2026-11-11; picked under

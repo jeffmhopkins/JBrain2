@@ -4081,6 +4081,14 @@ export interface GrowbotTicketFor {
 /** One saved view of a visual memory (`i` from 0), as a plain `<img src>`: same-origin cookie
  *  auth, so it never goes through `request()`. dev:mock has no image route, so it draws an
  *  abstract picture instead — never a face. */
+/** What the brain log covers (api/growbot_brainlog.py): the last 1, 3 or 6 hours, speech
+ *  hashed or kept, and names replaced with [name] wherever they appear. */
+export interface GrowbotBrainLogRequest {
+  hours: 1 | 3 | 6;
+  redact: boolean;
+  names: string[];
+}
+
 export function growbotMemoryViewUrl(id: string, mid: string, i: number): string {
   if (MOCK_MODE) return mockMemoryView(mid, i);
   return `/api/growbot/personas/${encodeURIComponent(id)}/memories/${encodeURIComponent(mid)}/views/${i}`;
@@ -8235,6 +8243,13 @@ export const api = {
     const response = await request(`/api/growbot/personas/${encodeURIComponent(id)}/export`);
     const named = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
     return { blob: await response.blob(), filename: named?.[1] ?? "persona-soul.json" };
+  },
+
+  /** The brain log for GrowBot's developer: a zip of the last `hours`, with the box's name. */
+  async growbotBrainLog(body: GrowbotBrainLogRequest): Promise<{ blob: Blob; filename: string }> {
+    const response = await request("/api/growbot/brain-log", jsonInit("POST", body));
+    const named = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+    return { blob: await response.blob(), filename: named?.[1] ?? "growbot-brain-log.zip" };
   },
 
   /** As a new persona (`name`), or over persona `over`, which is checkpointed first. */

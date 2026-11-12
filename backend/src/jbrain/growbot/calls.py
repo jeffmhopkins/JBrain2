@@ -214,6 +214,10 @@ class CallLog(Protocol):
         limit: int = 50,
     ) -> list[LoggedCall]: ...
 
+    async def page(
+        self, ctx: SessionContext, *, since: datetime, after_id: int = 0, limit: int = 200
+    ) -> list[LoggedCall]: ...
+
 
 _COLUMNS: Final = (
     "kind, persona_id, robot, model, ok, error, request, reply, reasoning, images, image_bytes,"
@@ -290,28 +294,46 @@ class SqlCallLog:
                     {"since": since, "kind": kind, "limit": limit},
                 )
             ).mappings()
-            return [
-                LoggedCall(
-                    id=row["id"],
-                    created_at=row["created_at"],
-                    record=CallRecord(
-                        kind=row["kind"],
-                        ok=row["ok"],
-                        total_ms=row["total_ms"],
-                        persona_id=row["persona_id"],
-                        robot=row["robot"],
-                        model=row["model"],
-                        error=row["error"],
-                        request=row["request"],
-                        reply=row["reply"],
-                        reasoning=row["reasoning"],
-                        images=row["images"],
-                        image_bytes=row["image_bytes"],
-                        prompt_tokens=row["prompt_tokens"],
-                        cached_tokens=row["cached_tokens"],
-                        completion_tokens=row["completion_tokens"],
-                        timings=row["timings"],
+            return [_logged(row) for row in rows]
+
+    async def page(
+        self, ctx: SessionContext, *, since: datetime, after_id: int = 0, limit: int = 200
+    ) -> list[LoggedCall]:
+        """Rows since `since`, oldest first, after row `after_id`: an export walks a window
+        a page at a time, so six hours of prompts never sit in memory at once."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        f"SELECT id, created_at, {_SELECT} FROM app.growbot_calls"
+                        " WHERE created_at >= :since AND id > :after ORDER BY id LIMIT :limit"
                     ),
+                    {"since": since, "after": after_id, "limit": limit},
                 )
-                for row in rows
-            ]
+            ).mappings()
+            return [_logged(row) for row in rows]
+
+
+def _logged(row: Any) -> LoggedCall:
+    return LoggedCall(
+        id=row["id"],
+        created_at=row["created_at"],
+        record=CallRecord(
+            kind=row["kind"],
+            ok=row["ok"],
+            total_ms=row["total_ms"],
+            persona_id=row["persona_id"],
+            robot=row["robot"],
+            model=row["model"],
+            error=row["error"],
+            request=row["request"],
+            reply=row["reply"],
+            reasoning=row["reasoning"],
+            images=row["images"],
+            image_bytes=row["image_bytes"],
+            prompt_tokens=row["prompt_tokens"],
+            cached_tokens=row["cached_tokens"],
+            completion_tokens=row["completion_tokens"],
+            timings=row["timings"],
+        ),
+    )

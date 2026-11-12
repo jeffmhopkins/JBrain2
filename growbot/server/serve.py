@@ -147,6 +147,14 @@ SOUL_PATH = "/api/box/persona"
 MEMORY_PATH = "/api/box/memories"
 MAX_MEMORY_BODY = 2_500_000
 MEMORY_ID_RE = re.compile(r"r[0-9a-f]{1,32}")
+# The creature's diary (upstream's brain log): a snapshot is at most 70 KB on the page
+# (`_LOG_TRIM`) and 400 held rows, and its id is "nx-" and up to 20 more (next.html LOG_SID).
+MAX_DIARY_BODY = 256 * 1024
+DIARY_ROWS_MAX = 500
+DIARY_SID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# What a snapshot says about the page that wrote it. Its soul peek and join key stay behind:
+# the soul lives on the box already, and the export needs only the rows and this header.
+DIARY_HEAD = ("kind", "mode", "redacted", "ua", "reason", "agent", "boot")
 
 # Upstream's pairing codes are `gb-` + 6 hex; the api holds robots to this same shape.
 CODE_RE = re.compile(r"gb-[A-Za-z0-9]{1,32}")
@@ -1454,6 +1462,8 @@ class GrowBot:
             return json_response(200, {"ok": True})
         if name == "gallery" and req.arg("download"):
             return json_response(404, {"error": "no gallery on the box"})
+        if name == "journal" and req.method == "POST":
+            return self.diary(req)
         if name in ("journal", "episodes", "gallery", "ev", "hit", "feedback"):
             # Upstream's server-side telemetry and cloud stores: answered, kept nowhere.
             return Response(204)
@@ -1673,12 +1683,15 @@ class GrowBot:
     def log_call(self, row: dict[str, Any]) -> None:
         """Send one call-log row to the api, off the call's path: the phone already has its
         answer, and a slow or failing api costs the row, never the creature."""
+        self._post_later("/internal/growbot/calls", row)
+
+    def _post_later(self, path: str, payload: dict[str, Any]) -> None:
         if not self._log_slots.acquire(blocking=False):
             return
 
         def send() -> None:
             try:
-                self._api_post("/internal/growbot/calls", row)
+                self._api_post(path, payload)
             finally:
                 self._log_slots.release()
 
@@ -1686,6 +1699,37 @@ class GrowBot:
             self._log_pool.submit(send)
         except RuntimeError:
             self._log_slots.release()
+
+    def diary(self, req: Request) -> Response:
+        """The creature's diary snapshot (`flushLog` in next.html), kept on the box so the
+        owner can hand a window of it to upstream's developer as the brain log. Its rows go to
+        the api off the page's path, like the call log's; the page reads only `ok`. A watch-id
+        registration (`op`) is upstream's cloud link and is answered as before, kept nowhere."""
+        msg = _parse(req.body) if len(req.body) <= MAX_DIARY_BODY else None
+        rows = msg.get("log") if msg else None
+        sid = msg.get("sid") if msg else None
+        if (
+            msg is None
+            or "op" in msg
+            or not isinstance(rows, list)
+            or not isinstance(sid, str)
+            or not DIARY_SID_RE.fullmatch(sid)
+        ):
+            return Response(204)
+        who = self._who(req)
+        row_list = [r for r in rows[-DIARY_ROWS_MAX:] if isinstance(r, dict)]
+        if row_list:
+            self._post_later(
+                "/internal/growbot/journal",
+                {
+                    "sid": sid,
+                    "persona": who.get("persona"),
+                    "robot": who.get("robot", ""),
+                    "head": {k: msg[k] for k in DIARY_HEAD if k in msg},
+                    "rows": row_list,
+                },
+            )
+        return json_response(200, {"ok": True})
 
     async def llm(self, req: Request, *, stream: bool) -> Response:
         models = await self._call(self.models)

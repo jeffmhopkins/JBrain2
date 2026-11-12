@@ -309,6 +309,30 @@ rows past 32 waiting rather than queueing without end. A failed write never fail
 with the debug API: `GET /api/debug/growbot/calls` and `…/calls/summary`, which splits picture
 turns from text ones (`../runbooks/DEBUG_ACCESS.md`).
 
+**Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
+pick 1, 3 or 6 hours and download one zip with what debugging needs. Upstream's own "brain
+log" is the creature's diary (`flushLog` in next.html posts a rolling window of its inputs,
+goals and actions to `/api/journal` every 8 s, human speech already hashed by `redactQ`), so
+the sidecar now forwards each snapshot's rows to `POST /internal/growbot/journal` on the call
+log's worker (its soul peek and join key stay behind) and answers `{"ok":true}`; a watch-id
+registration is still upstream's cloud link and is kept nowhere. `app.growbot_journal`
+(migration 0261, owner-only RLS, kept a week) keeps each row once, keyed by diary id, row
+time and a hash of the row, since every snapshot resends rows it sent before. The PWA's
+Body tab *Share a brain log…* (DESIGN.md "GrowBot — the brain log") posts to `POST
+/api/growbot/brain-log` and gets `growbot-brain-log-<stamp>-<N>h.zip`: `calls.jsonl` (every
+call-log row in the window, oldest first, a long system prompt written once under `prompts/`),
+`summary.json` (the call log's latency summary), `diary.jsonl` and `diary-pages.json` (the
+diary rows and each page load's header), `box.json` (the personas and robots in the window,
+numbered, and the models that answered), `manifest.json` and a README for the developer. It
+leaves the house, so it carries no ids or secrets of the box's: personas, robots and diaries
+are numbered, codes and ids inside text are swapped for those numbers, and bearer-shaped
+tokens are cut. Redacted (the default) applies upstream's own rule with upstream's own djb2
+`h8`, so a hashed line joins to the diary's: quoted spans become `«h8·Nw»`, a transcription
+is hashed whole, the creature's words stay; the box re-applies it to the diary too, since a
+`.local` LAN name makes upstream's page count as staging and write raw. Names the owner lists
+(kept on his phone, never on the box) read `[name]` everywhere, in either mode. A debug token
+reads the same zip, always redacted, at `GET /api/debug/growbot/brain-log?hours=`.
+
 **The relay** is the same process, at `wss://jbrain.local:8444/d/<code>` and
 `/d/<code>-agent`, reimplementing the envelopes above plus the key check.
 
@@ -426,7 +450,9 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
     checkpoint keeps them); duplicate copies them; export leaves them out. The persona page's
     *Memories* tab is the grid with an armed delete and a viewer.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
-  the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic.
+  the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic. Its store
+  landed early with the brain log (§2 "Brain log", migration 0261); reading it in the PWA and
+  the note remain.
 
 ## 5. What only the owner can do
 

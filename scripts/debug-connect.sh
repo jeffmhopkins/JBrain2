@@ -43,6 +43,7 @@
 #   scripts/debug-connect.sh logs api --tail 100
 #   scripts/debug-connect.sh growbot-calls --minutes 30 --kind llm --full   # the creature's turns
 #   scripts/debug-connect.sh growbot-latency --minutes 120   # where a creature turn's time went
+#   scripts/debug-connect.sh growbot-brainlog --hours 3   # the brain log zip, saved here
 #   scripts/debug-connect.sh host                      # host RAM + per-container + per-process RSS
 #   scripts/debug-connect.sh disk [--refresh]          # where the disk went: fs, docker df, project dirs
 #     (Images/containers/volumes/build cache with reclaimable bytes, and du of PROJECT_DIR one
@@ -628,6 +629,15 @@ except Exception: print("")')
   growbot-latency) # [--minutes N] — the call log's latency split by kind, stage, picture or not
     m=60; [ "${1:-}" = "--minutes" ] && m="$2"
     _call GET "/api/debug/growbot/calls/summary?minutes=$m" | _pp
+    ;;
+  growbot-brainlog) # [--hours 1|3|6] — the brain log zip (redacted), saved to the current dir
+    h=1; [ "${1:-}" = "--hours" ] && h="$2"
+    # Straight to a file: _call holds the body in a shell variable, which drops a zip's NULs.
+    f="growbot-brain-log-${h}h.zip"
+    code="$(curl -sS -o "$f" -w '%{http_code}' -H "Authorization: Bearer $KEY" \
+      "$BASE/api/debug/growbot/brain-log?hours=$h")" || { echo "curl failed" >&2; exit 1; }
+    [ "$code" = 200 ] || { cat "$f" >&2; rm -f "$f"; echo "HTTP $code" >&2; exit 1; }
+    echo "saved $f"
     ;;
 
   host) _call GET /api/debug/host | _pp ;;   # host memory/swap/disk/load + per-container + per-process RSS

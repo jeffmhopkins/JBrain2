@@ -223,6 +223,7 @@ What the upstream app calls, and what answers on the box:
 | `/api/redeem`, `/api/transfer` | 410: no credits on the box. |
 | `DELETE /api/journal`, `DELETE /api/episodes` | 200 `{"ok":true}` (the app's erase flow reads JSON); nothing is stored to erase. |
 | `/api/gallery?…&download=1` | 404: no soul or policy gallery on the box. |
+| `POST /api/journal` (a diary snapshot: `sid` and `log`) | its rows to the api's `POST /internal/growbot/journal` off the page's path (soul peek and join key left behind), kept a week for the brain log (`../docs/plans/GROWBOT_PLAN.md` §2 "Brain log"); 200 `{"ok":true}`. A watch-id registration (`op`) or anything else is 204, stored nowhere. |
 | `/api/journal`, `episodes`, `gallery`, `ev`, `hit`, `feedback` | otherwise 204, stored nowhere. |
 
 When the box fails the creature, it says why. `growbot-box.js` keeps the reason a speech call
