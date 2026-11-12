@@ -1334,3 +1334,21 @@ def test_the_mouth_keeps_time_with_the_measured_voice() -> None:
     assert loud == 1 and gap == 0 and soft == pytest.approx(0.5) and past == 0
     face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
     assert "createMediaElementSource" not in face
+
+
+def test_the_mouth_keeps_time_with_the_web_audio_line() -> None:
+    """On an iPhone the Kokoro line plays from a decoded buffer on Web Audio, with no element
+    holding a blob: the face reads that buffer at the context's clock from when it first saw
+    the line play, and a line still preparing tells it nothing."""
+    out = _face_in_node(
+        "var d=new Float32Array(400);for(var i=0;i<400;i++) d[i]=i<200?0.5:0;"
+        "var buf={sampleRate:1000,getChannelData:function(){ return d; }};"
+        "window.actx={currentTime:10};"
+        "window._fishWaLn={st:0,src:{buffer:buf}};var r=[window.gbFace.level()];"
+        "window._fishWaLn.st=1;r.push(window.gbFace.level());"
+        "window.actx.currentTime=10.25;r.push(window.gbFace.level());"
+        "window.actx.currentTime=11;r.push(window.gbFace.level());"
+        "console.log(JSON.stringify(r));"
+    )
+    preparing, start, gap, past = json.loads(out)
+    assert preparing is None and start == 1 and gap == 0 and past == 0

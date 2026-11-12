@@ -167,12 +167,30 @@
   }
 
   /* How loud the line now playing is, 0-1, so a mouth can keep time with the words (Dave's
-     lens burns with his voice). The players hold their line as a blob: URL, which is fetched
-     back and decoded offline into 20 ms steps, rather than routing the element through Web
-     Audio: on iOS a suspended AudioContext would silence the voice itself, and a face that is
-     a beat late costs nothing where a mute creature costs the session. null while unknown
-     (nothing measurable playing, or not decoded yet), and the face keeps its own rhythm. */
-  var STEP = 0.02, env = { src: "", data: null };
+     lens burns with his voice), in 20 ms steps. The Kokoro line on Web Audio (the iPhone's
+     route) already holds its decoded buffer, read at the context's clock from when the face
+     first saw it play. The element routes hold a blob: URL, fetched back and decoded offline,
+     rather than routing the element through Web Audio: on iOS a suspended AudioContext would
+     silence the voice itself, and a face a beat late costs nothing where a mute creature costs
+     the session. null while unknown (nothing measurable playing, or not decoded yet), and the
+     face keeps its own rhythm. */
+  var STEP = 0.02, env = { src: "", data: null }, wa = { src: null, t0: 0, data: null };
+  function envelope(audio) {
+    var data = audio.getChannelData(0), n = Math.max(1, Math.round(audio.sampleRate * STEP));
+    var out = [], peak = 0, i, j;
+    for (i = 0; i < data.length; i += n) {
+      var sum = 0, end = Math.min(data.length, i + n);
+      for (j = i; j < end; j++) sum += data[j] * data[j];
+      var rms = Math.sqrt(sum / Math.max(1, end - i));
+      out.push(rms);
+      if (rms > peak) peak = rms;
+    }
+    for (i = 0; i < out.length; i++) {
+      var v = peak > 0 ? Math.sqrt(out[i] / peak) : 0;
+      out[i] = v < 0.15 ? 0 : v;
+    }
+    return out;
+  }
   function measure(src) {
     env = { src: src, data: null };
     var Off = window.OfflineAudioContext || window.webkitOfflineAudioContext;
@@ -180,33 +198,30 @@
     fetch(src).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
       var done = function (audio) {
         if (env.src !== src || !audio) return;
-        var data = audio.getChannelData(0), n = Math.max(1, Math.round(audio.sampleRate * STEP));
-        var out = [], peak = 0, i, j;
-        for (i = 0; i < data.length; i += n) {
-          var sum = 0, end = Math.min(data.length, i + n);
-          for (j = i; j < end; j++) sum += data[j] * data[j];
-          var rms = Math.sqrt(sum / Math.max(1, end - i));
-          out.push(rms);
-          if (rms > peak) peak = rms;
-        }
-        for (i = 0; i < out.length; i++) {
-          var v = peak > 0 ? Math.sqrt(out[i] / peak) : 0;
-          out[i] = v < 0.15 ? 0 : v;
-        }
-        env.data = out;
+        env.data = envelope(audio);
       };
       var p = new Off(1, 1, 44100).decodeAudioData(buf, done, function () {});
       if (p && typeof p.catch === "function") p.catch(function () {});
     }).catch(function () {});
   }
   function playing(a) { return a && !a.paused && !a.ended && /^blob:/.test(String(a.src || "")) ? a : null; }
+  function at(data, secs) {
+    var i = Math.floor(secs / STEP);
+    return i >= 0 && i < data.length ? data[i] : 0;
+  }
   function voiceLevel() {
+    var ln = window._fishWaLn, ac = window.actx;
+    if (ln && ln.st === 1 && ln.src && ln.src.buffer && ac && typeof ac.currentTime === "number") {
+      if (wa.src !== ln.src) {
+        wa = { src: ln.src, t0: ac.currentTime, data: null };
+        try { wa.data = envelope(ln.src.buffer); } catch (e) {}
+      }
+      return wa.data ? at(wa.data, ac.currentTime - wa.t0) : null;
+    }
     var a = playing(window.fishAud) || playing(window.__gbBoxAudio);
     if (!a) return null;
     if (a.src !== env.src) measure(a.src);
-    if (!env.data) return null;
-    var i = Math.floor(a.currentTime / STEP);
-    return i < env.data.length ? env.data[i] : 0;
+    return env.data ? at(env.data, a.currentTime) : null;
   }
 
   function shade(hex, f) {
