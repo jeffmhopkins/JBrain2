@@ -782,7 +782,7 @@ async def test_a_phone_keeps_its_personas_settings_and_the_owner_edits_them(
 ) -> None:
     repo, sprout, _ = await _world(maker)
     # Nothing yet: the first phone sends its own.
-    assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A) == (0, None)
+    assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A) == (0, None, False)
     seed = prefs.patch_from({"gb_vol": "0.5", "gb_eye": "environment", "gb_nx_sid": "nx-a1"}, [])
     assert await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, seed) == 1
     # The owner's edit and the creature's change to another key both land.
@@ -792,6 +792,7 @@ async def test_a_phone_keeps_its_personas_settings_and_the_owner_edits_them(
     assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A) == (
         3,
         {"gb_vol": "0.5", "gb_face_color": "#ffffff", "gb_nx_sid": "nx-a1"},
+        False,
     )
     pulled = await repo.pull(SYSTEM_OWNER, sprout, PHONE_A, with_soul=False)
     assert isinstance(pulled, Pulled) and pulled.prefs == 3 and pulled.version == 1
@@ -871,6 +872,7 @@ async def test_the_sidecars_settings_routes(maker: async_sessionmaker) -> None:
     assert c.post("/internal/growbot/prefs/pull", json=who).json() == {
         "version": 0,
         "prefs": None,
+        "adopt": False,
     }
     r = c.post("/internal/growbot/prefs/push", json={**who, "set": {"gb_vol": "0.5"}})
     assert r.status_code == 200 and r.json() == {"version": 1}
@@ -886,3 +888,28 @@ async def test_the_sidecars_settings_routes(maker: async_sessionmaker) -> None:
     assert c.post("/internal/growbot/prefs/push", json={**who, "phone": "x"}).status_code == 401
     c.delete(f"/api/growbot/personas/{pid}")
     assert c.post("/internal/growbot/prefs/pull", json=who).status_code == 404
+
+
+async def test_an_owners_settings_before_any_phone_leave_room_for_the_phones_own(
+    maker: async_sessionmaker,
+) -> None:
+    repo, sprout, _ = await _world(maker)
+    assert await repo.patch_prefs(OWNER, sprout, prefs.patch_from({"gb_eye": "environment"}, []))
+    assert await repo.patch_prefs(OWNER, sprout, prefs.patch_from({"gb_vol": "0.4"}, []))
+    # The phone is told the owner's, and that it should keep its own under them.
+    assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A) == (
+        2,
+        {"gb_eye": "environment", "gb_vol": "0.4"},
+        True,
+    )
+    p = await repo.get_persona(OWNER, sprout)
+    assert p is not None and p.prefs == {"gb_eye": "environment", "gb_vol": "0.4"}
+    # Once a phone sent its own, the marker is gone.
+    mine = prefs.patch_from({"gb_face_color": "#ffffff"}, [])
+    assert await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, mine) == 3
+    got = await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A)
+    assert got == (
+        3,
+        {"gb_eye": "environment", "gb_vol": "0.4", "gb_face_color": "#ffffff"},
+        False,
+    )
