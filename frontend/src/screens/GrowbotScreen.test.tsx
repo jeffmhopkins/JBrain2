@@ -1056,6 +1056,7 @@ describe("GrowbotScreen a persona's page", () => {
   });
 
   it("switches a persona's camera from Manage, through its settings on the box", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const s = serve(
       UP,
       pageRoutes((path, init) => {
@@ -1081,6 +1082,28 @@ describe("GrowbotScreen a persona's page", () => {
       drop: [],
     });
     expect(within(eyes).getByRole("radio", { name: /^Back/ })).toHaveProperty("checked", true);
+    // The save re-reads the list at once, so the page follows the box from here.
+    expect(s.calls.filter((c) => c.path === "/api/growbot/personas").length).toBeGreaterThan(1);
+
+    // The box confirms, then the creature flips back to the front itself: the page follows.
+    const withEye = (gb_eye: string) => {
+      const next = overview();
+      s.ov.current = {
+        ...next,
+        personas: next.personas.map((x) => (x.id === SPROUT ? { ...x, prefs: { gb_eye } } : x)),
+      };
+    };
+    withEye("environment");
+    await act(async () => {
+      vi.advanceTimersByTime(15_100);
+    });
+    withEye("user");
+    await act(async () => {
+      vi.advanceTimersByTime(15_100);
+    });
+    await waitFor(() =>
+      expect(within(eyes).getByRole("radio", { name: /^Front/ })).toHaveProperty("checked", true),
+    );
   });
 
   it("waits for a persona's first phone before its camera can be picked", async () => {

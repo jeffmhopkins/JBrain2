@@ -111,6 +111,9 @@ export function GrowbotPersonaPage({
   const [eyeing, setEyeing] = useState<Eye | null>(null);
   const [eyeSaved, setEyeSaved] = useState<{ eye: Eye; over: Eye | null } | null>(null);
   const boxEye = persona.prefs ? eyeOf(persona.prefs) : null;
+  // Gone for good once the box's copy moves: kept, it would come back if the lens later
+  // returned to where it was before the save.
+  if (eyeSaved && eyeSaved.over !== boxEye) setEyeSaved(null);
   const savedEye = eyeSaved && eyeSaved.over === boxEye ? eyeSaved.eye : null;
   const [restoring, setRestoring] = useState<GrowbotCheckpoint | null>(null);
   const [mems, setMems] = useState<GrowbotMemory[] | null>(null);
