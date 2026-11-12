@@ -498,6 +498,11 @@ async def run_loop(
                 # Either box reservation — jcode power-on OR a jmolt night in flight — pauses the
                 # background loop so nothing loads a competing local model into the shared box.
                 held = bool(await settings.box_hold_names(queue.SYSTEM_CTX))
+            with contextlib.suppress(Exception):
+                # A talking GrowBot creature holds it too, so its turns get the GPU to
+                # themselves (settings_store GROWBOT_PRIORITY_KEY); it lapses minutes after
+                # the creature's last turn, and the paused work then runs.
+                held = held or await settings.growbot_awake(queue.SYSTEM_CTX)
         # Run the scheduler tick on its own cadence: claim due schedules and
         # enqueue their bound pipelines (workflow/scheduler.py). Cheap when idle
         # (a single indexed due-query) and rides the same loop as the job claim,

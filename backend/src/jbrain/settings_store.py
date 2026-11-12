@@ -8,6 +8,7 @@ the OcrPipeline reads it per job and the Settings screen round-trips it.
 """
 
 import json
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -335,6 +336,15 @@ MOLTBOOK_NIGHT_HOUR_DEFAULT = 3
 # box's own monitor / localhost (BRAIN_HOST_BIND=127.0.0.1), never on an exposed LAN port.
 # DB-backed, read live per turn (jbrain.api.agent) so it flips with no redeploy; an absent
 # or non-true value reads as OFF — text never leaks off a junk value.
+# GrowBot creature priority (owner, 2026-11-12: "dedicate more to GrowBot when we use it").
+# While a creature has talked in the last GROWBOT_AWAKE_S, the worker pauses its background
+# model work, as it does for the code-mode hold, so the creature's prefill has the GPU to
+# itself. The api's model lane stamps GROWBOT_AWAKE_UNTIL_KEY (epoch seconds) on each turn;
+# the owner turns the behaviour off with GROWBOT_PRIORITY_KEY (Settings).
+GROWBOT_PRIORITY_KEY = "growbot_priority"
+GROWBOT_PRIORITY_DEFAULT = True
+GROWBOT_AWAKE_UNTIL_KEY = "growbot_awake_until"
+GROWBOT_AWAKE_S = 180.0
 BRAIN_LLM_STREAM_KEY = "brain_llm_stream"
 BRAIN_LLM_STREAM_DEFAULT = False
 
@@ -1146,6 +1156,25 @@ class SqlSettingsStore:
         """The browse sub-agent's loop, "fast" or "b1"; a missing or junk value is "fast"."""
         raw = await self.get(ctx, BROWSE_LOOP_KEY, BROWSE_LOOP_DEFAULT)
         return raw if raw in BROWSE_LOOPS else BROWSE_LOOP_DEFAULT
+
+    async def growbot_priority(self, ctx: SessionContext) -> bool:
+        """Whether a talking creature pauses the worker's background model work. On unless
+        the owner stored an explicit `false`."""
+        return await self.get(ctx, GROWBOT_PRIORITY_KEY, GROWBOT_PRIORITY_DEFAULT) is not False
+
+    async def growbot_awake(self, ctx: SessionContext, now: float | None = None) -> bool:
+        """Whether a creature is talking now (its lane's last stamp has not run out) and the
+        owner left creature priority on."""
+        until = await self.get(ctx, GROWBOT_AWAKE_UNTIL_KEY, 0)
+        if not isinstance(until, int | float) or isinstance(until, bool):
+            return False
+        return until > (time.time() if now is None else now) and await self.growbot_priority(ctx)
+
+    async def mark_growbot_awake(self, ctx: SessionContext, now: float | None = None) -> None:
+        """Stamp the creature as talking for the next GROWBOT_AWAKE_S."""
+        await self.upsert(
+            ctx, GROWBOT_AWAKE_UNTIL_KEY, (time.time() if now is None else now) + GROWBOT_AWAKE_S
+        )
 
     async def brain_llm_stream(self, ctx: SessionContext) -> bool:
         """Whether real LLM prompt/answer text is streamed to the on-box wall display.

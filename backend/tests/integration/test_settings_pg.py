@@ -619,3 +619,24 @@ async def test_sdr_radio_gain_and_upconverter_round_trip_and_sanitize(
     # converter switched off has to put the radio back on its antenna.
     await store.set_sdr_radio(OWNER, wire, name="Long wire", description="", role=GENERAL)
     assert await store.sdr_radios(OWNER) == {wire: Radio(wire, "Long wire", "", GENERAL)}
+
+
+async def test_a_talking_creature_holds_the_worker_until_it_lapses_or_is_turned_off(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import GROWBOT_AWAKE_S, GROWBOT_AWAKE_UNTIL_KEY, GROWBOT_PRIORITY_KEY
+
+    store = SqlSettingsStore(maker)
+    assert await store.growbot_priority(OWNER) is True
+    assert await store.growbot_awake(OWNER) is False  # never stamped
+    await store.mark_growbot_awake(OWNER, now=1000.0)
+    assert await store.growbot_awake(OWNER, now=1000.0 + GROWBOT_AWAKE_S - 1) is True
+    assert await store.growbot_awake(OWNER, now=1000.0 + GROWBOT_AWAKE_S + 1) is False
+    # The owner's switch wins over a fresh stamp.
+    await store.upsert(OWNER, GROWBOT_PRIORITY_KEY, False)
+    assert await store.growbot_awake(OWNER, now=1001.0) is False
+    await store.upsert(OWNER, GROWBOT_PRIORITY_KEY, True)
+    # A junk stamp never holds the worker.
+    for junk in ("soon", True, None):
+        await store.upsert(OWNER, GROWBOT_AWAKE_UNTIL_KEY, junk)
+        assert await store.growbot_awake(OWNER, now=0.0) is False

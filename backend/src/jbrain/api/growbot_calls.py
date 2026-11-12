@@ -24,7 +24,7 @@ from jbrain.api.deps import DebugDep
 from jbrain.api.growbot_llm import log_call, serve_turn
 from jbrain.api.internal_auth import require_growbot
 from jbrain.db.session import SessionContext
-from jbrain.growbot.calls import CallLog, CallRecord, LoggedCall
+from jbrain.growbot.calls import CallLog, CallRecord, LoggedCall, is_cold
 
 internal_router = APIRouter(prefix="/growbot", dependencies=[Depends(require_growbot)])
 debug_router = APIRouter(prefix="/debug/growbot")
@@ -34,9 +34,6 @@ _UUID = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 # A replay re-runs a logged turn on the creature's own slot, which throws away the live
 # creature's cached prompt; it waits until the creature has been quiet this long.
 REPLAY_QUIET_S: Final = 120
-# Characters per token of the creature's system message, near enough to tell a turn that
-# resumed after the system message from one that re-read it (measured ~4.0 on Flash-Next).
-_CHARS_PER_TOKEN: Final = 4
 # The stages a summary reports, in the order a turn passes through them.
 _STAGES = (
     "lock_ms",
@@ -177,20 +174,12 @@ def _spread(values: list[float]) -> dict[str, float | int]:
     }
 
 
-def _cold(rec: CallRecord) -> bool:
-    """A model turn that re-read its system message instead of resuming after it."""
-    chars = rec.timings.get("system_chars")
-    if rec.cached_tokens is None or not isinstance(chars, int) or chars <= 0:
-        return False
-    return rec.cached_tokens * _CHARS_PER_TOKEN < chars // 2
-
-
 def _group(rec: CallRecord) -> str:
     if rec.kind != "llm":
         return rec.kind
     if rec.request.get("replay"):
         return "llm_replay"
-    if _cold(rec):
+    if is_cold(rec):
         return "llm_cold"
     return "llm_image" if rec.images else "llm_text"
 
@@ -206,7 +195,7 @@ def cold_reasons(calls: list[LoggedCall]) -> dict[str, int]:
         if rec.kind != "llm" or rec.request.get("replay"):
             continue
         sha = rec.timings.get("system_hash") or None
-        if _cold(rec):
+        if is_cold(rec):
             before = last.get(rec.robot)
             if before is None or sha is None:
                 out["unknown"] += 1

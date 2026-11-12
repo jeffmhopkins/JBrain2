@@ -12,6 +12,8 @@ import hashlib
 import importlib.util
 import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -457,12 +459,52 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
             if moving in line and "return " in line:
                 assert line.index("moveGuideText.live=") < line.index(moving), moving
     assert "_gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text;" in page
+    fixed = (
+        'sys+=(typeof gaitList==="function"&&gaitList.fixed||"")'
+        '+(typeof selfStats==="function"&&selfStats.fixed||"")'
+        '+(typeof vmPrompt==="function"&&vmPrompt.fixed||"");'
+    )
     assert "sys+=" not in page[
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
-    ].replace("sys+=_gbLive;", "")
+    ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert '<script src="/v3/prompts.js?v=1008-motion-box"' in page
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
+
+
+def test_the_fixed_rules_ride_the_system_message_and_the_state_stays_live() -> None:
+    """The gait rules, the picture-memory contract and the fixed self-description are the same
+    every turn, so they join the cached system message; every sentence that depends on state
+    stays in the turn's own message, or one change would make each turn re-read it all."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    stats = page[page.index("function selfStats(){") : page.index("/* ===== BRAIN TAB")]
+    fixed = page[page.index('var GB_SELF_FIXED="') : page.index("function selfStats(){")]
+    live = stats[stats.index('return "== WHAT YOU ARE RIGHT NOW') :]
+    for moving in ("_bootT", "callsSinceBoot", "seekGoal", "camOn", "moving", "lastMimic"):
+        assert moving in live and moving not in fixed, moving
+    for rule in ("You think whenever", "Quiet does not put you to sleep", "don't deflect"):
+        assert rule in fixed and rule not in live, rule
+    assert 'selfStats.fixed=GB_SELF_FIXED.replace("{model}",model);' in stats
+
+    spin = page[page.index("function normalSpinTruth(){") : page.index("function gaitList(){")]
+    assert "normalSpinTruth.now=normal;" in spin
+    assert '"+normal+"' not in spin
+    gaits = page[page.index("function gaitList(){") : page.index("// one-mover-at-a-time")]
+    rules = gaits[gaits.index("gaitList.fixed=") : gaits.index("  return spinFeedback")]
+    now = gaits[gaits.index("  return spinFeedback") :]
+    assert "== TRAINED WALKS" in rules and "normalSpinTruth()" in rules
+    for moving in ("forwardWalkState", "lines.join", "normalSpinTruth.now", "spinMeasLine"):
+        assert moving in now and moving not in rules, moving
+
+    vm = (_SITE / "v3" / "visual-memory.js").read_text(encoding="utf-8")
+    prompt = vm[vm.index("function vmPrompt(c){") : vm.index("function vmContract(){")]
+    contract = vm[
+        vm.index("function vmContract(){") : vm.index("\n}", vm.index("function vmContract"))
+    ]
+    assert 'vmPrompt.fixed=vmOn()?vmContract():"";' in prompt
+    assert "VISUAL MEMORY overrides" in contract and "vmCatalogLine" not in contract
+    assert "vmCatalogLine()" in prompt and "VM_PROMPT_OFF" in prompt
+    assert '<script src="/v3/visual-memory.js?v=1005-mem-box-fixed"' in page
 
 
 def test_the_brain_panel_keeps_only_what_a_box_creature_uses() -> None:
@@ -497,3 +539,32 @@ def test_the_text_is_phone_sized_even_in_desktop_site_mode() -> None:
     assert '"body>*:not(#wrap){zoom:"' in shim
     assert "return k > 1.25 ? Math.min(k, 3) : 1;" in shim
     assert 'window.addEventListener("resize", paint);' in shim
+
+
+def test_past_replies_go_back_to_the_model_in_its_own_json_shape() -> None:
+    """Replayed as bare words, the creature's history taught the model to answer in clipped
+    plain text; each past reply now rides as {"say", "emotion"}, a page note as an empty say."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert 'msgs.push({role:"assistant",content:gbTraceReply(tr[i])});' in page
+    assert 'content:tr[i].d?tr[i].a+"\\n(did: "' not in page
+    assert ',e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)};' in page
+    start = page.index("function gbTraceReply(t){")
+    fn = page[start : page.index("\n", start)]
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    cases = (
+        "[gbTraceReply({a:'Hi \"Jeff\"',e:'happy'}),"
+        "gbTraceReply({a:'(stayed quiet)',d:'spin 2 s'}),"
+        "gbTraceReply({a:'(brain hiccup \u2014 out of energy, no answer)'}),"
+        "gbTraceReply({a:'(purrs) hi'}),gbTraceReply({})]"
+    )
+    script = f"{fn}\nconsole.log(JSON.stringify({cases}));"
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    said, quiet, hiccup, spoken, empty = json.loads(out.stdout)
+    assert json.loads(said) == {"say": 'Hi "Jeff"', "emotion": "happy"}
+    assert quiet == '{"say":""}\n(stayed quiet)\n(did: spin 2 s)'
+    assert hiccup.startswith('{"say":""}\n(brain hiccup')
+    # A say the model wrote in brackets is still words it spoke.
+    assert json.loads(spoken) == {"say": "(purrs) hi"}
+    assert json.loads(empty) == {"say": ""}

@@ -1394,6 +1394,9 @@ export interface AppSettings {
   // default — it puts owner text on the unauthenticated display, so only turn it on
   // for a display bound to the box's own monitor / localhost.
   brain_llm_stream: boolean;
+  // A talking GrowBot creature pauses the box's background model work. ON by default; an
+  // older server omits it.
+  growbot_priority?: boolean;
   // Read the streamed wall-display turns aloud (Kokoro TTS on the box). OFF by
   // default — the runtime companion to brain_llm_stream, same localhost-only caveat.
   brain_read_aloud: boolean;

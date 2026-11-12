@@ -679,6 +679,10 @@ class FakeSettingsStore:
     async def box_hold_names(self, ctx: object) -> frozenset[str]:
         return await self.code_mode_hold_names(ctx) | await self.night_hold_names(ctx)
 
+    async def mark_growbot_awake(self, ctx: object, now: float | None = None) -> None:
+        marks = self.values.get("growbot_awake_marks", 0)
+        self.values["growbot_awake_marks"] = (marks if isinstance(marks, int) else 0) + 1
+
     async def moltbook_account_state(self, ctx: object) -> str:
         raw = self.values.get("moltbook_account_state", "ok")
         return raw if isinstance(raw, str) and raw.strip() else "ok"
@@ -750,6 +754,9 @@ class FakeSettingsStore:
 
     async def reflexion_buffer_retry(self, ctx: object) -> bool:
         return self.values.get("reflexion_buffer_retry", False) is True
+
+    async def growbot_priority(self, ctx: object) -> bool:
+        return self.values.get("growbot_priority", True) is not False
 
     async def brain_llm_stream(self, ctx: object) -> bool:
         return self.values.get("brain_llm_stream", False) is True
