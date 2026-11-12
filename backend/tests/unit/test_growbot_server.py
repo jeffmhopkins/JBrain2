@@ -93,6 +93,8 @@ class _Fake(BaseHTTPRequestHandler):
                 "auth": self.headers.get("Authorization", ""),
                 "ctype": self.headers.get("Content-Type", ""),
                 "body": body,
+                "persona": self.headers.get("X-Growbot-Persona", ""),
+                "robot": self.headers.get("X-Growbot-Robot", ""),
             }
         )
 
@@ -196,6 +198,8 @@ class _Fake(BaseHTTPRequestHandler):
             self._reply(200, json.dumps(reply).encode())
         elif self.path == "/v1/audio/transcriptions":
             self._reply(200, _Fake.stt_reply)
+        elif self.path == "/internal/growbot/calls":
+            self._reply(204 if authed else 401, b"")
         else:
             self._reply(404, b"{}")
 
@@ -942,6 +946,97 @@ def test_llm_goes_to_the_api_lane_with_only_engine_fields(run: _Running) -> None
     run.request("POST", "/api/llm?target=openrouter", _chat("text-only")).read()
     call = [s for s in _Fake.seen if s["path"].endswith("/chat/completions")][-1]
     assert json.loads(call["body"])["model"] == "text-only"
+
+
+def _logged(kind: str, n: int = 1) -> list[dict[str, Any]]:
+    """The call-log rows the sidecar posted, waiting for its background worker."""
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        rows = [
+            json.loads(s["body"])
+            for s in list(_Fake.seen)
+            if s["path"] == "/internal/growbot/calls" and json.loads(s["body"])["kind"] == kind
+        ]
+        if len(rows) >= n:
+            return rows
+        time.sleep(0.02)
+    raise AssertionError(f"no {kind} row logged")
+
+
+def test_llm_names_who_the_turn_is_for(run: _Running) -> None:
+    run.request("POST", "/api/llm?target=openrouter", _chat("x")).read()
+    call = [s for s in _Fake.seen if s["path"].endswith("/chat/completions")][-1]
+    assert (call["persona"], call["robot"]) == ("", "gb-abc123")
+    cookie = f"gb_session={run.app.sessions.mint(persona=_PERSONA, phone=_PHONE)}"
+    run.request("POST", "/api/llm?target=openrouter", _chat("x"), {"Cookie": cookie}).read()
+    call = [s for s in _Fake.seen if s["path"].endswith("/chat/completions")][-1]
+    assert (call["persona"], call["robot"]) == (_PERSONA, "")
+
+
+def test_stt_and_tts_each_log_a_row(run: _Running) -> None:
+    _Fake.stt_reply = json.dumps({"text": " hello robot "}).encode()
+    body, ctype = _multipart({"model": "w", "prompt": "names: Quorra"}, _wav(2.0))
+    assert (
+        run.request("POST", "/api/llm?target=groq-audio", body, {"Content-Type": ctype}).status
+        == 200
+    )
+    (row,) = _logged("stt")
+    assert row["ok"] and row["text"] == "hello robot" and row["robot"] == "gb-abc123"
+    assert row["timings"]["audio_s"] == 2.0 and row["timings"]["upstream_ms"] >= 0
+    assert row["detail"]["prompt"] == "names: Quorra" and row["detail"]["audio_ctx"] == 160
+    call = [s for s in _Fake.seen if s["path"] == "/internal/growbot/calls"][-1]
+    assert call["auth"] == f"Bearer {_TOKEN}"
+
+    say = json.dumps({"text": "hi there", "voice": "kokoro-af_heart"}).encode()
+    assert run.request("POST", "/api/fish-tts", say).status == 200
+    (row,) = _logged("tts")
+    assert row["ok"] and row["text"] == "hi there" and row["detail"]["voice"] == "kokoro-af_heart"
+
+    _Fake.tts_status = 500
+    assert run.request("POST", "/api/fish-tts", say).status == 503
+    failed = _logged("tts", 2)[-1]
+    assert not failed["ok"] and failed["error"].startswith("tts HTTP 500")
+
+
+def test_a_failed_transcription_logs_why(run: _Running) -> None:
+    run.app.config.stt_url = "http://127.0.0.1:9/v1"
+    body, ctype = _multipart({"model": "w"}, _wav(1.0))
+    assert (
+        run.request("POST", "/api/llm?target=groq-audio", body, {"Content-Type": ctype}).status
+        == 503
+    )
+    (row,) = _logged("stt")
+    assert not row["ok"] and "speech service" in row["error"]
+
+
+def test_the_log_drops_rows_rather_than_queue_without_end(
+    gb: types.ModuleType, tmp_path: Path
+) -> None:
+    config = gb.Config(
+        site=tmp_path,
+        api_url="http://127.0.0.1:9",
+        tts_url="http://127.0.0.1:9",
+        stt_url="http://127.0.0.1:9",
+        token_file=tmp_path / "none",
+        trusted_proxy="127.0.0.2",
+    )
+    app = gb.GrowBot(config)
+    gate = threading.Event()
+    sent: list[dict[str, Any]] = []
+
+    def slow(_path: str, row: dict[str, Any]) -> None:
+        gate.wait(5)
+        sent.append(row)
+
+    app._api_post = slow
+    for i in range(gb.LOG_PENDING_MAX + 10):
+        app.log_call({"kind": "tts", "n": i})
+    gate.set()
+    app._log_pool.shutdown(wait=True)
+    assert len(sent) == gb.LOG_PENDING_MAX
+    # Every slot came back once its row was sent.
+    for _ in range(gb.LOG_PENDING_MAX):
+        assert app._log_slots.acquire(blocking=False)
 
 
 def test_llm_stream_relays_sse_as_it_arrives(run: _Running) -> None:
