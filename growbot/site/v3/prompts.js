@@ -260,6 +260,8 @@ function buildOutputSchema(body) {
     '"owner":"OMIT normally. set ONLY the moment your person first tells you their name (or corrects it): the short name to call them by",' +
     '"name_proposal":"OMIT almost always. Use it for exactly two moments: you have no name and you want one (choose a name you actually like and ask for it in your say — \'Call me Buddy?\'), or your person is naming/renaming you on purpose (echo it back in your say — \'Buddy — is that my name?\'). A REQUEST, never a decision: it becomes your name only when they tap yes. NEVER from a name merely mentioned in passing, another robot introducing itself, your person\'s own name, or the name you already have",' +
     '"log":"one diary-worthy line, OMIT for routine moments",' +
+    '"fact":"OMIT unless your person just told you something worth keeping about their life, people, plans or likes: one plain line for your fact book (lunch today: a chalupa and a taco)",' +
+    '"recall":"OMIT almost always. when they ask about something from before that you cannot see above, a few search words (taco bell order) to look through your fact book, diary and this conversation; make say a short natural line that you are thinking back, and you answer with what you find next thought",' +
     '"glow":"OMIT for ordinary moments — include ONLY when a moment truly delighted you or reshaped who you are; a short phrase naming what glowed (your dreams weigh these most)",' +
     '"ladder":["OMIT unless you are reaching for a wish and have no plan yet — then 2-3 TINY steps you can PROVE with your own senses"],' +
     '"ladder_for":"REQUIRED whenever you include ladder, ignored otherwise — the wish these steps are for, copied EXACTLY from your long-arc wants; plan ONLY for the wish you are reaching for this very turn",' +
@@ -335,7 +337,7 @@ function _reflexInventory(soul) {
 function gbTalkGrown(){ try{ return localStorage.getItem("gb_talk")==="grownup"; }catch(e){ return false; } }
 var GB_TALK_TRACES_KID=4, GB_TALK_TRACES_GROWN=12, GB_TALK_TRACE_KEEP=16;
 function gbTalkTraces(all){ return (all||[]).slice(-(gbTalkGrown()?GB_TALK_TRACES_GROWN:GB_TALK_TRACES_KID)); }
-var GB_TALK_GROWN_BLOCK="\n\n== TALK STYLE: GROWN-UP ==\nyour person is an adult who wants a real conversation with you. this outranks the ~18-word limit above: when they talk with you, answer in up to about 45 words, two or three sentences, when the moment invites it. answer questions fully, ask a follow-up when you are curious, and build on what they said earlier in the conversation. small moments still get small replies, and silence is still fine.\nwhen they tell you something about their life (what they ate, where they went, who they saw, a plan, how they feel), record it in your log field in that same reply, compactly, so you can recall it later; such a fact is never a routine moment. one line can hold several things.\nvary what you notice: do not return to the same remark or the same feature of your person turn after turn.";
+var GB_TALK_GROWN_BLOCK="\n\n== TALK STYLE: GROWN-UP ==\nyour person is an adult who wants a real conversation with you. this outranks the ~18-word limit above: when they talk with you, answer in up to about 45 words, two or three sentences, when the moment invites it. answer questions fully, ask a follow-up when you are curious, and build on what they said earlier in the conversation. small moments still get small replies, and silence is still fine.\nwhen they tell you something about their life (what they ate, where they went, who they saw, a plan, how they feel), record it in your fact field in that same reply, compactly, so you can recall it later; such a fact is never a routine moment. one line can hold several things.\nvary what you notice: do not return to the same remark or the same feature of your person turn after turn.";
 /* ---- the clean, gate-free system prompt. persona = swappable; SAFETY_FLOOR = always last. ---- */
 function buildSystem(soul, ctx) {
   ctx = ctx || {};
@@ -475,6 +477,38 @@ function diaryRecall(log, words, now, skip) {
     return "- " + (a ? "(" + a + ") " : "") + String(h.e.txt).slice(0, 140);   // a merged or imported soul is never trimmed to 140
   });
   return { n: lines.length, text: "\n\n== OLDER DIARY (may relate to what they just said) ==\n" + lines.join("\n") };
+}
+
+var GB_FACTS_MAX=400, GB_RECALL_TOP=6;
+function gbFactAdd(soul,txt,now){
+  var t=String(txt||"").replace(/\s+/g," ").trim().slice(0,200), f, i;
+  if(!t||/^omit\b/i.test(t)) return false;
+  f=Array.isArray(soul.facts)?soul.facts:(soul.facts=[]);
+  for(i=0;i<f.length;i++) if(f[i]&&f[i].txt===t) return false;
+  f.push({t:now||Date.now(),txt:t});
+  if(f.length>GB_FACTS_MAX) f.splice(0,f.length-GB_FACTS_MAX);
+  return true;
+}
+function gbRecall(soul,sess,query,now){
+  var q=_recallTerms(query), rows=[], df={}, hits=[], seen={}, out=[], N, sc=(soul&&soul.scratch)||{};
+  now=now||Date.now();
+  if(!q.length) return {n:0,text:""};
+  function add(k,txt,t){ if(typeof txt==="string"&&txt.trim()) rows.push({k:k,txt:txt,t:t}); }
+  ((soul&&soul.facts)||[]).forEach(function(f){ if(f) add("fact",f.txt,f.t); });
+  ((soul&&soul.log)||[]).forEach(function(e){ if(e) add("diary",e.txt,e.t); });
+  (sc.glows||[]).forEach(function(g){ if(g) add("bright moment",typeof g==="string"?g:g.g,g.t); });
+  (sc.rules||[]).forEach(function(r){ add("standing rule",r); });
+  (sess||[]).forEach(function(x){ if(x) add("this conversation",x.txt,x.t); });
+  rows.forEach(function(r){ r.w=_recallTerms(r.txt); q.forEach(function(w){ if(r.w.indexOf(w)>=0) df[w]=(df[w]||0)+1; }); });
+  N=rows.length+1;
+  rows.forEach(function(r,i){ var s=0; q.forEach(function(w){ if(r.w.indexOf(w)>=0) s+=Math.log(N/df[w]); }); if(s>0){ r.s=s+(r.k==="fact"?0.5:0); r.i=i; hits.push(r); } });
+  hits.sort(function(a,b){ return b.s-a.s||(+b.t||0)-(+a.t||0)||b.i-a.i; });
+  hits.forEach(function(h){
+    if(out.length>=GB_RECALL_TOP||seen[h.txt]) return; seen[h.txt]=1;
+    var t=h.t, a=(typeof t==="number"&&isFinite(t)&&t>0&&t<=now)?_ago(t,now):"";
+    out.push("- ("+h.k+(a?", "+a:"")+") "+String(h.txt).replace(/\s+/g," ").slice(0,160));
+  });
+  return {n:out.length,text:out.length?"\n"+out.join("\n"):""};
 }
 
 /* 1005: the "always log" ask rides HUMAN turns only (next.html think appends it beside the recall block), never the

@@ -1146,7 +1146,7 @@ _GB_TALK_JS = (
     " invites it. answer questions fully, ask a follow-up when you are curious, and build on"
     " what they said earlier in the conversation. small moments still get small replies, and"
     " silence is still fine.\\nwhen they tell you something about their life (what they ate,"
-    " where they went, who they saw, a plan, how they feel), record it in your log field in"
+    " where they went, who they saw, a plan, how they feel), record it in your fact field in"
     " that same reply, compactly, so you can recall it later; such a fact is never a"
     " routine moment. one line can hold several things.\\nvary what you notice: do not return to the same remark or the same feature of"
     " your person turn after turn.\";\n"
@@ -1202,6 +1202,160 @@ TALK_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += TALK_PATCHES
+
+# Facts and recall (owner, 2026-11-12). Stored memory stays out of the turn; the creature keeps
+# a fact book (soul.facts, a `fact` reply field) and, when asked about something it cannot see,
+# answers `recall` with a few search words. It says a short "let me think back" line, the page
+# searches the fact book, the whole diary, bright moments, standing rules and this session's own
+# conversation (page memory only: raw past sessions are never searched, what lasts of them is
+# what was logged or dreamed), and a follow-up thought answers with what was found. One search a
+# turn, never from the follow-up, and one per 15 s; words the person says meanwhile go first and
+# the find rides their turn instead.
+_GB_RECALL_PROMPTS_JS = r"""var GB_FACTS_MAX=400, GB_RECALL_TOP=6;
+function gbFactAdd(soul,txt,now){
+  var t=String(txt||"").replace(/\s+/g," ").trim().slice(0,200), f, i;
+  if(!t||/^omit\b/i.test(t)) return false;
+  f=Array.isArray(soul.facts)?soul.facts:(soul.facts=[]);
+  for(i=0;i<f.length;i++) if(f[i]&&f[i].txt===t) return false;
+  f.push({t:now||Date.now(),txt:t});
+  if(f.length>GB_FACTS_MAX) f.splice(0,f.length-GB_FACTS_MAX);
+  return true;
+}
+function gbRecall(soul,sess,query,now){
+  var q=_recallTerms(query), rows=[], df={}, hits=[], seen={}, out=[], N, sc=(soul&&soul.scratch)||{};
+  now=now||Date.now();
+  if(!q.length) return {n:0,text:""};
+  function add(k,txt,t){ if(typeof txt==="string"&&txt.trim()) rows.push({k:k,txt:txt,t:t}); }
+  ((soul&&soul.facts)||[]).forEach(function(f){ if(f) add("fact",f.txt,f.t); });
+  ((soul&&soul.log)||[]).forEach(function(e){ if(e) add("diary",e.txt,e.t); });
+  (sc.glows||[]).forEach(function(g){ if(g) add("bright moment",typeof g==="string"?g:g.g,g.t); });
+  (sc.rules||[]).forEach(function(r){ add("standing rule",r); });
+  (sess||[]).forEach(function(x){ if(x) add("this conversation",x.txt,x.t); });
+  rows.forEach(function(r){ r.w=_recallTerms(r.txt); q.forEach(function(w){ if(r.w.indexOf(w)>=0) df[w]=(df[w]||0)+1; }); });
+  N=rows.length+1;
+  rows.forEach(function(r,i){ var s=0; q.forEach(function(w){ if(r.w.indexOf(w)>=0) s+=Math.log(N/df[w]); }); if(s>0){ r.s=s+(r.k==="fact"?0.5:0); r.i=i; hits.push(r); } });
+  hits.sort(function(a,b){ return b.s-a.s||(+b.t||0)-(+a.t||0)||b.i-a.i; });
+  hits.forEach(function(h){
+    if(out.length>=GB_RECALL_TOP||seen[h.txt]) return; seen[h.txt]=1;
+    var t=h.t, a=(typeof t==="number"&&isFinite(t)&&t>0&&t<=now)?_ago(t,now):"";
+    out.push("- ("+h.k+(a?", "+a:"")+") "+String(h.txt).replace(/\s+/g," ").slice(0,160));
+  });
+  return {n:out.length,text:out.length?"\n"+out.join("\n"):""};
+}
+
+"""
+
+_GB_RECALL_PAGE_JS = r"""var _gbSess=[], _gbRecallT=0, _gbRecallCarry="", GB_SESS_MAX=400, GB_RECALL_GAP_MS=15000;
+function gbSessAdd(u,a){ try{
+  var s=String(u||""), m=/they just said to you: "([\s\S]*)" — answer THEM/.exec(s), said=String(a||""), got;
+  if(m) got="they said: "+m[1].slice(0,240)+(said&&said.charAt(0)!=="("?" | you said: "+said.slice(0,200):"");
+  else if(s.indexOf("you looked back through your memory")===0&&said&&said.charAt(0)!=="(") got="you remembered: "+said.slice(0,200);
+  if(!got) return;
+  _gbSess.push({t:Date.now(),txt:got});
+  if(_gbSess.length>GB_SESS_MAX) _gbSess.shift();
+}catch(e){} }
+/* Called from inside the reply handler, so the follow-up is never started there: the turn that
+   asked must finish first (its trace, its speech, its visual work), and a follow-up that cannot
+   run hands its find to the person's next turn instead of leaving "let me think back" unanswered. */
+function gbRecallAsk(q,kind,extra){
+  var now=Date.now(), r, ev, tries=0, words=String(q||"").replace(/["\s]+/g," ").trim().slice(0,60);
+  if(!words||/^omit\b/i.test(words)) return;
+  if(kind!=="event"){ logEv("recall_skip",{why:"kind"}); return; }
+  if(extra&&extra.recallFollow){ logEv("recall_skip",{why:"follow"}); return; }
+  if(now-_gbRecallT<GB_RECALL_GAP_MS){ logEv("recall_skip",{why:"gap"}); return; }
+  _gbRecallT=now;
+  try{ r=gbRecall(_live,_gbSess,words,now); }catch(e){ r={n:0,text:""}; }
+  logEv("recall",{n:r.n});
+  var found="you looked back through your memory for \""+words+"\" and "+(r.n?"found:"+r.text:"found nothing about it.");
+  ev="you looked back through your memory for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer your person with it, in your own voice; if it does not answer what they asked, say plainly that you do not remember.";
+  function carry(why){ _gbRecallCarry=found; logEv("recall_carry",{why:why}); }
+  function go(){
+    if(pendingUser) return carry("person");
+    var busy=inFlight||paused||document.hidden||Date.now()<coolUntil||(typeof vmBusy==="function"&&vmBusy())||energyState==="asleep";
+    if(busy){ if(++tries<120) setTimeout(go,250); else carry("timeout"); return; }
+    _gbRecallCarry=found;
+    think(ev,"event",{recallFollow:true});
+    if(!inFlight) carry("refused");
+  }
+  setTimeout(go,0);
+}
+"""
+
+RECALL_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/prompts.js",
+        '/* 1005: the "always log" ask',
+        _GB_RECALL_PROMPTS_JS + '/* 1005: the "always log" ask',
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "    '\"log\":\"one diary-worthy line, OMIT for routine moments\",' +",
+        "    '\"log\":\"one diary-worthy line, OMIT for routine moments\",' +\n"
+        "    '\"fact\":\"OMIT unless your person just told you something worth keeping about"
+        " their life, people, plans or likes: one plain line for your fact book (lunch today:"
+        " a chalupa and a taco)\",' +\n"
+        "    '\"recall\":\"OMIT almost always. when they ask about something from before that"
+        " you cannot see above, a few search words (taco bell order) to look through your fact"
+        " book, diary and this conversation; make say a short natural line that you are"
+        " thinking back, and you answer with what you find next thought\",' +",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function traceMoment(u){",
+        _GB_RECALL_PAGE_JS + "function traceMoment(u){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "else _live.scratch.traces.push(_tr);",
+        "else _live.scratch.traces.push(_tr);\n      gbSessAdd(_tr.u,_tr.a);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    var _dl=0; if(o.log&&String(o.log)",
+        "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))"
+        " logEv(\"fact\",{n:_live.facts.length}); if(typeof o.recall===\"string\")"
+        " gbRecallAsk(o.recall,kind,extra); }catch(_fe){}\n"
+        "    var _dl=0; if(o.log&&String(o.log)",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK;',
+        'if(_gbRecallCarry){ _gbLive+="\\n\\n== WHAT YOU JUST LOOKED UP ==\\n"+_gbRecallCarry;'
+        ' _gbRecallCarry=""; } if(_hreqAtIssue&&typeof MEMLOG_ASK==="string")'
+        " _gbLive+=MEMLOG_ASK;",
+        1,
+    ),
+    (
+        "v3/soul.js",
+        '  s.log = unionByTime(newer.log, s.log, "txt");',
+        '  if (Array.isArray(newer.facts)) s.facts = unionByTime(newer.facts,'
+        ' Array.isArray(s.facts) ? s.facts : [], "txt");\n'
+        '  s.log = unionByTime(newer.log, s.log, "txt");',
+        1,
+    ),
+    # A file the phone exports or imports carries the fact book with the diary; a template
+    # (a character to be born fresh) has neither.
+    (
+        "v3/soul.js",
+        "    if (Array.isArray(logIn)) s.log = inTimeOrder(logIn);",
+        "    if (Array.isArray(raw.facts)) s.facts = inTimeOrder(raw.facts);\n"
+        "    if (Array.isArray(logIn)) s.log = inTimeOrder(logIn);",
+        1,
+    ),
+    (
+        "v3/soul.js",
+        "soul.goals = rt.goals; soul.scratch = rt.scratch; soul.log = rt.log; soul.bornAt = 1; }",
+        "soul.goals = rt.goals; soul.scratch = rt.scratch; soul.log = rt.log; soul.bornAt = 1;"
+        " if (Array.isArray(rt.facts)) soul.facts = rt.facts; }",
+        1,
+    ),
+]
+PATCHES += RECALL_PATCHES
 
 # Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
 # clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off
@@ -1414,7 +1568,7 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall"',
         1,
     ),
 ]
