@@ -1107,8 +1107,9 @@ PATCHES += QUIET_PATCHES
 # hold a conversation (a meal named over ten minutes was gone when he asked). A persona's
 # gb_talk setting (growbot-box.js syncs it; JBrain's persona page sets it) of "grownup" gives
 # longer replies and 12 replayed exchanges, and asks it to log facts as it hears them; older
-# memory stays out of the turn (the owner wants it looked up, not carried). Kid, the default, is upstream's creature unchanged. Read every turn, so a change
-# lands on the next thought; the grown-up block sits in the cached prefix, so the switch costs
+# memory stays out of the turn (the owner wants it looked up, not carried). Kid, the default,
+# talks as upstream's creature does; the ring keeps 16 turns for both, so a switch to grown-up
+# has its 12 at once. Read every turn, so a change lands on the next thought; the grown-up block sits in the cached prefix, so the switch costs
 # one cold turn.
 _GB_TALK_JS = (
     "function gbTalkGrown(){ try{ return localStorage.getItem(\"gb_talk\")===\"grownup\"; }"
@@ -1123,8 +1124,8 @@ _GB_TALK_JS = (
     " what they said earlier in the conversation. small moments still get small replies, and"
     " silence is still fine.\\nwhen they tell you something about their life (what they ate,"
     " where they went, who they saw, a plan, how they feel), record it in your log field in"
-    " that same reply, compactly, so you can recall it later. one line can hold several"
-    " things.\\nvary what you notice: do not return to the same remark or the same feature of"
+    " that same reply, compactly, so you can recall it later; such a fact is never a"
+    " routine moment. one line can hold several things.\\nvary what you notice: do not return to the same remark or the same feature of"
     " your person turn after turn.\";\n"
 )
 

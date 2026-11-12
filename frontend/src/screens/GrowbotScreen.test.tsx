@@ -1123,7 +1123,7 @@ describe("GrowbotScreen a persona's page", () => {
     expect(within(talks).getByRole("radio", { name: /^Kid/ })).toHaveProperty("checked", true);
     fireEvent.click(within(talks).getByRole("radio", { name: /^Grown-up/ }));
     expect(
-      await screen.findByText("Sprout talks grown-up from its next thought on Pixel 6a."),
+      await screen.findByText("Sprout talks like a grown-up from its next thought on Pixel 6a."),
     ).toBeTruthy();
     expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({
       set: { gb_talk: "grownup" },
@@ -1137,6 +1137,19 @@ describe("GrowbotScreen a persona's page", () => {
         drop: ["gb_talk"],
       }),
     );
+  });
+
+  it("shows the talk style the box holds for a persona", async () => {
+    const ov = overview();
+    ov.personas = ov.personas.map((x) =>
+      x.id === SPROUT ? { ...x, prefs: { gb_talk: "grownup" } } : x,
+    );
+    serve(UP, pageRoutes(), null, ov);
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    const talks = screen.getByRole("group", { name: "Talk style" });
+    expect(within(talks).getByRole("radio", { name: /^Grown-up/ })).toHaveProperty("checked", true);
   });
 
   it("waits for a persona's first phone before its camera can be picked", async () => {

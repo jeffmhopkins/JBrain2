@@ -539,11 +539,11 @@ export function GrowbotPersonaPage({
       );
       setTalkSaved({ talk, over: boxTalk });
       onChanged();
-      const name = TALKS.find((t) => t.id === talk)?.name ?? talk;
+      const how = talk === "grownup" ? "like a grown-up" : "like a kid";
       say(
         p.phone
-          ? `${p.name} talks ${name.toLowerCase()} from its next thought ${onPhone(p.phone, pl)}.`
-          : `${p.name} talks ${name.toLowerCase()} next time it opens.`,
+          ? `${p.name} talks ${how} from its next thought ${onPhone(p.phone, pl)}.`
+          : `${p.name} talks ${how} next time it opens.`,
       );
     } catch (e) {
       say(`The talk style didn't change — ${message(e)}`);
