@@ -66,6 +66,10 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+function isObject(v: unknown): boolean {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
 function asText(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
@@ -411,7 +415,9 @@ export function GrowbotPersonaPage({
                 <h3>{m.label}</h3>
                 <span className="gb-up">{m.up}</span>
                 {/* Before it first wakes, the creature's seed fills these in on the phone. */}
-                {(m.id === "identity" || m.id === "bond" || m.up in soul) && (
+                {(m.id === "identity" ||
+                  m.id === "bond" ||
+                  (m.up === "log" ? Array.isArray(soul.log) : isObject(soul[m.up]))) && (
                   <button
                     type="button"
                     className="gb-linkbtn"

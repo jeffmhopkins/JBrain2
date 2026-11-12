@@ -286,7 +286,10 @@ async def _written(
     if done == "stale":
         raise HTTPException(
             status_code=409,
-            detail="It changed on its phone while you were editing. Nothing was saved — try again.",
+            detail=(
+                "It changed on its phone while you were editing. Nothing was saved — close this "
+                "and open it again to see what it wrote."
+            ),
         )
     persona, cp = done
     return WrittenOut(

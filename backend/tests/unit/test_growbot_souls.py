@@ -264,6 +264,8 @@ def test_a_creature_that_has_not_woken_keeps_its_seed_until_it_writes_these() ->
         with pytest.raises(souls.SoulError, match="hasn't written this yet"):
             souls.edit_region(fresh, region, value)
     assert souls.edit_region(fresh, "identity", "I am Pip and I like boats.")["identity"]
+    with pytest.raises(souls.SoulError, match="hasn't written this yet"):
+        souls.edit_region(fresh | {"scratch": None}, "scratch", {"state": "up", "rules": []})
 
 
 def test_rules_already_past_the_cap_do_not_block_editing_right_now() -> None:

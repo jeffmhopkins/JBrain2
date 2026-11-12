@@ -375,9 +375,9 @@ def _edit_memory(out: dict[str, Any], region: str, value: Any) -> None:
         # tab still holding the old ones does not win them back.
         out["identityAt"] = int(time.time() * 1000)
         return
-    if region not in out:
+    if not isinstance(out.get(region), list if region == "log" else dict):
         # A creature that has not woken yet gets upstream's seed for these on its first load
-        # (normalizeSoul fills a missing key whole); a partial one here would replace that seed.
+        # (normalizeSoul fills a missing or broken one whole); a partial one would replace it.
         raise SoulError(
             "It hasn't written this yet — it does when it first wakes up. Nothing was saved."
         )

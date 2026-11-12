@@ -73,6 +73,9 @@ export function GrowbotMemoryEditor({ p, soul, version, which, openOn, onClose, 
       .map((l) => ({ t: l.t, txt: l.txt }))
       .sort((a, b) => b.t - a.t),
   );
+  // Frozen when the sheet opens: the screen's poll re-reads the persona under it, and a base
+  // that followed would let a save drop what the creature wrote meanwhile.
+  const [base] = useState(version);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -118,7 +121,7 @@ export function GrowbotMemoryEditor({ p, soul, version, which, openOn, onClose, 
     setBusy(true);
     setErr("");
     try {
-      onSaved(await api.editGrowbotRegion(p.id, info.up as GrowbotRegion, v, version));
+      onSaved(await api.editGrowbotRegion(p.id, info.up as GrowbotRegion, v, base));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setBusy(false);
