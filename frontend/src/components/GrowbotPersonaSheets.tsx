@@ -171,8 +171,8 @@ export function GrowbotLaunchSheet({ p, personas, pl, up, onHere, onOther, onClo
       {bodies.map((r) => {
         const b = r.name || r.code;
         const other = riderOfPersonas(personas, r.code);
-        // Reopening what this phone already wears is a fresh tab on the same body: the relay
-        // hands the body to the new socket, so it is offered, never greyed out.
+        // Reopening what this phone already wears is just another tab: the relay lets every tab
+        // of the rider's phone drive the body, so it is offered, never greyed out.
         const again = p.wearing === r.code && herewear;
         const why = r.revoked_at
           ? `${b}'s key is revoked — reflash it first.`

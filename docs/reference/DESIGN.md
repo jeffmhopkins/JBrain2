@@ -3277,7 +3277,7 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   from Pixel 6a. Sprout closes here — it's kept on the box.*), **On this phone, wearing Fish**
   (violet; *Captain Bolt lets go and carries on alone on Pixel 6a.*, or *It takes Fish's legs.*,
   plus *Fish is off — its legs move once it's on.*; *Opens again, still wearing Fish.* when it
-  already wears Fish here, since reopening hands the body to the new tab; disabled with the
+  already wears Fish here, since every tab of the rider's phone may drive it; disabled with the
   reason only when the key is revoked) and **On another phone…** (*Two codes to scan, alone or
   wearing Fish.*).
 - **Body.** The robot's card: its name, its state in words beside the dot (on · seen 20 s ago /
