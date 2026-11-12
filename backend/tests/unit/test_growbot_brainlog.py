@@ -392,9 +392,10 @@ def test_the_sidecar_keeps_a_diary_snapshot(tmp_path: Path) -> None:
     "bad",
     [
         {"sid": "nx/../x", "rows": []},
-        {"sid": "nx-a", "robot": "Fish", "rows": []},
-        {"sid": "nx-a", "persona": "not-a-uuid", "rows": []},
-        {"sid": "nx-a", "rows": [{"t": i} for i in range(501)]},
+        {"sid": "nx-abc", "robot": "Fish", "rows": []},
+        {"sid": "nx-ab", "rows": []},
+        {"sid": "nx-abc", "persona": "not-a-uuid", "rows": []},
+        {"sid": "nx-abc", "rows": [{"t": i} for i in range(501)]},
     ],
 )
 def test_the_sidecar_route_refuses_odd_snapshots(tmp_path: Path, bad: dict[str, Any]) -> None:
@@ -525,3 +526,36 @@ def test_the_owner_route_hides_the_names_the_box_knows_with_no_list(tmp_path: Pa
     with zipfile.ZipFile(io.BytesIO(got.content)) as zf:
         calls = zf.read(next(n for n in zf.namelist() if n.endswith("calls.jsonl")))
     assert json.loads(calls)["reply"] == "Hi [name] and [name], I am [name] on [name]"
+
+
+def test_a_name_never_rewrites_the_exports_own_labels() -> None:
+    scrub = Scrub(redact=False, names=["Robot", "robot", "Persona"])
+    scrub.robot("gb-x")
+    assert scrub.text("robot-1 says hi to Robot and persona-2") == (
+        "robot-1 says hi to [name] and persona-2"
+    )
+    assert scrub.names == ["Robot", "Persona"]
+
+
+def test_diary_ids_are_relabelled_whole() -> None:
+    scrub = Scrub(redact=False)
+    scrub.diary("nx-abcd")
+    scrub.diary("nx-ab12")
+    assert scrub.text("nx-abcd and nx-ab12 but not nx-abcde") == (
+        "diary-1 and diary-2 but not nx-abcde"
+    )
+
+
+async def test_prompts_past_their_cap_are_not_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(brainlog, "PROMPTS_MAX", 1000)
+    calls = [_call(1), _call(2, request={"messages": [{"role": "system", "content": "y" * 600}]})]
+    files, _ = await _build(calls)
+    rows = _jsonl(files["calls.jsonl"])
+    assert rows[0]["request"]["messages"][0]["content"]["shared"].startswith("prompts/")
+    assert rows[1]["request"]["messages"][0]["content"]["shared"].startswith("[not kept")
+    assert json.loads(files["manifest.json"])["cut"] is True
+
+
+def test_known_names_are_deduplicated() -> None:
+    metas = [{"kind": "person", "name": "Quorra"}] * 300 + [{"kind": "person", "name": "QUORRA"}]
+    assert brainlog.known_names([], metas) == ["Quorra"]

@@ -36,6 +36,7 @@ from jbrain.growbot.repo import RobotInfo
 
 HOURS: Final = (1, 3, 6)
 NAMES_MAX: Final = 20
+KNOWN_MAX: Final = 300
 # A system prompt this long is written once under prompts/ and referenced, since the creature
 # sends the same soul with every turn and a window would otherwise repeat it thousands of times.
 PROMPT_SHARE_MIN: Final = 512
@@ -46,12 +47,15 @@ DIARY_MAX: Final = 60_000
 # Past this much compressed, the zip stops taking rows and says so in its manifest: a flooded
 # diary must not build a file the box cannot hold in memory.
 OUT_MAX: Final = 96 * 1024 * 1024
+# The shared prompts are held until the end, so they count against OUT_MAX, and past this a new
+# one is not kept: a soul that changes every turn would otherwise be a file a turn.
+PROMPTS_MAX: Final = 32 * 1024 * 1024
 # Diary fields upstream fills with what a person said, unquoted (next.html `logEv("user",
 # {txt})`, `logEv("body_sound", {words})`, ...). Upstream hashes them at capture only when it
 # thinks it is in production, and a `.local` box name reads as staging, so the box hashes them
 # again here whatever the page did.
 SPEECH_KEYS: Final = frozenset(
-    ("txt", "words", "wordsHeld", "q", "input", "ans", "heard", "said", "text", "transcript")
+    ("txt", "words", "wordsHeld", "q", "ans", "heard", "said", "text", "transcript")
 )
 
 _QUOTE_RES: Final = (re.compile(r'"([^"\n]{3,})"'), re.compile(r"“([^”\n]{3,})”"))
@@ -107,13 +111,21 @@ class Scrub:
     robots: dict[str, str] = field(default_factory=dict)
     diaries: dict[str, str] = field(default_factory=dict)
     _names_re: re.Pattern[str] | None = None
+    _sids_re: re.Pattern[str] | None = None
 
     def __post_init__(self) -> None:
-        names = sorted({n.strip() for n in self.names if len(n.strip()) >= 2}, key=len)
+        seen: dict[str, str] = {}
+        for n in self.names:
+            if len(n.strip()) >= 2:
+                seen.setdefault(n.strip().casefold(), n.strip())
+        # The owner's list comes first, then the box's own: a soul with hundreds of person
+        # memories of one child dedupes to one name and crowds nothing out.
+        names = sorted(list(seen.values())[:KNOWN_MAX], key=len)
         self.names = names
         if names:
             alts = "|".join(re.escape(n) for n in reversed(names))
-            self._names_re = re.compile(rf"(?i)(?<!\w)(?:{alts})(?!\w)")
+            # Never inside the export's own labels: a robot named "Robot" leaves robot-1 alone.
+            self._names_re = re.compile(rf"(?i)(?<!\w)(?:{alts})(?!\w|-\d)")
 
     def persona(self, pid: str | None) -> str | None:
         if not pid:
@@ -126,7 +138,11 @@ class Scrub:
         return self.robots.setdefault(code, f"robot-{len(self.robots) + 1}")
 
     def diary(self, sid: str) -> str:
-        return self.diaries.setdefault(sid, f"diary-{len(self.diaries) + 1}")
+        if sid not in self.diaries:
+            self.diaries[sid] = f"diary-{len(self.diaries) + 1}"
+            alts = "|".join(re.escape(d) for d in sorted(self.diaries, key=len, reverse=True))
+            self._sids_re = re.compile(rf"(?<![\w-])(?:{alts})(?![\w-])")
+        return self.diaries[sid]
 
     def text(self, s: str, *, quotes: bool = True) -> str:
         """Ids swapped, secrets cut, quoted speech hashed (redacted), listed names replaced."""
@@ -134,8 +150,8 @@ class Scrub:
         s = _CODE_RE.sub(lambda m: self.robot(m.group(0)), s)
         s = _UUID_RE.sub(lambda m: self.persona(m.group(0)) or "", s)
         # Upstream treats a diary id as the key that erases that diary on its cloud.
-        for sid, label in self.diaries.items():
-            s = s.replace(sid, label)
+        if self._sids_re is not None:
+            s = self._sids_re.sub(lambda m: self.diaries[m.group(0)], s)
         if self.redact and quotes:
             s = redact_quotes(s)
         if self._names_re is not None:
@@ -172,10 +188,17 @@ class _Prompts:
         self.files: dict[str, str] = {}
         # The same soul rides every turn: scrub it once, keyed on the raw prompt's hash.
         self.seen: dict[str, Any] = {}
+        self.size = 0
+        self.dropped = False
 
     def share(self, prompt: str) -> str:
         key = hashlib.sha256(prompt.encode()).hexdigest()[:12]
-        self.files.setdefault(key, prompt)
+        if key not in self.files:
+            if self.size + len(prompt) > PROMPTS_MAX:
+                self.dropped = True
+                return "[not kept: the brain log's prompt cap]"
+            self.files[key] = prompt
+            self.size += len(prompt)
         return f"prompts/{key}.txt"
 
 
@@ -309,7 +332,11 @@ def known_names(souls: list[dict[str, Any]], memories: list[dict[str, Any]]) -> 
     for meta in memories:
         if meta.get("kind") == "person" and isinstance(meta.get("name"), str):
             found.append(meta["name"])
-    return [n.strip()[:60] for n in found if len(n.strip()) >= 2]
+    out: dict[str, str] = {}
+    for n in found:
+        if len(n.strip()) >= 2:
+            out.setdefault(n.strip().casefold(), n.strip()[:60])
+    return list(out.values())
 
 
 def _line(obj: Any) -> bytes:
@@ -322,7 +349,8 @@ def _readme(manifest: dict[str, Any]) -> str:
         "is `«h8·Nw»` (upstream's djb2 h8 of the span, and its word count), and a transcription "
         "is hashed whole, as are the model's reasoning and the diary's speech fields (`txt`, "
         "`words`, ...). The creature's own words are kept. The hash is a join key, not secrecy: "
-        "a short common phrase can be guessed."
+        "a short common phrase can be guessed. A transcript that itself holds a quote mark or a "
+        "line break is hashed only up to it inside a model prompt, as in upstream's diary."
         if manifest["redacted"]
         else "Not redacted: what people said is here as it was heard."
     )
@@ -374,7 +402,7 @@ async def build(
 ) -> tuple[bytes, str]:
     """The zip and its file name."""
     since = now - timedelta(hours=hours)
-    scrub = Scrub(redact=redact, names=names[:NAMES_MAX] + (known or [])[:200])
+    scrub = Scrub(redact=redact, names=names[:NAMES_MAX] + (known or []))
     prompts = _Prompts()
     stamp = now.strftime("%Y%m%d-%H%M")
     root = f"growbot-brain-log-{stamp}-{hours}h"
@@ -422,7 +450,7 @@ async def build(
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         with zf.open(f"{root}/calls.jsonl", "w") as out:
             after = 0
-            while sum(counts.values()) < CALLS_MAX and buf.tell() < OUT_MAX:
+            while sum(counts.values()) < CALLS_MAX and buf.tell() + prompts.size < OUT_MAX:
                 batch = await calls.page(ctx, since=since, after_id=after, limit=_PAGE)
                 await asyncio.to_thread(write_calls, out, batch)
                 if len(batch) < _PAGE:
@@ -430,7 +458,11 @@ async def build(
                 after = batch[-1].id
         with zf.open(f"{root}/diary.jsonl", "w") as out:
             after = 0
-            while journal is not None and counts["diary"] < DIARY_MAX and buf.tell() < OUT_MAX:
+            while (
+                journal is not None
+                and counts["diary"] < DIARY_MAX
+                and buf.tell() + prompts.size < OUT_MAX
+            ):
                 rows = await journal.page(ctx, since=since, after_id=after, limit=_PAGE * 5)
                 await asyncio.to_thread(write_diary, out, rows)
                 if len(rows) < _PAGE * 5:
@@ -475,7 +507,8 @@ async def build(
             "counts": counts,
             "prompts": len(prompts.files),
             # True when the window held more than the zip takes (OUT_MAX, CALLS_MAX, DIARY_MAX).
-            "cut": buf.tell() >= OUT_MAX
+            "cut": buf.tell() + prompts.size >= OUT_MAX
+            or prompts.dropped
             or sum(counts[k] for k in ("llm", "stt", "tts")) >= CALLS_MAX
             or counts["diary"] >= DIARY_MAX,
         }

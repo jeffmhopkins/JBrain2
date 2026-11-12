@@ -44,7 +44,8 @@ Hours = Literal[1, 3, 6]
 
 class DiaryIn(BaseModel):
     # Upstream's diary id: "nx-" and up to 20 of [A-Za-z0-9_-] (next.html LOG_SID).
-    sid: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    # At least 6, so a diary id cannot be a fragment of ordinary text the export relabels.
+    sid: str = Field(pattern=r"^[A-Za-z0-9_-]{6,64}$")
     persona: str | None = Field(default=None, pattern=_UUID)
     robot: str = Field(default="", pattern=r"^(gb-[A-Za-z0-9]{1,32})?$")
     head: dict[str, Any] = Field(default_factory=dict)
@@ -123,8 +124,8 @@ async def _build(
             souls.append(full.soul)
         metas += [m.meta for m in await persona_repo.memories(ctx, p.id) or []]
     # Persona and robot names may be people's too (a creature named after a child).
-    known = brainlog.known_names(souls, metas) + [p.name for p in personas]
-    known += [r.name for r in robots if r.name]
+    known = [p.name for p in personas] + [r.name for r in robots if r.name]
+    known += brainlog.known_names(souls, metas)
     data, filename = await brainlog.build(
         ctx=ctx,
         calls=cast(CallLog, state.growbot_calls),

@@ -151,11 +151,12 @@ MEMORY_ID_RE = re.compile(r"r[0-9a-f]{1,32}")
 # (`_LOG_TRIM`) and 400 held rows, and its id is "nx-" and up to 20 more (next.html LOG_SID).
 MAX_DIARY_BODY = 256 * 1024
 DIARY_ROWS_MAX = 500
-DIARY_SID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
-# Upstream flushes every 8 s (a chunk can follow a live flush at once). One snapshot a phone in
-# this long is kept and the rest answered and dropped: the next snapshot resends their rows,
-# and a page that loops the POST cannot fill the box's disk.
-DIARY_EVERY_S = 2.0
+DIARY_SID_RE = re.compile(r"[A-Za-z0-9_-]{6,64}")
+# Upstream flushes every 8 s, and a chunk, a dream copy or the hide beacon can follow one at
+# once. A phone gets this many snapshots in each window and the rest are answered and dropped,
+# so a page that loops the POST cannot fill the box's disk while the beacon still lands.
+DIARY_BURST = 3
+DIARY_WINDOW_S = 8.0
 # What a snapshot says about the page that wrote it. Its soul peek and join key stay behind:
 # the soul lives on the box already, and the export needs only the rows and this header.
 DIARY_HEAD = ("kind", "mode", "redacted", "ua", "reason", "agent", "boot")
@@ -1036,7 +1037,7 @@ class GrowBot:
         self._rider_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-rider")
         self._log_pool: Executor = ThreadPoolExecutor(1, "growbot-log")
         self._log_slots = threading.BoundedSemaphore(LOG_PENDING_MAX)
-        self._diary_at: dict[str, float] = {}
+        self._diary_at: dict[str, collections.deque[float]] = {}
         self.rider_backoff = Backoff()
         self._proxy_addrs: set[str] = set()
         self._opening: collections.Counter[str] = collections.Counter()
@@ -1724,11 +1725,12 @@ class GrowBot:
         claims = self._claims(req)
         holder = (claims.phone or claims.robot) if claims else ""
         now = time.monotonic()
-        if now - self._diary_at.get(holder, -math.inf) < DIARY_EVERY_S:
-            return json_response(200, {"ok": True})
-        if len(self._diary_at) > 1024:
+        if len(self._diary_at) > 1024 and holder not in self._diary_at:
             self._diary_at.clear()
-        self._diary_at[holder] = now
+        recent = self._diary_at.setdefault(holder, collections.deque(maxlen=DIARY_BURST))
+        if len(recent) == DIARY_BURST and now - recent[0] < DIARY_WINDOW_S:
+            return json_response(200, {"ok": True})
+        recent.append(now)
         who = self._who(req)
         row_list = [r for r in rows[-DIARY_ROWS_MAX:] if isinstance(r, dict)]
         if row_list:

@@ -97,7 +97,7 @@ GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ),
     ("GET", "/internal/growbot/body/gb-x", None, 200),
     ("POST", "/internal/growbot/calls", {"kind": "tts", "ok": True, "total_ms": 1}, 204),
-    ("POST", "/internal/growbot/journal", {"sid": "nx-a", "rows": []}, 200),
+    ("POST", "/internal/growbot/journal", {"sid": "nx-abc", "rows": []}, 200),
     ("POST", "/internal/growbot/memories/list", {"persona": _PID, "phone": _PHONE}, 200),
     (
         "POST",

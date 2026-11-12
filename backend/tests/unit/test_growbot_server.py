@@ -935,6 +935,7 @@ def test_the_diary_is_kept_on_the_box(run: _Running) -> None:
     [
         {"op": "watchid", "sid": "nx-abc", "w": "f" * 32},
         {"sid": "nx/../x", "log": [{"t": 1}]},
+        {"sid": "nx-a", "log": [{"t": 1}]},
         {"sid": "nx-abc", "log": "rows"},
         {"sid": "nx-abc", "log": []},
         {"log": [{"t": 1}]},
@@ -950,16 +951,16 @@ def test_a_diary_post_that_is_not_a_snapshot_is_kept_nowhere(
     assert not [s for s in _Fake.seen if s["path"] == "/internal/growbot/journal"]
 
 
-def test_a_phone_looping_its_diary_is_held_to_one_snapshot_in_two_seconds(
+def test_a_phone_looping_its_diary_is_held_to_a_few_snapshots_a_flush(
     run: _Running,
 ) -> None:
-    for t in range(5):
+    for t in range(6):
         snap = {"sid": "nx-abc", "log": [{"t": t, "e": "tick"}]}
         resp = run.request("POST", "/api/journal", json.dumps(snap).encode())
         assert resp.status == 200 and json.loads(resp.read()) == {"ok": True}
     time.sleep(0.2)
-    sent = _forwarded("/internal/growbot/journal")
-    assert len(sent) == 1 and sent[0]["rows"] == [{"t": 0, "e": "tick"}]
+    sent = _forwarded("/internal/growbot/journal", 3)
+    assert [s["rows"][0]["t"] for s in sent] == [0, 1, 2]
 
 
 def test_a_huge_diary_post_is_kept_nowhere(run: _Running) -> None:
