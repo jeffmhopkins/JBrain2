@@ -8265,6 +8265,27 @@ export const api = {
     return (await response.json()) as GrowbotWritten;
   },
 
+  /** Deletes one checkpoint for good. A 404 means it is already gone, which is what was asked. */
+  async deleteGrowbotCheckpoint(id: string, cid: string): Promise<void> {
+    try {
+      await request(
+        `/api/growbot/personas/${encodeURIComponent(id)}/checkpoints/${encodeURIComponent(cid)}`,
+        { method: "DELETE" },
+      );
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 404)) throw e;
+    }
+  },
+
+  /** Deletes every automatic checkpoint; the named ones stay. Answers how many went. */
+  async deleteGrowbotAutomaticCheckpoints(id: string): Promise<number> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}/checkpoints/automatic`,
+      { method: "DELETE" },
+    );
+    return ((await response.json()) as { deleted: number }).deleted;
+  },
+
   /** Its visual memories, newest first. */
   async growbotMemories(id: string): Promise<GrowbotMemory[]> {
     const response = await request(`/api/growbot/personas/${encodeURIComponent(id)}/memories`);

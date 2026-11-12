@@ -104,6 +104,10 @@ async def test_a_non_owner_can_neither_read_nor_change_a_persona(
     assert not await repo.set_rider(ctx, "gb-fish", bolt)
     assert not await repo.open_on_phone(ctx, bolt, PHONE_B, "", "gb-fish")
     assert await repo.save_checkpoint(ctx, sprout, "x") is None
+    mine = await repo.save_checkpoint(OWNER, sprout, "mine")
+    assert mine is not None
+    assert not await repo.delete_checkpoint(ctx, sprout, mine.id)
+    assert await repo.delete_automatic(ctx, sprout) is None
     assert await repo.list_phones(ctx) == [] and await repo.riders(ctx) == []
     with pytest.raises(DBAPIError):
         await repo.create(ctx, "Evil", {"soul_format": 3}, "")
@@ -372,6 +376,43 @@ async def test_automatic_checkpoints_are_pruned_and_named_ones_kept(
     assert await repo.save_checkpoint(OWNER, "00000000-0000-4000-8000-000000000000", "x") is None
 
 
+async def test_one_checkpoint_is_deleted_and_only_from_its_own_persona(
+    maker: async_sessionmaker,
+) -> None:
+    repo, sprout, bolt = await _world(maker)
+    named = await repo.save_checkpoint(OWNER, sprout, "Before the beach trip")
+    auto = await repo.save_checkpoint(OWNER, sprout, "Before x", auto=True)
+    theirs = await repo.save_checkpoint(OWNER, bolt, "Bolt's")
+    assert named is not None and auto is not None and theirs is not None
+    # Named or automatic alike; never through another persona's id.
+    assert not await repo.delete_checkpoint(OWNER, sprout, theirs.id)
+    assert await repo.delete_checkpoint(OWNER, sprout, auto.id)
+    assert await repo.delete_checkpoint(OWNER, sprout, named.id)
+    assert not await repo.delete_checkpoint(OWNER, sprout, named.id)
+    assert await repo.list_checkpoints(OWNER, sprout) == []
+    assert [c.id for c in await repo.list_checkpoints(OWNER, bolt)] == [theirs.id]
+    gone = "00000000-0000-4000-8000-000000000000"
+    assert not await repo.delete_checkpoint(OWNER, gone, theirs.id)
+    assert not await repo.delete_checkpoint(OWNER, "nope", theirs.id)
+    assert not await repo.delete_checkpoint(OWNER, bolt, "nope")
+    persona = await repo.get_persona(OWNER, sprout)
+    assert persona is not None and persona.checkpoints == 0 and persona.version == 1
+
+
+async def test_deleting_the_automatic_ones_keeps_the_named(maker: async_sessionmaker) -> None:
+    repo, sprout, bolt = await _world(maker)
+    await repo.save_checkpoint(OWNER, sprout, "Before the beach trip")
+    for i in range(3):
+        await repo.write_soul(OWNER, sprout, {"soul_format": 3, "i": i}, before=(f"a{i}", ""))
+    await repo.save_checkpoint(OWNER, bolt, "Bolt's", auto=True)
+    assert await repo.delete_automatic(OWNER, sprout) == 3
+    assert await repo.delete_automatic(OWNER, sprout) == 0
+    assert [c.name for c in await repo.list_checkpoints(OWNER, sprout)] == ["Before the beach trip"]
+    assert len(await repo.list_checkpoints(OWNER, bolt)) == 1
+    assert await repo.delete_automatic(OWNER, "00000000-0000-4000-8000-000000000000") is None
+    assert await repo.delete_automatic(OWNER, "nope") is None
+
+
 async def test_deleting_a_persona_takes_its_checkpoints_and_tickets(
     maker: async_sessionmaker,
 ) -> None:
@@ -486,6 +527,20 @@ async def test_routes_seed_duplicate_rename_reset_and_delete(maker: async_sessio
     assert c.post(f"/api/growbot/personas/{pid}/checkpoints", json={"name": " "}).status_code == 422
     nobody = "/api/growbot/personas/00000000-0000-4000-8000-000000000000/checkpoints"
     assert c.post(nobody, json={"name": "x"}).status_code == 404
+    # Deleting one makes no checkpoint of its own, and a second delete finds nothing.
+    spare = c.post(f"/api/growbot/personas/{pid}/checkpoints", json={"name": "spare"}).json()
+    before = c.get(f"/api/growbot/personas/{pid}").json()["checkpoints"]
+    gone = f"/api/growbot/personas/{pid}/checkpoints/{spare['id']}"
+    assert c.delete(gone).status_code == 204
+    assert c.delete(gone).status_code == 404
+    assert c.get(f"/api/growbot/personas/{pid}").json()["checkpoints"] == before - 1
+    assert c.delete(f"/api/growbot/personas/{pid}/checkpoints/nope").status_code == 422
+    autos = c.delete(f"/api/growbot/personas/{pid}/checkpoints/automatic")
+    assert autos.status_code == 200 and autos.json()["deleted"] >= 1
+    left = c.get(f"/api/growbot/personas/{pid}").json()["checkpoint_list"]
+    assert left and not any(cp["auto"] for cp in left)
+    gone_p = "/api/growbot/personas/00000000-0000-4000-8000-000000000000/checkpoints/automatic"
+    assert c.delete(gone_p).status_code == 404
     seeded = _make(c, "Captain Bolt", seed=cp["id"])
     assert seeded["made_from"] == "Sprout — First week"
     assert seeded["soul"]["persona"] == {"constitution": "You are Bolt."}

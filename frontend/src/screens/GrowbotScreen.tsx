@@ -110,13 +110,15 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
   const prev = useRef<GrowbotOverview | null>(null);
   const robotsRef = useRef<GrowbotRobot[]>([]);
   const mounted = useRef(true);
-  useEffect(
-    () => () => {
+  // Set in the effect as well as the ref's start: StrictMode's dev remount runs the cleanup
+  // once, and a ref left false then drops every answer, so the screen sat on "Loading GrowBot…".
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
       mounted.current = false;
       if (toastTimer.current) clearTimeout(toastTimer.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   const say: Say = useCallback((text, opts = {}) => {
     setToast({ text, ...opts, k: ++seq.current });

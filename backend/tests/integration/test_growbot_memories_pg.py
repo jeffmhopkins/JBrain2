@@ -302,6 +302,21 @@ async def test_pruning_and_deleting_sweep_only_pictures_nothing_names(
     assert not await blobs.exists(_sha(CUP))
 
 
+async def test_deleting_a_checkpoint_sweeps_only_the_pictures_nothing_else_names(
+    maker: async_sessionmaker, blobs: FsBlobStore
+) -> None:
+    repo, sprout, _ = await _world(maker, blobs)
+    first = await repo.save_checkpoint(OWNER, sprout, "First week")
+    second = await repo.save_checkpoint(OWNER, sprout, "Second week")
+    assert first is not None and second is not None
+    assert await repo.forget_memory(OWNER, sprout, "r1")
+    # Two checkpoints still name the face: the first going leaves it for the second.
+    assert await repo.delete_checkpoint(OWNER, sprout, first.id)
+    assert await blobs.exists(_sha(FACE))
+    assert await repo.delete_checkpoint(OWNER, sprout, second.id)
+    assert not await blobs.exists(_sha(FACE))
+
+
 async def test_racing_keeps_and_forgets_never_lose_a_named_picture(
     maker: async_sessionmaker, blobs: FsBlobStore
 ) -> None:
