@@ -421,6 +421,13 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
     checkpoint keeps them and a restore brings them back; reset and import clear them (their
     checkpoint keeps them); duplicate copies them; export leaves them out. The persona page's
     *Memories* tab is the grid with an armed delete and a viewer.
+- **Upstream policy watch (owner, 2026-11-12): *"occasionally the grow bot official repo will
+  post up new policies … a way for the jbrain pwa to check"*.** ✅ The api checks upstream's
+  commits feed every 12 hours and, once `main` has moved off the pin, lists the changed policy
+  files with one GitHub compare call. It notifies the owner once per new upstream head that brings
+  any, and shows them on the Body tab's *Walks and spins* card (GUI gate passed: mock A,
+  `docs/mocks/growbot-policies/a-body-card.html`). Bringing them in is still a sync PR, and the
+  card says so. See `growbot/README.md` "Upstream and patches".
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic.
 
@@ -436,4 +443,5 @@ named in `../runbooks/LOCAL_ACCESS.md`). Everything else is PWA-operable.
   root-download page that `LOCAL_ACCESS.md` names as a gap.
 - Which local engine is usually up, which fixes the default vision model.
 - Upstream moves fast (dated build tags in every comment). `sync.sh` keeps the patch set
-  small enough to re-apply; a sync is its own PR.
+  small enough to re-apply; a sync is its own PR. The box now says when one is due (the
+  upstream policy watch, §4).

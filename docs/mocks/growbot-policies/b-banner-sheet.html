@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot policies — B — a banner and a sheet</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<!-- B: nothing on screen while up to date beyond one quiet line at the foot of the Body tab. When upstream has new policies, an amber banner sits above every GrowBot tab; tapping it opens a sheet with the list, how to bring them in, and Check now. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const phone = document.getElementById("phone");
+  function render() {
+    const S = G.S, f = G.f();
+    const banner = S.state === "behind" ? `<button class="banner-up" data-act="open"><span>${f.policies.length} new or changed walks and spins upstream</span>›</button>` : "";
+    const quiet = S.state === "error"
+      ? `<p class="hint dim">Couldn't check GitHub for new walks and spins (${f.checked}). <button class="linkbtn" data-act="check">${S.checking ? "Checking…" : "Check now"}</button></p>`
+      : S.state === "current" ? `<p class="hint dim">Walks and spins match upstream, checked ${f.checked}. <button class="linkbtn" data-act="check">${S.checking ? "Checking…" : "Check now"}</button></p>` : "";
+    const sheet = S.sheet && S.state === "behind" ? `<div class="scrim" data-act="close"><div class="sheet" onclick="event.stopPropagation()"><div class="handle"></div>
+        <div class="sh"><span class="t">New walks and spins</span><button class="x" data-act="close" aria-label="Close">×</button></div>
+        <div class="sb">${G.policyList()}${G.commitList()}${G.howTo()}${G.facts()}</div>
+        <div class="sf">${G.checkBtn("block")}<button class="btn block" data-act="github">See on GitHub</button></div></div></div>` : "";
+    phone.innerHTML = `<div class="topbar"><button class="back">Back</button><span class="ttl">GrowBot</span></div>${banner}
+      <div class="seg"><button>Personas</button><button class="on">Body</button><button>Phones</button></div>
+      <div class="body">
+        <section class="card"><div class="card-head"><h3>Pip</h3><span class="state"><span class="dot ok"></span><span class="ok-t">Connected</span></span></div>
+          <p class="hint"><strong>Juniper</strong> is wearing it, on the kitchen phone.</p>
+          <dl class="facts"><dt>Pairing code</dt><dd class="mono">gb-4f19c2</dd><dt>Device key</dt><dd>made Nov 10, only on Pip</dd></dl></section>
+        <button class="btn block">Add a robot</button>${quiet}
+      </div>${sheet}${G.toast()}`;
+  }
+  G.mockbar(document.getElementById("mockbar"), "B", render);
+  G.wire(phone, render, (act) => {
+    if (act === "open") G.S.sheet = true;
+    if (act === "close") G.S.sheet = false;
+    render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

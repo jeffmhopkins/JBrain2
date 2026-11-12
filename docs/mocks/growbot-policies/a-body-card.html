@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot policies — A — a card on the Body tab</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<!-- A: the upstream check is a card at the foot of the Body tab, under the robots, always there. Quiet when up to date; when upstream has new walks or spins it lists them, says how they come in, and offers Check now and GitHub. The box also sends a phone notification once per new upstream version. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const phone = document.getElementById("phone");
+  function render() {
+    const S = G.S, f = G.f();
+    let inner = "";
+    if (S.state === "behind" && !S.checking) inner = `${G.policyList()}${G.commitList()}${G.howTo()}`;
+    else if (S.state === "error" && !S.checking) inner = `<p class="msg bad">${f.error}</p>`;
+    else inner = `<p class="hint">Your robot runs the same walks and spins as the official GrowBot repo.</p>`;
+    phone.innerHTML = `<div class="topbar"><button class="back">Back</button><span class="ttl">GrowBot</span></div>
+      <div class="seg"><button>Personas</button><button class="on">Body</button><button>Phones</button></div>
+      <div class="body">
+        <section class="card"><div class="card-head"><h3>Pip</h3><span class="state"><span class="dot ok"></span><span class="ok-t">Connected</span></span></div>
+          <p class="hint"><strong>Juniper</strong> is wearing it, on the kitchen phone.</p>
+          <dl class="facts"><dt>Pairing code</dt><dd class="mono">gb-4f19c2</dd><dt>Device key</dt><dd>made Nov 10, only on Pip</dd></dl></section>
+        <button class="btn block">Add a robot</button>
+        <section class="card" aria-label="Walks and spins"><div class="card-head"><h3>Walks and spins</h3>${G.stateLine()}</div>
+          ${inner}${G.facts()}
+          <div class="acts">${G.checkBtn()}${S.state === "behind" ? `<button class="btn" data-act="github">See on GitHub</button>` : ""}</div></section>
+      </div>${G.toast()}`;
+  }
+  G.mockbar(document.getElementById("mockbar"), "A", render);
+  G.wire(phone, render);
+  render();
+})();
+</script>
+</body>
+</html>

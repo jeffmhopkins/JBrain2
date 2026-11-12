@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot policies — C — on the Ops screen</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<!-- C: upstream freshness belongs with the box's other updates, so it is a row on Ops beside Update. The GrowBot screen stays as it is; the row expands to the list, how to bring them in, and Check now. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const phone = document.getElementById("phone");
+  let open = true;
+  function render() {
+    const S = G.S, f = G.f();
+    const badge = S.checking ? `<span class="badge">checking</span>` : S.state === "current" ? `<span class="badge ok">up to date</span>` : S.state === "behind" ? `<span class="badge warn">${f.policies.length} new</span>` : `<span class="badge bad">couldn't check</span>`;
+    const body = !open ? "" : S.state === "behind" ? `${G.policyList()}${G.commitList()}${G.howTo()}${G.facts()}` : S.state === "error" ? `<p class="msg bad">${f.error}</p>${G.facts()}` : `<p class="hint">GrowBot's walks and spins match the official repo.</p>${G.facts()}`;
+    phone.innerHTML = `<div class="topbar"><button class="back">Back</button><span class="ttl">Ops</span></div>
+      <div class="body">
+        <p class="sec-h">Updates</p>
+        <section class="card"><div class="card-head"><h3>JBrain</h3><span class="badge ok">current</span></div>
+          <p class="hint">Running main at 4d4d0f6.</p><div class="acts"><button class="btn primary">Update</button></div></section>
+        <section class="card"><div class="card-head" data-act="toggle" style="cursor:pointer"><h3>GrowBot walks and spins</h3>${badge}<span class="dim-t">${open ? "▾" : "▸"}</span></div>
+          ${body}${open ? `<div class="acts">${G.checkBtn()}${S.state === "behind" ? `<button class="btn" data-act="github">See on GitHub</button>` : ""}</div>` : ""}</section>
+        <p class="sec-h">Services</p>
+        <section class="card"><div class="card-head"><h3>growbot</h3><span class="badge ok">up</span></div><p class="hint">1 robot connected.</p></section>
+      </div>${G.toast()}`;
+  }
+  G.mockbar(document.getElementById("mockbar"), "C", render);
+  G.wire(phone, render, (act) => { if (act === "toggle") { open = !open; render(); } });
+  render();
+})();
+</script>
+</body>
+</html>

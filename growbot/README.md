@@ -42,7 +42,17 @@ directory, so a patch that stops matching fails with its name and leaves the com
 alone.
 
 To move to a new upstream: change the pin in `upstream.json`, run `./sync.sh`, and review the
-diff in its own PR. `backend/tests/unit/test_growbot_site.py` holds the promises on the built
+diff in its own PR.
+
+The box watches for that moment itself (`backend/src/jbrain/growbot/upstream.py`). Every 12
+hours the api reads upstream's commits Atom feed through the shared SSRF-guarded fetcher. When
+`main` has moved off the pin, one unauthenticated GitHub `compare` call lists the changed files;
+a compare already answered for that pin and head is never asked again. The policy files (JSON
+under `app/policies/`, `app/policy*.json` and `policy/`) are kept in the `growbot_upstream`
+setting. The owner gets one notification per new upstream head that brings any, and the PWA's
+Body tab shows them on its *Walks and spins* card with *Check now* (at most once a minute).
+`GET`/`POST /api/debug/growbot/upstream[/check]` read and run the same check with a debug
+token. The api reads the pin off a read-only mount of `patches/` (`growbot_patches_dir`). `backend/tests/unit/test_growbot_site.py` holds the promises on the built
 bytes. Upstream's licence (PolyForm Noncommercial 1.0.0) is `LICENSE`; the vendored projects'
 licence texts ship beside their files. The GrowBot name and logo are upstream's trademarks.
 

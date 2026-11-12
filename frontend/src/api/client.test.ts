@@ -232,11 +232,16 @@ describe("api GrowBot", () => {
     expect(await api.growbotFlashJob()).toBeNull();
     await api.growbotStatus();
     await api.growbotFlashSetup();
+    await api.growbotUpstream();
+    await api.growbotCheckUpstream();
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
       "/api/growbot/flash",
       "/api/growbot/status",
       "/api/growbot/flash/setup",
+      "/api/growbot/upstream",
+      "/api/growbot/upstream/check",
     ]);
+    expect(fetchMock.mock.calls[4]?.[1]).toMatchObject({ method: "POST" });
   });
 
   it("starts a flash, revokes and tickets with POSTs carrying their bodies", async () => {

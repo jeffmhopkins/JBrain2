@@ -1,7 +1,7 @@
 import asyncio
 import datetime as dt
 import functools
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -104,6 +104,7 @@ from jbrain.api import (
     growbot_flash,
     growbot_llm,
     growbot_personas,
+    growbot_upstream,
     health,
     home_network,
     images,
@@ -204,6 +205,9 @@ from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
 from jbrain.growbot.calls import SqlCallLog
 from jbrain.growbot.personas import SqlPersonaRepo
 from jbrain.growbot.repo import SqlGrowbotRepo
+from jbrain.growbot.upstream import MAX_COMPARE_BYTES as GROWBOT_COMPARE_MAX_BYTES
+from jbrain.growbot.upstream import NOTIFY_KIND as GROWBOT_UPSTREAM_NOTIFY_KIND
+from jbrain.growbot.upstream import UpstreamWatch, read_pin, run_upstream_loop
 from jbrain.htmlrender import HtmlRenderClient
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
@@ -399,6 +403,17 @@ def _mint_enroll_secret(store: InternalSecrets) -> None:
         store.ensure(internal_auth.WALL_ENROLL)
     except OSError as exc:
         structlog.get_logger().error("enroll_secrets.mint_failed", error=repr(exc))
+
+
+GROWBOT_UPSTREAM_KEY = "growbot_upstream"
+
+
+def _growbot_compare_fetch(fetcher: WebFetcher) -> Callable[[str], Awaitable[bytes]]:
+    async def fetch(url: str) -> bytes:
+        _, body = await fetcher.fetch_bytes(url, max_bytes=GROWBOT_COMPARE_MAX_BYTES)
+        return body
+
+    return fetch
 
 
 def _mint_growbot_secret(store: InternalSecrets) -> None:
@@ -1773,6 +1788,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Bounds the on-box wall's voice listener (unauthenticated, LAN-only) so it can't flood
         # the local LLM: a burst of ~8 spoken commands, refilling ~1 every 2.5s.
         app.state.pet_say_rate_limiter = TokenBucket(capacity=8, refill_per_sec=0.4)
+        # The official GrowBot repo's new body policies: one check every 12 hours through the
+        # shared SSRF-guarded fetcher, one phone notification per new upstream version.
+        app.state.growbot_upstream = UpstreamWatch(
+            pin=lambda: read_pin(settings.growbot_patches_dir),
+            fetch_feed=web_fetcher.fetch_feed,
+            fetch_json=_growbot_compare_fetch(web_fetcher),
+            load=lambda: settings_store.get(SYSTEM_CTX, GROWBOT_UPSTREAM_KEY, None),
+            save=lambda record: settings_store.upsert(SYSTEM_CTX, GROWBOT_UPSTREAM_KEY, record),
+            notify=lambda title, body: notify_owner(
+                app.state.notify_bus,
+                Notification(kind=GROWBOT_UPSTREAM_NOTIFY_KIND, title=title, body=body),
+            ),
+        )
+        growbot_upstream_task = asyncio.create_task(run_upstream_loop(app.state.growbot_upstream))
         jpet_loop_task = asyncio.create_task(
             run_jpet_loop(
                 maker,
@@ -1877,6 +1906,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if vitals_sampler_task is not None:
             vitals_sampler_task.cancel()
         jpet_loop_task.cancel()
+        growbot_upstream_task.cancel()
         # Stop any chat turns still running detached from a (now-gone) SSE response, so
         # shutdown doesn't strand them; each closes via its own CancelledError path. AWAIT
         # their tasks (bounded) before disposing the engine: their cancel-cleanup runs the
@@ -1999,6 +2029,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(panel_notice.debug_router, prefix="/api")
         app.include_router(growbot.debug_router, prefix="/api")
         app.include_router(growbot_personas.debug_router, prefix="/api")
+        app.include_router(growbot_upstream.debug_router, prefix="/api")
         app.include_router(growbot_flash.debug_router, prefix="/api")
         app.include_router(growbot_calls.debug_router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
@@ -2036,6 +2067,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(feed.router, prefix="/api")
     app.include_router(growbot.router, prefix="/api")
     app.include_router(growbot_personas.router, prefix="/api")
+    app.include_router(growbot_upstream.router, prefix="/api")
     # Flashing a robot from the PWA, its status card and revoke (GROWBOT_PLAN §3, G2).
     app.include_router(growbot_flash.router, prefix="/api")
     # The box's LAN root as a download, so a phone can trust jbrain.local with no terminal.
