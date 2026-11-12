@@ -236,7 +236,7 @@
     "transition:opacity .45s ease,transform .3s ease,max-width .3s ease;max-width:200px;" +
     "animation:gbIn .25s ease-out}" +
     "#gbStatus .c.on{box-shadow:0 0 12px var(--k);animation:gbIn .25s ease-out,gbPulse 1.2s ease-in-out infinite}" +
-    "#gbStatus .c.done{opacity:.55;border-style:dashed;padding:3px 7px 3px 4px}" +
+    "#gbStatus .c.done{opacity:.55;border-style:dashed;padding:3px 7px 3px 4px;animation:none}" +
     // A finished chip keeps only its icon and its time, so three of them fit beside a live one.
     "#gbStatus .c.done .l{display:none}" +
     "#gbStatus .c.done .i{font-size:17px}" +
@@ -314,8 +314,8 @@
     });
   }
 
-  // Upstream's overlays (the wake gate, the landing) put the GrowBot logo top-left, under
-  // the strip; the strip drops below the visible one's nav bar instead.
+  // Upstream's wake gate puts the GrowBot logo top-left, under the strip; while it is up the
+  // strip drops below its nav bar instead.
   function topBelowNav() {
     var navs = document.querySelectorAll(".gb-entry-nav");
     for (var i = 0; i < navs.length; i++) {
@@ -375,8 +375,18 @@
         return e.el;
       })
     );
-    for (var j = 0; j < want.length; j++) {
-      if (root.children[j] !== want[j]) root.insertBefore(want[j], root.children[j] || null);
+    // Re-inserting an element restarts its animations, so a reorder moves the finished chips
+    // (which have none) around the running ones, never a running one past them.
+    var same = root.children.length === want.length;
+    for (var j = 0; same && j < want.length; j++) same = root.children[j] === want[j];
+    if (!same) {
+      for (var k = root.children.length - 1; k >= 0; k--) {
+        var c = root.children[k];
+        if (c.classList.contains("done") || want.indexOf(c) < 0) root.removeChild(c);
+      }
+      for (j = 0; j < want.length; j++) {
+        if (root.children[j] !== want[j]) root.insertBefore(want[j], root.children[j] || null);
+      }
     }
     while (root.children.length > want.length) root.removeChild(root.lastChild);
     schedule();

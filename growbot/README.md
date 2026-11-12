@@ -365,8 +365,8 @@ of `/v3/next.html`: photo, looking (a model call carrying a picture), thinking, 
 utterance being recorded), transcribing, voicing (Kokoro), speaking, moving (relay leg frames),
 and, with nothing under way, listening or idle. Each chip runs a clock; a finished one shrinks to
 its icon and final time and lingers 5 s. Whatever is under way always sits at the left edge,
-newest first, with finished chips after it, most recent first; on the wake gate and the landing
-the strip drops below the GrowBot logo bar instead of covering it. A photo also flashes the
+newest first, with finished chips after it, most recent first; on the wake gate the strip drops
+below the GrowBot logo bar instead of covering it. A photo also flashes the
 screen's edge. It watches from outside rather than patching each call site: it wraps `fetch`
 (the box's `/api/llm`, `/api/llm-stream` and `/api/fish-tts`, timed until the body is read, so a
 streamed reply counts as thinking until its last token) and the relay socket's `send` (a frame
