@@ -364,7 +364,9 @@ takes a picture (owner, 2026-11-12), `growbot-status.js` keeps a strip of chips 
 of `/v3/next.html`: photo, looking (a model call carrying a picture), thinking, hearing (an
 utterance being recorded), transcribing, voicing (Kokoro), speaking, moving (relay leg frames),
 and, with nothing under way, listening or idle. Each chip runs a clock; a finished one shrinks to
-its icon and final time and lingers 5 s while newer chips push it aside. A photo also flashes the
+its icon and final time and lingers 5 s. Whatever is under way always sits at the left edge,
+newest first, with finished chips after it, most recent first; on the wake gate the strip drops
+below the GrowBot logo bar instead of covering it. A photo also flashes the
 screen's edge. It watches from outside rather than patching each call site: it wraps `fetch`
 (the box's `/api/llm`, `/api/llm-stream` and `/api/fish-tts`, timed until the body is read, so a
 streamed reply counts as thinking until its last token) and the relay socket's `send` (a frame
@@ -373,6 +375,14 @@ repeating the last one, as a held pose does every 200 ms, is not movement), and 
 carries a picture: the camera itself encodes a frame into its ring every 2.5 s whether or not
 anything looks, so an encode would flash constantly. It loads right after the face and before any page script
 so every call goes through it; `?status=off` leaves the page untouched.
+
+### The bottom bar and the wake gate
+
+`CHROME_PATCHES` fit upstream's chrome to a box-run creature (owner, 2026-11-12). The bottom bar
+(brain, pause, mute and the type box) never fades: upstream hid it 9 s after the last touch.
+The wake gate drops upstream's store card under the wake button ("adopted, i'm yours", the
+members area and a soul download, or *adopt me · $20*): the box answers `/api/device` with a
+pass, there is no store, and the soul lives on the box.
 
 ### The brain panel and text size
 

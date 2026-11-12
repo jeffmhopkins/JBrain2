@@ -46,7 +46,7 @@
     return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
   };
 
-  // Newest first: index 0 sits at the left edge, so a new chip pushes the rest right.
+  // Display order, kept by order() at each render: index 0 sits at the left edge.
   var entries = [];
   var baseKind = "";
   var baseSince = now();
@@ -236,7 +236,7 @@
     "transition:opacity .45s ease,transform .3s ease,max-width .3s ease;max-width:200px;" +
     "animation:gbIn .25s ease-out}" +
     "#gbStatus .c.on{box-shadow:0 0 12px var(--k);animation:gbIn .25s ease-out,gbPulse 1.2s ease-in-out infinite}" +
-    "#gbStatus .c.done{opacity:.55;border-style:dashed;padding:3px 7px 3px 4px}" +
+    "#gbStatus .c.done{opacity:.55;border-style:dashed;padding:3px 7px 3px 4px;animation:none}" +
     // A finished chip keeps only its icon and its time, so three of them fit beside a live one.
     "#gbStatus .c.done .l{display:none}" +
     "#gbStatus .c.done .i{font-size:17px}" +
@@ -298,16 +298,46 @@
   var baseEl = null;
   var timer = 0;
 
+  function isOpen(e, t) {
+    return e.open > 0 || t < e.shownUntil;
+  }
+
+  // What is under way sits at the left edge, newest first, then what has finished, most recent
+  // first. Start order alone let a long run (the ear, a reopened chip) end up behind chips
+  // that started after it and finished long ago.
+  function order(t) {
+    entries.sort(function (a, b) {
+      var ao = isOpen(a, t);
+      var bo = isOpen(b, t);
+      if (ao !== bo) return ao ? -1 : 1;
+      return ao ? b.start - a.start : b.end - a.end;
+    });
+  }
+
+  // Upstream's wake gate puts the GrowBot logo top-left, under the strip; while it is up the
+  // strip drops below its nav bar instead.
+  function topBelowNav() {
+    var navs = document.querySelectorAll(".gb-entry-nav");
+    for (var i = 0; i < navs.length; i++) {
+      var r = navs[i].getBoundingClientRect();
+      if (r.height > 0 && r.bottom > 0) return Math.round(r.bottom + 6) + "px";
+    }
+    return "";
+  }
+
   function render() {
     timer = 0;
     pollPage();
     if (!root) return;
     var t = now();
+    var top = topBelowNav();
+    if (root.style.top !== top) root.style.top = top;
+    order(t);
     var anyOpen = false;
     var kept = [];
     for (var i = 0; i < entries.length; i++) {
       var e = entries[i];
-      var open = e.open > 0 || t < e.shownUntil;
+      var open = isOpen(e, t);
       if (open) anyOpen = true;
       var age = open ? 0 : t - e.end;
       if (!open && age > LINGER_MS + 500) {
@@ -345,8 +375,18 @@
         return e.el;
       })
     );
-    for (var j = 0; j < want.length; j++) {
-      if (root.children[j] !== want[j]) root.insertBefore(want[j], root.children[j] || null);
+    // Re-inserting an element restarts its animations, so a reorder moves the finished chips
+    // (which have none) around the running ones, never a running one past them.
+    var same = root.children.length === want.length;
+    for (var j = 0; same && j < want.length; j++) same = root.children[j] === want[j];
+    if (!same) {
+      for (var k = root.children.length - 1; k >= 0; k--) {
+        var c = root.children[k];
+        if (c.classList.contains("done") || want.indexOf(c) < 0) root.removeChild(c);
+      }
+      for (j = 0; j < want.length; j++) {
+        if (root.children[j] !== want[j]) root.insertBefore(want[j], root.children[j] || null);
+      }
     }
     while (root.children.length > want.length) root.removeChild(root.lastChild);
     schedule();

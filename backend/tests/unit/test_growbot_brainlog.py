@@ -107,7 +107,12 @@ class _Robots:
 
 
 def _call(
-    i: int, kind: str = "llm", ago: timedelta = timedelta(minutes=5), **kw: Any
+    i: int,
+    kind: str = "llm",
+    ago: timedelta = timedelta(minutes=5),
+    *,
+    at: datetime | None = None,
+    **kw: Any,
 ) -> LoggedCall:
     base: dict[str, Any] = {
         "kind": kind,
@@ -137,7 +142,12 @@ def _call(
     else:
         base |= {"reply": "Hello Quorra", "request": {"voice": "af_heart"}}
     base |= kw
-    return LoggedCall(i, _NOW - ago, CallRecord(**base))
+    return LoggedCall(i, at or _NOW - ago, CallRecord(**base))
+
+
+def _just_now() -> datetime:
+    """The owner route windows on the wall clock, not _NOW, so its calls are stamped by it."""
+    return datetime.now(UTC) - timedelta(seconds=30)
 
 
 def _diary(i: int, row: dict[str, Any]) -> DiaryRow:
@@ -408,7 +418,7 @@ def test_the_sidecar_route_refuses_odd_snapshots(tmp_path: Path, bad: dict[str, 
 
 
 def test_the_owner_downloads_the_zip(tmp_path: Path) -> None:
-    app, _ = _app(tmp_path, _Journal(), [_call(1, ago=timedelta(seconds=30))])
+    app, _ = _app(tmp_path, _Journal(), [_call(1, at=_just_now())])
     client = TestClient(app)
     app.dependency_overrides[owner_only] = _refuse
     assert client.post("/api/growbot/brain-log", json={"hours": 3}).status_code == 401
@@ -435,7 +445,7 @@ def test_the_owner_route_refuses_other_windows(tmp_path: Path, body: dict[str, A
 
 
 def test_the_debug_zip_is_always_redacted(tmp_path: Path) -> None:
-    app, _ = _app(tmp_path, _Journal(), [_call(1, "stt", ago=timedelta(seconds=30))])
+    app, _ = _app(tmp_path, _Journal(), [_call(1, "stt", at=_just_now())])
     client = TestClient(app)
     app.dependency_overrides[current_debug_principal] = _refuse
     assert client.get("/api/debug/growbot/brain-log").status_code == 401
@@ -519,7 +529,7 @@ def test_the_names_the_box_already_knows() -> None:
 
 
 def test_the_owner_route_hides_the_names_the_box_knows_with_no_list(tmp_path: Path) -> None:
-    call = _call(1, ago=timedelta(seconds=30), reply="Hi Jeffrey and Tamsin, I am Sprout on Fish")
+    call = _call(1, at=_just_now(), reply="Hi Jeffrey and Tamsin, I am Sprout on Fish")
     app, _ = _app(tmp_path, _Journal(), [call])
     app.dependency_overrides[owner_only] = lambda: OWNER
     got = TestClient(app).post("/api/growbot/brain-log", json={"hours": 1, "redact": False})

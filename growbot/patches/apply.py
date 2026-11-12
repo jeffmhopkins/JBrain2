@@ -725,6 +725,26 @@ SCRUB_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += SCRUB_PATCHES
 
+# The creature's chrome, fitted to a box-run creature (owner, 2026-11-12).
+CHROME_PATCHES: list[tuple[str, str, str, int]] = [
+    # "I want to keep the bottom bar visible all the time": upstream fades the bar (brain,
+    # pause, mute and the type box) 9 s after the last touch. Its clock still runs and still
+    # re-wakes the bar; it only never fades it.
+    ("v3/next.html", "setFade(true); },9000); }", "},9000); }", 1),
+    # The wake gate's card under the wake button is upstream's store: "adopted, i'm yours",
+    # its members area and a soul download for adopters, or "adopt me · $20". The box
+    # answers /api/device with a pass, so it always drew the adopted card; here the creature
+    # is the household's, its soul lives on the box, and there is no store. The card stays
+    # hidden, and the storage guard above it still runs.
+    (
+        "v3/next.html",
+        "var a=$(\"wgAdopt\"); if(!a||!window._wakeGateUp) return;",
+        "var a=$(\"wgAdopt\"); if(!a||!window._wakeGateUp||window.__gbBox) return;",
+        1,
+    ),
+]
+PATCHES += CHROME_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
