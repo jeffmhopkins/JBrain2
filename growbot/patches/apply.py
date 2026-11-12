@@ -868,24 +868,32 @@ PATCHES += ROUND2_PATCHES
 # has 4 s of audio, a pause shorter than the end-of-speech hold, or a full buffer, sends what
 # is held so far as a piece and keeps listening into a fresh buffer. Each piece runs the usual
 # transcript filters (hallucination lists, echo) and shows on screen as it lands; the end of
-# speech sends the last piece, and the creature gets one turn with the pieces joined in order.
-# A piece that never answers is given up after 12 s rather than hold the turn. Pieces skip the
-# phone's sound judge: by then the endpointer has heard seconds of voice.
-_GB_STREAM_JS = r'''var _gbPieceNext=null, _gbUtts={}, _gbUttSeq=0, GB_ROLL_MIN_S=4, GB_ROLL_GAP_MS=450;
+# speech sends the last piece (its trailing silence cut, as upstream trims a clip), and the
+# creature gets one turn with the pieces joined in order. A piece that never answers is given up
+# 25 s after the end, and one that lands later still reaches the creature as its own turn; a
+# cancelled utterance (the creature's own voice, pause, a hidden tab) sends nothing, as
+# upstream. Pieces skip the phone's sound judge: by then the endpointer has heard seconds of
+# voice, and a streamed utterance is not a hum.
+_GB_STREAM_JS = r'''var _gbPieceNext=null, _gbUtts={}, _gbDead={}, _gbUttSeq=0, GB_ROLL_MIN_S=4, GB_ROLL_GAP_MS=450, GB_UTT_MAX_MS=120000, GB_PIECE_WAIT_MS=25000;
 function _gbRollCheck(d,take){ var u=_pcmUtt; if(!_pcmLive||!u) return;
   var full=u.n>=u.buf.length, gap=Date.now()-vadVoiceT;
   if(!full&&!(u.n>=GB_ROLL_MIN_S*_pcmRate&&gap>=GB_ROLL_GAP_MS&&gap<_vadHold)) return;
-  _gbRoll(u); if(full&&take<d.length&&_pcmUtt){ var rest=d.subarray(take); _pcmUtt.buf.set(rest,0); _pcmUtt.n=rest.length; } }
-function _gbRoll(u){
-  if(!u.gbId){ u.gbId=++_gbUttSeq; _gbUtts[u.gbId]={text:[],done:[],n:0,meta:null,fin:false,t0:u.t0}; }
+  if(!_gbRoll(u)) return; if(full&&take<d.length&&_pcmUtt){ var rest=d.subarray(take); _pcmUtt.buf.set(rest,0); _pcmUtt.n=rest.length; } }
+function _gbRoll(u){ var fresh=new Float32Array(u.buf.length);
+  if(!u.gbId){ u.gbId=++_gbUttSeq; _gbUtts[u.gbId]={text:[],done:[],n:0,meta:null,fin:false,t0:u.t0};
+    var id=u.gbId; setTimeout(function(){ _gbFlush(id,true); },GB_UTT_MAX_MS+GB_PIECE_WAIT_MS);
+    try{ if(typeof _imitationCtl!=="undefined"&&_imitationCtl) _imitationCtl.cancel("streamed"); }catch(e){} }
   var g=_gbUtts[u.gbId], p={id:u.gbId,seq:g.n++}, buf=u.buf, n=u.n;
-  _pcmUtt={buf:new Float32Array(buf.length),n:0,pre:0,t0:Date.now(),nf:u.nf,gbId:u.gbId};
+  _pcmUtt={buf:fresh,n:0,pre:0,t0:Date.now(),nf:u.nf,gbId:u.gbId};
+  _gbSend(p,buf,n); return true; }
+function _gbSend(p,buf,n){
   if(n<Math.round(0.3*_pcmRate)){ _gbPiece(p,""); return; }
   setTimeout(function(){ try{ var w=encodeWav(buf.subarray(0,n),_pcmRate,16000,null);
     _sttLane="pcm"; _gbPieceNext=p; transcribe(new Blob([w],{type:"audio/wav"}),"audio/wav",Math.round(n/_pcmRate*1000)); }
     catch(e){ _gbPieceNext=null; _gbPiece(p,""); } },0); }
-function _gbPiece(p,txt,meta,lang){ var g=_gbUtts[p.id]; if(!g) return;
-  g.text[p.seq]=txt||""; g.done[p.seq]=1; if(meta&&(p.fin||!g.meta)) g.meta=meta; if(p.fin){ g.fin=true; g.lang=lang; }
+function _gbPiece(p,txt,meta,lang){ var g=_gbUtts[p.id];
+  if(!g){ if(txt&&!_gbDead[p.id]){ try{ logEv("stt_late",{}); }catch(e){} showYouSaid(txt); sendTxtFrom(txt,meta); } return; }
+  g.text[p.seq]=txt||""; g.done[p.seq]=1; if(meta&&(p.fin||!g.meta)) g.meta=meta; if(lang) g.lang=lang; if(p.fin) g.fin=true;
   var said=g.text.filter(function(t){ return t; }).join(" ");
   if(said&&!g.fin){ try{ showYouSaid(said+" …"); }catch(e){} }
   _gbFlush(p.id,false); }
@@ -897,14 +905,15 @@ function _gbFlush(id,force){ var g=_gbUtts[id]; if(!g||(!g.fin&&!force)) return;
   try{ logEv("stt_join",{n:g.n,ms:Date.now()-g.t0,force:force?1:0}); }catch(e){}
   try{ _convLangSaw(g.lang,txt,g.meta); }catch(e){}
   showYouSaid(txt); sendTxtFrom(txt,g.meta); }
-function _gbFinal(u,send){ var g=_gbUtts[u.gbId], p={id:u.gbId,seq:g.n++,fin:true};
-  setTimeout(function(){ _gbFlush(u.gbId,true); },12000);
-  if(!send||u.n<Math.round(0.3*_pcmRate)||vadVoiceT<u.t0){ _gbPiece(p,"",null,null); return; }
-  setTimeout(function(){ try{ var w=encodeWav(u.buf.subarray(0,u.n),_pcmRate,16000,null);
-    _sttLane="pcm"; _gbPieceNext=p; transcribe(new Blob([w],{type:"audio/wav"}),"audio/wav",Math.round(u.n/_pcmRate*1000)); }
-    catch(e){ _gbPieceNext=null; _gbPiece(p,"",null,null); } },0); }
+function _gbFinal(u,send,tailMs){ var id=u.gbId, g=_gbUtts[id];
+  if(!send){ delete _gbUtts[id]; _gbDead[id]=1; try{ var el=document.getElementById("youSaid"); if(el) el.style.display="none"; }catch(e){} return; }
+  var p={id:id,seq:g.n++,fin:true}, cut=Math.round(Math.max(0,(+tailMs||0))/1000*_pcmRate), n=Math.max(0,u.n-cut);
+  setTimeout(function(){ _gbFlush(id,true); },GB_PIECE_WAIT_MS);
+  if(vadVoiceT<u.t0){ _gbPiece(p,""); return; }
+  try{ _vadEndT=Date.now(); }catch(e){}
+  _gbSend(p,u.buf,n); }
 function pcmUttStop(send,tailMs){ var u=_pcmUtt;
-  if(u&&u.gbId&&_gbUtts[u.gbId]){ _pcmLive=false; _pcmUtt=null; _gbFinal(u,send); return; }
+  if(u&&u.gbId&&_gbUtts[u.gbId]){ _pcmLive=false; _pcmUtt=null; _gbFinal(u,send,tailMs); return; }
   return _gbPcmUttStop0(send,tailMs); }'''
 STREAM_PATCHES: list[tuple[str, str, str, int]] = [
     (
@@ -950,7 +959,59 @@ STREAM_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         'logEv("stt_drop",{p:_g.p,tgt:"groq"});',
-        'logEv("stt_drop",{p:_g.p,tgt:"groq"}); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta);',
+        'logEv("stt_drop",{p:_g.p,tgt:"groq"}); if(meta&&meta.gbPiece){'
+        ' _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); return; }',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'logEv("stt_drop",{p:_g.p,tgt:"di"});',
+        'logEv("stt_drop",{p:_g.p,tgt:"di"}); if(meta&&meta.gbPiece){'
+        ' _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); return; }',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'e.q==="daily_limit"){ toast(',
+        'e.q==="daily_limit"){ if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); toast(',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'e.q==="daily_limit"){ _sttPhase("done"); toast(',
+        'e.q==="daily_limit"){ if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta);'
+        ' _sttPhase("done"); toast(',
+        1,
+    ),
+    # Asleep, transcribe() returns before it reads the piece: the piece is answered empty.
+    (
+        "v3/next.html",
+        "return; } _asleepSttT=_asn; }",
+        "if(_gbP) _gbPiece(_gbP,\"\"); return; } _asleepSttT=_asn; }",
+        1,
+    ),
+    # An empty piece is not the room going quiet: the naming lane listens for whole clips only.
+    (
+        "v3/next.html",
+        'try{ if(txt&&String(txt).trim()) _listenStash=null; else if(_sttLane==="pcm") _listenFire(); }',
+        'try{ if(txt&&String(txt).trim()) _listenStash=null; else if(_sttLane==="pcm"'
+        '&&!(meta&&meta.gbPiece)) _listenFire(); }',
+        1,
+    ),
+    # Upstream ended every utterance at 12 s; a streamed one rolls its full buffer instead and
+    # runs until the person stops, with a 2-minute backstop.
+    (
+        "v3/next.html",
+        "else if(now-vadStartT > 12000){ vadStop(); _vadEndT=0; }",
+        "else if(now-vadStartT > (_pcmLive&&_pcmUtt?GB_UTT_MAX_MS:12000)){ vadStop(); _vadEndT=0; }",
+        1,
+    ),
+    # The mic going away mid-message still delivers what was already heard.
+    (
+        "v3/next.html",
+        "function pcmTapDown(){ try{if(",
+        "function pcmTapDown(){ try{ var _gbU=_pcmUtt; if(_gbU&&_gbU.gbId&&_gbUtts[_gbU.gbId])"
+        " _gbFlush(_gbU.gbId,true); }catch(e){} try{if(",
         1,
     ),
     (

@@ -607,6 +607,7 @@ function run(){ timers.sort(function(a,b){ return a.at-b.at; });
   while(timers.length&&timers[0].at<=now){ timers.shift().f(); } }
 var sent=[], shown=[], stt=[], old=[];
 function encodeWav(f,r,d,c){ return {len:f.length}; }
+var _vadEndT=0, _imitationCtl=null; var document={getElementById:function(){ return null; }};
 function Blob(parts){ this.len=parts[0].len; }
 function transcribe(b,t,ms){ stt.push({p:_gbPieceNext,len:b.len}); _gbPieceNext=null; }
 function showYouSaid(t){ shown.push(t); } function sendTxtFrom(t,m){ sent.push(t); }
@@ -666,18 +667,33 @@ def test_a_lost_or_silent_piece_never_holds_the_turn() -> None:
     utt(); feed(5000,true); feed(600,false); feed(4500,true); feed(600,false);
     feed(1200,false); pcmUttStop(true,300); run();
     answer(1,"the words that came back");
-    now+=12000; run();
+    now+=25000; run();
+    answer(0,"late words");
     """
     got = _run_stream(page, lost)
-    assert got["stt"] == 2 and got["sent"] == ["the words that came back"]
+    # What came back goes after the give-up; a piece landing later still reaches the creature.
+    assert got["stt"] == 2 and got["sent"] == ["the words that came back", "late words"]
 
-    # Cut off by the creature's own voice: what was already heard still reaches it.
+    # A cancelled utterance (its own voice, pause, a hidden tab) sends nothing, as upstream.
     cancelled = """
     utt(); feed(5000,true); feed(600,false); feed(1000,true); pcmUttStop(false,0); run();
     answer(0,"hello there");
     """
     got = _run_stream(page, cancelled)
-    assert got["sent"] == ["hello there"]
+    assert got["sent"] == []
+
+
+def test_a_streamed_utterance_outlives_the_old_twelve_second_cap() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "else if(now-vadStartT > (_pcmLive&&_pcmUtt?GB_UTT_MAX_MS:12000)){ vadStop();" in page
+    assert "_gbFlush(_gbU.gbId,true)" in page[page.index("function pcmTapDown(){") :][:300]
+    # 30 s of talk with no pause: the full buffer rolls twice and nothing is dropped.
+    nonstop = """
+    utt(); feed(30000,true); pcmUttStop(true,300); run();
+    for(var i=0;i<stt.length;i++) answer(i,"part"+i);
+    """
+    got = _run_stream(page, nonstop)
+    assert got["stt"] == 3 and got["sent"] == ["part0 part1 part2"]
 
 
 def test_an_ordinary_quiet_beat_waits_ninety_seconds_after_the_last_activity() -> None:
