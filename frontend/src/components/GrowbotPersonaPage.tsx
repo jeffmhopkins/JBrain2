@@ -17,6 +17,8 @@ import {
 } from "../api/client";
 import { useBackLayer } from "../backLayers";
 import {
+  EYES,
+  type Eye,
   FACES,
   MEMORY,
   type MemoryId,
@@ -27,6 +29,7 @@ import {
   ago,
   clip,
   day,
+  eyeOf,
   memoryForgot,
   onPhone,
   phoneName,
@@ -103,6 +106,8 @@ export function GrowbotPersonaPage({
   const [renaming, setRenaming] = useState(false);
   // The face being saved, shown picked while it is.
   const [facing, setFacing] = useState<GrowbotFace | null>(null);
+  // The camera being saved, shown picked while it is.
+  const [eyeing, setEyeing] = useState<Eye | null>(null);
   const [restoring, setRestoring] = useState<GrowbotCheckpoint | null>(null);
   const [mems, setMems] = useState<GrowbotMemory[] | null>(null);
   const [memError, setMemError] = useState("");
@@ -478,8 +483,32 @@ export function GrowbotPersonaPage({
     }
   }
 
+  /** Saved as it is tapped, like the face: the setting lives on the box, and the phone's
+   *  poll flips the lens where it stands. */
+  async function pickEye(eye: Eye) {
+    const was = eyeOf(detail?.prefs ?? p.prefs);
+    if (eye === was || eyeing !== null) return;
+    setEyeing(eye);
+    try {
+      const lens = eye === "back" ? "environment" : "user";
+      await api.setGrowbotPersonaPrefs(p.id, { gb_eye: lens });
+      setDetail((d) => (d ? { ...d, prefs: { ...(d.prefs ?? {}), gb_eye: lens } } : d));
+      const what = eye === "back" ? "its back camera" : "its front camera";
+      say(
+        p.phone
+          ? `${p.name} looks through ${what}; it switches ${onPhone(p.phone, pl)} in a few seconds.`
+          : `${p.name} looks through ${what} next time it opens.`,
+      );
+    } catch (e) {
+      say(`The camera didn't change — ${message(e)}`);
+    } finally {
+      setEyeing(null);
+    }
+  }
+
   function manageTab() {
     const current = facing ?? detail?.face ?? p.face;
+    const eye = eyeing ?? eyeOf(detail?.prefs ?? p.prefs);
     return (
       <section className="gb-card">
         <fieldset className="gb-choices">
@@ -496,6 +525,24 @@ export function GrowbotPersonaPage({
               <span className="gb-tx">
                 {f.name}
                 <em>{f.what}</em>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        <fieldset className="gb-choices">
+          <legend>Camera</legend>
+          {EYES.map((e) => (
+            <label key={e.id} className={`gb-choice${eye === e.id ? " sel" : ""}`}>
+              <input
+                type="radio"
+                name={`gb-eye-${p.id}`}
+                checked={eye === e.id}
+                disabled={eyeing !== null}
+                onChange={() => void pickEye(e.id)}
+              />
+              <span className="gb-tx">
+                {e.name}
+                <em>{e.what}</em>
               </span>
             </label>
           ))}

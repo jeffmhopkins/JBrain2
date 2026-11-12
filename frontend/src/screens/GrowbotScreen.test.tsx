@@ -62,6 +62,7 @@ function persona(over: Partial<GrowbotPersona>): GrowbotPersona {
     memories: 0,
     wearing: null,
     face: "lantern",
+    prefs: null,
     ...over,
   };
 }
@@ -1052,6 +1053,34 @@ describe("GrowbotScreen a persona's page", () => {
     ).toBeTruthy();
     expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({ face: "robot" });
     expect(within(faces).getByRole("radio", { name: /^Robot/ })).toHaveProperty("checked", true);
+  });
+
+  it("switches a persona's camera from Manage, through its settings on the box", async () => {
+    const s = serve(
+      UP,
+      pageRoutes((path, init) => {
+        if (path === `/api/growbot/personas/${SPROUT}/prefs` && init?.method === "PATCH") {
+          return json({ version: 2 });
+        }
+        return null;
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    const eyes = screen.getByRole("group", { name: "Camera" });
+    expect(within(eyes).getByRole("radio", { name: /^Front/ })).toHaveProperty("checked", true);
+    fireEvent.click(within(eyes).getByRole("radio", { name: /^Back/ }));
+    expect(
+      await screen.findByText(
+        "Sprout looks through its back camera; it switches on Pixel 6a in a few seconds.",
+      ),
+    ).toBeTruthy();
+    expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({
+      set: { gb_eye: "environment" },
+      drop: [],
+    });
+    expect(within(eyes).getByRole("radio", { name: /^Back/ })).toHaveProperty("checked", true);
   });
 
   it("renames, duplicates and exports from Manage", async () => {
