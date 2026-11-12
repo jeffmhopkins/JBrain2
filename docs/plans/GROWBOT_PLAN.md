@@ -322,7 +322,11 @@ turns from text ones (`../runbooks/DEBUG_ACCESS.md`).
 **Models.** The default lineup names a vision-capable catalog model so visual memory works:
 `qwen3-vl-30b` or `qwen3.8-27b` on the standard engine, `qwen3.8-flash-next` when Flash-Next
 is the engine. Upstream's measured budget is ~600–900 prompt tokens and ~10–25 reply tokens
-per turn, so latency is dominated by the image prefill on vision turns only. STT needs the box's
+per turn, so latency is dominated by the image prefill on vision turns only. Measured on the
+box (2026-11-12): the served 2048-token picture floor blew each 320 px frame up to ~2,100
+tokens, three frames a picture turn, ~33 s of prefill against ~5 s for a text turn. The lane
+now asks for its own floor per request (`CREATURE_IMAGE_MIN_TOKENS` = 256, read by Flash-Next's
+patched engine, `deploy/apply-llama-image-floor.sh`), so note photos keep 2048. STT needs the box's
 whisper model provisioned; without it the shim reports STT off and the creature's typed and
 talk-button paths still work.
 
