@@ -1391,13 +1391,14 @@ function gbSleepAllowed(){
 }
 /* Sleep ends whatever it was doing: a seek or mission still under way holds every dream back
    ("activity") until the leave lapses. maybeDream asks first, so a seek beat that slipped in is
-   ended on the next try; but only while no newer request of its person's is queued or was sent
-   since the leave, since what they asked for after the goodnight outranks it. */
+   ended on the next try; but only while no newer request of its person's is queued, sent, or
+   answered on the page (a game started by words) since the leave: what they asked for after the
+   goodnight outranks it. */
 var _gbSleepReq=0;
 function gbSleepGrant(){ _gbSleepOK=true; _gbSleepAt=Date.now(); logEv("sleep_ok",{csd:callsSinceDream});
   try{ _gbSleepReq=typeof _humanReqN==="number"?_humanReqN:0; }catch(e){} }
 function gbSleepEnds(){ try{
-  if(gbSleepAllowed()&&!pendingUser&&(typeof _humanReqN!=="number"||_humanReqN===_gbSleepReq)&&(seekGoal||actOn||mimicOn)) endActivity("sleep");
+  if(gbSleepAllowed()&&!pendingUser&&!(_humanT>_gbSleepAt)&&(typeof _humanReqN!=="number"||_humanReqN===_gbSleepReq)&&(seekGoal||actOn||mimicOn)) endActivity("sleep");
 }catch(e){} }
 /* The visit's lines not yet dreamed ride the soul (scratch.visit), so a dream after a reload or
    on the next day's open still sees the conversation it should keep; a landed dream clears them,
@@ -1468,7 +1469,7 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
         1,
     ),
     ("v3/next.html", "IDLE_DREAM_MS=120000", "IDLE_DREAM_MS=300000", 1),
-    ("v3/next.html", "function maybeDream(){ var _dw0=", "function maybeDream(){ gbSleepEnds(); var _dw0=", 1),
+    ("v3/next.html", "function maybeDream(){ var _dw0=", "function maybeDream(){ try{ gbSleepEnds(); }catch(e){} var _dw0=", 1),
     # "Go to sleep" and "go to bed" are the plainest ways to let it sleep, and upstream's seek
     # words read them as a place to find, so the sleep it was given became a hunt for "sleep".
     (

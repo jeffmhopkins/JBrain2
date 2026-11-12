@@ -1773,16 +1773,19 @@ def test_leave_to_sleep_ends_what_it_was_doing() -> None:
     queued, or sent after the goodnight, outranks the leave."""
     got = _sleep_page(
         "var ended=[],seekGoal='my keys',actOn=true,mimicOn=false,pendingUser=null,_humanReqN=3;"
+        "var _humanT=Date.now()-5000;"
         "function endActivity(r){ended.push(r);seekGoal='';actOn=false;}"
         "var r={};gbSleepEnds();r.unasked=ended.length;"
         "gbSleepGrant();gbSleepEnds();r.slept=ended.slice();"
         "seekGoal='the remote';actOn=true;pendingUser='find the remote';gbSleepEnds();"
         "r.queued=ended.length;pendingUser=null;_humanReqN=4;gbSleepEnds();r.asked=ended.length;"
         "gbSleepGrant();gbSleepEnds();r.again=ended.length;"
+        # Words answered on the page alone (the shake game) move no request, only _humanT.
+        "mimicOn=true;gbSleepGrant();_humanT=_gbSleepAt+1;gbSleepEnds();r.game=ended.length;"
         "console.log(JSON.stringify(r));"
     )
     assert got["unasked"] == 0 and got["slept"] == ["sleep"]
-    assert got["queued"] == 1 and got["asked"] == 1 and got["again"] == 2
+    assert got["queued"] == 1 and got["asked"] == 1 and got["again"] == 2 and got["game"] == 2
 
 
 def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
@@ -1798,7 +1801,7 @@ def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
         in page
     )
     assert "IDLE_DREAM_MS=300000" in page and "IDLE_DREAM_MS=120000" not in page
-    assert "function maybeDream(){ gbSleepEnds(); var _dw0=" in page
+    assert "function maybeDream(){ try{ gbSleepEnds(); }catch(e){} var _dw0=" in page
     assert "_gbSleepOK=false; _gbDreamOnOpen=false;" in page
     assert '+(_gbSleepWhy||"a quiet stillness came over it")+gbDreamSession();' in page
     assert '_t.indexOf("🌙 dreamed")!==0 && _t.indexOf("📖")!==0;' in page

@@ -8961,13 +8961,14 @@ function gbSleepAllowed(){
 }
 /* Sleep ends whatever it was doing: a seek or mission still under way holds every dream back
    ("activity") until the leave lapses. maybeDream asks first, so a seek beat that slipped in is
-   ended on the next try; but only while no newer request of its person's is queued or was sent
-   since the leave, since what they asked for after the goodnight outranks it. */
+   ended on the next try; but only while no newer request of its person's is queued, sent, or
+   answered on the page (a game started by words) since the leave: what they asked for after the
+   goodnight outranks it. */
 var _gbSleepReq=0;
 function gbSleepGrant(){ _gbSleepOK=true; _gbSleepAt=Date.now(); logEv("sleep_ok",{csd:callsSinceDream});
   try{ _gbSleepReq=typeof _humanReqN==="number"?_humanReqN:0; }catch(e){} }
 function gbSleepEnds(){ try{
-  if(gbSleepAllowed()&&!pendingUser&&(typeof _humanReqN!=="number"||_humanReqN===_gbSleepReq)&&(seekGoal||actOn||mimicOn)) endActivity("sleep");
+  if(gbSleepAllowed()&&!pendingUser&&!(_humanT>_gbSleepAt)&&(typeof _humanReqN!=="number"||_humanReqN===_gbSleepReq)&&(seekGoal||actOn||mimicOn)) endActivity("sleep");
 }catch(e){} }
 /* The visit's lines not yet dreamed ride the soul (scratch.visit), so a dream after a reload or
    on the next day's open still sees the conversation it should keep; a landed dream clears them,
@@ -9001,7 +9002,7 @@ function gbDreamKeep(o){ try{
   logEv("dream_keep",{s:k,f:n});
 }catch(e){} }
 var _humanT=0;   // 0925 (field session nx-mt7or): when the person's last typed or transcribed turn arrived (sendTxtFrom); maybeDream waits 30 s after it
-function maybeDream(){ gbSleepEnds(); var _dw0=(typeof vmBusy==="function"&&vmBusy())?"vm":(seekGoal||actOn)?"activity":_motion?"motion":_speechBusy()?"speaking":"";   // never dream mid-pursuit — a 24-beat seek trips callsSinceDream>=12 and the dream would interrupt the mission (audit)
+function maybeDream(){ try{ gbSleepEnds(); }catch(e){} var _dw0=(typeof vmBusy==="function"&&vmBusy())?"vm":(seekGoal||actOn)?"activity":_motion?"motion":_speechBusy()?"speaking":"";   // never dream mid-pursuit — a 24-beat seek trips callsSinceDream>=12 and the dream would interrupt the mission (audit)
   /* 1005 (memory research 1005, a tester 09-30: a dream was due from the 12th reply, none started, NO row said why). These
      first holds returned silently; a creature that is always speaking or always in an activity never dreams and the journal
      looked healthy. They now join the same one-row-per-episode dream_defer below (why vm|activity|motion|speaking), in the
