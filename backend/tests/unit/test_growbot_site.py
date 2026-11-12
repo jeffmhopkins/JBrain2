@@ -1771,14 +1771,19 @@ def test_leave_to_sleep_ends_what_it_was_doing() -> None:
     """A seek still under way when its person lets it sleep ends, after the reply that took the
     leave, so the dream is not held back as "activity" until the leave lapses."""
     got = _sleep_page(
-        "var timers=[],ended=[],seekGoal='my keys',actOn=true,mimicOn=false;"
+        "var timers=[],ended=[],seekGoal='my keys',actOn=true,mimicOn=false,actGen=0;"
+        "var inFlight=false;"
         "setTimeout=function(f){timers.push(f);};"
-        "function endActivity(r){ended.push(r);seekGoal='';actOn=false;}"
+        "function endActivity(r){ended.push(r);seekGoal='';actOn=false;actGen++;}"
         "gbSleepGrant();var before=ended.slice();timers.shift()();"
-        "_gbSleepOK=true;gbSleepGrant();timers.shift()();"
-        "console.log(JSON.stringify({before,ended}));"
+        "_gbSleepOK=true;gbSleepGrant();timers.shift()();var idle=ended.slice();"
+        # Words queued behind the goodnight start a new seek in the same handler: they win.
+        "seekGoal='the remote';actOn=true;gbSleepGrant();seekGoal='my phone';inFlight=true;"
+        "timers.shift()();"
+        "console.log(JSON.stringify({before,idle,ended,seek:seekGoal}));"
     )
-    assert got["before"] == [] and got["ended"] == ["sleep"]
+    assert got["before"] == [] and got["idle"] == ["sleep"]
+    assert got["ended"] == ["sleep"] and got["seek"] == "my phone"
 
 
 def test_sleep_replaces_the_every_twelve_replies_dream() -> None:

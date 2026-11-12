@@ -8961,9 +8961,11 @@ function gbSleepAllowed(){
 }
 /* Sleep ends whatever it was doing: a seek or mission still under way holds every dream back
    ("activity") until the permission lapses. After this reply's handler, since endActivity
-   voids replies still in flight. */
+   voids replies still in flight, and only if nothing began meanwhile: words queued behind the
+   goodnight are answered in that handler, and what they started outranks the leave. */
 function gbSleepGrant(){ _gbSleepOK=true; _gbSleepAt=Date.now(); logEv("sleep_ok",{csd:callsSinceDream});
-  setTimeout(function(){ try{ if(_gbSleepOK&&(seekGoal||actOn||mimicOn)) endActivity("sleep"); }catch(e){} },0); }
+  var g, s; try{ g=actGen; s=seekGoal; }catch(e){ return; }
+  setTimeout(function(){ try{ if(_gbSleepOK&&actGen===g&&seekGoal===s&&!inFlight&&(seekGoal||actOn||mimicOn)) endActivity("sleep"); }catch(e){} },0); }
 /* The visit's lines not yet dreamed ride the soul (scratch.visit), so a dream after a reload or
    on the next day's open still sees the conversation it should keep; a landed dream clears them,
    so no visit is summarised twice. */
