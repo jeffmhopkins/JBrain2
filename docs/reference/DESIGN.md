@@ -3461,6 +3461,13 @@ and a JPanel in the same room are visibly the same family.
   fills the top 62% of the screen; the caption, text box and button bar own the rest.
 - **The panels' eyes.** The same white eye, pupil, catchlight and lids, with GrowBot's seven
   emotions mapped onto the panels' lid geometry, so one emotion looks the same on both.
+- **The pupil always shows** (owner, 2026-11-12). On every face, in every emotion, the lids
+  leave at least 36% of the eye open at its centreline (scaled back as one past that, so the
+  mood's shape stays) and the pupil sits in that opening; the lantern draws its pupil all the
+  time, not only while thinking or looking. Only a blink or sleep shuts an eye.
+- **It feels the phone tilt** (owner, 2026-11-12). Past a hand-held wobble the pupils roll to
+  the low side, the head leans back toward level and the face swings a little downhill, eased
+  slowly so a walking body does not shake it.
 - **The beak talks.** The lower three beak segments drop while it speaks; the crest perks when
   alert or happy and droops when tired or sleepy.
 - **Upstream's sky stays.** The pixel sky, its mood hue, the stars, the sparks and the dream
