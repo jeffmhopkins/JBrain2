@@ -495,6 +495,9 @@
 .gb-seg button {
   flex: 1;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 44px;
   border: 0;
   border-radius: 10px;
@@ -508,17 +511,18 @@
   background: var(--accent-tint);
   color: var(--text);
 }
+/* Labels never squeeze into each other: past the phone's width the row scrolls instead. */
 .gb-seg.inner {
+  overflow-x: auto;
+  scrollbar-width: none;
   margin-top: 4px;
   padding: 3px;
   gap: 2px;
 }
 /* Sized by their words, so a label and its count pill stay on one line at any text size. */
 .gb-seg.inner button {
-  flex: 1 1 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  flex: 1 0 auto;
+  min-width: auto;
   padding: 0 6px;
   white-space: nowrap;
   min-height: 40px;

@@ -850,6 +850,36 @@ describe("GrowbotScreen a persona's page", () => {
     expect(s.calls.some((c) => c.path.endsWith("/checkpoints/automatic"))).toBe(true);
   });
 
+  it("swipes a row open for its rail, whose delete takes a second tap", async () => {
+    const s = serve(
+      UP,
+      pageRoutes((path, init) =>
+        path.endsWith(`/checkpoints/${cp().id}`) && init?.method === "DELETE"
+          ? new Response(null, { status: 204 })
+          : null,
+      ),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: /^Checkpoints/ }));
+    const tap = screen.getByRole("button", { name: /^Before the beach trip/ });
+    const slide = tap.parentElement as HTMLElement;
+    const swipe = (from: number, to: number) => {
+      fireEvent.touchStart(slide, { touches: [{ clientX: from, clientY: 100 }] });
+      fireEvent.touchMove(slide, { touches: [{ clientX: (from + to) / 2, clientY: 101 }] });
+      fireEvent.touchMove(slide, { touches: [{ clientX: to, clientY: 101 }] });
+      fireEvent.touchEnd(slide, { touches: [] });
+    };
+    swipe(300, 40);
+    expect(screen.getByRole("button", { name: /restore/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /new persona/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/ }));
+    expect(s.calls.some((c) => c.method === "DELETE")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "tap again to delete" }));
+    expect(await screen.findByText("Deleted “Before the beach trip”.")).toBeTruthy();
+    expect(s.calls.filter((c) => c.method === "DELETE")).toHaveLength(1);
+  });
+
   it("starts a new persona from a checkpoint's personality", async () => {
     const s = serve(
       UP,

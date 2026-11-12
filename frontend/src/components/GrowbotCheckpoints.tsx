@@ -41,9 +41,10 @@ export function GrowbotCheckpoints({
   const [saving, setSaving] = useState(false);
   const autos = cps.filter((c) => c.auto).length;
 
-  // The rail's and the sheet's delete arm the same key, so either one's second tap deletes.
-  function del(cp: GrowbotCheckpoint) {
-    if (!arm(`cp:${cp.id}`)) return;
+  // The rail and the sheet arm their own keys, so a delete armed on the rail and then backed
+  // out of never leaves the sheet's button one tap from deleting.
+  function del(cp: GrowbotCheckpoint, where: "rail" | "sheet") {
+    if (!arm(`cp-${where}:${cp.id}`)) return;
     setRailId(null);
     setOpened(null);
     onDelete(cp);
@@ -99,8 +100,9 @@ export function GrowbotCheckpoints({
                     label: "delete",
                     tone: "delete",
                     icon: <TrashIcon size={18} />,
-                    armed: isArmed(`cp:${c.id}`),
-                    onClick: () => del(c),
+                    armed: isArmed(`cp-rail:${c.id}`),
+                    armedLabel: "tap again to delete",
+                    onClick: () => del(c, "rail"),
                   },
                 ]}
               >
@@ -176,10 +178,10 @@ export function GrowbotCheckpoints({
             </button>
             <button
               type="button"
-              className={`gb-btn block danger${isArmed(`cp:${opened.id}`) ? " armed" : ""}`}
-              onClick={() => del(opened)}
+              className={`gb-btn block danger${isArmed(`cp-sheet:${opened.id}`) ? " armed" : ""}`}
+              onClick={() => del(opened, "sheet")}
             >
-              {isArmed(`cp:${opened.id}`)
+              {isArmed(`cp-sheet:${opened.id}`)
                 ? "Tap again — this can't be undone"
                 : "Delete checkpoint"}
             </button>

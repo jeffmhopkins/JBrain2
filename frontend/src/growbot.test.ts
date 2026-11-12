@@ -11,6 +11,15 @@ describe("dayHeading", () => {
     expect(dayHeading(at(11, 23), NOW)).toBe("Yesterday");
     expect(dayHeading(at(10, 12), NOW)).toBe("10 Nov");
   });
+
+  it("names the year of an older year's day, so the same date a year apart never merges", () => {
+    const lastYear = new Date(2025, 10, 12, 9, 0).toISOString();
+    expect(dayHeading(lastYear, NOW)).toBe("12 Nov 2025");
+    const rows = [at(12, 8), { created_at: lastYear }].map((r) =>
+      typeof r === "string" ? { created_at: r } : r,
+    );
+    expect(byDay(rows, NOW).map((g) => g.heading)).toEqual(["Today", "12 Nov 2025"]);
+  });
 });
 
 describe("byDay", () => {

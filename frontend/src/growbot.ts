@@ -523,7 +523,8 @@ export function dayHeading(iso: string, now = new Date()): string {
   const back = Math.round((start(now) - start(d)) / 86_400_000);
   if (back === 0) return "Today";
   if (back === 1) return "Yesterday";
-  return day(iso);
+  // Named checkpoints are kept for good, so an older year says so and never merges with this one.
+  return d.getFullYear() === now.getFullYear() ? day(iso) : `${day(iso)} ${d.getFullYear()}`;
 }
 
 /** Rows grouped under their day's heading, in the order given (newest first in, so out). */
