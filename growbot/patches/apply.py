@@ -731,6 +731,17 @@ CHROME_PATCHES: list[tuple[str, str, str, int]] = [
     # pause, mute and the type box) 9 s after the last touch. Its clock still runs and still
     # re-wakes the bar; it only never fades it.
     ("v3/next.html", "setFade(true); },9000); }", "},9000); }", 1),
+    # The keyboard: Android Chrome by default lays it over the page and pans the page up to the
+    # focused type box, which scrolls the status strip and the top of the face off screen.
+    # resizes-content shrinks the layout viewport instead, so every fixed layer (the face's
+    # canvas, the strip, the bar) fits the space above the keyboard and the face redraws
+    # smaller. iOS ignores the key.
+    (
+        "v3/next.html",
+        "user-scalable=no, viewport-fit=cover\"/>",
+        "user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content\"/>",
+        1,
+    ),
     # The wake gate's card under the wake button is upstream's store: "adopted, i'm yours",
     # its members area and a soul download for adopters, or "adopt me · $20". The box
     # answers /api/device with a pass, so it always drew the adopted card; here the creature

@@ -124,6 +124,8 @@ def test_the_bottom_bar_never_fades() -> None:
     """Brain, pause, mute and the type box stay on screen (owner, 2026-11-12)."""
     creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "setFade(true)" not in creature
+    # The keyboard shrinks the page rather than panning the strip and the face off screen.
+    assert "viewport-fit=cover, interactive-widget=resizes-content" in creature
     assert "function setFade(f){" in creature
 
 
