@@ -1155,24 +1155,38 @@ describe("GrowbotScreen a persona's page", () => {
     expect(within(talks).getByRole("radio", { name: /^Grown-up/ })).toHaveProperty("checked", true);
   });
 
-  it("waits for a persona's first phone before its camera can be picked", async () => {
+  it("sets a persona's camera and talk style before any phone has opened it", async () => {
     const ov = overview();
-    ov.personas = ov.personas.map((x) => (x.id === SPROUT ? { ...x, prefs: null } : x));
-    const s = serve(UP, pageRoutes(), null, ov);
+    ov.personas = ov.personas.map((x) =>
+      x.id === SPROUT ? { ...x, prefs: null, phone: null } : x,
+    );
+    const s = serve(
+      UP,
+      pageRoutes((path, init) => {
+        if (path === `/api/growbot/personas/${SPROUT}/prefs` && init?.method === "PATCH") {
+          return json({ version: 1 });
+        }
+        return null;
+      }),
+      null,
+      ov,
+    );
     render(<GrowbotScreen />);
     await openSprout();
     fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
-    const eyes = screen.getByRole("group", { name: "Camera" });
-    expect(within(eyes).getByRole("radio", { name: /^Back/ })).toHaveProperty("disabled", true);
-    expect(
-      within(eyes).getByText("Open Sprout on a phone once, then pick its camera here."),
-    ).toBeTruthy();
-    fireEvent.click(within(eyes).getByRole("radio", { name: /^Back/ }));
-    expect(s.calls.some((c) => c.path.endsWith("/prefs"))).toBe(false);
+    expect(screen.queryByText(/on a phone once/)).toBeNull();
     const talks = screen.getByRole("group", { name: "Talk style" });
-    expect(within(talks).getByRole("radio", { name: /^Grown-up/ })).toHaveProperty(
-      "disabled",
-      true,
+    fireEvent.click(within(talks).getByRole("radio", { name: /^Grown-up/ }));
+    expect(
+      await screen.findByText("Sprout talks like a grown-up next time it opens."),
+    ).toBeTruthy();
+    const eyes = screen.getByRole("group", { name: "Camera" });
+    fireEvent.click(within(eyes).getByRole("radio", { name: /^Back/ }));
+    await waitFor(() =>
+      expect(s.calls.filter((c) => c.method === "PATCH").map((c) => c.body)).toEqual([
+        { set: { gb_talk: "grownup" }, drop: [] },
+        { set: { gb_eye: "environment" }, drop: [] },
+      ]),
     );
   });
 
