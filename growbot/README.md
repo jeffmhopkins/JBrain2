@@ -376,6 +376,20 @@ carries a picture: the camera itself encodes a frame into its ring every 2.5 s w
 anything looks, so an encode would flash constantly. It loads right after the face and before any page script
 so every call goes through it; `?status=off` leaves the page untouched.
 
+### The eyes follow a face
+
+The pupils follow the person in front of the phone, with no model call (owner, 2026-11-12).
+`growbot-eyes.js` turns a face box into a point on the screen and hands it to the face
+(`gbFace.see`), which eases the pupils and the whole eye toward it. When the box is more than
+0.7 s old, the eyes settle back. A touch's glance outranks it, and so do thinking, looking,
+resting and sleep. The box comes from the BlazeFace detector that the leg tracker already
+ships. While the tracker is detecting, it passes every box it keeps (`apply.py` hooks both of
+its result paths). When it isn't (no robot paired, a person said stop, the body is busy, or
+it is only checking once a second), `growbot-eyes.js` runs its own copy of the detector in a
+worker on the creature's open front camera. That copy runs 8 times a second, 4 in low power,
+and twice a second after 5 s with no face. It is closed after 30 s without a camera. Frames
+stay in the browser, and nothing runs while the camera is off or facing the back.
+
 ### The bottom bar and the wake gate
 
 `CHROME_PATCHES` fit upstream's chrome to a box-run creature (owner, 2026-11-12). The bottom bar

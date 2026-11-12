@@ -113,6 +113,9 @@
      other code, so the shapes this file adds are eased beside it rather than written into it. */
   var cur = null, lastEmo = "", talk = 0, startle = 0, blush = 0, lastTouch = 0;
   var pup = { x: 0, y: 0 }, gaze = { x: 0, y: 0 }, lastT = 0;
+  /* Where the camera last saw a face, -1..1 on the screen (growbot-eyes.js). Kept only briefly:
+     a face that left the frame lets the eyes settle back instead of staring at where it was. */
+  var seen = { x: 0, y: 0, at: 0 }, SEEN_MS = 700;
 
   /* The phone's roll in the screen's plane, radians, + when its right side is down (owner,
      2026-11-12: the face should feel the phone tilt). Read from gravity in our own listener;
@@ -498,13 +501,17 @@
     var felt = Math.sign(tilt) * Math.max(0, Math.min(0.7, Math.abs(tilt) - 0.08));
     lean += (felt - lean) * (1 - Math.exp(-dt / 400));
     var wander = s.think || s.looking ? Math.sin(s.t / 1600) * 0.7 : 0;
-    var aim = s.think || s.looking ? { x: wander, y: 0 } : { x: s.gx, y: s.gy };
+    /* A touch is the person asking for its attention, so its glance outranks the face it is
+       watching; asleep or resting it watches nobody (owner, 2026-11-12: the eyes follow you). */
+    var watching = Date.now() - seen.at < SEEN_MS && !s.dreaming && !s.paused;
+    var look = s.gx || s.gy || !watching ? { x: s.gx, y: s.gy } : { x: seen.x, y: seen.y };
+    var aim = s.think || s.looking ? { x: wander, y: 0 } : look;
     aim.x = Math.max(-1.2, Math.min(1.2, aim.x + lean * 1.6));
     var ease = 1 - Math.exp(-dt / 320);
     pup.x += (aim.x - pup.x) * ease;
     pup.y += (aim.y - pup.y) * ease;
-    gaze.x += (s.gx + wander * 0.4 - gaze.x) * ease;
-    gaze.y += (s.gy - gaze.y) * ease;
+    gaze.x += (look.x + wander * 0.4 - gaze.x) * ease;
+    gaze.y += (look.y - gaze.y) * ease;
     var bob = (s.paused || s.dreaming ? 6 * Math.sin(s.t / 900) : 3 * Math.sin(s.t / 1300)) + Math.sin(s.t * 0.05) * s.shake * 8;
     var d = {
       t: s.t, open: open, lids: cur, pupil: pup,
@@ -535,6 +542,11 @@
         typeof CanvasRenderingContext2D.prototype.getTransform === "function";
     },
     setColour: setColour,
+    /* A face at x, y (-1..1, screen right and down positive) was seen just now. */
+    see: function (x, y) {
+      if (!isFinite(x) || !isFinite(y)) return;
+      seen = { x: Math.max(-1, Math.min(1, x)), y: Math.max(-1, Math.min(1, y)), at: Date.now() };
+    },
     colour: function () { return BODY; },
     /* What each face's lids leave open at the eye's centreline, per emotion, 0-1: the pupil's
        guarantee, read by the site tests. */

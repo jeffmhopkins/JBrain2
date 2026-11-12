@@ -193,6 +193,52 @@ def test_the_face_feels_the_phone_tilt() -> None:
     assert face.count("d.sway * ") == 3
 
 
+def test_the_eyes_load_after_the_status_strip_and_take_the_trackers_boxes() -> None:
+    """The leg tracker hands every box it keeps to the eyes, from the worker and from the
+    main-thread fallback, so its detector drives the pupils whenever it is running."""
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    tags = re.findall(r"<script[^>]*>", creature)
+    assert tags[3] == '<script src="/growbot-eyes.js">'
+    eyes = (_SITE / "growbot-eyes.js").read_text(encoding="utf-8")
+    assert eyes == (_GROWBOT / "patches" / "growbot-eyes.js").read_text(encoding="utf-8")
+    assert re.search(r"https?://", eyes) is None
+    assert creature.count("if(window.gbEyes)window.gbEyes.boxes(boxes);") == 2
+    assert 'import("/v3/face-worker-client.mjs")' in eyes
+    face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    assert "see: function (x, y) {" in face
+
+
+def _eyes_in_node(script: str) -> str:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    eyes = (_SITE / "growbot-eyes.js").read_text(encoding="utf-8")
+    shim = (
+        "var seen=[];var window={gbFace:{see:function(x,y){seen.push([x,y]);}}};"
+        "var document={hidden:false};var setInterval=function(){};"
+    )
+    out = subprocess.run(
+        [node, "-e", f"{shim}\n{eyes}\n{script}"], capture_output=True, text=True, check=True
+    )
+    return out.stdout
+
+
+def test_the_eyes_look_toward_the_face_on_screen() -> None:
+    """The front camera's frame is not mirrored, so a face on the frame's left is on the
+    screen's right; the biggest face wins, and the pupils' target stays in -1..1 after gain."""
+    seen = json.loads(
+        _eyes_in_node(
+            "window.gbEyes.boxes([{x:0.05,y:0.1,width:0.1,height:0.1},"
+            "{x:0.1,y:0.6,width:0.3,height:0.3}]);"
+            "window.gbEyes.boxes([]);"
+            "console.log(JSON.stringify(seen));"
+        )
+    )
+    assert len(seen) == 1
+    x, y = seen[0]
+    assert x > 0.5 and y > 0.2
+
+
 def test_a_persona_wears_its_own_face_lantern_by_default() -> None:
     """The box's face for the persona is read before the face loads, a poll's new one changes
     it where it stands, and only ?face= outranks it."""

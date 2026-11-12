@@ -363,6 +363,28 @@ PATCHES: list[tuple[str, str, str, int]] = [
         "talking:Date.now()<speakingUntil,glow:col}); }",
         1,
     ),
+    # The eyes follow a face (growbot-eyes.js): the leg tracker hands over every box it keeps,
+    # from the worker and from the main-thread fallback, so its detector feeds the pupils while
+    # it runs and growbot-eyes.js only runs its own when the tracker is not watching.
+    (
+        "v3/next.html",
+        '<script src="/growbot-status.js"></script>',
+        '<script src="/growbot-status.js"></script><script src="/growbot-eyes.js"></script>',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '      if(boxes.length&&result.source!=="flow")lastFaceAt=at;',
+        '      if(window.gbEyes)window.gbEyes.boxes(boxes);'
+        ' if(boxes.length&&result.source!=="flow")lastFaceAt=at;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "            if(boxes.length)lastFaceAt=now;",
+        "            if(window.gbEyes)window.gbEyes.boxes(boxes); if(boxes.length)lastFaceAt=now;",
+        1,
+    ),
     # Recolouring, as on the panels: a `coat` verb beside `sky`, read with upstream's own
     # colour words (_hueOf), and logged like the sky so the diary shows when it changed.
     (
@@ -1063,6 +1085,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     shutil.copyfile(HERE / "growbot-box.js", site / "growbot-box.js")
     shutil.copyfile(HERE / "growbot-face.js", site / "growbot-face.js")
     shutil.copyfile(HERE / "growbot-status.js", site / "growbot-status.js")
+    shutil.copyfile(HERE / "growbot-eyes.js", site / "growbot-eyes.js")
     # The installed app (Android): served without a session, since Chrome fetches the
     # manifest and its icons with no cookie.
     (site / "icons").mkdir(exist_ok=True)
