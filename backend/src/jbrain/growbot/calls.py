@@ -154,7 +154,10 @@ class ReplyCollector:
                     self._tools.append(f"{fn.get('name') or ''}{fn.get('arguments') or ''}")
 
     def finish(self) -> None:
-        if not self._stream and self._buf:
+        if self._stream:
+            # A last event the engine sent without its closing newline.
+            self.feed(b"\n")
+        elif self._buf:
             self._take(self._buf, delta=False)
         self._buf = b""
 

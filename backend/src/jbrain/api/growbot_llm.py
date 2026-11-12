@@ -113,6 +113,15 @@ def _header(request: Request, name: str, pattern: re.Pattern[str]) -> str:
     return value if pattern.fullmatch(value) else ""
 
 
+def _quietly(fn: Any, *args: Any) -> None:
+    """Run a call-log step that must never cut the reply: before this log the relay passed
+    the engine's bytes through untouched, and an odd chunk still must."""
+    try:
+        fn(*args)
+    except Exception:  # noqa: BLE001 - the log never fails a turn
+        log.warning("growbot-llm call log could not read the reply", exc_info=True)
+
+
 def log_call(request: Request, rec: CallRecord) -> None:
     """Write `rec` to the call log in the background: a turn never waits on its own log line,
     and a failed write costs a warning, never the turn."""
@@ -342,7 +351,7 @@ async def chat_completions(request: Request) -> Response:
                         yield error_bytes(body, stream=stream)
                         return
                     async for chunk in upstream.aiter_raw():
-                        collector.feed(chunk)
+                        _quietly(collector.feed, chunk)
                         yield chunk
         except SlotCapError as exc:
             failed(f"slot cap: {exc}")
@@ -355,17 +364,22 @@ async def chat_completions(request: Request) -> Response:
             failed(f"gateway unreachable: {exc}")
             body = _server_error("the on-box model did not answer", "gateway_unavailable")
             yield error_bytes(body, stream=stream)
-        except BaseException:
+        except (asyncio.CancelledError, GeneratorExit):
             # The phone went away mid-reply (the server cancels the body); the partial turn
             # is still worth a row, since a hung-up turn is often the slow one.
             failed("phone disconnected")
             raise
+        except Exception as exc:
+            failed(f"proxy error: {type(exc).__name__}")
+            raise
         finally:
-            await client.aclose()
-            collector.finish()
-            collector.fill(rec)
+            # The row first, all synchronous: inside a cancelled scope every await below
+            # raises again, so logging after `aclose` would lose exactly the hung-up turns.
+            _quietly(collector.finish)
+            _quietly(collector.fill, rec)
             rec.total_ms = round((time.monotonic() - started) * 1000)
             log_call(request, rec)
+            await client.aclose()
 
     media = "text/event-stream" if stream else "application/json"
     return StreamingResponse(relay(), media_type=media, headers={"Cache-Control": "no-cache"})

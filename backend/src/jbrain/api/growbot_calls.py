@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import math
 import statistics
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal, cast
@@ -41,6 +42,15 @@ _STAGES = (
 )
 
 
+_DetailValue = Annotated[str, Field(max_length=500)] | int | float | bool | None
+
+
+def _finite(value: object) -> bool:
+    """json.dumps writes NaN as `NaN`, which jsonb refuses, so one would lose the whole row.
+    (Refusing it in the model instead makes FastAPI's 422 fail to serialise the input.)"""
+    return not isinstance(value, float) or math.isfinite(value)
+
+
 def _calls(request: Request) -> CallLog:
     return cast(CallLog, request.app.state.growbot_calls)
 
@@ -56,7 +66,7 @@ class SidecarCallIn(BaseModel):
     # The transcript (stt) or the line spoken (tts).
     text: str = Field(default="", max_length=8000)
     # stt: the clip's length and the prompt the app gave whisper; tts: the voice.
-    detail: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    detail: dict[str, _DetailValue] = Field(default_factory=dict)
     timings: dict[str, int | float] = Field(default_factory=dict)
 
 
@@ -74,9 +84,9 @@ async def record_sidecar_call(request: Request, body: SidecarCallIn) -> Response
             robot=body.robot,
             model=body.model,
             error=body.error,
-            request={k: v for k, v in body.detail.items() if len(k) <= 40},
+            request={k: v for k, v in body.detail.items() if len(k) <= 40 and _finite(v)},
             reply=body.text,
-            timings={k: v for k, v in body.timings.items() if len(k) <= 40},
+            timings={k: v for k, v in body.timings.items() if len(k) <= 40 and _finite(v)},
         ),
     )
     return Response(status_code=204)

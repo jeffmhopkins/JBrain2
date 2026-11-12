@@ -173,6 +173,13 @@ def test_a_body_reply_and_an_error_in_the_stream() -> None:
     assert not rec.ok and rec.error == "pool busy" and rec.reply == ""
 
 
+def test_a_last_event_without_its_newline_still_counts() -> None:
+    got = ReplyCollector(stream=True, started=time.monotonic())
+    got.feed(b'data: {"choices":[{"delta":{"content":"end"}}]}')
+    got.finish()
+    assert got.reply == "end"
+
+
 def test_a_runaway_reply_is_cut() -> None:
     got = ReplyCollector(stream=False, started=time.monotonic())
     got.feed(json.dumps({"choices": [{"message": {"content": "x" * (TEXT_MAX + 10)}}]}).encode())
@@ -403,3 +410,84 @@ def test_writes_are_held_until_they_land() -> None:
         assert not growbot_llm._WRITES and len(log.rows) == 1
 
     asyncio.run(go())
+
+
+class _Hangup(_Gateway):
+    """Streams one chunk, then the phone hangs up; closing the client is cancelled again, as
+    every await is inside a cancelled scope."""
+
+    def stream(self, method: str, path: str, *, json: dict[str, Any]) -> Any:
+        inner = super().stream(method, path, json=json)
+
+        async def cut() -> Any:
+            yield b'data: {"choices":[{"delta":{"content":"half a"}}]}\n\n'
+            await asyncio.Event().wait()
+
+        inner.aiter_raw = cut
+        return inner
+
+    async def aclose(self) -> None:
+        raise asyncio.CancelledError
+
+
+def test_a_hung_up_turn_still_writes_its_row(tmp_path: Path) -> None:
+    from starlette.requests import Request
+
+    log = _Log()
+    app, auth = _app(tmp_path, log, _Hangup())
+
+    async def go() -> None:
+        body = json.dumps(_chat(stream=True)).encode()
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": _COMPLETIONS,
+            "headers": [(k.lower().encode(), v.encode()) for k, v in auth.items()],
+            "app": app,
+        }
+        response = await growbot_llm.chat_completions(Request(scope, receive))
+        stream = response.body_iterator  # type: ignore[attr-defined]
+        first = await stream.__anext__()
+        assert b"half a" in first
+        with pytest.raises(asyncio.CancelledError):
+            await stream.athrow(asyncio.CancelledError())
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+    asyncio.run(go())
+    (rec,) = [r for _, r in log.rows]
+    assert not rec.ok and rec.error == "phone disconnected"
+    assert rec.reply == "half a"
+
+
+def test_an_odd_chunk_never_cuts_the_reply(tmp_path: Path) -> None:
+    log = _Log()
+    odd = (b'data: {"choices": 1}\n\n', b'data: {"choices":[{"delta":{"tool_calls":7}}]}\n\n')
+    app, auth = _app(tmp_path, log, _Gateway(chunks=odd))
+    with TestClient(app) as client:
+        r = client.post(_COMPLETIONS, json=_chat(stream=True), headers=auth)
+        assert r.status_code == 200 and r.content == b"".join(odd)
+        (rec,) = _wait(log)
+    assert rec.ok
+
+
+def test_the_sidecar_route_drops_nan_and_refuses_long_detail(tmp_path: Path) -> None:
+    log = _Log()
+    app, auth = _app(tmp_path, log)
+    headers = {**auth, "Content-Type": "application/json"}
+    with TestClient(app) as client:
+        nan = (
+            b'{"kind":"tts","ok":true,"total_ms":1,'
+            b'"timings":{"x":NaN,"y":2},"detail":{"z":Infinity}}'
+        )
+        assert (
+            client.post("/internal/growbot/calls", content=nan, headers=headers).status_code == 204
+        )
+        (rec,) = _wait(log)
+        long = {"kind": "tts", "ok": True, "total_ms": 1, "detail": {"x": "y" * 501}}
+        assert client.post("/internal/growbot/calls", json=long, headers=auth).status_code == 422
+    assert rec.timings == {"y": 2} and rec.request == {}
