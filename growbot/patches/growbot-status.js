@@ -20,8 +20,8 @@
   var MERGE_MS = 1500;
   var MOVE_IDLE_MS = 900;
   var SNAP_SHOW_MS = 1200;
-  // Upstream's blips and own-voice guards set speakingUntil ~700 ms ahead; a real line lasts.
-  var SPEAK_MIN_MS = 600;
+  // Upstream's blips set speakingUntil 700 ms ahead; a spoken line's floor is over 1.2 s.
+  var SPEAK_MIN_MS = 1000;
   var MAX_CHIPS = 5;
 
   var KINDS = {
@@ -103,6 +103,11 @@
     return typeof body === "string" && body.indexOf('"image_url"') >= 0 ? "see" : "think";
   }
 
+  // The page aborts a reply the person talked over; that is a turn cut short, not a failure.
+  function aborted(err) {
+    return !!err && err.name === "AbortError";
+  }
+
   // The call lasts until its body has been read, not until its headers: a streamed reply is
   // still thinking while its tokens arrive.
   function whenRead(response, e) {
@@ -119,8 +124,8 @@
             if (r.done) end(e, !response.ok);
             else pump();
           },
-          function () {
-            end(e, true);
+          function (err) {
+            end(e, !aborted(err));
           }
         );
       };
@@ -145,8 +150,8 @@
         function (r) {
           whenRead(r, e);
         },
-        function () {
-          end(e, true);
+        function (err) {
+          end(e, !aborted(err));
         }
       );
       return p;
@@ -154,11 +159,13 @@
   }
 
   // The body: relay-transport.js frames every leg command as {"t":"act"|"routine"|"pose"|"stop"}.
-  // A held pose re-sends the same frame every 200 ms for up to 10 min; standing still is not
-  // moving, so a frame equal to the last one (bar its request id) does not count.
+  // A hold re-sends its pose every 200 ms for up to 10 min: the same frame, or (a timed hold)
+  // two frames in turn, 1 degree apart. Standing still is not moving, so a frame equal to
+  // either of the last two (bar its request id) does not count.
   var moving = null;
   var movingT = 0;
-  var lastFrame = "";
+  var lastFrames = ["", ""];
+  var lastFrameT = 0;
   if (!off && window.WebSocket) {
     var realSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
@@ -167,8 +174,16 @@
           typeof data === "string" && /^\{"t":"(act|routine|pose|stop)"/.test(data)
             ? data.replace(/"rid":\d+,?/, "")
             : "";
-        if (frame && frame !== lastFrame) {
-          lastFrame = frame;
+        if (frame) {
+          // After a pause the same gesture again is a new move; a hold never pauses.
+          var t = now();
+          var repeat =
+            t - lastFrameT < MOVE_IDLE_MS &&
+            (frame === lastFrames[0] || frame === lastFrames[1]);
+          lastFrames = [frame, lastFrames[0]];
+          lastFrameT = t;
+        }
+        if (frame && !repeat) {
           if (!moving) moving = begin("move");
           clearTimeout(movingT);
           movingT = setTimeout(function () {
