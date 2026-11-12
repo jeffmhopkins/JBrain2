@@ -324,6 +324,14 @@ PATCHES: list[tuple[str, str, str, int]] = [
         '<head><script src="/growbot-box.js"></script><script src="/growbot-face.js"></script>',
         1,
     ),
+    # The live status strip (growbot-status.js): what the creature is doing right now, top-left,
+    # loaded before any page script so its fetch and socket wrappers see every call.
+    (
+        "v3/next.html",
+        '<script src="/growbot-face.js"></script>',
+        '<script src="/growbot-face.js"></script><script src="/growbot-status.js"></script>',
+        1,
+    ),
     (
         "v3/next.html",
         "function drawFace(t){ scheduleFace();",
@@ -848,6 +856,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     _patch(site, PATCHES)
     shutil.copyfile(HERE / "growbot-box.js", site / "growbot-box.js")
     shutil.copyfile(HERE / "growbot-face.js", site / "growbot-face.js")
+    shutil.copyfile(HERE / "growbot-status.js", site / "growbot-status.js")
     # The installed app (Android): served without a session, since Chrome fetches the
     # manifest and its icons with no cookie.
     (site / "icons").mkdir(exist_ok=True)

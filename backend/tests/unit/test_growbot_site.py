@@ -74,6 +74,38 @@ def test_the_creature_loads_the_face_right_after_the_box_voice() -> None:
     ).read_bytes()
 
 
+def test_the_creature_shows_what_it_is_doing_top_left() -> None:
+    """The status strip loads right after the face, before any page script, so its wrappers
+    see every model call, photo, voice clip and leg frame the page makes."""
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    tags = re.findall(r"<script[^>]*>", creature)
+    assert tags[:3] == [
+        '<script src="/growbot-box.js">',
+        '<script src="/growbot-face.js">',
+        '<script src="/growbot-status.js">',
+    ]
+    strip = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
+    assert strip == (_GROWBOT / "patches" / "growbot-status.js").read_text(encoding="utf-8")
+    assert re.search(r"https?://", strip) is None
+    # Each hook is the page's own call site: the model and voice lanes, relay-transport's
+    # frames, and the globals the VAD and every voice route keep.
+    assert 'u.pathname === "/api/fish-tts"' in strip
+    assert 'u.pathname !== "/api/llm" && u.pathname !== "/api/llm-stream"' in strip
+    assert "body.indexOf('\"image_url\"')" in strip
+    assert 'if (kind === "see") snap();' in strip
+    assert "WebSocket.prototype.send = function" in strip
+    assert "window.vadOn || window.recording" in strip
+    assert "window.speakingUntil" in strip
+    # The camera refills its frame ring every 2.5 s: an encode is not a look, so no hook on it.
+    assert "toDataURL" not in strip
+    assert '"/api/llm?target=openrouter"' in creature
+    assert "var listenMode=false, vadRec=null, vadOn=false," in creature
+    assert "var micStream=null, recording=false," in creature
+    assert "var robotReady=false, speakingUntil=0," in creature
+    transport = (_SITE / "relay-transport.js").read_text(encoding="utf-8")
+    assert "JSON.stringify({ t: 'act', rid, steps, mode })" in transport
+
+
 def test_the_pixel_eyes_give_way_only_while_the_new_face_is_on() -> None:
     """Upstream's eyes are skipped, not deleted: ?face=pixel or a throw brings them back."""
     creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
