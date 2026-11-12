@@ -17,6 +17,7 @@ either mode, because a soul and the creature's lines can name the people it live
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -25,7 +26,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Final, Protocol
+from typing import IO, Any, Final, Protocol
 
 from jbrain.db.session import SessionContext
 from jbrain.growbot.calls import CallRecord, LoggedCall
@@ -42,10 +43,21 @@ _PAGE: Final = 200
 # Bounds the zip, not a window a creature fills: six hours at a turn a second is 21,600.
 CALLS_MAX: Final = 30_000
 DIARY_MAX: Final = 60_000
+# Past this much compressed, the zip stops taking rows and says so in its manifest: a flooded
+# diary must not build a file the box cannot hold in memory.
+OUT_MAX: Final = 96 * 1024 * 1024
+# Diary fields upstream fills with what a person said, unquoted (next.html `logEv("user",
+# {txt})`, `logEv("body_sound", {words})`, ...). Upstream hashes them at capture only when it
+# thinks it is in production, and a `.local` box name reads as staging, so the box hashes them
+# again here whatever the page did.
+SPEECH_KEYS: Final = frozenset(
+    ("txt", "words", "wordsHeld", "q", "input", "ans", "heard", "said", "text", "transcript")
+)
 
 _QUOTE_RES: Final = (re.compile(r'"([^"\n]{3,})"'), re.compile(r"“([^”\n]{3,})”"))
 _SECRET_RE: Final = re.compile(
     r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}|\b(sk|pk|rk)-[A-Za-z0-9_-]{16,}"
+    r"|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\b[0-9a-fA-F]{32,}\b"
 )
 _CODE_RE: Final = re.compile(r"\bgb-[A-Za-z0-9]{1,32}\b")
 _UUID_RE: Final = re.compile(
@@ -121,6 +133,9 @@ class Scrub:
         s = _SECRET_RE.sub(lambda m: (m.group(1) or "") + "[secret]", s)
         s = _CODE_RE.sub(lambda m: self.robot(m.group(0)), s)
         s = _UUID_RE.sub(lambda m: self.persona(m.group(0)) or "", s)
+        # Upstream treats a diary id as the key that erases that diary on its cloud.
+        for sid, label in self.diaries.items():
+            s = s.replace(sid, label)
         if self.redact and quotes:
             s = redact_quotes(s)
         if self._names_re is not None:
@@ -139,6 +154,12 @@ class Scrub:
             }
         return value
 
+    def whole(self, s: str) -> str:
+        """Hashed whole when redacted: text that is, or restates, what a person said."""
+        if not self.redact or not s.strip():
+            return self.text(s)
+        return hashed(s.strip())
+
     def heard(self, s: str) -> str:
         """A transcript: everything it says is someone in the house, so hashed whole."""
         if not self.redact or not s.strip():
@@ -149,6 +170,8 @@ class Scrub:
 class _Prompts:
     def __init__(self) -> None:
         self.files: dict[str, str] = {}
+        # The same soul rides every turn: scrub it once, keyed on the raw prompt's hash.
+        self.seen: dict[str, Any] = {}
 
     def share(self, prompt: str) -> str:
         key = hashlib.sha256(prompt.encode()).hexdigest()[:12]
@@ -158,10 +181,14 @@ class _Prompts:
 
 def _content(content: Any, scrub: Scrub, prompts: _Prompts | None) -> Any:
     if isinstance(content, str):
-        out = scrub.text(content)
-        if prompts is not None and len(out) >= PROMPT_SHARE_MIN:
-            return {"shared": prompts.share(out)}
-        return out
+        if prompts is None:
+            return scrub.text(content)
+        raw = hashlib.sha256(content.encode()).hexdigest()
+        if raw not in prompts.seen:
+            out = scrub.text(content)
+            shared = len(out) >= PROMPT_SHARE_MIN
+            prompts.seen[raw] = {"shared": prompts.share(out)} if shared else out
+        return prompts.seen[raw]
     return scrub.walk(content)
 
 
@@ -208,7 +235,7 @@ def call_row(call: LoggedCall, scrub: Scrub, prompts: _Prompts) -> dict[str, Any
         "persona": scrub.persona(rec.persona_id),
         "robot": scrub.robot(rec.robot),
         "model": rec.model,
-        "error": scrub.text(rec.error, quotes=False),
+        "error": scrub.text(rec.error),
         "total_ms": rec.total_ms,
         "timings": rec.timings,
         "images": rec.images,
@@ -218,7 +245,8 @@ def call_row(call: LoggedCall, scrub: Scrub, prompts: _Prompts) -> dict[str, Any
         "completion_tokens": rec.completion_tokens,
         "request": request,
         "reply": reply,
-        "reasoning": scrub.text(rec.reasoning),
+        # A thinking model restates what it heard in its own words, unquoted.
+        "reasoning": scrub.whole(rec.reasoning),
     }
 
 
@@ -230,16 +258,58 @@ def _head(head: dict[str, Any], scrub: Scrub) -> dict[str, Any]:
     return scrub.walk(head, quotes=False)
 
 
+def _speech(value: Any, scrub: Scrub) -> Any:
+    if isinstance(value, str):
+        return scrub.whole(value)
+    if isinstance(value, list):
+        return [_speech(v, scrub) for v in value]
+    return scrub.walk(value)
+
+
 def diary_row(row: DiaryRow, scrub: Scrub) -> dict[str, Any]:
     boot = row.head.get("boot")
-    return {
+    labels = {
         "diary": scrub.diary(row.sid),
         "persona": scrub.persona(row.persona_id),
         "robot": scrub.robot(row.robot),
         "received": row.created_at.isoformat(),
         "boot": boot.get("t") if isinstance(boot, dict) else None,
-        **scrub.walk(row.row),
     }
+    out: dict[str, Any] = {}
+    for key, value in row.row.items():
+        name = scrub.text(str(key), quotes=False)
+        # A row field named like one of the box's labels keeps its value under `_<name>`.
+        out["_" + name if name in labels else name] = (
+            _speech(value, scrub) if key in SPEECH_KEYS else scrub.walk(value)
+        )
+    return {**labels, **out}
+
+
+def known_names(souls: list[dict[str, Any]], memories: list[dict[str, Any]]) -> list[str]:
+    """Names the box already holds that upstream's own redaction would hide: each soul's
+    `goals.owner` (upstream hashes it in the diary's soul peek) and the people the creature
+    has named in its visual memories. Added to the owner's list, so an empty list is no leak."""
+    found: list[str] = []
+
+    def owners(value: Any, depth: int = 0) -> None:
+        if depth > 6:
+            return
+        if isinstance(value, dict):
+            goals = value.get("goals")
+            if isinstance(goals, dict) and isinstance(goals.get("owner"), str):
+                found.append(goals["owner"])
+            for v in value.values():
+                owners(v, depth + 1)
+        elif isinstance(value, list):
+            for v in value[:200]:
+                owners(v, depth + 1)
+
+    for soul in souls:
+        owners(soul)
+    for meta in memories:
+        if meta.get("kind") == "person" and isinstance(meta.get("name"), str):
+            found.append(meta["name"])
+    return [n.strip()[:60] for n in found if len(n.strip()) >= 2]
 
 
 def _line(obj: Any) -> bytes:
@@ -250,7 +320,9 @@ def _readme(manifest: dict[str, Any]) -> str:
     mode = (
         "Redacted, the way upstream's own diary is: a quoted span of three or more characters "
         "is `«h8·Nw»` (upstream's djb2 h8 of the span, and its word count), and a transcription "
-        "is hashed whole. The creature's own words are kept."
+        "is hashed whole, as are the model's reasoning and the diary's speech fields (`txt`, "
+        "`words`, ...). The creature's own words are kept. The hash is a join key, not secrecy: "
+        "a short common phrase can be guessed."
         if manifest["redacted"]
         else "Not redacted: what people said is here as it was heard."
     )
@@ -298,10 +370,11 @@ async def build(
     names: list[str],
     now: datetime,
     jbrain: str,
+    known: list[str] | None = None,
 ) -> tuple[bytes, str]:
     """The zip and its file name."""
     since = now - timedelta(hours=hours)
-    scrub = Scrub(redact=redact, names=names[:NAMES_MAX])
+    scrub = Scrub(redact=redact, names=names[:NAMES_MAX] + (known or [])[:200])
     prompts = _Prompts()
     stamp = now.strftime("%Y%m%d-%H%M")
     root = f"growbot-brain-log-{stamp}-{hours}h"
@@ -311,48 +384,55 @@ async def build(
     pages: dict[str, dict[str, Any]] = {}
     # Summary needs only timings and sizes, never the prompt, so it keeps a stripped copy.
     light: list[LoggedCall] = []
+
+    # The scrubbing and deflating run off the event loop, a page at a time: six hours of
+    # prompts is seconds of CPU the api's other requests must not wait behind.
+    def write_calls(out: IO[bytes], batch: list[LoggedCall]) -> None:
+        for call in batch:
+            out.write(_line(call_row(call, scrub, prompts)))
+            rec = call.record
+            counts[rec.kind] = counts.get(rec.kind, 0) + 1
+            if rec.model:
+                models.add(rec.model)
+            light.append(
+                LoggedCall(
+                    call.id,
+                    call.created_at,
+                    CallRecord(
+                        kind=rec.kind,
+                        ok=rec.ok,
+                        total_ms=rec.total_ms,
+                        images=rec.images,
+                        image_bytes=rec.image_bytes,
+                        prompt_tokens=rec.prompt_tokens,
+                        cached_tokens=rec.cached_tokens,
+                        timings=rec.timings,
+                    ),
+                )
+            )
+
+    def write_diary(out: IO[bytes], rows: list[DiaryRow]) -> None:
+        for row in rows:
+            out.write(_line(diary_row(row, scrub)))
+            counts["diary"] += 1
+            boot = row.head.get("boot")
+            key = f"{scrub.diary(row.sid)}@{boot.get('t') if isinstance(boot, dict) else ''}"
+            pages.setdefault(key, _head(row.head, scrub))
+
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         with zf.open(f"{root}/calls.jsonl", "w") as out:
             after = 0
-            while sum(counts.values()) < CALLS_MAX:
+            while sum(counts.values()) < CALLS_MAX and buf.tell() < OUT_MAX:
                 batch = await calls.page(ctx, since=since, after_id=after, limit=_PAGE)
-                for call in batch:
-                    out.write(_line(call_row(call, scrub, prompts)))
-                    counts[call.record.kind] = counts.get(call.record.kind, 0) + 1
-                    if call.record.model:
-                        models.add(call.record.model)
-                    rec = call.record
-                    light.append(
-                        LoggedCall(
-                            call.id,
-                            call.created_at,
-                            CallRecord(
-                                kind=rec.kind,
-                                ok=rec.ok,
-                                total_ms=rec.total_ms,
-                                images=rec.images,
-                                image_bytes=rec.image_bytes,
-                                prompt_tokens=rec.prompt_tokens,
-                                cached_tokens=rec.cached_tokens,
-                                timings=rec.timings,
-                            ),
-                        )
-                    )
+                await asyncio.to_thread(write_calls, out, batch)
                 if len(batch) < _PAGE:
                     break
                 after = batch[-1].id
         with zf.open(f"{root}/diary.jsonl", "w") as out:
             after = 0
-            while journal is not None and counts["diary"] < DIARY_MAX:
+            while journal is not None and counts["diary"] < DIARY_MAX and buf.tell() < OUT_MAX:
                 rows = await journal.page(ctx, since=since, after_id=after, limit=_PAGE * 5)
-                for row in rows:
-                    out.write(_line(diary_row(row, scrub)))
-                    counts["diary"] += 1
-                    boot = row.head.get("boot")
-                    key = (
-                        f"{scrub.diary(row.sid)}@{boot.get('t') if isinstance(boot, dict) else ''}"
-                    )
-                    pages.setdefault(key, _head(row.head, scrub))
+                await asyncio.to_thread(write_diary, out, rows)
                 if len(rows) < _PAGE * 5:
                     break
                 after = rows[-1].id
@@ -394,6 +474,10 @@ async def build(
             "jbrain": jbrain,
             "counts": counts,
             "prompts": len(prompts.files),
+            # True when the window held more than the zip takes (OUT_MAX, CALLS_MAX, DIARY_MAX).
+            "cut": buf.tell() >= OUT_MAX
+            or sum(counts[k] for k in ("llm", "stt", "tts")) >= CALLS_MAX
+            or counts["diary"] >= DIARY_MAX,
         }
         zf.writestr(f"{root}/manifest.json", json.dumps(manifest, indent=1))
         zf.writestr(f"{root}/README.md", _readme(manifest))

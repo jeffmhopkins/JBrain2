@@ -328,9 +328,14 @@ leaves the house, so it carries no ids or secrets of the box's: personas, robots
 are numbered, codes and ids inside text are swapped for those numbers, and bearer-shaped
 tokens are cut. Redacted (the default) applies upstream's own rule with upstream's own djb2
 `h8`, so a hashed line joins to the diary's: quoted spans become `«h8·Nw»`, a transcription
-is hashed whole, the creature's words stay; the box re-applies it to the diary too, since a
-`.local` LAN name makes upstream's page count as staging and write raw. Names the owner lists
-(kept on his phone, never on the box) read `[name]` everywhere, in either mode. A debug token
+and the model's reasoning are hashed whole, the creature's words stay. A `.local` LAN name
+makes upstream's page count as staging and write its diary raw, so the box hashes the diary's
+speech fields (`txt`, `words`, … `SPEECH_KEYS`) whole itself, whatever the page did. Names
+read `[name]` everywhere, in either mode: the ones the owner lists (kept on his phone, never on
+the box) plus the ones the box already holds (each soul's `goals.owner`, the people named in
+visual memories, persona and robot names). The sidecar keeps at most one snapshot per phone
+every 2 s, an export builds off the event loop one at a time (409 while one runs), and a zip
+stops taking rows past 96 MB, with `cut` in its manifest. A debug token
 reads the same zip, always redacted, at `GET /api/debug/growbot/brain-log?hours=`.
 
 **The relay** is the same process, at `wss://jbrain.local:8444/d/<code>` and

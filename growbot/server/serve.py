@@ -152,6 +152,10 @@ MEMORY_ID_RE = re.compile(r"r[0-9a-f]{1,32}")
 MAX_DIARY_BODY = 256 * 1024
 DIARY_ROWS_MAX = 500
 DIARY_SID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# Upstream flushes every 8 s (a chunk can follow a live flush at once). One snapshot a phone in
+# this long is kept and the rest answered and dropped: the next snapshot resends their rows,
+# and a page that loops the POST cannot fill the box's disk.
+DIARY_EVERY_S = 2.0
 # What a snapshot says about the page that wrote it. Its soul peek and join key stay behind:
 # the soul lives on the box already, and the export needs only the rows and this header.
 DIARY_HEAD = ("kind", "mode", "redacted", "ua", "reason", "agent", "boot")
@@ -1032,6 +1036,7 @@ class GrowBot:
         self._rider_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-rider")
         self._log_pool: Executor = ThreadPoolExecutor(1, "growbot-log")
         self._log_slots = threading.BoundedSemaphore(LOG_PENDING_MAX)
+        self._diary_at: dict[str, float] = {}
         self.rider_backoff = Backoff()
         self._proxy_addrs: set[str] = set()
         self._opening: collections.Counter[str] = collections.Counter()
@@ -1716,6 +1721,14 @@ class GrowBot:
             or not DIARY_SID_RE.fullmatch(sid)
         ):
             return Response(204)
+        claims = self._claims(req)
+        holder = (claims.phone or claims.robot) if claims else ""
+        now = time.monotonic()
+        if now - self._diary_at.get(holder, -math.inf) < DIARY_EVERY_S:
+            return json_response(200, {"ok": True})
+        if len(self._diary_at) > 1024:
+            self._diary_at.clear()
+        self._diary_at[holder] = now
         who = self._who(req)
         row_list = [r for r in rows[-DIARY_ROWS_MAX:] if isinstance(r, dict)]
         if row_list:

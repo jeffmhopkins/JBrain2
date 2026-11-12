@@ -3382,7 +3382,7 @@ rare, deliberate act, so it lives behind one secondary button and asks everythin
   Transcripts and quoted speech become hashes, the way GrowBot's own diary does. The creature's
   words stay.*) and *Keep what people said* (*Every transcript as it was heard.*); *Names to
   hide* (comma-separated, *Replaced with [name] everywhere in the file, in either mode.
-  Remembered on this phone.*); one dim line on what is inside and what never is; then
+  Remembered on this phone.*); one dim line on what is inside, what never is, and that the creature's soul and its own words go out as written, so the names they use belong in the list; then
   *Download brain log (.zip)* (primary, block), which reads *Gathering the brain log…* while
   the box builds it.
 - **After.** The sheet closes and a toast says *Saved growbot-brain-log-…-3h.zip to Downloads.

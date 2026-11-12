@@ -6,6 +6,7 @@ routes are the owner's, a debug token's and the sidecar's. Fake stores: no datab
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import zipfile
@@ -24,10 +25,10 @@ from jbrain.api.growbot_calls import summarize
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.growbot import brainlog
-from jbrain.growbot.brainlog import Scrub, h8, redact_quotes
+from jbrain.growbot.brainlog import Scrub, h8, hashed, redact_quotes
 from jbrain.growbot.calls import CallRecord, LoggedCall
 from jbrain.growbot.journal import DiaryBatch, DiaryRow
-from jbrain.growbot.personas import Persona
+from jbrain.growbot.personas import Memory, Persona
 from jbrain.growbot.repo import RobotInfo
 from jbrain.storage import FsInternalSecrets
 
@@ -87,6 +88,16 @@ class _Personas:
                 wearing=_CODE,
                 memories=5,
             )
+        ]
+
+    async def get_persona(self, ctx: SessionContext, pid: str) -> Persona | None:
+        (p,) = await self.list_personas(ctx)
+        return Persona(**{**p.__dict__, "soul": {"core": {"goals": {"owner": "Jeffrey"}}}})
+
+    async def memories(self, ctx: SessionContext, pid: str) -> list[Memory]:
+        return [
+            Memory(id="r1", meta={"kind": "person", "name": "Tamsin"}, views=[]),
+            Memory(id="r2", meta={"kind": "any", "name": "red mug"}, views=[]),
         ]
 
 
@@ -301,7 +312,7 @@ async def test_the_diary_rows_and_their_pages() -> None:
     rows = _jsonl(files["diary.jsonl"])
     assert [r["e"] for r in rows] == ["heard", "act"]
     assert rows[0]["diary"] == "diary-1" and rows[0]["boot"] == 111
-    assert rows[0]["q"] == f"«{h8('dance for Quorra')}·3w»"
+    assert rows[0]["q"] == hashed('"dance for Quorra"')
     assert rows[1]["who"] == ["[name]"]
     pages = json.loads(files["diary-pages.json"])
     assert pages == {"diary-1@111": {"mode": "v3", "boot": {"t": 111, "bld": "deadbeef"}}}
@@ -436,3 +447,81 @@ def test_the_debug_zip_is_always_redacted(tmp_path: Path) -> None:
     assert manifest["hours"] == 6 and manifest["redacted"] is True
     assert b"can you dance" not in calls
     assert client.get("/api/debug/growbot/brain-log", params={"hours": 5}).status_code == 422
+
+
+async def test_raw_speech_in_the_diary_and_the_models_thinking_are_hashed() -> None:
+    # A `.local` box name makes upstream's page think it is staging, so it writes raw.
+    files, _ = await _build(
+        [_call(1, reasoning="The child asked me to dance, so I will.")],
+        [
+            _diary(1, {"t": 10, "e": "user", "txt": "mum is at the dentist at 3"}),
+            _diary(2, {"t": 11, "e": "body_sound", "words": ["hello", "there you"]}),
+            _diary(3, {"t": 12, "e": "act", "verb": "spin", "diary": "x", "note": "nx-abc123"}),
+        ],
+    )
+    (llm,) = _jsonl(files["calls.jsonl"])
+    assert llm["reasoning"] == f"«{h8('The child asked me to dance, so I will.')}·9w»"
+    user, sound, act = _jsonl(files["diary.jsonl"])
+    assert user["txt"] == f"«{h8('mum is at the dentist at 3')}·7w»"
+    assert sound["words"] == [f"«{h8('hello')}·1w»", f"«{h8('there you')}·2w»"]
+    # A row's own field never overwrites the box's label, and its diary id is numbered.
+    assert act["diary"] == "diary-1" and act["_diary"] == "x" and act["note"] == "diary-1"
+    assert act["verb"] == "spin"
+    everything = b"".join(files.values()).decode()
+    assert "dentist" not in everything and "nx-abc123" not in everything
+
+
+async def test_full_mode_keeps_the_diarys_speech_and_the_thinking() -> None:
+    files, _ = await _build(
+        [_call(1, reasoning="thinking")],
+        [_diary(1, {"t": 10, "e": "user", "txt": "hi Quorra"})],
+        redact=False,
+        names=["Quorra"],
+    )
+    assert _jsonl(files["calls.jsonl"])[0]["reasoning"] == "thinking"
+    assert _jsonl(files["diary.jsonl"])[0]["txt"] == "hi [name]"
+
+
+def test_token_shapes_are_cut() -> None:
+    scrub = Scrub(redact=False)
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop"
+    assert scrub.text(f"t={jwt} k={'ab' * 20}") == "t=[secret] k=[secret]"
+    assert scrub.text("build deadbeef") == "build deadbeef"
+
+
+async def test_a_window_past_the_size_cap_is_cut_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(brainlog, "OUT_MAX", 1)
+    monkeypatch.setattr(brainlog, "_PAGE", 1)
+    files, _ = await _build([_call(i, "tts") for i in range(1, 5)])
+    assert len(_jsonl(files["calls.jsonl"])) < 4
+    assert json.loads(files["manifest.json"])["cut"] is True
+
+
+def test_one_brain_log_at_a_time(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, _Journal(), [])
+    app.dependency_overrides[owner_only] = lambda: OWNER
+    lock = asyncio.Lock()
+    app.state.growbot_brainlog_lock = lock
+    asyncio.run(lock.acquire())
+    got = TestClient(app).post("/api/growbot/brain-log", json={"hours": 1})
+    assert got.status_code == 409
+    lock.release()
+    assert TestClient(app).post("/api/growbot/brain-log", json={"hours": 1}).status_code == 200
+
+
+def test_the_names_the_box_already_knows() -> None:
+    souls = [{"soul_format": 3, "core": {"goals": {"owner": "Jeffrey", "wants": []}}}, {}]
+    metas = [{"kind": "person", "name": "Quorra"}, {"kind": "any", "name": "red mug"}]
+    assert brainlog.known_names(souls, metas) == ["Jeffrey", "Quorra"]
+
+
+def test_the_owner_route_hides_the_names_the_box_knows_with_no_list(tmp_path: Path) -> None:
+    call = _call(1, ago=timedelta(seconds=30), reply="Hi Jeffrey and Tamsin, I am Sprout on Fish")
+    app, _ = _app(tmp_path, _Journal(), [call])
+    app.dependency_overrides[owner_only] = lambda: OWNER
+    got = TestClient(app).post("/api/growbot/brain-log", json={"hours": 1, "redact": False})
+    with zipfile.ZipFile(io.BytesIO(got.content)) as zf:
+        calls = zf.read(next(n for n in zf.namelist() if n.endswith("calls.jsonl")))
+    assert json.loads(calls)["reply"] == "Hi [name] and [name], I am [name] on [name]"

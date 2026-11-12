@@ -119,7 +119,8 @@ export function GrowbotBrainLogSheet({ say, onClose }: Props) {
       <p className="gb-hint dim">
         Every model turn, transcription and spoken line with where the time went, the creature's own
         diary, and a latency summary. No camera frames, keys, codes or box ids: personas and robots
-        are numbered.
+        are numbered. The creature's soul and its own words go out as written, so list the names
+        they use.
       </p>
       {error && (
         <p className="gb-msg bad" role="alert">

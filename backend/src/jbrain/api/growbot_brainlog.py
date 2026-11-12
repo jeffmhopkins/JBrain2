@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
@@ -91,18 +92,52 @@ async def _zip(
     names: list[str],
 ) -> Response:
     state = request.app.state
+    # One at a time: a six-hour zip is held in memory while it is built.
+    lock = getattr(state, "growbot_brainlog_lock", None)
+    if lock is None:
+        lock = state.growbot_brainlog_lock = asyncio.Lock()
+    if lock.locked():
+        raise HTTPException(409, "A brain log is already being gathered. Try again in a moment.")
+    async with lock:
+        return await _build(request, ctx, settings, hours=hours, redact=redact, names=names)
+
+
+async def _build(
+    request: Request,
+    ctx: SessionContext,
+    settings: Settings,
+    *,
+    hours: int,
+    redact: bool,
+    names: list[str],
+) -> Response:
+    state = request.app.state
+    persona_repo = cast(PersonaRepo, state.growbot_personas)
+    personas = await persona_repo.list_personas(ctx)
+    robots = await cast(GrowbotRepo, state.growbot_repo).list_robots(ctx)
+    souls: list[dict[str, Any]] = []
+    metas: list[dict[str, Any]] = []
+    for p in personas:
+        full = await persona_repo.get_persona(ctx, p.id)
+        if full is not None and full.soul:
+            souls.append(full.soul)
+        metas += [m.meta for m in await persona_repo.memories(ctx, p.id) or []]
+    # Persona and robot names may be people's too (a creature named after a child).
+    known = brainlog.known_names(souls, metas) + [p.name for p in personas]
+    known += [r.name for r in robots if r.name]
     data, filename = await brainlog.build(
         ctx=ctx,
         calls=cast(CallLog, state.growbot_calls),
         journal=_journal(request),
-        personas=await cast(PersonaRepo, state.growbot_personas).list_personas(ctx),
-        robots=await cast(GrowbotRepo, state.growbot_repo).list_robots(ctx),
+        personas=personas,
+        robots=robots,
         summarize=summarize,
         hours=hours,
         redact=redact,
         names=names,
         now=datetime.now(UTC),
         jbrain=settings.git_sha,
+        known=known,
     )
     log.info("growbot.brain_log", hours=hours, redact=redact, bytes=len(data))
     return Response(
