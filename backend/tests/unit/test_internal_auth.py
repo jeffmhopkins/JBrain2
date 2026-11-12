@@ -96,7 +96,9 @@ GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
         200,
     ),
     ("GET", "/internal/growbot/body/gb-x", None, 200),
+    ("GET", "/internal/growbot/robots/gb-x/cal", None, 200),
     ("POST", "/internal/growbot/calls", {"kind": "tts", "ok": True, "total_ms": 1}, 204),
+    ("POST", "/internal/growbot/journal", {"sid": "nx-abc", "rows": []}, 200),
     ("POST", "/internal/growbot/memories/list", {"persona": _PID, "phone": _PHONE}, 200),
     (
         "POST",
@@ -113,9 +115,17 @@ GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ),
 ]
 # Routes with a path parameter, as app.routes names them.
-_TEMPLATES = {"/internal/growbot/body/gb-x": "/internal/growbot/body/{code}"}
+_TEMPLATES = {
+    "/internal/growbot/body/gb-x": "/internal/growbot/body/{code}",
+    "/internal/growbot/robots/gb-x/cal": "/internal/growbot/robots/{code}/cal",
+}
 # Keeps its own HMAC bearer (api/llm_internal.py, tested in test_llm_internal.py).
 _OWN_BEARER = {"/internal/llm/regen-gateway-config"}
+
+
+class _YesBodyRepo:
+    async def get_cal(self, ctx: object, code: str) -> tuple[bool, None]:
+        return True, None
 
 
 class _YesGrowbotRepo:
@@ -135,6 +145,7 @@ def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
         app.state.auth_repo = FakeAuthRepo()
         app.state.growbot_repo = _YesGrowbotRepo()
         app.state.growbot_personas = _YesPersonaRepo()
+        app.state.growbot_body = _YesBodyRepo()
         yield app, c
 
 

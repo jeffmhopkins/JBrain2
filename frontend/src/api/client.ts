@@ -3884,6 +3884,8 @@ export interface GrowbotRobot {
   revoked_at: string | null;
   last_seen_at: string | null;
   connected: boolean;
+  /** Its rider's creature page is open and takes the Body tab's moves (absent: an older box). */
+  creature?: boolean;
 }
 
 /** What the box last found in the official GrowBot repo (jbrain.growbot.upstream):
@@ -3909,6 +3911,56 @@ export interface GrowbotUpstream {
   checked_at: string | null;
   error: string;
 }
+
+/** What the Body tab can ask the creature wearing a robot to do: walks and spins run the
+ *  creature's own policies on its phone's motion sensors, gestures are its named keyframes. */
+export type GrowbotMove =
+  | "forward"
+  | "back"
+  | "spin_left"
+  | "spin_right"
+  | "wiggle"
+  | "bow"
+  | "sway"
+  | "stop";
+
+/** The creature's answer: whether it started the move, and if not, why in its own words. */
+export interface GrowbotMoveResult {
+  ok: boolean;
+  state: string;
+  why: string;
+}
+
+/** A robot's leg calibration, upstream's `gb_walk_cal` field for field: by-eye trims (°), the
+ *  left/right swap, each leg's and the IMU's signs, and the walk gain. Kept on the box per
+ *  robot; the creature copies it in. */
+export interface GrowbotCal {
+  L_OFF: number;
+  R_OFF: number;
+  SWAP: 0 | 1;
+  L_SIGN: -1 | 1;
+  R_SIGN: -1 | 1;
+  IMU_SIGN: [-1 | 1, -1 | 1, -1 | 1];
+  gain: number;
+}
+
+/** `saved` false: nothing set from here, so each phone still uses what it holds. */
+export interface GrowbotCalOut {
+  cal: GrowbotCal;
+  saved: boolean;
+}
+
+/** One keyframe in the robot's own left/right (the box applies a saved swap). */
+export interface GrowbotStep {
+  l: number;
+  r: number;
+  ms: number;
+}
+
+export type GrowbotAct =
+  | { kind: "act"; steps: GrowbotStep[] }
+  | { kind: "wiggle" }
+  | { kind: "stop" };
 
 export interface GrowbotStatus {
   service: "up" | "down";
@@ -4100,6 +4152,14 @@ export interface GrowbotTicketFor {
   persona?: string;
   /** "lan" for the robot's own phone, whose setup page follows only the LAN site's link. */
   where?: "here" | "lan";
+}
+
+/** What the brain log covers (api/growbot_brainlog.py): the last 1, 3 or 6 hours, speech
+ *  hashed or kept, and names replaced with [name] wherever they appear. */
+export interface GrowbotBrainLogRequest {
+  hours: 1 | 3 | 6;
+  redact: boolean;
+  names: string[];
 }
 
 /** One saved view of a visual memory (`i` from 0), as a plain `<img src>`: same-origin cookie
@@ -8186,6 +8246,35 @@ export const api = {
     return (await response.json()) as GrowbotRobot;
   },
 
+  /** One move for the creature wearing `code`; `secs` (1-15, 0 for its own pick) for a walk
+   *  or spin. Refused with words when nobody drives it or its page is not on screen. */
+  async moveGrowbotRobot(code: string, move: GrowbotMove, secs = 0): Promise<GrowbotMoveResult> {
+    const response = await request(
+      `/api/growbot/robots/${encodeURIComponent(code)}/move`,
+      jsonInit("POST", { move, secs }),
+    );
+    return (await response.json()) as GrowbotMoveResult;
+  },
+
+  async growbotCal(code: string): Promise<GrowbotCalOut> {
+    const response = await request(`/api/growbot/robots/${encodeURIComponent(code)}/cal`);
+    return (await response.json()) as GrowbotCalOut;
+  },
+
+  /** Saves the keys given, over those saved before; the rest stay each phone's own. */
+  async saveGrowbotCal(code: string, cal: Partial<GrowbotCal>): Promise<GrowbotCalOut> {
+    const response = await request(
+      `/api/growbot/robots/${encodeURIComponent(code)}/cal`,
+      jsonInit("PUT", cal),
+    );
+    return (await response.json()) as GrowbotCalOut;
+  },
+
+  /** Moves the legs now, straight to the chip (409 when the robot is not on the relay). */
+  async growbotAct(code: string, move: GrowbotAct): Promise<void> {
+    await request(`/api/growbot/robots/${encodeURIComponent(code)}/act`, jsonInit("POST", move));
+  },
+
   /** Ends every phone's GrowBot session (a lost phone, say); each opens again from here. */
   async growbotSignOutPhones(): Promise<void> {
     await request("/api/growbot/sessions/reset", { method: "POST" });
@@ -8271,6 +8360,13 @@ export const api = {
     return { blob: await response.blob(), filename: named?.[1] ?? "persona-soul.json" };
   },
 
+  /** The brain log for GrowBot's developer: a zip of the last `hours`, with the box's name. */
+  async growbotBrainLog(body: GrowbotBrainLogRequest): Promise<{ blob: Blob; filename: string }> {
+    const response = await request("/api/growbot/brain-log", jsonInit("POST", body));
+    const named = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+    return { blob: await response.blob(), filename: named?.[1] ?? "growbot-brain-log.zip" };
+  },
+
   /** As a new persona (`name`), or over persona `over`, which is checkpointed first. */
   async importGrowbotPersona(
     soul: unknown,
@@ -8297,6 +8393,27 @@ export const api = {
       { method: "POST" },
     );
     return (await response.json()) as GrowbotWritten;
+  },
+
+  /** Deletes one checkpoint for good. A 404 means it is already gone, which is what was asked. */
+  async deleteGrowbotCheckpoint(id: string, cid: string): Promise<void> {
+    try {
+      await request(
+        `/api/growbot/personas/${encodeURIComponent(id)}/checkpoints/${encodeURIComponent(cid)}`,
+        { method: "DELETE" },
+      );
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 404)) throw e;
+    }
+  },
+
+  /** Deletes every automatic checkpoint; the named ones stay. Answers how many went. */
+  async deleteGrowbotAutomaticCheckpoints(id: string): Promise<number> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}/checkpoints/automatic`,
+      { method: "DELETE" },
+    );
+    return ((await response.json()) as { deleted: number }).deleted;
   },
 
   /** Its visual memories, newest first. */

@@ -21,6 +21,7 @@ import type {
   FactOut,
   GeneratedImageOut,
   GraphEdge,
+  GrowbotCal,
   GrowbotCheckpoint,
   GrowbotFailCode,
   GrowbotFlashJob,
@@ -191,6 +192,7 @@ const mockGb = {
       revoked_at: null,
       last_seen_at: new Date(Date.now() - 20_000).toISOString(),
       connected: true,
+      creature: true,
     },
     {
       code: "gb-91d0e4",
@@ -209,6 +211,19 @@ const mockGb = {
   job: null as GrowbotFlashJob | null,
   steps: [] as MockGbStep[],
   networks: ["Home-2G", "Workshop"],
+  // Saved calibrations by robot (absent: never saved) and the moves the screen sent.
+  cals: {} as Record<string, GrowbotCal>,
+  acts: [] as { code: string; body: unknown }[],
+};
+
+const MOCK_GB_CAL: GrowbotCal = {
+  L_OFF: 0,
+  R_OFF: 0,
+  SWAP: 0,
+  L_SIGN: -1,
+  R_SIGN: 1,
+  IMU_SIGN: [1, -1, 1],
+  gain: 1,
 };
 
 function mockGbServiceUp(): boolean {
@@ -816,6 +831,17 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
     const { soul: _s, vms: _v, ...cp } = made;
     return json(cp);
   }
+  if (rest === "checkpoints/automatic" && method === "DELETE") {
+    const before = p.cps.length;
+    p.cps = p.cps.filter((c) => !c.auto);
+    return json({ deleted: before - p.cps.length });
+  }
+  const gone = /^checkpoints\/([^/]+)$/.exec(rest)?.[1];
+  if (gone && method === "DELETE") {
+    if (!p.cps.some((c) => c.id === gone)) return json({ detail: "no such checkpoint" }, 404);
+    p.cps = p.cps.filter((c) => c.id !== gone);
+    return new Response(null, { status: 204 });
+  }
   const restore = /^checkpoints\/([^/]+)\/restore$/.exec(rest)?.[1];
   if (restore && method === "POST") {
     const cp = p.cps.find((c) => c.id === restore);
@@ -850,7 +876,10 @@ async function mockGrowbot(
   if (personas) return personas;
   const up = mockGbServiceUp();
   const robots = () =>
-    mockGb.robots.map((r) => ({ ...r, connected: up && r.connected && !r.revoked_at }));
+    mockGb.robots.map((r) => {
+      const on = up && r.connected && !r.revoked_at;
+      return { ...r, connected: on, creature: on && !!r.creature };
+    });
   if (path === "/api/growbot/status" && method === "GET") {
     const list = robots();
     return json({
@@ -863,6 +892,32 @@ async function mockGrowbot(
     return json(mockGbUpstream());
   }
   if (path === "/api/growbot/robots" && method === "GET") return json(robots());
+  const cal = /^\/api\/growbot\/robots\/([^/]+)\/(cal|act)$/.exec(path);
+  if (cal) {
+    const code = decodeURIComponent(cal[1] ?? "");
+    const r = mockGb.robots.find((x) => x.code === code);
+    if (!r) return json({ detail: "no such robot" }, 404);
+    if (cal[2] === "act" && method === "POST") {
+      if (!up || !r.connected || r.revoked_at) {
+        return json({ detail: "the robot is not on the relay" }, 409);
+      }
+      mockGb.acts.push({ code, body: JSON.parse(String(init?.body ?? "{}")) });
+      return json({ sent: true });
+    }
+    if (cal[2] === "cal" && method === "GET") {
+      const saved = mockGb.cals[code];
+      return json({ cal: saved ?? MOCK_GB_CAL, saved: !!saved });
+    }
+    if (cal[2] === "cal" && method === "PUT") {
+      const next = {
+        ...MOCK_GB_CAL,
+        ...mockGb.cals[code],
+        ...(JSON.parse(String(init?.body ?? "{}")) as Partial<GrowbotCal>),
+      };
+      mockGb.cals[code] = next;
+      return json({ cal: next, saved: true });
+    }
+  }
   const revoke = /^\/api\/growbot\/robots\/([^/]+)\/revoke$/.exec(path);
   if (revoke && method === "POST") {
     const r = mockGb.robots.find((x) => x.code === decodeURIComponent(revoke[1] ?? ""));
@@ -870,6 +925,31 @@ async function mockGrowbot(
     r.revoked_at = new Date().toISOString();
     r.connected = false;
     return json({ ...r });
+  }
+  if (path === "/api/growbot/brain-log" && method === "POST") {
+    const { hours } = JSON.parse(String(init?.body ?? "{}")) as { hours?: number };
+    if (![1, 3, 6].includes(Number(hours))) return json({ detail: "hours is 1, 3 or 6" }, 422);
+    return new Response(new Blob(["PK"], { type: "application/zip" }), {
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="growbot-brain-log-20261112-0300-${hours}h.zip"`,
+      },
+    });
+  }
+  const move = /^\/api\/growbot\/robots\/([^/]+)\/move$/.exec(path);
+  if (move && method === "POST") {
+    const r = robots().find((x) => x.code === decodeURIComponent(move[1] ?? ""));
+    if (!r || r.revoked_at) return json({ detail: "no such robot" }, 404);
+    if (!r.creature) {
+      return json(
+        {
+          detail:
+            "Nobody is driving it: open a persona wearing it, and keep the creature on screen.",
+        },
+        409,
+      );
+    }
+    return json({ ok: true, state: "started", why: "" });
   }
   if (path === "/api/growbot/sessions/reset" && method === "POST") {
     return new Response(null, { status: 204 });

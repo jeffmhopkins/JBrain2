@@ -16,7 +16,10 @@ import {
   api,
 } from "../api/client";
 import { GrowbotAddSheet } from "../components/GrowbotAddSheet";
+import { GrowbotBodyControls } from "../components/GrowbotBodyControls";
+import { GrowbotBrainLogSheet } from "../components/GrowbotBrainLogSheet";
 import { GrowbotFail, GrowbotLog, GrowbotPhases } from "../components/GrowbotJob";
+import { GrowbotMovePanel, stopCreature } from "../components/GrowbotMovePanel";
 import { GrowbotPersonaPage } from "../components/GrowbotPersonaPage";
 import {
   GrowbotAvatar,
@@ -70,6 +73,7 @@ type SheetState =
   | { kind: "other"; pid: string | null; code: string | null }
   | { kind: "new"; seed: string | null }
   | { kind: "import"; over: string | null }
+  | { kind: "brainlog" }
   | null;
 
 interface Toast {
@@ -111,13 +115,15 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
   const prev = useRef<GrowbotOverview | null>(null);
   const robotsRef = useRef<GrowbotRobot[]>([]);
   const mounted = useRef(true);
-  useEffect(
-    () => () => {
+  // Set in the effect as well as the ref's start: StrictMode's dev remount runs the cleanup
+  // once, and a ref left false then drops every answer, so the screen sat on "Loading GrowBot…".
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
       mounted.current = false;
       if (toastTimer.current) clearTimeout(toastTimer.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   const say: Say = useCallback((text, opts = {}) => {
     setToast({ text, ...opts, k: ++seq.current });
@@ -631,6 +637,17 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     );
   }
 
+  // The brain log covers the creature, not one robot, so it sits under the robots and shows
+  // with none too: a persona alone on a phone still thinks, hears and speaks.
+  const brainLog = (
+    <>
+      <div className="gb-sec-h">For GrowBot's developer</div>
+      <button type="button" className="gb-btn block" onClick={() => setSheet({ kind: "brainlog" })}>
+        Share a brain log…
+      </button>
+    </>
+  );
+
   function bodyTab() {
     if (status === null) return null;
     const flashing = running && (
@@ -654,6 +671,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
               Add a robot
             </button>
           )}
+          {brainLog}
           <GrowbotUpstreamCard />
         </>
       );
@@ -664,6 +682,11 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           <div key={r.code} className="gb-stack">
             {bodyCard(r)}
             {riderPick(r)}
+            <GrowbotBodyControls
+              robot={r}
+              move={<GrowbotMovePanel robot={r} withStop={false} />}
+              onStop={() => stopCreature(r)}
+            />
           </div>
         ))}
         {flashing || (
@@ -675,6 +698,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             Add a robot
           </button>
         )}
+        {brainLog}
         <GrowbotUpstreamCard />
       </>
     );
@@ -878,6 +902,10 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           }}
           onClose={() => setSheet(null)}
         />
+      )}
+
+      {sheet?.kind === "brainlog" && (
+        <GrowbotBrainLogSheet say={say} onClose={() => setSheet(null)} />
       )}
 
       {sheet?.kind === "add" && (

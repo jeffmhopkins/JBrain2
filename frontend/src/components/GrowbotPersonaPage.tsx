@@ -26,7 +26,6 @@ import {
   ago,
   clip,
   day,
-  memoriesCount,
   memoryForgot,
   onPhone,
   phoneName,
@@ -38,10 +37,12 @@ import {
   words,
 } from "../growbot";
 import { Dialog } from "./Dialog";
+import { GrowbotCheckpoints } from "./GrowbotCheckpoints";
 import { GrowbotMemoryGrid } from "./GrowbotMemories";
 import { GrowbotTabs, type Say } from "./GrowbotPersonaSheets";
 import { Sheet } from "./Sheet";
 import { useArm } from "./growbotArm";
+import { ChevronLeftIcon } from "./icons";
 
 type PTab = "soul" | "vm" | "cps" | "manage";
 
@@ -96,7 +97,6 @@ export function GrowbotPersonaPage({
   // The face being saved, shown picked while it is.
   const [facing, setFacing] = useState<GrowbotFace | null>(null);
   const [restoring, setRestoring] = useState<GrowbotCheckpoint | null>(null);
-  const [cpName, setCpName] = useState("");
   const [mems, setMems] = useState<GrowbotMemory[] | null>(null);
   const [memError, setMemError] = useState("");
   // Bumped by every write that can change them (a restore brings a checkpoint's back; a reset
@@ -171,17 +171,47 @@ export function GrowbotPersonaPage({
     };
   }
 
-  async function saveCheckpoint() {
-    const name = cpName.trim();
-    if (!name) return;
+  async function saveCheckpoint(name: string): Promise<boolean> {
     try {
       await api.saveGrowbotCheckpoint(p.id, name);
-      setCpName("");
       await load();
       onChanged();
       say(`Saved “${name}”.`);
+      return true;
     } catch (e) {
       say(`The checkpoint wasn't saved — ${message(e)}`);
+      return false;
+    }
+  }
+
+  /** Gone for good: deleting makes no checkpoint of its own, so there is no Undo. */
+  async function deleteCheckpoint(cp: GrowbotCheckpoint) {
+    try {
+      await api.deleteGrowbotCheckpoint(p.id, cp.id);
+      setDetail((d) =>
+        d
+          ? {
+              ...d,
+              checkpoints: Math.max(0, d.checkpoints - 1),
+              checkpoint_list: d.checkpoint_list.filter((c) => c.id !== cp.id),
+            }
+          : d,
+      );
+      onChanged();
+      say(`Deleted “${cp.name}”.`);
+    } catch (e) {
+      say(`“${cp.name}” wasn't deleted — ${message(e)}`);
+    }
+  }
+
+  async function deleteAutomatic() {
+    try {
+      const n = await api.deleteGrowbotAutomaticCheckpoints(p.id);
+      await load();
+      onChanged();
+      say(`Deleted ${n} automatic checkpoint${n === 1 ? "" : "s"}. The ones you named are kept.`);
+    } catch (e) {
+      say(`The automatic checkpoints weren't deleted — ${message(e)}`);
     }
   }
 
@@ -428,62 +458,18 @@ export function GrowbotPersonaPage({
 
   function cpsTab() {
     return (
-      <section className="gb-card">
-        <div className="gb-inline-save">
-          <input
-            value={cpName}
-            placeholder="Name it, e.g. Before the trip"
-            aria-label="Checkpoint name"
-            maxLength={80}
-            onChange={(e) => setCpName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void saveCheckpoint();
-            }}
-          />
-          <button
-            type="button"
-            className="gb-btn primary"
-            disabled={!cpName.trim()}
-            onClick={() => void saveCheckpoint()}
-          >
-            Save
-          </button>
-        </div>
-        <p className="gb-hint dim gb-gap">
-          A checkpoint is a copy of its whole soul and visual memories, kept on the box.
-        </p>
-        {cps.length ? (
-          <div className="gb-list gb-gap">
-            {cps.map((c) => (
-              <div key={c.id} className="gb-cp">
-                <div className="gb-cp-head">
-                  <span className="gb-t1">{c.name}</span>
-                  {c.auto && <span className="gb-tag dim">automatic</span>}
-                </div>
-                <div className="gb-t2">
-                  {when(c.created_at)}
-                  {c.why ? ` · ${c.why}` : ""}
-                  {c.memories > 0 ? ` · ${memoriesCount(c.memories)}` : ""}
-                </div>
-                <div className="gb-acts">
-                  <button type="button" className="gb-btn" onClick={() => setRestoring(c)}>
-                    Restore
-                  </button>
-                  <button type="button" className="gb-btn" onClick={() => onSeed(c.id)}>
-                    New persona from it
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          detail && (
-            <p className="gb-hint dim gb-gap">
-              No checkpoints yet. One is made on its own before every edit, restore and reset.
-            </p>
-          )
-        )}
-      </section>
+      <GrowbotCheckpoints
+        name={p.name}
+        cps={cps}
+        loaded={detail !== null}
+        isArmed={isArmed}
+        arm={arm}
+        onSave={saveCheckpoint}
+        onRestore={setRestoring}
+        onSeed={(c) => onSeed(c.id)}
+        onDelete={(c) => void deleteCheckpoint(c)}
+        onDeleteAutomatic={() => void deleteAutomatic()}
+      />
     );
   }
 
@@ -574,8 +560,13 @@ export function GrowbotPersonaPage({
   return (
     <div className="gb-page">
       <div className="gb-page-head">
-        <button type="button" className="gb-btn" onClick={onBack}>
-          Back
+        <button
+          type="button"
+          className="gb-page-back"
+          aria-label="Back to personas"
+          onClick={onBack}
+        >
+          <ChevronLeftIcon size={22} />
         </button>
         <span className="gb-page-ttl">
           <h2 className="gb-page-name" tabIndex={-1} ref={heading}>
@@ -593,7 +584,7 @@ export function GrowbotPersonaPage({
         tabs={[
           { id: "soul", label: "Soul" },
           { id: "vm", label: "Memories", count: vmCount },
-          { id: "cps", label: "Checkpoints" },
+          { id: "cps", label: "Checkpoints", count: n },
           { id: "manage", label: "Manage" },
         ]}
       />

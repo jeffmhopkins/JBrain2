@@ -100,6 +100,8 @@ from jbrain.api import (
     family,
     feed,
     growbot,
+    growbot_body,
+    growbot_brainlog,
     growbot_calls,
     growbot_flash,
     growbot_llm,
@@ -202,7 +204,9 @@ from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
 from jbrain.gmail import GmailClientProvider
 from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
+from jbrain.growbot.body import SqlBodyRepo
 from jbrain.growbot.calls import SqlCallLog
+from jbrain.growbot.journal import SqlJournal
 from jbrain.growbot.personas import SqlPersonaRepo
 from jbrain.growbot.repo import SqlGrowbotRepo
 from jbrain.growbot.upstream import MAX_COMPARE_BYTES as GROWBOT_COMPARE_MAX_BYTES
@@ -505,7 +509,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.owner_device_repo = SqlOwnerDeviceRepo(maker)
         app.state.growbot_repo = SqlGrowbotRepo(maker)
+        app.state.growbot_body = SqlBodyRepo(maker)
         app.state.growbot_calls = SqlCallLog(maker)
+        app.state.growbot_journal = SqlJournal(maker)
         app.state.growbot_personas = SqlPersonaRepo(
             maker, FsBlobStore(settings.blob_dir).namespace("growbot-memories")
         )
@@ -2034,10 +2040,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(panel_agent.debug_router, prefix="/api")
         app.include_router(panel_notice.debug_router, prefix="/api")
         app.include_router(growbot.debug_router, prefix="/api")
+        app.include_router(growbot_body.debug_router, prefix="/api")
         app.include_router(growbot_personas.debug_router, prefix="/api")
         app.include_router(growbot_upstream.debug_router, prefix="/api")
         app.include_router(growbot_flash.debug_router, prefix="/api")
         app.include_router(growbot_calls.debug_router, prefix="/api")
+        app.include_router(growbot_brainlog.debug_router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(owner_devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
@@ -2072,10 +2080,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
     app.include_router(growbot.router, prefix="/api")
+    app.include_router(growbot_body.router, prefix="/api")
     app.include_router(growbot_personas.router, prefix="/api")
     app.include_router(growbot_upstream.router, prefix="/api")
     # Flashing a robot from the PWA, its status card and revoke (GROWBOT_PLAN §3, G2).
     app.include_router(growbot_flash.router, prefix="/api")
+    app.include_router(growbot_brainlog.router, prefix="/api")
     # The box's LAN root as a download, so a phone can trust jbrain.local with no terminal.
     app.include_router(lan_ca.router, prefix="/api")
     app.include_router(images.generated_router, prefix="/api")
@@ -2131,9 +2141,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(owner_devices.internal_router, prefix="/internal")
     # The GrowBot sidecar's ticket and key checks and its model lane, on its own token.
     app.include_router(growbot.internal_router, prefix="/internal")
+    app.include_router(growbot_body.internal_router, prefix="/internal")
     app.include_router(growbot_personas.internal_router, prefix="/internal")
     app.include_router(growbot_llm.router, prefix="/internal")
     app.include_router(growbot_calls.internal_router, prefix="/internal")
+    app.include_router(growbot_brainlog.internal_router, prefix="/internal")
     # The worker's pre-load gateway-config re-stamp (internal network only, bearer-gated;
     # jbrain.llm.gateway_regen says why the worker cannot write the config itself).
     app.include_router(llm_internal.router, prefix="/internal")

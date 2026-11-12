@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot checkpoints — A — the Chats list</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+// A: the Chats panel, borrowed whole. A dashed "＋ Save a checkpoint" row (as "＋ New chat"),
+// filter segments with counts (as Today · Older · Archived), then one card of compact rows.
+// Swipe a row left for restore · new persona · delete (tap again); tap a row for its sheet.
+G.why = "A — borrows the Chats panel whole: ＋ row, counted segments, compact rows, swipe rail; tap opens a sheet. Swipe a row left (drag with the mouse).";
+G.list = () => {
+  const S = G.S;
+  const n = { all: S.cps.length, named: S.cps.filter((c) => !c.auto).length, auto: S.cps.filter((c) => c.auto).length };
+  const rows = S.cps.filter((c) => S.filter === "all" || (S.filter === "auto") === c.auto);
+  const chip = (id, l) => `<button class="${S.filter === id ? "on" : ""}" data-act="filter" data-arg="${id}">${l}<span class="seg-n">${n[id]}</span></button>`;
+  return `<button class="new-row" data-act="newcp">＋ Save a checkpoint</button>
+    <div class="chips">${chip("all", "All")}${chip("named", "Named")}${chip("auto", "Automatic")}</div>
+    ${rows.length ? `<div class="group">${rows.map((c) => G.row(c)).join("")}</div>`
+      : `<div class="empty">${S.cps.length ? "None here." : "No checkpoints yet. One is made on its own before every edit, restore and reset."}</div>`}
+    <p class="hint">Swipe a row left to restore, start a new persona or delete. Filled dot: one you named. Hollow: made on its own before a change; the 20 newest are kept.</p>`;
+};
+G.render();
+</script>
+</body>
+</html>

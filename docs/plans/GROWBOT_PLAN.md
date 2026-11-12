@@ -194,6 +194,13 @@ change made on one phone is invisible everywhere else.
   kind each setting is.
 - The model list the PWA offers is the box's catalog filtered to installed models, with
   vision-capable ones marked.
+- **The leg calibration landed first, and simpler** (owner, 2026-11-12: *"we also need to be
+  able to trim the legs … anything they could do in the original application"*). Upstream
+  reads `gb_walk_cal` at every move, so it needs no queue, report or reload: the box is the
+  only writer (`app.growbot_robots.cal`, migration 0261, set from the Body tab's Legs pane,
+  `api/growbot_body.py`) and `growbot-box.js` copies it into each page, the box winning key by
+  key. The pane's check moves go chip-direct (`POST /internal/robots/act`). See
+  growbot/README.md "Leg calibration".
 
 ### 2c. The creature lives on the box, as profiles the owner can switch
 
@@ -309,13 +316,46 @@ rows past 32 waiting rather than queueing without end. A failed write never fail
 with the debug API: `GET /api/debug/growbot/calls` and `…/calls/summary`, which splits picture
 turns from text ones (`../runbooks/DEBUG_ACCESS.md`).
 
+**Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
+pick 1, 3 or 6 hours and download one zip with what debugging needs. Upstream's own "brain
+log" is the creature's diary (`flushLog` in next.html posts a rolling window of its inputs,
+goals and actions to `/api/journal` every 8 s, human speech already hashed by `redactQ`), so
+the sidecar now forwards each snapshot's rows to `POST /internal/growbot/journal` on the call
+log's worker (its soul peek and join key stay behind) and answers `{"ok":true}`; a watch-id
+registration is still upstream's cloud link and is kept nowhere. `app.growbot_journal`
+(migration 0262, owner-only RLS, kept a week) keeps each row once, keyed by diary id, row
+time and a hash of the row, since every snapshot resends rows it sent before. The PWA's
+Body tab *Share a brain log…* (DESIGN.md "GrowBot — the brain log") posts to `POST
+/api/growbot/brain-log` and gets `growbot-brain-log-<stamp>-<N>h.zip`: `calls.jsonl` (every
+call-log row in the window, oldest first, a long system prompt written once under `prompts/`),
+`summary.json` (the call log's latency summary), `diary.jsonl` and `diary-pages.json` (the
+diary rows and each page load's header), `box.json` (the personas and robots in the window,
+numbered, and the models that answered), `manifest.json` and a README for the developer. It
+leaves the house, so it carries no ids or secrets of the box's: personas, robots and diaries
+are numbered, codes and ids inside text are swapped for those numbers, and bearer-shaped
+tokens are cut. Redacted (the default) applies upstream's own rule with upstream's own djb2
+`h8`, so a hashed line joins to the diary's: quoted spans become `«h8·Nw»`, a transcription
+and the model's reasoning are hashed whole, the creature's words stay. A `.local` LAN name
+makes upstream's page count as staging and write its diary raw, so the box hashes the diary's
+speech fields (`txt`, `words`, … `SPEECH_KEYS`) whole itself, whatever the page did. Names
+read `[name]` everywhere, in either mode: the ones the owner lists (kept on his phone, never on
+the box) plus the ones the box already holds (each soul's `goals.owner`, the people named in
+visual memories, persona and robot names). The sidecar keeps at most one snapshot per phone
+every 2 s, an export builds off the event loop one at a time (409 while one runs), and a zip
+stops taking rows past 96 MB, with `cut` in its manifest. A debug token
+reads the same zip, always redacted, at `GET /api/debug/growbot/brain-log?hours=`.
+
 **The relay** is the same process, at `wss://jbrain.local:8444/d/<code>` and
 `/d/<code>-agent`, reimplementing the envelopes above plus the key check.
 
 **Models.** The default lineup names a vision-capable catalog model so visual memory works:
 `qwen3-vl-30b` or `qwen3.8-27b` on the standard engine, `qwen3.8-flash-next` when Flash-Next
 is the engine. Upstream's measured budget is ~600–900 prompt tokens and ~10–25 reply tokens
-per turn, so latency is dominated by the image prefill on vision turns only. STT needs the box's
+per turn, so latency is dominated by the image prefill on vision turns only. Measured on the
+box (2026-11-12): the served 2048-token picture floor blew each 320 px frame up to ~2,100
+tokens, three frames a picture turn, ~33 s of prefill against ~5 s for a text turn. The lane
+now asks for its own floor per request (`CREATURE_IMAGE_MIN_TOKENS` = 256, read by Flash-Next's
+patched engine, `deploy/apply-llama-image-floor.sh`), so note photos keep 2048. STT needs the box's
 whisper model provisioned; without it the shim reports STT off and the creature's typed and
 talk-button paths still work.
 
@@ -412,7 +452,12 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
     Fish*, the hand-over banners, *On another phone* with a persona and the body, and the
     persona page with its tabs (soul and editor, checkpoints, manage). "This phone" is learned
     from a launch here that lands (the creature's phone id is another origin's), and the
-    launcher tile says who wears the body.
+    launcher tile says who wears the body. Since 2026-11-12 the Body tab also moves the robot
+    (owner: *"if the body is turned on … call the policies directly to have it try and do
+    movements from my pwa commands"*): a remote laid out like upstream's Policy Remote
+    (`tester/policy.html`) sends each move to the creature on the rider's phone over the
+    side channel, since the policies run on that phone's motion sensors (README "Moves from
+    JBrain").
   - **G4d — visual memories.** ✅ Migration 0258 (`growbot_memories`, owner-only under RLS
     with its isolation test); the pictures in the blob store's own `growbot-memories`
     namespace, deleted only once no memory or checkpoint names them. The phone syncs record by
@@ -429,7 +474,9 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   `docs/mocks/growbot-policies/a-body-card.html`). Bringing them in is still a sync PR, and the
   card says so. See `growbot/README.md` "Upstream and patches".
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
-  the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic.
+  the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic. Its store
+  landed early with the brain log (§2 "Brain log", migration 0262); reading it in the PWA and
+  the note remain.
 
 ## 5. What only the owner can do
 

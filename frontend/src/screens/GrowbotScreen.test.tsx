@@ -295,6 +295,14 @@ describe("GrowbotScreen tabs", () => {
     expect(screen.getByRole("button", { name: "Add a robot" })).toHaveClass("primary");
   });
 
+  it("shares a brain log from the Body tab, with or without a robot", async () => {
+    serve({ service: "up", connected: 0, robots: [] }, undefined, null, overview({ body: [] }));
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    fireEvent.click(screen.getByRole("button", { name: "Share a brain log…" }));
+    expect(screen.getByRole("button", { name: "Download brain log (.zip)" })).toBeInTheDocument();
+  });
+
   it("still shows the robots on a box that has no personas yet", async () => {
     serve(UP, undefined, null, null);
     render(<GrowbotScreen />);
@@ -661,7 +669,7 @@ describe("GrowbotScreen a persona's page", () => {
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
       "Soul",
       "Memories0",
-      "Checkpoints",
+      "Checkpoints3",
       "Manage",
     ]);
     for (const r of ["Personality", "Expression", "Name and description", "Dreams", "Thinking"]) {
@@ -673,7 +681,7 @@ describe("GrowbotScreen a persona's page", () => {
     ).toBeTruthy();
     expect(screen.getByText(/Sprout writes these itself/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open Sprout…" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to personas" }));
     expect(await screen.findByRole("tab", { name: /^Personas/ })).toBeInTheDocument();
   });
 
@@ -776,18 +784,25 @@ describe("GrowbotScreen a persona's page", () => {
     );
     render(<GrowbotScreen />);
     await openSprout();
-    fireEvent.click(screen.getByRole("tab", { name: "Checkpoints" }));
-    const save = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(screen.getByRole("tab", { name: /^Checkpoints/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save a checkpoint" }));
+    const naming = screen.getByRole("dialog", { name: "Save a checkpoint" });
+    const save = within(naming).getByRole("button", { name: "Save" });
     expect(save).toBeDisabled();
-    fireEvent.change(screen.getByRole("textbox", { name: "Checkpoint name" }), {
+    fireEvent.change(within(naming).getByRole("textbox", { name: "Name it" }), {
       target: { value: "Picnic" },
     });
     fireEvent.click(save);
     expect(await screen.findByText("Saved “Picnic”.")).toBeTruthy();
     expect(s.calls.find((c) => c.path.endsWith("/checkpoints"))?.body).toEqual({ name: "Picnic" });
-    expect(screen.getByText("automatic")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Save a checkpoint" })).toBeNull();
+    // Named and automatic ones sit together under their day; the automatic one says so.
+    expect(
+      screen.getByRole("button", { name: /^Before editing personality\s*, automatic/ }),
+    ).toBeTruthy();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: /^Before the beach trip/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore Sprout to this" }));
     const dlg = screen.getByRole("dialog", { name: "Restore “Before the beach trip”?" });
     expect(dlg).toHaveTextContent(
       /saved as a checkpoint first, so this can be undone\. It reloads on Pixel 6a\./,
@@ -800,6 +815,77 @@ describe("GrowbotScreen a persona's page", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
+  });
+
+  it("deletes a checkpoint behind a second tap, and every automatic one at once", async () => {
+    const s = serve(
+      UP,
+      pageRoutes((path, init) => {
+        if (path.endsWith("/checkpoints/automatic") && init?.method === "DELETE") {
+          return json({ deleted: 1 });
+        }
+        if (path.endsWith(`/checkpoints/${cp().id}`) && init?.method === "DELETE") {
+          return new Response(null, { status: 204 });
+        }
+        return null;
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: /^Checkpoints/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Before the beach trip/ }));
+    const sheet = screen.getByRole("dialog", { name: "Before the beach trip" });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Delete checkpoint" }));
+    expect(s.calls.some((c) => c.method === "DELETE")).toBe(false);
+    fireEvent.click(
+      within(sheet).getByRole("button", { name: "Tap again — this can't be undone" }),
+    );
+    expect(await screen.findByText("Deleted “Before the beach trip”.")).toBeTruthy();
+    expect(s.calls.find((c) => c.method === "DELETE")?.path).toBe(
+      `/api/growbot/personas/${detail().id}/checkpoints/${cp().id}`,
+    );
+    expect(screen.queryByRole("button", { name: /^Before the beach trip/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: /^Checkpoints/ })).toHaveTextContent("Checkpoints2");
+
+    const sweep = screen.getByRole("button", { name: "Delete the 1 automatic one" });
+    fireEvent.click(sweep);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Tap again — deletes 1, keeps the named ones" }),
+    );
+    expect(
+      await screen.findByText("Deleted 1 automatic checkpoint. The ones you named are kept."),
+    ).toBeTruthy();
+    expect(s.calls.some((c) => c.path.endsWith("/checkpoints/automatic"))).toBe(true);
+  });
+
+  it("swipes a row open for its rail, whose delete takes a second tap", async () => {
+    const s = serve(
+      UP,
+      pageRoutes((path, init) =>
+        path.endsWith(`/checkpoints/${cp().id}`) && init?.method === "DELETE"
+          ? new Response(null, { status: 204 })
+          : null,
+      ),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: /^Checkpoints/ }));
+    const tap = screen.getByRole("button", { name: /^Before the beach trip/ });
+    const slide = tap.parentElement as HTMLElement;
+    const swipe = (from: number, to: number) => {
+      fireEvent.touchStart(slide, { touches: [{ clientX: from, clientY: 100 }] });
+      fireEvent.touchMove(slide, { touches: [{ clientX: (from + to) / 2, clientY: 101 }] });
+      fireEvent.touchMove(slide, { touches: [{ clientX: to, clientY: 101 }] });
+      fireEvent.touchEnd(slide, { touches: [] });
+    };
+    swipe(300, 40);
+    expect(screen.getByRole("button", { name: /restore/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /new persona/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/ }));
+    expect(s.calls.some((c) => c.method === "DELETE")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "tap again to delete" }));
+    expect(await screen.findByText("Deleted “Before the beach trip”.")).toBeTruthy();
+    expect(s.calls.filter((c) => c.method === "DELETE")).toHaveLength(1);
   });
 
   it("starts a new persona from a checkpoint's personality", async () => {
@@ -818,10 +904,9 @@ describe("GrowbotScreen a persona's page", () => {
     );
     render(<GrowbotScreen />);
     await openSprout();
-    fireEvent.click(screen.getByRole("tab", { name: "Checkpoints" }));
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "New persona from it" })[1] as HTMLElement,
-    );
+    fireEvent.click(screen.getByRole("tab", { name: /^Checkpoints/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Before the beach trip/ }));
+    fireEvent.click(screen.getByRole("button", { name: "New persona from it" }));
     const sheet = screen.getByRole("dialog", { name: "New persona" });
     expect(
       await within(sheet).findByRole("radio", { name: /Sprout — Before the beach trip/ }),
@@ -1229,10 +1314,14 @@ describe("GrowbotScreen a persona's visual memories", () => {
     await openMemories(2);
     await screen.findByRole("list", { name: "Saved views" });
 
-    fireEvent.click(screen.getByRole("tab", { name: "Checkpoints" }));
+    fireEvent.click(screen.getByRole("tab", { name: /^Checkpoints/ }));
     // A checkpoint says how many it keeps, when it keeps any.
-    expect(screen.getByText(/· 1 visual memory$/)).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[0] as HTMLElement);
+    expect(screen.getByText("1 vm")).toBeTruthy();
+    // The first of the two same-named rows is the one that keeps a visual memory.
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /^Before the beach trip/ })[0] as HTMLElement,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Restore Sprout to this" }));
     const dlg = screen.getByRole("dialog", { name: "Restore “Before the beach trip”?" });
     expect(dlg).toHaveTextContent(/gets back the visual memories it had then/);
     fireEvent.click(within(dlg).getByRole("button", { name: "Restore" }));
@@ -1608,7 +1697,7 @@ describe("GrowbotScreen after review", () => {
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("button", { name: /^Sprout — soul/ }));
     expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Sprout" }));
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to personas" }));
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Sprout — soul/ })),
     );

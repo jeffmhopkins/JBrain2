@@ -511,10 +511,40 @@ export function words(v: unknown): string {
   return "";
 }
 
+/** HH:MM, the time a row under its day's heading shows. */
+export function clock(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** The heading a dated row sits under: Today, Yesterday, or its day (local time). */
+export function dayHeading(iso: string, now = new Date()): string {
+  const d = new Date(iso);
+  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const back = Math.round((start(now) - start(d)) / 86_400_000);
+  if (back === 0) return "Today";
+  if (back === 1) return "Yesterday";
+  // Named checkpoints are kept for good, so an older year says so and never merges with this one.
+  return d.getFullYear() === now.getFullYear() ? day(iso) : `${day(iso)} ${d.getFullYear()}`;
+}
+
+/** Rows grouped under their day's heading, in the order given (newest first in, so out). */
+export function byDay<T extends { created_at: string }>(
+  rows: T[],
+  now = new Date(),
+): { heading: string; rows: T[] }[] {
+  const out: { heading: string; rows: T[] }[] = [];
+  for (const r of rows) {
+    const heading = dayHeading(r.created_at, now);
+    const last = out[out.length - 1];
+    if (last && last.heading === heading) last.rows.push(r);
+    else out.push({ heading, rows: [r] });
+  }
+  return out;
+}
+
 /** dd Mon, HH:MM — a checkpoint's date. */
 export function when(iso: string): string {
-  const d = new Date(iso);
-  return `${day(iso)}, ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+  return `${day(iso)}, ${clock(iso)}`;
 }
 
 // A visual memory with no name still reads as what it is.
@@ -539,4 +569,25 @@ export function memoryForgot(m: GrowbotMemory): string {
 /** "3 visual memories" — a checkpoint's, or nothing when it keeps none. */
 export function memoriesCount(n: number): string {
   return n > 0 ? `${n} visual memor${n === 1 ? "y" : "ies"}` : "";
+}
+
+// The names the brain log hides (GrowbotBrainLogSheet), kept on this phone only: they are the
+// household's, so the box never stores them and the list is typed once per phone.
+export const BRAIN_LOG_NAMES_KEY = "growbot.brainLogNames";
+
+export function storedBrainLogNames(): string {
+  return readStore(BRAIN_LOG_NAMES_KEY) ?? "";
+}
+
+export function storeBrainLogNames(names: string): void {
+  writeStore(BRAIN_LOG_NAMES_KEY, names.trim() ? names : null);
+}
+
+/** "Quorra, Tamsin" → ["Quorra", "Tamsin"]: comma- or line-separated, blanks dropped. */
+export function splitNames(names: string): string[] {
+  return names
+    .split(/[,\n]/)
+    .map((n) => n.trim())
+    .filter((n) => n.length >= 2)
+    .slice(0, 20);
 }

@@ -3289,8 +3289,16 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   radio list: *Nobody* (*Fish stands still.*), then every persona with where it is. Picking a
   persona open on a phone hands it the legs there; picking one that is not open opens it on
   this phone wearing Fish (through the first-time note when it applies). *The one it leaves
-  carries on alone on its phone.* Last, *Add a robot* (secondary). With no robot yet, the tab is
-  *Add a robot*.
+  carries on alone on its phone.* Then **Controls for <name>** (below), whose *Move* pane is the
+  robot's remote (owner, 2026-11-12), laid out like upstream's Policy Remote: a segmented policy pick (*Forward*,
+  *Backward*, *Spin ↻*, *Spin ↺*), *Seconds* (1-15, 5 by default) beside the primary *Walk
+  forward 5 s* (its label names the pick and the time), a row of gestures (*Wiggle*, *Bow*,
+  *Sway*), with the card's one *Stop* under it. Under them, what the creature said: *Walking forward for 5 s.*, or
+  its own words for why not, in rose. The walk runs on the rider phone's motion sensors, so
+  every button is disabled, with the reason in words above them, until the robot is on (*Turn
+  the robot on to move it.*) and a creature wearing it is open on screen (*Open a persona
+  wearing it and keep the creature on screen. Its phone's motion sensors run the walk.*). Last,
+  *Add a robot* (secondary). With no robot yet, the tab is *Add a robot*.
 - **Phones.** One row per phone that has opened GrowBot (a phone outline, its name, what it
   holds: *Captain Bolt · wearing Fish*, *Sprout · alone*, *nothing open*), with a violet *Fish*
   tag on the one wearing the body. *A phone holds one persona at a time, and a persona is open on
@@ -3315,9 +3323,10 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   one-time ticket naming the persona and, optionally, the body, re-minted every 100 s). *Copy
   code 2 as a link instead* copies the same one-time, two-minute link: that is "launch a
   persona from a link" (owner, 2026-11-10); there is no standing link.
-- **A persona's page** (tapping its row) has its name with where it is under it, its own tabs
-  (*Soul* · *Memories* · *Checkpoints* · *Manage*), and *Open <name>…* in the foot, which raises
-  the launch sheet.
+- **A persona's page** (tapping its row) has a ‹ back chevron, its name with where it is under
+  it, its own tabs (*Soul* · *Memories* · *Checkpoints* · *Manage*, the counted ones with a count
+  pill as on the Chats panel's segments), and *Open <name>…* in the foot, which raises the launch
+  sheet.
   - *Soul*: *Personality and settings — tap to edit* as rows (Personality, Expression, Name and
     description, Dreams, Thinking, Body, each with a one-line preview and ›). A row opens the
     editor sheet (a text box, or monospace for the JSON regions) with *Save*. Every save makes
@@ -3339,10 +3348,20 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     it forget that face or thing; a checkpoint made before still has it.* A checkpoint row says
     how many visual memories it keeps; a restore brings them back, and *Reset* and *Import over
     it* clear them (the checkpoint made first keeps them).
-  - *Checkpoints*: *Name it* plus *Save*, then the list, newest first (name, date, *automatic*
-    and why for the ones made before an edit, restore, reset or import), each with *Restore* (a
-    centre confirm that names the date and says the current state is saved first; its toast has
-    *Undo*) and *New persona from it*.
+  - *Checkpoints* (owner, 2026-11-12 — binding mock `docs/mocks/growbot-checkpoints/b-by-day.html`,
+    variant B "grouped by day"; rivals in that set's README): the Chats panel's look. A dashed
+    *＋ Save a checkpoint* row opens a sheet (*Name it*, *Save*). Then the checkpoints newest
+    first, grouped under *Today*, *Yesterday* or the date, each day a card of compact rows: a
+    filled steel dot for one the owner named and a hollow one for an automatic one (made before
+    an edit, restore, reset or import), the name, *N vm* when it keeps visual memories, the time
+    and ›. A row swipes left (the shared `SwipeRow`, as the Chats rows do) for **restore** (steel),
+    **new persona** (violet) and **delete** (rose, armed: *tap again*); tapping it opens its sheet
+    with the date, why, what it keeps, *Restore <name> to this*, *New persona from it* and
+    *Delete checkpoint* (armed: *Tap again — this can't be undone*), so nothing lives only
+    behind the gesture. *Restore* is the centre confirm that names the date and says the
+    current state is saved first; its toast has *Undo*. A delete makes no checkpoint, so its
+    toast (*Deleted “Day 1”.*) has none. Under the days, *Delete the N automatic ones* (danger,
+    armed: *Tap again — deletes N, keeps the named ones*) clears every automatic one at once.
   - *Manage*: *Face* first (owner, 2026-11-11): a radio list, *Lantern* (the default),
     *Ostrich*, *Robot*, *Pixel*, each with a one-line description, saved as it is tapped. It is
     not a soul write, so no checkpoint and no reload: the toast says it changes on its phone in
@@ -3360,6 +3379,20 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   reach the box, the log behind *Show the log* until something fails) → *<name> is paired*.
   Closing the sheet mid-flash leaves *Flashing — tap to watch* on the Body tab. Each failure
   says what happened and the recovery, never "see the log".
+- **Controls for <name>** (owner, 2026-11-12: *"anything they could do in the original
+  application"*) is one card under each robot's *Who wears* on the Body tab
+  (`components/GrowbotBodyControls.tsx`, owner 2026-11-12: the remote and the leg trim in one
+  GUI): a *Move | Legs* segmented strip, *Move* first (the remote above), and one full-width
+  rose *Stop* under both that stops the chip and the creature walking it together. *Legs* is upstream's tester leg check in its own
+  three steps: *1 · Which leg* (*Move left leg* / *Move right leg*, then the *Swap left and
+  right* checkbox), *2 · Straighten* (a *Left trim* and *Right trim* row each: −, slider ±30°,
+  +, the value; the legs stand at the new trim once the hand stops), *3 · Direction* (*Sweep
+  left/right forward*), then *Advanced* (each leg's sign, the IMU's roll/pitch/yaw signs, the
+  walk gain) and an armed *Reset calibration*. Every change saves that one setting on the box
+  at once (the line above step 1 says whether anything is saved there yet; a setting never
+  changed here stays each phone's own), and a status line under it says what was
+  done or why a move did not go. A robot that is off keeps its calibration editable but its
+  moves and *Stop* disabled, with *Turn the robot on to move it.*
 - **Motion.** Sheets slide up, the restore confirm scales in, the persona page slides in from
   the right, banners drop in and toasts rise, 160–200 ms ease-out, each only when it first
   appears, all off under `prefers-reduced-motion`.
@@ -3376,6 +3409,26 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   disclosure, then how they come in (*ask Claude to "sync GrowBot to upstream"*, then *Ops →
   Update*), the facts (your copy, upstream, checked) and *Check now* beside *See on GitHub*.
   A box without the check shows no card. The box also notifies once per new upstream version.
+
+## GrowBot — the brain log (owner, 2026-11-12 — binding mock: `docs/mocks/growbot-brain-log/a-share-sheet.html`, variant A; rivals B "quick buttons" and C "preview first" retained in `docs/mocks/growbot-brain-log/README.md`; plan `docs/plans/GROWBOT_PLAN.md` §2 "Brain log")
+
+The owner shares a window of the creature's life with GrowBot's developer as one zip. It is a
+rare, deliberate act, so it lives behind one secondary button and asks everything in one sheet.
+
+- **Where.** The Body tab, under the robots and *Add a robot*: a section head *For GrowBot's
+  developer* and *Share a brain log…* (secondary, block). It shows with no robot too, since a
+  persona alone on a phone still thinks, hears and speaks.
+- **The sheet** (*Share a brain log*): a segmented pick *1 hour · 3 hours · 6 hours* (1 hour
+  first); *What people said* as two choices, *Hash what people said* (selected; *Recommended.
+  Transcripts and quoted speech become hashes, the way GrowBot's own diary does. The creature's
+  words stay.*) and *Keep what people said* (*Every transcript as it was heard.*); *Names to
+  hide* (comma-separated, *Replaced with [name] everywhere in the file, in either mode.
+  Remembered on this phone.*); one dim line on what is inside, what never is, and that the creature's soul and its own words go out as written, so the names they use belong in the list; then
+  *Download brain log (.zip)* (primary, block), which reads *Gathering the brain log…* while
+  the box builds it.
+- **After.** The sheet closes and a toast says *Saved growbot-brain-log-…-3h.zip to Downloads.
+  Send it to GrowBot's developer as it is.* A refusal stays in the sheet as a rose message,
+  *The brain log didn't download — <why>*.
 
 ## GrowBot — the creature's face (owner, 2026-11-10 — binding mock: `docs/mocks/growbot-face/a-ostrich.html`, variant A; rivals B "the panels' robot" and C "lantern eyes" retained in `docs/mocks/growbot-face/README.md`; built in `growbot/patches/growbot-face.js`)
 

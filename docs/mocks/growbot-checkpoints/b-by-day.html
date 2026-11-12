@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot checkpoints — B — grouped by day</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+// B: the rows grouped under day headings (as the Minecraft session list), named and automatic
+// together; the same swipe rail and row sheet; a "Delete the automatic ones" sweep at the end.
+G.why = "B — rows grouped by day, no filter; same swipe rail and sheet; one armed button clears every automatic checkpoint.";
+G.list = () => {
+  const S = G.S;
+  const days = [];
+  for (const c of S.cps) {
+    const d = G.dayLabel(c.t);
+    const g = days.find((x) => x.d === d);
+    if (g) g.rows.push(c); else days.push({ d, rows: [c] });
+  }
+  const autos = S.cps.filter((c) => c.auto).length;
+  const time = (c) => `${String(c.t.getHours()).padStart(2, "0")}:${String(c.t.getMinutes()).padStart(2, "0")}`;
+  return `<button class="new-row" data-act="newcp">＋ Save a checkpoint</button>
+    ${days.length ? days.map((g) => `<div class="sect">${g.d}<span class="r">${g.rows.length}</span></div>
+      <div class="group">${g.rows.map((c) => G.row(c, { meta: time })).join("")}</div>`).join("")
+      : `<div class="empty">No checkpoints yet. One is made on its own before every edit, restore and reset.</div>`}
+    ${autos ? `<button class="btn block danger${S.armed === "delauto" ? " armed" : ""}" data-act="delauto">${S.armed === "delauto" ? `Tap again — deletes ${autos}, keeps the named ones` : `Delete the ${autos} automatic ones`}</button>` : ""}
+    <p class="hint">Swipe a row left to restore, start a new persona or delete. Filled dot: one you named. Hollow: made on its own before a change.</p>`;
+};
+G.render();
+</script>
+</body>
+</html>

@@ -63,7 +63,7 @@ from collections.abc import AsyncGenerator, Callable
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 HERE = Path(__file__).resolve().parent
 
@@ -132,7 +132,28 @@ OPENING_MAX = 16
 BACKOFF_LIMIT = 8
 BACKOFF_WINDOW_S = 300.0
 MAX_PEERS_PER_CHANNEL = 8
+# What the PWA's Body tab may ask the creature on the robot to do, and for how long a walk or
+# spin runs. The creature runs its own policies with its phone's IMU (growbot-box.js).
+MOVES = frozenset(
+    {"forward", "back", "spin_left", "spin_right", "wiggle", "bow", "sway", "stop"}
+)
+MOVE_SECS = (1.0, 15.0)
+# A creature answers at once (it acks what it started, not what it finished); one that has not
+# by then is busy or gone, and the api's own call to here is 5 s.
+MOVE_ACK_S = 3.0
 MODELS_CACHE_S = 30.0
+# A creature polls its robot's calibration every few seconds; one api read serves them all.
+CAL_CACHE_S = 2.0
+CAL_PATH = "/api/box/cal"
+# Whether a persona's phone wears a robot, for its calibration polls; a hand-over shows within.
+WEARS_CACHE_S = 15.0
+# The PWA's direct leg moves (api/growbot_body.py), checked again here since they go straight
+# to the chip: a few keyframes, inside the servo's travel, none long enough to stall it.
+ACT_MAX_STEPS = 12
+ACT_MS = (50, 2000)
+# Far above any rid a phone's relay-transport counts to, so the chip's ack to a PWA move is
+# never mistaken for the reply to a phone's own.
+ACT_RID_BASE = 1_500_000_000
 # How often a phone on the relay is asked again whether its persona still wears the body.
 RIDER_RECHECK_S = 10.0
 SOUL_WORKERS = 2
@@ -147,6 +168,19 @@ SOUL_PATH = "/api/box/persona"
 MEMORY_PATH = "/api/box/memories"
 MAX_MEMORY_BODY = 2_500_000
 MEMORY_ID_RE = re.compile(r"r[0-9a-f]{1,32}")
+# The creature's diary (upstream's brain log): a snapshot is at most 70 KB on the page
+# (`_LOG_TRIM`) and 400 held rows, and its id is "nx-" and up to 20 more (next.html LOG_SID).
+MAX_DIARY_BODY = 256 * 1024
+DIARY_ROWS_MAX = 500
+DIARY_SID_RE = re.compile(r"[A-Za-z0-9_-]{6,64}")
+# Upstream flushes every 8 s, and a chunk, a dream copy or the hide beacon can follow one at
+# once. A phone gets this many snapshots in each window and the rest are answered and dropped,
+# so a page that loops the POST cannot fill the box's disk while the beacon still lands.
+DIARY_BURST = 3
+DIARY_WINDOW_S = 8.0
+# What a snapshot says about the page that wrote it. Its soul peek and join key stay behind:
+# the soul lives on the box already, and the export needs only the rows and this header.
+DIARY_HEAD = ("kind", "mode", "redacted", "ua", "reason", "agent", "boot")
 
 # Upstream's pairing codes are `gb-` + 6 hex; the api holds robots to this same shape.
 CODE_RE = re.compile(r"gb-[A-Za-z0-9]{1,32}")
@@ -924,6 +958,8 @@ class Channel:
     peers: set[WebSocket] = field(default_factory=set)
     # When the chip now on it was admitted (wall clock), for the api's robot list.
     body_since: float = 0.0
+    # The PWA's moves sent to the creature on a side channel, awaiting its box_ack, by rid.
+    acks: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
 
     def status(self) -> dict[str, object]:
         return {"t": "status", "awake": 1 if self.body is not None else 0}
@@ -936,9 +972,36 @@ class Channel:
 def _parse(data: bytes) -> dict[str, Any] | None:
     try:
         msg = json.loads(data)
-    except ValueError:
+    except (ValueError, RecursionError):
+        # Deep nesting under the frame cap would otherwise escape the socket's task.
         return None
     return msg if isinstance(msg, dict) else None
+
+
+def _act_frame(frame: Any) -> dict[str, Any] | None:
+    """The chip frame a PWA move may be, rebuilt from checked fields only, or None."""
+    if not isinstance(frame, dict):
+        return None
+    kind = frame.get("t")
+    if kind == "stop":
+        return {"t": "stop"}
+    if kind == "routine":
+        return {"t": "routine", "name": "wiggle"} if frame.get("name") == "wiggle" else None
+    steps = frame.get("steps")
+    if kind != "act" or not isinstance(steps, list) or not 0 < len(steps) <= ACT_MAX_STEPS:
+        return None
+    out: list[dict[str, int]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            return None
+        vals = [step.get(k) for k in ("l", "r", "ms")]
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in vals):
+            return None
+        l, r, ms = cast(list[int], vals)  # noqa: E741 (the wire's own name)
+        if not (0 <= l <= 180 and 0 <= r <= 180 and ACT_MS[0] <= ms <= ACT_MS[1]):
+            return None
+        out.append({"l": l, "r": r, "ms": ms})
+    return {"t": "act", "steps": out, "mode": "replace"}
 
 
 def _without_key(hello: dict[str, Any]) -> dict[str, Any]:
@@ -1024,6 +1087,7 @@ class GrowBot:
         self._rider_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-rider")
         self._log_pool: Executor = ThreadPoolExecutor(1, "growbot-log")
         self._log_slots = threading.BoundedSemaphore(LOG_PENDING_MAX)
+        self._diary_at: dict[str, collections.deque[float]] = {}
         self.rider_backoff = Backoff()
         self._proxy_addrs: set[str] = set()
         self._opening: collections.Counter[str] = collections.Counter()
@@ -1033,6 +1097,11 @@ class GrowBot:
         self._root_cert = b""
         self._root_cert_at = -math.inf
         self._models_at = -math.inf
+        self._cals: dict[str, tuple[float, Any]] = {}
+        self._wears: dict[tuple[str, str, str], tuple[float, bool]] = {}
+        # Apart from the soul sync, so a slow api answering these polls never holds a soul.
+        self._cal_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-cal")
+        self._act_rid = ACT_RID_BASE
         self.did = hashlib.sha256(b"growbot-on-the-box").hexdigest()[:16]
 
     # -- outbound ---------------------------------------------------------------
@@ -1203,7 +1272,7 @@ class GrowBot:
         )
 
     def internal(self, req: Request) -> Response:
-        """The api's two routes: which robots are on the relay, and dropping one."""
+        """The api's routes: which robots are on the relay, dropping one, and a PWA move."""
         if not self._internal_ok(req):
             return json_response(401, {"error": "unauthorized"})
         if req.path == "/internal/robots" and req.method == "GET":
@@ -1213,6 +1282,7 @@ class GrowBot:
                     "since": time.strftime(
                         "%Y-%m-%dT%H:%M:%SZ", time.gmtime(chan.body_since)
                     ),
+                    "creature": self._creature(chan.name) is not None,
                 }
                 for chan in sorted(self.channels.values(), key=lambda c: c.name)
                 if chan.body is not None and not chan.name.endswith("-agent")
@@ -1229,7 +1299,79 @@ class GrowBot:
                 # 1008 like a failed hello: the robot's key no longer opens the relay.
                 chan.body.close(1008, "revoked")
             return json_response(200, {"dropped": dropped})
+        if req.path == "/internal/robots/act" and req.method == "POST":
+            return self._internal_act(_parse(req.body))
         return json_response(404, {"error": "no such route"})
+
+    def _internal_act(self, msg: dict[str, Any] | None) -> Response:
+        """One PWA move (the Body tab's Calibrate) straight to the chip, as upstream's tester
+        sends it: `{code, frame}`, the frame an `act`, the `wiggle` routine, or a `stop`.
+        `sent` is False when no chip is on the relay for that code."""
+        code = msg.get("code") if msg else None
+        frame = msg.get("frame") if msg else None
+        if not isinstance(code, str) or not CODE_RE.fullmatch(code):
+            return json_response(400, {"error": "code"})
+        wire = _act_frame(frame)
+        if wire is None:
+            return json_response(400, {"error": "frame"})
+        chan = self.channels.get(code)
+        if chan is None or chan.body is None:
+            return json_response(200, {"sent": False})
+        self._act_rid = self._act_rid + 1 if self._act_rid < 2_147_483_647 else ACT_RID_BASE
+        chan.body.send_text(json.dumps({**wire, "rid": self._act_rid}))
+        return json_response(200, {"sent": True})
+
+    def _creature(self, code: str) -> WebSocket | None:
+        """The creature page on `code`'s side channel: the rider's phone, which runs the
+        walk and spin policies on its own IMU, so only it can take a move."""
+        chan = self.channels.get(f"{code}-agent")
+        return chan.body if chan is not None else None
+
+    async def move(self, req: Request) -> Response:
+        """The PWA's Body tab: one move for the creature wearing `code`, answered with what the
+        creature said it did (`ok`, its move `state`, and `why` in its own words)."""
+        if not self._internal_ok(req):
+            return json_response(401, {"error": "unauthorized"})
+        if req.method != "POST":
+            return json_response(405, {"error": "post only"})
+        msg = _parse(req.body)
+        code = msg.get("code") if msg else None
+        what = msg.get("move") if msg else None
+        secs = msg.get("secs", 0) if msg else None
+        if not isinstance(code, str) or not CODE_RE.fullmatch(code):
+            return json_response(400, {"error": "code"})
+        if not isinstance(what, str) or what not in MOVES:
+            return json_response(400, {"error": "move"})
+        if (
+            isinstance(secs, bool)
+            or not isinstance(secs, int | float)
+            or not (secs == 0 or MOVE_SECS[0] <= secs <= MOVE_SECS[1])
+        ):
+            return json_response(400, {"error": "secs"})
+        chan = self.channels.get(f"{code}-agent")
+        creature = chan.body if chan is not None else None
+        if chan is None or creature is None:
+            return json_response(409, {"error": "no_creature"})
+        rid = secrets.token_hex(8)
+        waiter: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        chan.acks[rid] = waiter
+        try:
+            creature.send_json({"t": "box_move", "rid": rid, "move": what, "secs": secs})
+            ack = await asyncio.wait_for(waiter, MOVE_ACK_S)
+        except TimeoutError:
+            return json_response(504, {"error": "no_answer"})
+        finally:
+            chan.acks.pop(rid, None)
+        state = ack.get("state")
+        why = ack.get("why")
+        return json_response(
+            200,
+            {
+                "ok": ack.get("ok") is True,
+                "state": state[:40] if isinstance(state, str) else "",
+                "why": why[:220] if isinstance(why, str) else "",
+            },
+        )
 
     def _same_origin(self, req: Request) -> bool:
         """A request a browser sent from another origin (the PWA on :443 is same-site, so
@@ -1289,6 +1431,8 @@ class GrowBot:
             return self.start_page(req)
         if req.path == ROOT_CERT_PATH:
             return await self.root_cert_route(req)
+        if req.path == "/internal/robots/move":
+            return await self.move(req)
         if req.path.startswith("/internal/"):
             return self.internal(req)
         if req.path in PUBLIC_PATHS and req.method in ("GET", "HEAD"):
@@ -1447,6 +1591,8 @@ class GrowBot:
         name = req.path[len("/api/") :]
         if req.path in (SOUL_PATH, SOUL_PATH + "/state"):
             return await self.soul_route(req)
+        if req.path == CAL_PATH:
+            return await self.cal_route(req)
         if req.path in (MEMORY_PATH, MEMORY_PATH + "/view", MEMORY_PATH + "/forget"):
             return await self.memory_route(req)
         if name in ("journal", "episodes") and req.method == "DELETE":
@@ -1454,6 +1600,8 @@ class GrowBot:
             return json_response(200, {"ok": True})
         if name == "gallery" and req.arg("download"):
             return json_response(404, {"error": "no gallery on the box"})
+        if name == "journal" and req.method == "POST":
+            return self.diary(req)
         if name in ("journal", "episodes", "gallery", "ev", "hit", "feedback"):
             # Upstream's server-side telemetry and cloud stores: answered, kept nowhere.
             return Response(204)
@@ -1481,6 +1629,57 @@ class GrowBot:
         if name == "fish-tts":
             return await self.tts(req)
         return json_response(404, {"error": "not found"})
+
+    async def cal_route(self, req: Request) -> Response:
+        """`GET ?id=<code>`: the robot's calibration as the PWA saved it, which growbot-box.js
+        copies into `gb_walk_cal`; `{cal: null}` when never saved, or when the api cannot say,
+        so the phone keeps what it has. Only the robot this phone drives: `gb_walk_cal` is one
+        key per phone, so a link naming another robot must not leave that robot's trims on it
+        (that also gets `{cal: null}`)."""
+        if req.method != "GET":
+            return json_response(405, {"error": "method not allowed"})
+        code = req.arg("id")
+        headers = [("Cache-Control", "no-store")]
+        if not CODE_RE.fullmatch(code):
+            return json_response(400, {"error": "id"}, headers)
+        claims = self._claims(req)
+        if claims is None or not await self._drives(claims, code):
+            return json_response(200, {"cal": None}, headers)
+        return json_response(200, {"cal": await self._cal(code)}, headers)
+
+    async def _drives(self, claims: Claims, code: str) -> bool:
+        """The robot its ticket named, or the one its persona wears now (asked of the api,
+        and remembered a while, since the page asks every few seconds)."""
+        if claims.robot == code:
+            return True
+        if not claims.persona:
+            return False
+        key = (claims.persona, claims.phone, code)
+        hit = self._wears.get(key)
+        if hit is not None and time.monotonic() - hit[0] < WEARS_CACHE_S:
+            return hit[1]
+        may = await self._call(self.may_drive, claims, code, pool=self._cal_pool)
+        if len(self._wears) > 64:
+            self._wears.clear()
+        self._wears[key] = (time.monotonic(), may is True)
+        return may is True
+
+    async def _cal(self, code: str) -> Any:
+        now = time.monotonic()
+        hit = self._cals.get(code)
+        if hit is not None and now - hit[0] < CAL_CACHE_S:
+            return hit[1]
+        url = f"{self.config.api_url}/internal/growbot/robots/{code}/cal"
+        up = await self._call(
+            http_call, url, None, self._auth(), "GET", 5.0, pool=self._cal_pool
+        )
+        got = _parse(up.body) if up.status == 200 else None
+        cal = got.get("cal") if got is not None else None
+        cal = cal if isinstance(cal, dict) else None
+        if len(self._cals) > 64:
+            self._cals.clear()
+        self._cals[code] = (time.monotonic(), cal)
+        return cal
 
     async def soul_route(self, req: Request) -> Response:
         """The persona's soul, which lives on the box (plan §2c): `GET` pulls it, `POST
@@ -1673,12 +1872,15 @@ class GrowBot:
     def log_call(self, row: dict[str, Any]) -> None:
         """Send one call-log row to the api, off the call's path: the phone already has its
         answer, and a slow or failing api costs the row, never the creature."""
+        self._post_later("/internal/growbot/calls", row)
+
+    def _post_later(self, path: str, payload: dict[str, Any]) -> None:
         if not self._log_slots.acquire(blocking=False):
             return
 
         def send() -> None:
             try:
-                self._api_post("/internal/growbot/calls", row)
+                self._api_post(path, payload)
             finally:
                 self._log_slots.release()
 
@@ -1686,6 +1888,46 @@ class GrowBot:
             self._log_pool.submit(send)
         except RuntimeError:
             self._log_slots.release()
+
+    def diary(self, req: Request) -> Response:
+        """The creature's diary snapshot (`flushLog` in next.html), kept on the box so the
+        owner can hand a window of it to upstream's developer as the brain log. Its rows go to
+        the api off the page's path, like the call log's; the page reads only `ok`. A watch-id
+        registration (`op`) is upstream's cloud link and is answered as before, kept nowhere."""
+        msg = _parse(req.body) if len(req.body) <= MAX_DIARY_BODY else None
+        rows = msg.get("log") if msg else None
+        sid = msg.get("sid") if msg else None
+        if (
+            msg is None
+            or "op" in msg
+            or not isinstance(rows, list)
+            or not isinstance(sid, str)
+            or not DIARY_SID_RE.fullmatch(sid)
+        ):
+            return Response(204)
+        claims = self._claims(req)
+        holder = (claims.phone or claims.robot) if claims else ""
+        now = time.monotonic()
+        if len(self._diary_at) > 1024 and holder not in self._diary_at:
+            self._diary_at.clear()
+        recent = self._diary_at.setdefault(holder, collections.deque(maxlen=DIARY_BURST))
+        if len(recent) == DIARY_BURST and now - recent[0] < DIARY_WINDOW_S:
+            return json_response(200, {"ok": True})
+        recent.append(now)
+        who = self._who(req)
+        row_list = [r for r in rows[-DIARY_ROWS_MAX:] if isinstance(r, dict)]
+        if row_list:
+            self._post_later(
+                "/internal/growbot/journal",
+                {
+                    "sid": sid,
+                    "persona": who.get("persona"),
+                    "robot": who.get("robot", ""),
+                    "head": {k: msg[k] for k in DIARY_HEAD if k in msg},
+                    "rows": row_list,
+                },
+            )
+        return json_response(200, {"ok": True})
 
     async def llm(self, req: Request, *, stream: bool) -> Response:
         models = await self._call(self.models)
@@ -2072,7 +2314,14 @@ class GrowBot:
                 kind, data = await ws.recv()
                 if kind != 0x1:
                     continue
-                msg = _parse(data) if chip else None
+                msg = _parse(data) if chip or chan.acks else None
+                if not chip:
+                    if msg is not None and msg.get("t") == "box_ack":
+                        waiter = chan.acks.pop(str(msg.get("rid")), None)
+                        if waiter is not None and not waiter.done():
+                            waiter.set_result(msg)
+                        continue
+                    msg = None
                 if msg is not None and msg.get("t") == "hb":
                     ws.send_text('{"t":"hb_ack"}')
                 elif msg is not None and msg.get("t") == "hello":
