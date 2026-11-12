@@ -19,22 +19,33 @@ from jbrain.llm.slot_roles import GROWBOT_ROLE
 from tests.unit.test_growbot_llm import _COMPLETIONS, _app, _chat, _Gateway
 
 _SYSTEM = "be a small curious robot. " * 800
+# The real check, kept before the autouse fixture stands every model in a pool.
+_REAL_POOLED = prefix._pooled
 
 
 class _Store:
     def __init__(self, restored: bool = True, saved: bool = True, fail: bool = False) -> None:
         self.restores: list[tuple[str, str, Any]] = []
         self.saves: list[tuple[str, str, int, Any]] = []
+        self.efforts: list[str | None] = []
+        self.used: list[tuple[str, str | None, Any]] = []
         self._restored = restored
         self._saved = saved
         self._fail = fail
 
     async def restore_if_lost(
-        self, served_model: str, system: str, tools: list[Any], *, role: Any = None
+        self,
+        served_model: str,
+        system: str,
+        tools: list[Any],
+        *,
+        reasoning_effort: str | None = None,
+        role: Any = None,
     ) -> bool:
         if self._fail:
             raise RuntimeError("gateway down")
         self.restores.append((served_model, system, role))
+        self.efforts.append(reasoning_effort)
         return self._restored
 
     async def save_after_prime(
@@ -44,10 +55,22 @@ class _Store:
         tools: list[Any],
         prime_tokens: int,
         *,
+        reasoning_effort: str | None = None,
         role: Any = None,
     ) -> bool:
         self.saves.append((served_model, system, prime_tokens, role))
+        self.efforts.append(reasoning_effort)
         return self._saved
+
+    def identity_of(
+        self, served_model: str, system: str, tools: list[Any], reasoning_effort: str | None
+    ) -> str | None:
+        return f"{served_model}:{reasoning_effort}:{len(system)}"
+
+    def note_prefix_used(
+        self, served_model: str, fingerprint: str | None, *, role: Any = None
+    ) -> None:
+        self.used.append((served_model, fingerprint, role))
 
 
 @pytest.fixture(autouse=True)
@@ -59,6 +82,11 @@ def _fresh_ratio(monkeypatch: pytest.MonkeyPatch) -> None:
 def _no_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(prefix, "SAVE_QUIET_S", 0.0)
     monkeypatch.setattr(prefix, "_POLL_S", 0.01)
+
+
+@pytest.fixture(autouse=True)
+def _pooled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prefix, "_pooled", lambda _model: True)
 
 
 def _usage(tokens: int) -> tuple[bytes, ...]:
@@ -91,19 +119,65 @@ def _turn(stream: bool = True) -> dict[str, Any]:
 
 async def test_a_restore_asks_the_store_for_the_growbot_slot() -> None:
     store = _Store()
-    assert await prefix.restore(store, "m", _SYSTEM) is True
-    assert store.restores == [("m", _SYSTEM, GROWBOT_ROLE)]
+    assert await prefix.restore(store, "m", _SYSTEM, "off") is True
+    assert store.restores == [("m", _SYSTEM, GROWBOT_ROLE)] and store.efforts == ["off"]
 
 
 async def test_a_short_system_or_no_store_is_never_restored() -> None:
     store = _Store()
-    assert await prefix.restore(store, "m", "tiny") is False
-    assert await prefix.restore(None, "m", _SYSTEM) is False
+    assert await prefix.restore(store, "m", "tiny", "off") is False
+    assert await prefix.restore(None, "m", _SYSTEM, "off") is False
     assert store.restores == []
 
 
+async def test_a_model_without_a_role_pool_never_touches_the_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Unpooled, the store would key the restore memo by model alone, sharing jerv's.
+    monkeypatch.setattr(prefix, "_pooled", lambda _model: False)
+    store = _Store()
+    assert await prefix.restore(store, "m", _SYSTEM, "off") is False
+    saver = prefix.PrefixSaver()
+    assert not saver.schedule(
+        store=store,
+        model="m",
+        system=_SYSTEM,
+        level="off",
+        key="k",
+        last_turn=lambda: None,
+        lock=None,
+        pool_guard=None,
+        client_factory=_Gateway(),
+        apply_level=lambda _b: None,
+    )
+    assert store.restores == [] and store.saves == []
+
+
+def test_the_real_pool_check_reads_the_catalog() -> None:
+    from jbrain.llm import local_catalog
+
+    pooled = [m.served_model for m in local_catalog.CATALOG if m.kv_pool is not None]
+    assert pooled and _REAL_POOLED(pooled[0])
+    assert not _REAL_POOLED("no-such-model")
+
+
+def test_a_used_restore_clears_the_stores_memo() -> None:
+    store = _Store()
+    prefix.consumed(store, "m", _SYSTEM, "off")
+    assert store.used == [("m", f"m:off:{len(_SYSTEM)}", GROWBOT_ROLE)]
+    prefix.consumed(None, "m", _SYSTEM, "off")
+
+
+def test_a_broken_memo_is_only_a_log_line() -> None:
+    class _Broken(_Store):
+        def note_prefix_used(self, *_a: Any, **_k: Any) -> None:
+            raise RuntimeError("boom")
+
+    prefix.consumed(_Broken(), "m", _SYSTEM, "off")
+
+
 async def test_a_failing_restore_is_a_cold_turn_not_an_error() -> None:
-    assert await prefix.restore(_Store(fail=True), "m", _SYSTEM) is False
+    assert await prefix.restore(_Store(fail=True), "m", _SYSTEM, "off") is False
 
 
 async def test_a_save_primes_the_slot_then_saves_by_its_token_count() -> None:
@@ -115,6 +189,7 @@ async def test_a_save_primes_the_slot_then_saves_by_its_token_count() -> None:
         store=store,
         model="m",
         system=_SYSTEM,
+        level="off",
         key="k",
         last_turn=lambda: None,
         lock=asyncio.Lock(),
@@ -131,13 +206,14 @@ async def test_a_save_primes_the_slot_then_saves_by_its_token_count() -> None:
     ]
     assert sent["json"]["max_tokens"] == 1 and sent["json"]["stream"] is False
     assert levels == [sent["json"]]
-    assert store.saves == [("m", _SYSTEM, 7123, GROWBOT_ROLE)]
+    assert store.saves == [("m", _SYSTEM, 7123, GROWBOT_ROLE)] and store.efforts == ["off"]
     assert saver.saved == {"k"} and gateway.closed == 1
     # Saved once per system text: the same key schedules nothing.
     assert not saver.schedule(
         store=store,
         model="m",
         system=_SYSTEM,
+        level="off",
         key="k",
         last_turn=lambda: None,
         lock=None,
@@ -157,6 +233,7 @@ async def test_an_unreadable_prime_saves_nothing(chunks: tuple[bytes, ...]) -> N
         store=store,
         model="m",
         system=_SYSTEM,
+        level="off",
         key="k",
         last_turn=lambda: None,
         lock=None,
@@ -169,6 +246,27 @@ async def test_an_unreadable_prime_saves_nothing(chunks: tuple[bytes, ...]) -> N
     assert store.saves == [] and saver.saved == set()
 
 
+async def test_a_declined_save_is_not_primed_again() -> None:
+    store = _Store(saved=False)
+    saver = prefix.PrefixSaver()
+    args: dict[str, Any] = {
+        "store": store,
+        "model": "m",
+        "system": _SYSTEM,
+        "level": "off",
+        "key": "k",
+        "last_turn": lambda: None,
+        "lock": None,
+        "pool_guard": None,
+        "client_factory": _Gateway(chunks=_usage(7000)),
+        "apply_level": lambda _b: None,
+    }
+    assert saver.schedule(**args)
+    assert saver._task is not None
+    await saver._task
+    assert len(store.saves) == 1 and not saver.schedule(**args)
+
+
 async def test_a_refused_prime_saves_nothing() -> None:
     store = _Store()
     saver = prefix.PrefixSaver()
@@ -176,6 +274,7 @@ async def test_a_refused_prime_saves_nothing() -> None:
         store=store,
         model="m",
         system=_SYSTEM,
+        level="off",
         key="k",
         last_turn=lambda: None,
         lock=None,
@@ -200,6 +299,7 @@ async def test_a_save_waits_for_quiet_and_gives_up_on_chatter(
         store=store,
         model="m",
         system=_SYSTEM,
+        level="off",
         key="k",
         last_turn=time.monotonic,  # the creature never goes quiet
         lock=None,
@@ -223,6 +323,7 @@ async def test_a_failing_save_is_only_a_log_line() -> None:
         store=_Broken(),
         model="m",
         system=_SYSTEM,
+        level="off",
         key="k",
         last_turn=lambda: None,
         lock=None,
@@ -232,7 +333,7 @@ async def test_a_failing_save_is_only_a_log_line() -> None:
     )
     assert saver._task is not None
     await saver._task
-    assert saver.saved == set()
+    assert saver.saved == {"k"}
 
 
 def test_short_systems_and_a_busy_saver_schedule_nothing() -> None:
@@ -243,6 +344,7 @@ def test_short_systems_and_a_busy_saver_schedule_nothing() -> None:
             store=store,
             model="m",
             system=system,
+            level="off",
             key=system[:5],
             last_turn=lambda: None,
             lock=None,
@@ -266,6 +368,8 @@ def test_a_first_turn_restores_and_a_close_one_does_not(tmp_path: Path) -> None:
         assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
         assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
     assert len(store.restores) == 1 and store.restores[0][1] == _SYSTEM
+    # The turn that ran on the restore released the store's memo.
+    assert [u[2] for u in store.used] == [GROWBOT_ROLE]
     app.state.growbot_last_turn = time.monotonic() - prefix.RESTORE_AFTER_QUIET_S - 1
     with TestClient(app) as client:
         assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
@@ -301,3 +405,46 @@ def test_a_turn_marks_the_creature_awake_at_most_once_a_minute(tmp_path: Path) -
         for _ in range(3):
             assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
     assert store.values["growbot_awake_marks"] == 1
+
+
+def test_a_long_awake_stretch_gives_the_worker_a_break(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jbrain.api import growbot_llm
+    from tests.unit.fakes import FakeSettingsStore
+
+    clock = [1000.0]
+    monkeypatch.setattr(growbot_llm.time, "monotonic", lambda: clock[0])
+    store = FakeSettingsStore()
+    app, _auth, _gw = _app(tmp_path, gateway=_Gateway())
+    app.state.settings_store = store
+
+    class _Req:
+        pass
+
+    req = _Req()
+    req.app = app  # type: ignore[attr-defined]
+
+    def marks() -> int:
+        value = store.values["growbot_awake_marks"]
+        assert isinstance(value, int)
+        return value
+
+    async def turns(until: float) -> None:
+        while clock[0] < until:
+            growbot_llm._mark_awake(req)  # type: ignore[arg-type]
+            await asyncio.sleep(0)
+            clock[0] += 61.0
+
+    async def run() -> None:
+        await turns(1000.0 + growbot_llm._AWAKE_HOLD_MAX_S)
+        held = marks()
+        assert held == 20  # one a minute for the 20-minute cap
+        # A turn a minute through the break stamps nothing; the worker gets its window.
+        await turns(clock[0] + growbot_llm._AWAKE_BREAK_S - 61.0)
+        assert marks() == held
+        # After the break the hold starts again.
+        await turns(clock[0] + 122.0)
+        assert marks() > held
+
+    asyncio.run(run())

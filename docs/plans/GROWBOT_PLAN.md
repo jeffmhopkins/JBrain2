@@ -334,9 +334,11 @@ system prefix saved to disk and restored after a restart (`jbrain.growbot.prefix
 cold turn, once the creature is quiet 20 s, the lane primes its slot with the system message and
 a one-character turn and saves it through the jerv prompt cache's per-role store, so only the
 system text reaches disk; a turn after 5 minutes' quiet asks the store to restore it into the
-slot if the slot is empty), and creature priority (done: each turn stamps
+slot if the slot is empty; only on a model with a role pool, where the creature has a slot of
+its own), and creature priority (done: each turn stamps
 `growbot_awake_until`, and while it has not lapsed, 3 minutes after the last turn, the worker
-pauses its background model work as it does for the code-mode hold; Settings → Devices →
+pauses its background loop as it does for the code-mode hold, for at most 20 minutes at a
+stretch, then stamps nothing for 10 so the worker can catch up; Settings → Devices →
 *GrowBot priority* turns it off);
 (4) history made reusable. Thinking stays off.
 

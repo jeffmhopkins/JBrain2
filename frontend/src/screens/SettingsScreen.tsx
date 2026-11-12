@@ -1960,9 +1960,10 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               <section className="settings-card">
                 <h2 className="settings-label">GrowBot priority</h2>
                 <p className="settings-meta">
-                  while a GrowBot creature is talking, the box pauses its background model work
-                  (note analysis, scheduled jobs) so the creature answers faster. the work picks up
-                  a few minutes after the creature goes quiet. on by default.
+                  while a GrowBot creature is talking, the box pauses its background work (note
+                  analysis, ingest, scheduled jobs) so the creature answers faster, for at most 20
+                  minutes at a stretch with a 10-minute catch-up after. the work picks up a few
+                  minutes after the creature goes quiet. on by default.
                 </p>
                 <div className="theme-picker" aria-label="GrowBot priority">
                   {[true, false].map((on) => (

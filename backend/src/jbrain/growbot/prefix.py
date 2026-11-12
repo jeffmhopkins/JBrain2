@@ -26,6 +26,7 @@ import time
 from collections.abc import Callable
 from typing import Any, Final, Protocol
 
+from jbrain.llm import local_catalog
 from jbrain.llm.openai_slot_fit import fit_openai_request, pinned_request
 from jbrain.llm.slot_roles import GROWBOT_ROLE
 
@@ -48,7 +49,13 @@ MIN_SYSTEM_CHARS: Final = 16_000
 
 class PrefixStore(Protocol):
     async def restore_if_lost(
-        self, served_model: str, system: str, tools: list[Any], *, role: Any = None
+        self,
+        served_model: str,
+        system: str,
+        tools: list[Any],
+        *,
+        reasoning_effort: str | None = None,
+        role: Any = None,
     ) -> bool: ...
 
     async def save_after_prime(
@@ -58,25 +65,56 @@ class PrefixStore(Protocol):
         tools: list[Any],
         prime_tokens: int,
         *,
+        reasoning_effort: str | None = None,
         role: Any = None,
     ) -> bool: ...
 
+    def identity_of(
+        self, served_model: str, system: str, tools: list[Any], reasoning_effort: str | None
+    ) -> str | None: ...
 
-async def restore(store: PrefixStore | None, model: str, system: str) -> bool:
+    def note_prefix_used(
+        self, served_model: str, fingerprint: str | None, *, role: Any = None
+    ) -> None: ...
+
+
+def _pooled(model: str) -> bool:
+    """Only a model with a role pool gives the creature a slot of its own. Unpooled, the store
+    keys its restore memo and its slot pick by model alone, so a creature restore would land in
+    any idle slot and spend jerv's memo."""
+    return local_catalog.pool_of(model) is not None
+
+
+async def restore(store: PrefixStore | None, model: str, system: str, level: str) -> bool:
     """Put the creature's prefix back into its slot if the slot lost it and a file exists."""
-    if store is None or len(system) < MIN_SYSTEM_CHARS:
+    if store is None or len(system) < MIN_SYSTEM_CHARS or not _pooled(model):
         return False
     try:
         return await asyncio.wait_for(
-            store.restore_if_lost(model, system, [], role=GROWBOT_ROLE), RESTORE_TIMEOUT_S
+            store.restore_if_lost(model, system, [], reasoning_effort=level, role=GROWBOT_ROLE),
+            RESTORE_TIMEOUT_S,
         )
     except Exception:  # noqa: BLE001 - the turn runs cold rather than fail
         log.warning("growbot prefix restore failed model=%s", model, exc_info=True)
         return False
 
 
+def consumed(store: PrefixStore | None, model: str, system: str, level: str) -> None:
+    """A turn has run on the restored prefix. Left in place, the store's restored-but-unused
+    memo would refuse every later restore for this role until the process restarts, so a model
+    reload would cost the cold turn this exists to remove."""
+    if store is None:
+        return
+    try:
+        fingerprint = store.identity_of(model, system, [], level)
+        store.note_prefix_used(model, fingerprint, role=GROWBOT_ROLE)
+    except Exception:  # noqa: BLE001 - the memo is bookkeeping; the turn already ran
+        log.warning("growbot prefix memo not cleared model=%s", model, exc_info=True)
+
+
 class PrefixSaver:
-    """One save at a time, and each system text saved once per process."""
+    """One save at a time, and each system text tried once per process: a save the store
+    declines (no patch, slot not identified) would decline again, and each try primes the slot."""
 
     def __init__(self) -> None:
         self.saved: set[str] = set()
@@ -91,6 +129,7 @@ class PrefixSaver:
         store: PrefixStore | None,
         model: str,
         system: str,
+        level: str,
         key: str,
         last_turn: Callable[[], float | None],
         lock: asyncio.Lock | None,
@@ -98,11 +137,26 @@ class PrefixSaver:
         client_factory: Callable[[], Any],
         apply_level: Callable[[dict[str, Any]], None],
     ) -> bool:
-        if store is None or len(system) < MIN_SYSTEM_CHARS or key in self.saved or self.busy():
+        if (
+            store is None
+            or len(system) < MIN_SYSTEM_CHARS
+            or key in self.saved
+            or self.busy()
+            or not _pooled(model)
+        ):
             return False
         self._task = asyncio.create_task(
             self._save(
-                store, model, system, key, last_turn, lock, pool_guard, client_factory, apply_level
+                store,
+                model,
+                system,
+                level,
+                key,
+                last_turn,
+                lock,
+                pool_guard,
+                client_factory,
+                apply_level,
             )
         )
         return True
@@ -112,6 +166,7 @@ class PrefixSaver:
         store: PrefixStore,
         model: str,
         system: str,
+        level: str,
         key: str,
         last_turn: Callable[[], float | None],
         lock: asyncio.Lock | None,
@@ -129,10 +184,12 @@ class PrefixSaver:
                 if quiet is not None and time.monotonic() - quiet < SAVE_QUIET_S:
                     return
                 tokens = await _prime(model, system, pool_guard, client_factory, apply_level)
-                if tokens and await store.save_after_prime(
-                    model, system, [], tokens, role=GROWBOT_ROLE
+                if not tokens:
+                    return
+                self.saved.add(key)
+                if await store.save_after_prime(
+                    model, system, [], tokens, reasoning_effort=level, role=GROWBOT_ROLE
                 ):
-                    self.saved.add(key)
                     log.info("growbot prefix saved model=%s tokens=%s", model, tokens)
         except Exception:  # noqa: BLE001 - a lost save costs a future cold turn, nothing now
             log.warning("growbot prefix save failed model=%s", model, exc_info=True)

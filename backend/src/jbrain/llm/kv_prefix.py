@@ -123,7 +123,7 @@ from jbrain.llm import kv_conversation, kv_pool_guard, llama_swap_config, local_
 from jbrain.llm.errors import LlmError
 from jbrain.llm.kv_conversation import ConversationHold, ConversationMeta
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
-from jbrain.llm.slot_roles import KvPool, SlotRole, layout_matches
+from jbrain.llm.slot_roles import GROWBOT_ROLE, KvPool, SlotRole, layout_matches
 from jbrain.llm.types import LlmTool
 
 log = structlog.get_logger()
@@ -1589,7 +1589,8 @@ class KvPrefixStore:
         await box_events.record(
             box_events.KV_PREFIX_SAVED,
             served_model,
-            detail=f"{prime_tokens}-token jerv prefix saved to disk",
+            detail=f"{prime_tokens}-token {'creature' if role is GROWBOT_ROLE else 'jerv'} "
+            "prefix saved to disk",
         )
         await self._note("saved", served_model, role=role, tokens=prime_tokens, slot=slot_id)
         return True

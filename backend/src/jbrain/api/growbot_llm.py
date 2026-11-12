@@ -61,6 +61,7 @@ from jbrain.llm.openai_slot_fit import (
 )
 from jbrain.llm.residency import ResidencyError
 from jbrain.llm.slot_roles import GROWBOT_ROLE, SlotCapError
+from jbrain.settings_store import GROWBOT_AWAKE_S
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -152,7 +153,8 @@ def _save_prefix(
         store=getattr(state, "kv_prefix", None),
         model=model,
         system=system,
-        key=f"{model}:{hashlib.sha256(system.encode()).hexdigest()}",
+        level=level,
+        key=f"{model}:{level}:{hashlib.sha256(system.encode()).hexdigest()}",
         last_turn=lambda: getattr(state, "growbot_last_turn", None),
         lock=lock,
         pool_guard=pool_guard,
@@ -164,6 +166,12 @@ def _save_prefix(
 # How often the lane re-stamps the creature as talking (settings_store GROWBOT_AWAKE_S): a
 # turn a few seconds apart needs no database write each time.
 _AWAKE_RESTAMP_S: Final = 60.0
+# A creature left running talks to itself every minute or so, which would hold the worker (its
+# ingest, OCR and nightly jobs too) for as long as the phone stays on. So a hold lasts at most
+# _AWAKE_HOLD_MAX_S at a stretch, then the lane stops stamping for _AWAKE_BREAK_S: the last
+# stamp lapses GROWBOT_AWAKE_S in, and the worker has the rest of the break to catch up.
+_AWAKE_HOLD_MAX_S: Final = 1200.0
+_AWAKE_BREAK_S: Final = 600.0
 
 
 def _mark_awake(request: Request) -> None:
@@ -173,6 +181,15 @@ def _mark_awake(request: Request) -> None:
     last = getattr(state, "growbot_awake_stamped", None)
     now = time.monotonic()
     if store is None or (isinstance(last, float) and now - last < _AWAKE_RESTAMP_S):
+        return
+    if now < getattr(state, "growbot_awake_break_until", 0.0):
+        return
+    since = getattr(state, "growbot_awake_since", None)
+    if not isinstance(since, float) or not isinstance(last, float) or now - last > GROWBOT_AWAKE_S:
+        since = state.growbot_awake_since = now
+    if now - since >= _AWAKE_HOLD_MAX_S:
+        state.growbot_awake_break_until = now + _AWAKE_BREAK_S
+        state.growbot_awake_since = None
         return
     state.growbot_awake_stamped = now
 
@@ -442,11 +459,14 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                 model = rec.model = str(payload["model"])
                 # After a long quiet the slot may have lost the prefix to a restart.
                 long_quiet = previous is None or time.monotonic() - previous > RESTORE_AFTER_QUIET_S
-                if (
+                restored = (
                     not replay
                     and long_quiet
-                    and await prefix.restore(getattr(state, "kv_prefix", None), model, system)
-                ):
+                    and await prefix.restore(
+                        getattr(state, "kv_prefix", None), model, system, level
+                    )
+                )
+                if restored:
                     mark("restore_ms")
                 # Judged on the model actually sent, after admission, as jcode's proxy does.
                 _apply_level(payload, level, model)
@@ -464,6 +484,9 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                         body = _server_error("the on-box model refused the turn", "gateway_error")
                         yield error_bytes(body, stream=stream)
                         return
+                    if restored:
+                        # The prompt has reached the slot, even if the phone hangs up now.
+                        _quietly(prefix.consumed, state.kv_prefix, model, system, level)
                     async for chunk in upstream.aiter_raw():
                         _quietly(collector.feed, chunk)
                         yield chunk
