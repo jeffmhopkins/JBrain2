@@ -90,10 +90,55 @@
   }
   function copy(o) { var c = {}; for (var k in o) c[k] = o[k]; return c; }
 
+  /* The pupil is the creature's life: a face that hid it for a whole mood (sleepy's lids met,
+     happy's cheek swallowed it) read as no one home (owner, 2026-11-12). So at the eye's
+     centreline the lids together may cover at most 1 - OPEN_MIN of it; past that they are
+     scaled back as one, keeping the mood's shape. `bend` is how far each face's lower-lid curve
+     peaks above its edge per unit of lb. Only a blink or sleep shuts an eye now. */
+  var OPEN_MIN = 0.36, PANEL_BEND = 0.5, LANTERN_BEND = 1.2;
+  function lidCap(p, bend) {
+    var low = p.ly > 0.01 ? p.ly + bend * p.lb : 0, cover = p.uy + low;
+    var k = cover > 1 - OPEN_MIN ? (1 - OPEN_MIN) / cover : 1;
+    return { uy: p.uy * k, ua: p.ua, ly: p.ly * k, lb: p.lb * k, sx: p.sx, sy: p.sy, top: p.uy * k, bottom: low * k };
+  }
+  /* The pupil sits in the middle of what the lids leave open, sized to fit it, and the gaze
+     moves it only as far as that opening allows; y is from the eye's centre, h its height. */
+  function pupilIn(q, h, r0, gy) {
+    var top = -h / 2 + h * q.top, room = h * (1 - q.top - q.bottom);
+    var r = Math.min(r0, room * 0.42);
+    return { y: top + room / 2 + gy * Math.max(0, room / 2 - r), r: r };
+  }
+
   /* Easing lives here, not in upstream's P: P carries only eye and smile, and its numbers feed
      other code, so the shapes this file adds are eased beside it rather than written into it. */
   var cur = null, lastEmo = "", talk = 0, startle = 0, blush = 0, lastTouch = 0;
   var pup = { x: 0, y: 0 }, gaze = { x: 0, y: 0 }, lastT = 0;
+
+  /* The phone's roll in the screen's plane, radians, + when its right side is down (owner,
+     2026-11-12: the face should feel the phone tilt). Read from gravity in our own listener;
+     upstream asks iOS for motion permission and learns the browser's accel sign into _IOS_G,
+     which this multiplies by, so a flipped browser does not roll the face the wrong way. Lying
+     flat, gravity leaves the screen's plane and the roll fades out rather than spin. */
+  var roll = 0, rollAt = 0;
+  try {
+    window.addEventListener("devicemotion", function (ev) {
+      var g = ev.accelerationIncludingGravity;
+      if (!g || typeof g.x !== "number" || typeof g.y !== "number") return;
+      var sg = window._IOS_G === -1 ? -1 : 1, x = sg * g.x, y = sg * g.y, m = Math.sqrt(x * x + y * y);
+      if (!isFinite(m)) return;
+      /* Gravity is in the device's frame and the face is drawn in the screen's: a phone turned
+         to landscape has rotated its screen too, so the screen's angle comes back off. */
+      var turn = 0;
+      try {
+        turn = screen.orientation && typeof screen.orientation.angle === "number" ? screen.orientation.angle : +window.orientation || 0;
+      } catch (e) {}
+      var a = m > 1 ? Math.atan2(-x, y) + turn * Math.PI / 180 : 0;
+      a = Math.atan2(Math.sin(a), Math.cos(a));
+      roll = a * Math.min(1, Math.max(0, (m - 3) / 4));
+      rollAt = Date.now();
+    });
+  } catch (e) {}
+  var lean = 0;
 
   function shade(hex, f) {
     var n = parseInt(hex.slice(1), 16);
@@ -181,17 +226,18 @@
       c.fill();
       return;
     }
+    p = lidCap(p, PANEL_BEND);
     c.save();
     c.fillStyle = "#f6f9fc";
     rr(c, cx - bw / 2, cy - h / 2, bw, h, Math.min(bw, h) * 0.38);
     c.fill();
     c.clip();
-    var pr = Math.min(h / 2, 17 * s * (1 - 0.3 * d.startle));
-    var px = cx + d.pupil.x * 11 * s, py = cy + d.pupil.y * 9 * s;
+    var pu = pupilIn(p, h, Math.min(h / 2, 17 * s * (1 - 0.3 * d.startle)), d.pupil.y);
+    var pr = pu.r, px = cx + d.pupil.x * 11 * s, py = cy + pu.y;
     c.fillStyle = dark;
     disc(c, px, py, pr);
     c.fillStyle = "rgba(255,255,255,.92)";
-    disc(c, px - 6 * s, py - 7 * s, 5 * s);
+    disc(c, px - pr * 0.35, py - pr * 0.41, pr * 0.3);
     c.fillStyle = "#000";
     if (p.uy > 0.01) {
       c.save();
@@ -218,7 +264,7 @@
   function ostrich(c, d) {
     var hex = BODY, s = 2.2;
     var head = shade(hex, 0.94), beak = shade(hex, 0.52), dark = shade(hex, 0.22);
-    var cx = LW / 2 + d.gaze.x * 8, hy = 250 + d.bob + d.gaze.y * 6, i;
+    var cx = LW / 2 + d.gaze.x * 8 + d.sway * 34, hy = 250 + d.bob + d.gaze.y * 6, i;
     birdBody(c, hex, d);
     rings(c, shade(hex, 0.76), LW / 2, 598, cx, hy + 42 * s, 50 * s * 0.95, 34 * s * 0.95, 7, 22);
     c.save();
@@ -269,7 +315,7 @@
   /* B: the panels' robot head (face.c draw_robot) with a crop of the chest. */
   function robot(c, d) {
     var hex = BODY, s = 1.45, dark = shade(hex, 0.22), i;
-    var cx = LW / 2 + d.gaze.x * 6, hy = 300 + d.bob + d.gaze.y * 5;
+    var cx = LW / 2 + d.gaze.x * 6 + d.sway * 30, hy = 300 + d.bob + d.gaze.y * 5;
     c.fillStyle = shade(hex, 0.88);
     rr(c, LW / 2 - 144 * s * 0.9, 560, 288 * s * 0.9, 300, 70);
     c.fill();
@@ -333,7 +379,7 @@
      glowed as one image: a halo per shape would glow around the lidded part too. */
   var layerC = null;
   function lantern(c, d) {
-    var glow = d.glow, cx = LW / 2 + d.gaze.x * 22, cy = 300 + d.bob + d.gaze.y * 16, gap = 74;
+    var glow = d.glow, cx = LW / 2 + d.gaze.x * 22 + d.sway * 44, cy = 300 + d.bob + d.gaze.y * 16, gap = 74;
     if (!layerC) layerC = document.createElement("canvas");
     if (layerC.width !== c.canvas.width || layerC.height !== c.canvas.height) { layerC.width = c.canvas.width; layerC.height = c.canvas.height; }
     var o = layerC.getContext("2d"), m = c.getTransform();
@@ -343,7 +389,7 @@
     o.translate(cx, cy);
     o.rotate(d.tilt * Math.PI / 180 * 0.6);
     for (var side = -1; side <= 1; side += 2) {
-      var p = side < 0 ? d.lids.l : d.lids.r;
+      var p = lidCap(side < 0 ? d.lids.l : d.lids.r, LANTERN_BEND);
       var w = 104 * p.sx * (1 + 0.15 * d.startle), h = 150 * p.sy * (1 + 0.15 * d.startle) * d.open;
       var bw = w * (1 + 0.3 * Math.max(0, 1 - Math.min(d.open, 1))), x = side * gap;
       o.globalCompositeOperation = "source-over";
@@ -355,10 +401,9 @@
       o.fillStyle = "rgba(255,255,255,.35)";
       rr(o, x - bw * 0.28, -h / 2 + h * 0.12, bw * 0.2, h * 0.22, bw * 0.1);
       o.fill();
-      if (d.showPupil) {
-        o.fillStyle = "rgba(0,0,0,.78)";
-        disc(o, x + d.pupil.x * bw * 0.22, d.pupil.y * h * 0.2, Math.min(bw, h) * 0.17);
-      }
+      var pu = pupilIn(p, h, Math.min(bw, h) * 0.17, d.pupil.y);
+      o.fillStyle = "rgba(0,0,0,.78)";
+      disc(o, x + d.pupil.x * bw * 0.22, pu.y, pu.r);
       o.globalCompositeOperation = "destination-out";
       o.fillStyle = "#000";
       if (p.uy > 0.01) {
@@ -443,20 +488,29 @@
        eased by time, not per frame, because LOW_POWER draws at 15 fps. */
     var dt = lastT && s.t > lastT ? Math.min(250, s.t - lastT) : 16;
     lastT = s.t;
+    /* Tilted, the pupils roll to the low side, the head leans back toward level and the whole
+       face swings a little downhill on its neck: gravity on the eyes, balance on the head
+       (owner, 2026-11-12: the face itself reacts, not just the eyes). Only past a hand-held
+       phone's wobble, capped so a phone on its side does not tip the face over, and slow, so
+       a walking body does not shake it; a stale reading (no sensor, or permission never
+       given) settles back to zero. */
+    var tilt = Date.now() - rollAt < 1000 && Math.abs(roll) < 2.4 ? roll : 0;
+    var felt = Math.sign(tilt) * Math.max(0, Math.min(0.7, Math.abs(tilt) - 0.08));
+    lean += (felt - lean) * (1 - Math.exp(-dt / 400));
     var wander = s.think || s.looking ? Math.sin(s.t / 1600) * 0.7 : 0;
     var aim = s.think || s.looking ? { x: wander, y: 0 } : { x: s.gx, y: s.gy };
+    aim.x = Math.max(-1.2, Math.min(1.2, aim.x + lean * 1.6));
     var ease = 1 - Math.exp(-dt / 320);
     pup.x += (aim.x - pup.x) * ease;
     pup.y += (aim.y - pup.y) * ease;
     gaze.x += (s.gx + wander * 0.4 - gaze.x) * ease;
     gaze.y += (s.gy - gaze.y) * ease;
-    var glance = Math.abs(s.gx) + Math.abs(s.gy) > 0.05;
     var bob = (s.paused || s.dreaming ? 6 * Math.sin(s.t / 900) : 3 * Math.sin(s.t / 1300)) + Math.sin(s.t * 0.05) * s.shake * 8;
     var d = {
-      t: s.t, open: open, lids: cur, pupil: pup, showPupil: s.think || s.looking || glance,
+      t: s.t, open: open, lids: cur, pupil: pup,
       gaze: { x: gaze.x + Math.sin(s.t * 0.045) * s.shake * 0.6, y: gaze.y }, think: s.think,
       dreaming: s.dreaming, talking: talking, talk: talk, smile: s.smile, mouth: sp.mouth,
-      tilt: cur.tilt, crest: cur.crest, startle: startle, blush: blush,
+      tilt: cur.tilt - lean * 180 / Math.PI * 0.45, sway: lean, crest: cur.crest, startle: startle, blush: blush,
       /* The lantern has no body, so a chosen colour is its eyes' colour; unchosen, the mood's. */
       glow: face === "lantern" && custom ? BODY : s.glow,
       energy: s.energy, bob: bob
@@ -482,6 +536,21 @@
     },
     setColour: setColour,
     colour: function () { return BODY; },
+    /* What each face's lids leave open at the eye's centreline, per emotion, 0-1: the pupil's
+       guarantee, read by the site tests. */
+    openings: function () {
+      var out = {};
+      for (var k in LIDS) {
+        var sp = spec(k), o = { panel: 1, lantern: 1 };
+        [sp.l, sp.r].forEach(function (p) {
+          var a = lidCap(p, PANEL_BEND), b = lidCap(p, LANTERN_BEND);
+          o.panel = Math.min(o.panel, 1 - a.top - a.bottom);
+          o.lantern = Math.min(o.lantern, 1 - b.top - b.bottom);
+        });
+        out[k] = o;
+      }
+      return out;
+    },
     draw: function (c, W, H, s) {
       var m = c.getTransform();
       try {

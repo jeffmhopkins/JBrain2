@@ -156,6 +156,44 @@ def test_the_pixel_eyes_give_way_only_while_the_new_face_is_on() -> None:
     assert "broken = true;" in face
 
 
+def _face_in_node(script: str) -> str:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    shim = "var window={addEventListener:function(){}},location={search:''};"
+    out = subprocess.run(
+        [node, "-e", f"{shim}\n{face}\n{script}"], capture_output=True, text=True, check=True
+    )
+    return out.stdout
+
+
+def test_every_face_keeps_the_pupil_open_in_every_mood() -> None:
+    """Sleepy's lids met and happy's cheek covered the pupil for the whole mood (owner,
+    2026-11-12): now every emotion leaves at least a third of each eye open on every face, and
+    the lantern draws its pupil always, not only while thinking or looking."""
+    openings = json.loads(_face_in_node("console.log(JSON.stringify(window.gbFace.openings()));"))
+    assert set(openings) == {"calm", "curious", "happy", "alert", "scared", "sleepy", "tired"}
+    for mood, faces in openings.items():
+        for kind, room in faces.items():
+            assert room >= 0.36 - 1e-9, (mood, kind, room)
+    face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    assert "showPupil" not in face
+
+
+def test_the_face_feels_the_phone_tilt() -> None:
+    """Gravity's roll in the screen's plane rolls the pupils downhill and leans the head back
+    toward level, through upstream's learned accel sign."""
+    face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    assert 'window.addEventListener("devicemotion", function (ev) {' in face
+    assert "window._IOS_G === -1 ? -1 : 1" in face
+    # Landscape turns the screen with the phone, so its angle comes back off the roll.
+    assert "Math.atan2(-x, y) + turn * Math.PI / 180" in face
+    assert "aim.x = Math.max(-1.2, Math.min(1.2, aim.x + lean * 1.6));" in face
+    assert "tilt: cur.tilt - lean * 180 / Math.PI * 0.45, sway: lean," in face
+    assert face.count("d.sway * ") == 3
+
+
 def test_a_persona_wears_its_own_face_lantern_by_default() -> None:
     """The box's face for the persona is read before the face loads, a poll's new one changes
     it where it stands, and only ?face= outranks it."""
