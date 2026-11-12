@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -438,10 +439,13 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     body = prompts[start : prompts.index("\n}\n", start)]
     assert body.endswith("\n  return _gbStatic + buildOutputSchema(soul.body);")
     live = body[body.index("buildSystem.live = ") : body.index("  return _gbStatic")]
-    for moving in ("== LONG-ARC", "== SCRATCHPAD", "clock", "== RECENT DIARY", "diary"):
-        assert moving in live
+    moving = ("languageContext(", "== LONG-ARC", "== SCRATCHPAD", "clock", "== RECENT DIARY")
+    for part in moving:
+        assert part in live, part
     static = body[body.index("var _gbStatic = ") : body.index("buildSystem.live = ")]
     assert "SAFETY_FLOOR" in static and "== YOUR IDENTITY" in static and "clock" not in static
+    # The automatic reply-language line rewrites itself once speech settles a language.
+    assert "languageContext(" not in static
 
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert '_gbLive=(buildSystem.live||"")+(moveGuideText.live||"")' in page
@@ -467,7 +471,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     assert "sys+=" not in page[
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
-    assert '<script src="/v3/prompts.js?v=1008-motion-box"' in page
+    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang"' in page
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
 
@@ -568,3 +572,143 @@ def test_past_replies_go_back_to_the_model_in_its_own_json_shape() -> None:
     # A say the model wrote in brackets is still words it spoke.
     assert json.loads(spoken) == {"say": "(purrs) hi"}
     assert json.loads(empty) == {"say": ""}
+
+
+def test_a_spoken_turn_sends_one_frame_unless_something_is_moving() -> None:
+    """Each frame is ~300 tokens of prefill on the box; three only when there is change to see."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    line = page[page.index("var _nf=(kind===") :]
+    line = line[: line.index(";")]
+    assert line.endswith(
+        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||(extra&&extra.beat&&seekGoal)"
+        '||(extra&&typeof extra.visualUser==="string"&&_GB_LOOK_WORDS.test(extra.visualUser)))'
+        "?3:1)"
+    )
+    words = page[page.index("var _GB_LOOK_WORDS=/") :]
+    words = words[len("var _GB_LOOK_WORDS=/") : words.index("/i;")]
+    look = re.compile(words.replace("\\b", r"\b"), re.IGNORECASE)
+    for said in ("watch this", "what am I holding?", "What's this", "can you see me"):
+        assert look.search(said), said
+    for said in ("how are you", "spin to your left", "tell me a story"):
+        assert not look.search(said), said
+    assert "each thought you see the freshest one, or the 3 freshest" in page
+
+
+def _stream_js(page: str) -> str:
+    start = page.index("var _gbPieceNext=null")
+    return page[start : page.index("function _gbPcmUttStop0(")]
+
+
+_STREAM_HARNESS = r"""
+var _pcmRate=1000, _pcmLive=true, _pcmUtt=null, vadVoiceT=0, _vadHold=1500, now=0;
+Date.now=function(){ return now; };
+var timers=[]; setTimeout=function(f,ms){ timers.push({f:f,at:now+(ms||0)}); };
+function run(){ timers.sort(function(a,b){ return a.at-b.at; });
+  while(timers.length&&timers[0].at<=now){ timers.shift().f(); } }
+var sent=[], shown=[], stt=[], old=[];
+function encodeWav(f,r,d,c){ return {len:f.length}; }
+var _vadEndT=0, _imitationCtl=null; var document={getElementById:function(){ return null; }};
+function Blob(parts){ this.len=parts[0].len; }
+function transcribe(b,t,ms){ stt.push({p:_gbPieceNext,len:b.len}); _gbPieceNext=null; }
+function showYouSaid(t){ shown.push(t); } function sendTxtFrom(t,m){ sent.push(t); }
+function logEv(){} function _convLangSaw(){}
+function _gbPcmUttStop0(s,t){ old.push(s); }
+function utt(){ _pcmUtt={buf:new Float32Array(13000),n:0,pre:0,t0:now,nf:0}; _pcmLive=true; }
+function feed(ms,voice){ for(var i=0;i<ms;i+=100){ var d=new Float32Array(100), u=_pcmUtt;
+  var take=Math.min(u.buf.length-u.n,100); u.buf.set(d.subarray(0,take),u.n); u.n+=take;
+  if(voice) vadVoiceT=now; _gbRollCheck(d,take); now+=100; run(); } }
+function answer(i,txt){ var p=stt[i].p; _gbPiece(p,txt,{lang:"en"},"en"); }
+"""
+
+
+def _run_stream(page: str, scenario: str) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = (
+        _stream_js(page)
+        + _STREAM_HARNESS
+        + scenario
+        + "\nconsole.log(JSON.stringify({sent:sent,shown:shown,stt:stt.length,old:old}));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def test_speech_is_transcribed_in_pieces_and_reaches_the_creature_as_one_turn() -> None:
+    """A long message goes to the transcriber at its pauses and at the buffer's end while the
+    person keeps talking, nothing past the old 12 s cap is lost, and the creature gets one turn
+    with every piece in order."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    long_talk = """
+    utt(); feed(5000,true); feed(600,false);            // 5 s then a pause: piece 0
+    feed(13000,true);                                   // a full buffer: piece 1, no audio lost
+    feed(2000,true); pcmUttStop(true,300); run();       // the end: piece 2, the final
+    answer(1,"second part"); answer(0,"first part,");
+    answer(2,"and the end.");
+    """
+    got = _run_stream(page, long_talk)
+    assert got["stt"] == 3
+    assert got["sent"] == ["first part, second part and the end."]
+    assert got["old"] == []
+    assert "first part, second part …" in got["shown"]
+
+    # A short message never splits and goes the old way.
+    short = "utt(); feed(3000,true); pcmUttStop(true,300); run();"
+    got = _run_stream(page, short)
+    assert got["stt"] == 0 and got["old"] == [True] and got["sent"] == []
+
+
+def test_a_lost_or_silent_piece_never_holds_the_turn() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    # Piece 0 never answers; the end is silence, so no final piece is sent: the turn goes after
+    # the 12 s give-up with what did come back.
+    lost = """
+    utt(); feed(5000,true); feed(600,false); feed(4500,true); feed(600,false);
+    feed(1200,false); pcmUttStop(true,300); run();
+    answer(1,"the words that came back");
+    now+=25000; run();
+    answer(0,"late words");
+    """
+    got = _run_stream(page, lost)
+    # What came back goes after the give-up; a piece landing later still reaches the creature.
+    assert got["stt"] == 2 and got["sent"] == ["the words that came back", "late words"]
+
+    # A cancelled utterance (its own voice, pause, a hidden tab) sends nothing, as upstream.
+    cancelled = """
+    utt(); feed(5000,true); feed(600,false); feed(1000,true); pcmUttStop(false,0); run();
+    answer(0,"hello there");
+    """
+    got = _run_stream(page, cancelled)
+    assert got["sent"] == []
+
+
+def test_a_streamed_utterance_outlives_the_old_twelve_second_cap() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "else if(now-vadStartT > (_pcmLive&&_pcmUtt?GB_UTT_MAX_MS:12000)){ vadStop();" in page
+    assert "_gbFinal(_gbU,true,0)" in page[page.index("function pcmTapDown(){") :][:300]
+    # A long message gets a longer pause before its turn is over.
+    assert (
+        "if(now-vadVoiceT > (_pcmUtt&&_pcmUtt.gbId?Math.max(_vadHold,GB_LONG_HOLD_MS):_vadHold))"
+    ) in page
+    # Its own beats hold while a streamed message is live or its pieces are landing.
+    assert (
+        "if((vadOn&&(now-vadStartT<6000||(_pcmLive&&_pcmUtt&&_pcmUtt.gbId)))||now<vadHoldUntil"
+        "||Object.keys(_gbUtts).length){ lastActT=now; return; }"
+    ) in page
+    # 30 s of talk with no pause: the full buffer rolls twice and nothing is dropped.
+    nonstop = """
+    utt(); feed(30000,true); pcmUttStop(true,300); run();
+    for(var i=0;i<stt.length;i++) answer(i,"part"+i);
+    """
+    got = _run_stream(page, nonstop)
+    assert got["stt"] == 3 and got["sent"] == ["part0 part1 part2"]
+
+
+def test_an_ordinary_quiet_beat_waits_ninety_seconds_after_the_last_activity() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "var GB_QUIET_AFTER_MS=90000;" in page
+    assert "if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){" in page
+    assert "idle>=8000 && now-lastBeatT" not in page
+    assert page.index("var GB_QUIET_AFTER_MS") < page.index("if(idle>=GB_QUIET_AFTER_MS")
+    assert "90 seconds after anything last happened" in page

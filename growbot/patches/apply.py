@@ -630,8 +630,9 @@ _SELF_FIXED = (
     ' yourself) ==\\nYou think whenever something happens — a voice, a touch, a mission step —'
     " answering right away, or the moment your current thought finishes. Quiet does not put you"
     " to sleep. While awake you can occasionally notice or express something; silence is welcome"
-    " too. Ordinary quiet opportunities are spaced at least four minutes apart, subject to your"
-    " activity waits, availability and energy. Explicit pause stops autonomous thoughts. A"
+    " too. Ordinary quiet opportunities are spaced at least four minutes apart and come at least"
+    " 90 seconds after anything last happened, subject to your activity waits, availability and"
+    " energy. Explicit pause stops autonomous thoughts. A"
     " language model ({model}) is how you feel and choose your words — it's fine to say so,"
     " simply. If asked how fast, how often you think or look, or whether an AI helps you — tell"
     " the truth in your own voice; don't deflect. How long you have been awake, your eyes and"
@@ -792,6 +793,283 @@ HISTORY_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += HISTORY_PATCHES
+
+# Round 2 of the speed work, from the owner's first live session on the new layout (2026-11-12).
+# The automatic reply-language line rewrites itself once the person's speech settles a language
+# ("follow the conversation" becomes "speech established English"), and it sat in the cached
+# system message, so that turn re-read all ~10k tokens (28 s). It now rides the live block; an
+# explicit choice reads the same either way.
+# And a spoken turn always sent 3 camera frames, ~300 tokens each on the box (~2 s of prefill
+# for the two extra). It now sends 1 unless the scene is changing, the phone is carried or the
+# body is moving, the same signals upstream already uses to give an idle tick its eye.
+ROUND2_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/prompts.js",
+        "AWAKE_PLAN_CORRECTION + languageContext(soul, ctx.language) +",
+        "AWAKE_PLAN_CORRECTION +",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        '  buildSystem.live = "\\n\\n== LONG-ARC (dream-written) ==" + wants',
+        '  buildSystem.live = languageContext(soul, ctx.language) +'
+        ' "\\n\\n== LONG-ARC (dream-written) ==" + wants',
+        1,
+    ),
+    (
+        "v3/next.html",
+        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0)):3;",
+        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0))"
+        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||(extra&&extra.beat&&seekGoal)"
+        "||(extra&&typeof extra.visualUser===\"string\"&&_GB_LOOK_WORDS.test(extra.visualUser)))"
+        "?3:1);",
+        1,
+    ),
+    # Three frames still ride a seek beat (watching for its goal is comparing over time) and a
+    # person's words about looking ("watch this", "what am I holding"): by the time speech is
+    # transcribed the wave may be over, and the older frames hold it.
+    (
+        "v3/next.html",
+        "events/seek-beats keep full 3-frame sight (change detection is the game).",
+        "events/seek-beats keep full 3-frame sight (change detection is the game). [box: a"
+        " spoken turn keeps 1 unless something moves, a seek beat runs or the words ask to look]",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function _stripImages(msgs){",
+        "var _GB_LOOK_WORDS=/\\b(look|looking|see|watch|show|showing|holding|hold up|wave|"
+        "waving|doing|what'?s this|what is this|what is that|what'?s that)\\b/i;\n"
+        "function _stripImages(msgs){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "each thought you see the 3 freshest (about the last 8 seconds), so you can compare NOW to"
+        " a moment ago.",
+        "each thought you see the freshest one, or the 3 freshest (about the last 8 seconds) when"
+        " the scene or your body is moving, so you can compare NOW to a moment ago.",
+        1,
+    ),
+    # A phone that cached the old file loads this one.
+    (
+        "v3/next.html",
+        '<script src="/v3/prompts.js?v=1008-motion-box"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang"',
+        1,
+    ),
+]
+PATCHES += ROUND2_PATCHES
+
+# Speech is transcribed while the person is still talking (owner, 2026-11-12). Upstream held a
+# whole utterance and sent it at the end, so the wait after the last word grew with its length
+# (6 s for a 12 s message), and it capped one utterance at 12 s and silently dropped the rest:
+# the owner's longest message reached the creature cut mid-sentence. Now, once an utterance
+# has 4 s of audio, a pause shorter than the end-of-speech hold, or a full buffer, sends what
+# is held so far as a piece and keeps listening into a fresh buffer. Each piece runs the usual
+# transcript filters (hallucination lists, echo) and shows on screen as it lands; the end of
+# speech sends the last piece (its trailing silence cut, as upstream trims a clip), and the
+# creature gets one turn with the pieces joined in order. A piece that never answers is given up
+# 25 s after the end, and one that lands later still reaches the creature as its own turn; a
+# cancelled utterance (the creature's own voice, pause, a hidden tab) sends nothing, as
+# upstream. Pieces skip the phone's sound judge: by then the endpointer has heard seconds of
+# voice, and a streamed utterance is not a hum.
+_GB_STREAM_JS = r'''var _gbPieceNext=null, _gbUtts={}, _gbDead={}, _gbUttSeq=0, GB_ROLL_MIN_S=4, GB_ROLL_GAP_MS=450, GB_UTT_MAX_MS=120000, GB_PIECE_WAIT_MS=25000, GB_LONG_HOLD_MS=2500;
+function _gbRollCheck(d,take){ var u=_pcmUtt; if(!_pcmLive||!u) return;
+  var full=u.n>=u.buf.length, gap=Date.now()-vadVoiceT;
+  if(!full&&!(u.n>=GB_ROLL_MIN_S*_pcmRate&&gap>=GB_ROLL_GAP_MS&&gap<_vadHold)) return;
+  if(!_gbRoll(u)) return; if(full&&take<d.length&&_pcmUtt){ var rest=d.subarray(take); _pcmUtt.buf.set(rest,0); _pcmUtt.n=rest.length; } }
+function _gbRoll(u){ var fresh=new Float32Array(u.buf.length);
+  if(!u.gbId){ u.gbId=++_gbUttSeq; _gbUtts[u.gbId]={text:[],done:[],n:0,meta:null,fin:false,t0:u.t0};
+    var id=u.gbId; setTimeout(function(){ _gbFlush(id,true); },GB_UTT_MAX_MS+GB_PIECE_WAIT_MS);
+    try{ if(typeof _imitationCtl!=="undefined"&&_imitationCtl) _imitationCtl.cancel("streamed"); }catch(e){} }
+  var g=_gbUtts[u.gbId], p={id:u.gbId,seq:g.n++}, buf=u.buf, n=u.n;
+  _pcmUtt={buf:fresh,n:0,pre:0,t0:Date.now(),nf:u.nf,gbId:u.gbId};
+  _gbSend(p,buf,n); return true; }
+function _gbSend(p,buf,n){
+  if(n<Math.round(0.3*_pcmRate)){ _gbPiece(p,""); return; }
+  setTimeout(function(){ try{ var w=encodeWav(buf.subarray(0,n),_pcmRate,16000,null);
+    _sttLane="pcm"; _gbPieceNext=p; transcribe(new Blob([w],{type:"audio/wav"}),"audio/wav",Math.round(n/_pcmRate*1000)); }
+    catch(e){ _gbPieceNext=null; _gbPiece(p,""); } },0); }
+function _gbPiece(p,txt,meta,lang){ var g=_gbUtts[p.id];
+  if(!g){ if(txt&&!_gbDead[p.id]){ try{ logEv("stt_late",{}); }catch(e){} showYouSaid(txt); sendTxtFrom(txt,meta); } return; }
+  g.text[p.seq]=txt||""; g.done[p.seq]=1; if(meta&&(p.fin||!g.meta)) g.meta=meta; if(lang) g.lang=lang; if(p.fin) g.fin=true;
+  var said=g.text.filter(function(t){ return t; }).join(" ");
+  if(said&&!g.fin){ try{ showYouSaid(said+" …"); }catch(e){} }
+  _gbFlush(p.id,false); }
+function _gbFlush(id,force){ var g=_gbUtts[id]; if(!g||(!g.fin&&!force)) return;
+  for(var i=0;i<g.n&&!force;i++) if(!g.done[i]) return;
+  delete _gbUtts[id];
+  var txt=g.text.filter(function(t){ return t; }).join(" ").replace(/\s+/g," ").trim();
+  if(!txt) return;
+  try{ logEv("stt_join",{n:g.n,ms:Date.now()-g.t0,force:force?1:0}); }catch(e){}
+  try{ _convLangSaw(g.lang,txt,g.meta); }catch(e){}
+  showYouSaid(txt); sendTxtFrom(txt,g.meta); }
+function _gbFinal(u,send,tailMs){ var id=u.gbId, g=_gbUtts[id];
+  if(!send){ delete _gbUtts[id]; _gbDead[id]=1; try{ var el=document.getElementById("youSaid"); if(el) el.style.display="none"; }catch(e){} return; }
+  var p={id:id,seq:g.n++,fin:true}, cut=Math.round(Math.max(0,(+tailMs||0))/1000*_pcmRate), n=Math.max(0,u.n-cut);
+  setTimeout(function(){ _gbFlush(id,true); },GB_PIECE_WAIT_MS);
+  if(vadVoiceT<u.t0){ _gbPiece(p,""); return; }
+  try{ _vadEndT=Date.now(); }catch(e){}
+  _gbSend(p,u.buf,n); }
+function pcmUttStop(send,tailMs){ var u=_pcmUtt;
+  if(u&&u.gbId&&_gbUtts[u.gbId]){ _pcmLive=false; _pcmUtt=null; _gbFinal(u,send,tailMs); return; }
+  return _gbPcmUttStop0(send,tailMs); }'''
+STREAM_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "function pcmUttStop(send,tailMs){ _pcmLive=false;",
+        _GB_STREAM_JS + "\nfunction _gbPcmUttStop0(send,tailMs){ _pcmLive=false;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "_pcmUtt.buf.set(take===d.length?d:d.subarray(0,take),_pcmUtt.n); _pcmUtt.n+=take; }",
+        "_pcmUtt.buf.set(take===d.length?d:d.subarray(0,take),_pcmUtt.n); _pcmUtt.n+=take;"
+        " _gbRollCheck(d,take); }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function transcribe(blob,type,clipMs){ var _jmIn=_sttJm; _sttJm=null;",
+        "function transcribe(blob,type,clipMs){ var _jmIn=_sttJm; _sttJm=null;"
+        " var _gbP=_gbPieceNext; _gbPieceNext=null;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  var meta=_languageRequest(clipMs);",
+        "  var meta=_languageRequest(clipMs); if(_gbP) meta.gbPiece=_gbP;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  if(meta&&meta.soft&&!_bodyVet(txt,meta)) meta.soft=null;",
+        "  if(meta&&meta.gbPiece){ _gbPiece(meta.gbPiece,txt,meta,detectedLang); return; }\n"
+        "  if(meta&&meta.soft&&!_bodyVet(txt,meta)) meta.soft=null;",
+        1,
+    ),
+    # A piece the filters or the gate throw away, or that never comes back, is an empty piece.
+    (
+        "v3/next.html",
+        "function _heardDrop(why,meta){ try{",
+        "function _heardDrop(why,meta){ if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,\"\",meta); try{",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'logEv("stt_drop",{p:_g.p,tgt:"groq"});',
+        'logEv("stt_drop",{p:_g.p,tgt:"groq"}); if(meta&&meta.gbPiece){'
+        ' _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); return; }',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'logEv("stt_drop",{p:_g.p,tgt:"di"});',
+        'logEv("stt_drop",{p:_g.p,tgt:"di"}); if(meta&&meta.gbPiece){'
+        ' _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); return; }',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'e.q==="daily_limit"){ toast(',
+        'e.q==="daily_limit"){ if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); toast(',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'e.q==="daily_limit"){ _sttPhase("done"); toast(',
+        'e.q==="daily_limit"){ if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta);'
+        ' _sttPhase("done"); toast(',
+        1,
+    ),
+    # Asleep, transcribe() returns before it reads the piece: the piece is answered empty.
+    (
+        "v3/next.html",
+        "return; } _asleepSttT=_asn; }",
+        "if(_gbP) _gbPiece(_gbP,\"\"); return; } _asleepSttT=_asn; }",
+        1,
+    ),
+    # An empty piece is not the room going quiet: the naming lane listens for whole clips only.
+    (
+        "v3/next.html",
+        'try{ if(txt&&String(txt).trim()) _listenStash=null; else if(_sttLane==="pcm") _listenFire(); }',
+        'try{ if(txt&&String(txt).trim()) _listenStash=null; else if(_sttLane==="pcm"'
+        '&&!(meta&&meta.gbPiece)) _listenFire(); }',
+        1,
+    ),
+    # Upstream ended every utterance at 12 s; a streamed one rolls its full buffer instead and
+    # runs until the person stops, with a 2-minute backstop.
+    (
+        "v3/next.html",
+        "else if(now-vadStartT > 12000){ vadStop(); _vadEndT=0; }",
+        "else if(now-vadStartT > (_pcmLive&&_pcmUtt?GB_UTT_MAX_MS:12000)){ vadStop(); _vadEndT=0; }",
+        1,
+    ),
+    # A pause that only splits a piece never ends the turn. Once a message is long enough to
+    # stream, the person also gets a longer pause (2.5 s, upstream adapts 1.5-4 s) before the
+    # turn is over: a long message has thinking pauses.
+    (
+        "v3/next.html",
+        "  if(now-vadVoiceT > _vadHold) vadStop();",
+        "  if(now-vadVoiceT > (_pcmUtt&&_pcmUtt.gbId?Math.max(_vadHold,GB_LONG_HOLD_MS):_vadHold))"
+        " vadStop();",
+        1,
+    ),
+    # No beat of its own while the person is mid-message or their pieces are still landing:
+    # upstream held only the first 6 s of an utterance, which a 12 s cap made enough.
+    (
+        "v3/next.html",
+        "if((vadOn&&now-vadStartT<6000)||now<vadHoldUntil){ lastActT=now; return; }",
+        "if((vadOn&&(now-vadStartT<6000||(_pcmLive&&_pcmUtt&&_pcmUtt.gbId)))||now<vadHoldUntil"
+        "||Object.keys(_gbUtts).length){ lastActT=now; return; }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_sttOvl=Math.max(0,_sttOvl-1); _sttPhase("done"); toast(',
+        '_sttOvl=Math.max(0,_sttOvl-1); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta);'
+        ' _sttPhase("done"); toast(',
+        1,
+    ),
+    # The mic going away mid-message still delivers what was heard, the held audio included.
+    (
+        "v3/next.html",
+        "function pcmTapDown(){ try{if(",
+        "function pcmTapDown(){ try{ var _gbU=_pcmUtt; if(_gbU&&_gbU.gbId&&_gbUtts[_gbU.gbId])"
+        " _gbFinal(_gbU,true,0); }catch(e){} try{if(",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "_sttOvl=Math.max(0,_sttOvl-1); toast(window.gbBoxEars",
+        "_sttOvl=Math.max(0,_sttOvl-1); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,\"\",meta);"
+        " toast(window.gbBoxEars",
+        1,
+    ),
+]
+PATCHES += STREAM_PATCHES
+
+# The creature leaves a conversation room before it speaks up on its own (owner, 2026-11-12).
+# Upstream let a quiet beat fire 8 s after the last activity once four minutes had passed since
+# the last beat, so it could cut in moments after the person stopped talking. Now an ordinary
+# quiet beat waits 90 s after the last activity; past that it may ask or wonder as before.
+# Activity and seek beats (its own missions) are unchanged.
+QUIET_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "if(idle>=8000 && now-lastBeatT>240000){",
+        "if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var YIELD_MAX=3, _yieldRun=0, _yieldSaid=0;",
+        "var GB_QUIET_AFTER_MS=90000;\nvar YIELD_MAX=3, _yieldRun=0, _yieldSaid=0;",
+        1,
+    ),
+]
+PATCHES += QUIET_PATCHES
 
 # Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
 # clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off
