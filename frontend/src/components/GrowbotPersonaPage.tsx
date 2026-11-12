@@ -106,8 +106,12 @@ export function GrowbotPersonaPage({
   const [renaming, setRenaming] = useState(false);
   // The face being saved, shown picked while it is.
   const [facing, setFacing] = useState<GrowbotFace | null>(null);
-  // The camera being saved, shown picked while it is.
+  // The camera being saved, shown picked while it is, then the one just saved until the
+  // overview's poll brings the box's copy (the creature may flip it itself meanwhile).
   const [eyeing, setEyeing] = useState<Eye | null>(null);
+  const [eyeSaved, setEyeSaved] = useState<{ eye: Eye; over: Eye | null } | null>(null);
+  const boxEye = persona.prefs ? eyeOf(persona.prefs) : null;
+  const savedEye = eyeSaved && eyeSaved.over === boxEye ? eyeSaved.eye : null;
   const [restoring, setRestoring] = useState<GrowbotCheckpoint | null>(null);
   const [mems, setMems] = useState<GrowbotMemory[] | null>(null);
   const [memError, setMemError] = useState("");
@@ -484,15 +488,16 @@ export function GrowbotPersonaPage({
   }
 
   /** Saved as it is tapped, like the face: the setting lives on the box, and the phone's
-   *  poll flips the lens where it stands. */
+   *  poll flips the lens where it stands. Only once a phone has sent its settings: the first
+   *  phone a persona opens on makes them from its own, and a box copy holding only the camera
+   *  would make that phone drop the rest. */
   async function pickEye(eye: Eye) {
-    const was = eyeOf(detail?.prefs ?? p.prefs);
-    if (eye === was || eyeing !== null) return;
+    if (p.prefs === null || eye === (savedEye ?? boxEye) || eyeing !== null) return;
     setEyeing(eye);
     try {
-      const lens = eye === "back" ? "environment" : "user";
-      await api.setGrowbotPersonaPrefs(p.id, { gb_eye: lens });
-      setDetail((d) => (d ? { ...d, prefs: { ...(d.prefs ?? {}), gb_eye: lens } } : d));
+      await api.setGrowbotPersonaPrefs(p.id, { gb_eye: eye === "back" ? "environment" : "user" });
+      setEyeSaved({ eye, over: boxEye });
+      onChanged();
       const what = eye === "back" ? "its back camera" : "its front camera";
       say(
         p.phone
@@ -508,7 +513,7 @@ export function GrowbotPersonaPage({
 
   function manageTab() {
     const current = facing ?? detail?.face ?? p.face;
-    const eye = eyeing ?? eyeOf(detail?.prefs ?? p.prefs);
+    const eye = eyeing ?? savedEye ?? boxEye ?? "front";
     return (
       <section className="gb-card">
         <fieldset className="gb-choices">
@@ -537,7 +542,7 @@ export function GrowbotPersonaPage({
                 type="radio"
                 name={`gb-eye-${p.id}`}
                 checked={eye === e.id}
-                disabled={eyeing !== null}
+                disabled={eyeing !== null || p.prefs === null}
                 onChange={() => void pickEye(e.id)}
               />
               <span className="gb-tx">
@@ -546,6 +551,9 @@ export function GrowbotPersonaPage({
               </span>
             </label>
           ))}
+          {p.prefs === null && (
+            <p className="gb-hint dim">Open {p.name} on a phone once, then pick its camera here.</p>
+          )}
         </fieldset>
         <div className="gb-acts two first">
           <button type="button" className="gb-btn" onClick={() => setRenaming(true)}>

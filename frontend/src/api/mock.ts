@@ -523,7 +523,7 @@ function mockGbPersona(
     memories: vms.length,
     wearing: null,
     face: "lantern",
-    prefs: null,
+    prefs: {},
     ...over,
     soul,
     vms,
@@ -768,9 +768,9 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
   }
   if (rest === "prefs" && method === "PATCH") {
     const { set, drop } = body() as { set?: Record<string, string>; drop?: string[] };
-    const next = { ...(p.prefs ?? {}), ...(set ?? {}) };
+    const next = { ...(p.prefs ?? {}) };
     for (const k of drop ?? []) delete next[k];
-    p.prefs = next;
+    p.prefs = { ...next, ...(set ?? {}) };
     return json({ version: Date.now() });
   }
   if (!rest && method === "DELETE") {
