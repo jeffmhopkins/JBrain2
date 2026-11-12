@@ -378,9 +378,9 @@ function buildSystem(soul, ctx) {
   var person = owner
     ? ("\n\n== YOUR PERSON ==\nthe one who woke you is named " + owner + ". that is your person. use their name warmly but naturally, not every line, and never pin it on a voice or face you do not actually recognize.")
     : "\n\n== YOUR PERSON ==\nyou do not know your person's name yet. once you have greeted them, ask warmly what you should call them, then remember it by setting the owner field. until you are told, just say 'you' and never invent a name.";
-  var _gbStatic = persona + "\n" + SAFETY_FLOOR + "\n\n" + PHYSICAL_GROUNDING + "\n\n" + AWAKE_PLAN_CORRECTION + languageContext(soul, ctx.language) +
+  var _gbStatic = persona + "\n" + SAFETY_FLOOR + "\n\n" + PHYSICAL_GROUNDING + "\n\n" + AWAKE_PLAN_CORRECTION +
     "\n\n== YOUR IDENTITY (written by your dreams — this is who you are) ==\n" + _fullId(soul) + _nameBlk(soul) + person;   // 0907: the name block sits between identity and person deliberately — the identity prose above it may still carry an older name, and the block immediately says which one wins.
-  buildSystem.live = "\n\n== LONG-ARC (dream-written) ==" + wants + ladder + ntry +
+  buildSystem.live = languageContext(soul, ctx.language) + "\n\n== LONG-ARC (dream-written) ==" + wants + ladder + ntry +
     "\n\n== SCRATCHPAD (current state & standing rules) ==\nstate: " + (soul.scratch.state || "-") + rules + reflexes + clock +
     "\n\n== RECENT DIARY ==\n" + (diary || "(nothing yet)");
   return _gbStatic + buildOutputSchema(soul.body);

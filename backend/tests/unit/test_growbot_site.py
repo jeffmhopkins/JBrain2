@@ -438,10 +438,13 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     body = prompts[start : prompts.index("\n}\n", start)]
     assert body.endswith("\n  return _gbStatic + buildOutputSchema(soul.body);")
     live = body[body.index("buildSystem.live = ") : body.index("  return _gbStatic")]
-    for moving in ("== LONG-ARC", "== SCRATCHPAD", "clock", "== RECENT DIARY", "diary"):
-        assert moving in live
+    moving = ("languageContext(", "== LONG-ARC", "== SCRATCHPAD", "clock", "== RECENT DIARY")
+    for part in moving:
+        assert part in live, part
     static = body[body.index("var _gbStatic = ") : body.index("buildSystem.live = ")]
     assert "SAFETY_FLOOR" in static and "== YOUR IDENTITY" in static and "clock" not in static
+    # The automatic reply-language line rewrites itself once speech settles a language.
+    assert "languageContext(" not in static
 
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert '_gbLive=(buildSystem.live||"")+(moveGuideText.live||"")' in page
@@ -467,7 +470,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     assert "sys+=" not in page[
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
-    assert '<script src="/v3/prompts.js?v=1008-motion-box"' in page
+    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang"' in page
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
 
@@ -568,3 +571,12 @@ def test_past_replies_go_back_to_the_model_in_its_own_json_shape() -> None:
     # A say the model wrote in brackets is still words it spoke.
     assert json.loads(spoken) == {"say": "(purrs) hi"}
     assert json.loads(empty) == {"say": ""}
+
+
+def test_a_spoken_turn_sends_one_frame_unless_something_is_moving() -> None:
+    """Each frame is ~300 tokens of prefill on the box; three only when there is change to see."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    line = page[page.index("var _nf=(kind===") :]
+    line = line[: line.index(";")]
+    assert line.endswith(":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil)?3:1)")
+    assert "each thought you see the freshest one, or the 3 freshest" in page

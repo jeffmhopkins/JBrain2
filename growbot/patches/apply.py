@@ -793,6 +793,53 @@ HISTORY_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += HISTORY_PATCHES
 
+# Round 2 of the speed work, from the owner's first live session on the new layout (2026-11-12).
+# The automatic reply-language line rewrites itself once the person's speech settles a language
+# ("follow the conversation" becomes "speech established English"), and it sat in the cached
+# system message, so that turn re-read all ~10k tokens (28 s). It now rides the live block; an
+# explicit choice reads the same either way.
+# And a spoken turn always sent 3 camera frames, ~300 tokens each on the box (~2 s of prefill
+# for the two extra). It now sends 1 unless the scene is changing, the phone is carried or the
+# body is moving, the same signals upstream already uses to give an idle tick its eye.
+ROUND2_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/prompts.js",
+        "AWAKE_PLAN_CORRECTION + languageContext(soul, ctx.language) +",
+        "AWAKE_PLAN_CORRECTION +",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        '  buildSystem.live = "\\n\\n== LONG-ARC (dream-written) ==" + wants',
+        '  buildSystem.live = languageContext(soul, ctx.language) +'
+        ' "\\n\\n== LONG-ARC (dream-written) ==" + wants',
+        1,
+    ),
+    (
+        "v3/next.html",
+        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0)):3;",
+        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0))"
+        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil)?3:1);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "each thought you see the 3 freshest (about the last 8 seconds), so you can compare NOW to"
+        " a moment ago.",
+        "each thought you see the freshest one, or the 3 freshest (about the last 8 seconds) when"
+        " the scene or your body is moving, so you can compare NOW to a moment ago.",
+        1,
+    ),
+    # A phone that cached the old file loads this one.
+    (
+        "v3/next.html",
+        '<script src="/v3/prompts.js?v=1008-motion-box"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang"',
+        1,
+    ),
+]
+PATCHES += ROUND2_PATCHES
+
 # Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
 # clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off
 # only re-sends the same clip to the queue it is waiting in (whisper-server finishes an
