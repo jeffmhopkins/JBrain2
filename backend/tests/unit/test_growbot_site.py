@@ -591,3 +591,89 @@ def test_a_spoken_turn_sends_one_frame_unless_something_is_moving() -> None:
     for said in ("how are you", "spin to your left", "tell me a story"):
         assert not look.search(said), said
     assert "each thought you see the freshest one, or the 3 freshest" in page
+
+
+def _stream_js(page: str) -> str:
+    start = page.index("var _gbPieceNext=null")
+    return page[start : page.index("function _gbPcmUttStop0(")]
+
+
+_STREAM_HARNESS = r"""
+var _pcmRate=1000, _pcmLive=true, _pcmUtt=null, vadVoiceT=0, _vadHold=1500, now=0;
+Date.now=function(){ return now; };
+var timers=[]; setTimeout=function(f,ms){ timers.push({f:f,at:now+(ms||0)}); };
+function run(){ timers.sort(function(a,b){ return a.at-b.at; });
+  while(timers.length&&timers[0].at<=now){ timers.shift().f(); } }
+var sent=[], shown=[], stt=[], old=[];
+function encodeWav(f,r,d,c){ return {len:f.length}; }
+function Blob(parts){ this.len=parts[0].len; }
+function transcribe(b,t,ms){ stt.push({p:_gbPieceNext,len:b.len}); _gbPieceNext=null; }
+function showYouSaid(t){ shown.push(t); } function sendTxtFrom(t,m){ sent.push(t); }
+function logEv(){} function _convLangSaw(){}
+function _gbPcmUttStop0(s,t){ old.push(s); }
+function utt(){ _pcmUtt={buf:new Float32Array(13000),n:0,pre:0,t0:now,nf:0}; _pcmLive=true; }
+function feed(ms,voice){ for(var i=0;i<ms;i+=100){ var d=new Float32Array(100), u=_pcmUtt;
+  var take=Math.min(u.buf.length-u.n,100); u.buf.set(d.subarray(0,take),u.n); u.n+=take;
+  if(voice) vadVoiceT=now; _gbRollCheck(d,take); now+=100; run(); } }
+function answer(i,txt){ var p=stt[i].p; _gbPiece(p,txt,{lang:"en"},"en"); }
+"""
+
+
+def _run_stream(page: str, scenario: str) -> dict[str, object]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = (
+        _stream_js(page)
+        + _STREAM_HARNESS
+        + scenario
+        + "\nconsole.log(JSON.stringify({sent:sent,shown:shown,stt:stt.length,old:old}));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def test_speech_is_transcribed_in_pieces_and_reaches_the_creature_as_one_turn() -> None:
+    """A long message goes to the transcriber at its pauses and at the buffer's end while the
+    person keeps talking, nothing past the old 12 s cap is lost, and the creature gets one turn
+    with every piece in order."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    long_talk = """
+    utt(); feed(5000,true); feed(600,false);            // 5 s then a pause: piece 0
+    feed(13000,true);                                   // a full buffer: piece 1, no audio lost
+    feed(2000,true); pcmUttStop(true,300); run();       // the end: piece 2, the final
+    answer(1,"second part"); answer(0,"first part,");
+    answer(2,"and the end.");
+    """
+    got = _run_stream(page, long_talk)
+    assert got["stt"] == 3
+    assert got["sent"] == ["first part, second part and the end."]
+    assert got["old"] == []
+    assert "first part, second part …" in got["shown"]
+
+    # A short message never splits and goes the old way.
+    short = "utt(); feed(3000,true); pcmUttStop(true,300); run();"
+    got = _run_stream(page, short)
+    assert got["stt"] == 0 and got["old"] == [True] and got["sent"] == []
+
+
+def test_a_lost_or_silent_piece_never_holds_the_turn() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    # Piece 0 never answers; the end is silence, so no final piece is sent: the turn goes after
+    # the 12 s give-up with what did come back.
+    lost = """
+    utt(); feed(5000,true); feed(600,false); feed(4500,true); feed(600,false);
+    feed(1200,false); pcmUttStop(true,300); run();
+    answer(1,"the words that came back");
+    now+=12000; run();
+    """
+    got = _run_stream(page, lost)
+    assert got["stt"] == 2 and got["sent"] == ["the words that came back"]
+
+    # Cut off by the creature's own voice: what was already heard still reaches it.
+    cancelled = """
+    utt(); feed(5000,true); feed(600,false); feed(1000,true); pcmUttStop(false,0); run();
+    answer(0,"hello there");
+    """
+    got = _run_stream(page, cancelled)
+    assert got["sent"] == ["hello there"]

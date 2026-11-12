@@ -2087,7 +2087,7 @@ function talkAbort(){ if(!recording) return; var r=recorder; recorder=null; reco
   if(recStopT){ clearTimeout(recStopT); recStopT=null; }
   var b=$("talkBtn"); if(b){ b.style.background=""; b.style.color=""; b.textContent="🎤 talk"; }
   try{ r.stop(); }catch(e){} _pcmFenceT=Date.now(); if(_talkHeldListen){ _talkHeldListen=false; listenMode=true; reflectListen(); } }   // same pre-roll fence as talkStop (K3 0805 #3)
-function transcribe(blob,type,clipMs){ var _jmIn=_sttJm; _sttJm=null;   // 0925 body sounds: the judge score handed over by the call site (see _sttSoft), taken FIRST so no early return can leave it for the next clip
+function transcribe(blob,type,clipMs){ var _jmIn=_sttJm; _sttJm=null; var _gbP=_gbPieceNext; _gbPieceNext=null;   // 0925 body sounds: the judge score handed over by the call site (see _sttSoft), taken FIRST so no early return can leave it for the next clip
   if(energyState==="asleep"){ var _asn=Date.now(); if(_asn-_asleepSttT<60000){ try{ logEv("stt_skip",{}); }catch(e){}
       if(_asn-_asleepProbeT>=60000){ _asleepProbeT=_asn; _sttProbe=true;
         try{ think("your person spoke to you while you were out of energy and you could not hear the words. you are awake again now. tell them so, and ask them to say it once more.","event"); }catch(e){ _sttProbe=false; } }   // K3 402 finding + retro #2: the transcript-free probe wakes a JUST-PAID user fast, but it is throttled to 1/min and its own 402 stays SILENT (_sttProbe consumed in the handler) — otherwise a walled creature near a TV probed on every ambient clip and nagged on each one. The prompt is only ever seen by a funded brain.
@@ -2099,7 +2099,7 @@ function transcribe(blob,type,clipMs){ var _jmIn=_sttJm; _sttJm=null;   // 0925 
      first so the queue's win is a number, not a claim. */
   _sttSnap={mx:_clipMax,mean:_clipN?Math.round(_clipSum/_clipN*1000)/1000:0,duty:_clipN?Math.round(_clipHot/_clipN*100)/100:0,n:_clipN,pv:_sttPitch,lane:_sttLane};
   _sttOvl++;
-  var meta=_languageRequest(clipMs);
+  var meta=_languageRequest(clipMs); if(_gbP) meta.gbPiece=_gbP;
   try{ if(_jmIn){ meta.jm=_jmIn.m; meta.jw=String(_jmIn.why||"").slice(0,12); meta.et=_jmIn.et||null; meta.mx=_sttSnap.mx; } }catch(e){}   // 0925 body sounds: on THIS clip's meta, read back at response time (never a global then: the 0829 _sttSnap race)
   _sttPhase("up"); if(STT_GROQ) groqTranscribe(blob,type,meta); else diTranscribe(blob,type,meta); }   /* 0729: DeepInfra is PRIMARY for STT (Groq free tier 429'd ~74% under launch load); Groq stays the free backstop below. Flip back to groqTranscribe if DeepInfra ever throttles. */
 /* ---- 0827 STT PRIMARY RAMP, slice 1 (Brit GO: "yes kill 8 second wait"). READ THAT AIM RIGHT:
@@ -2207,10 +2207,10 @@ function groqTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext
     .then(function(r){ /* 0827 FAIL-CLOSED (grok found it, measured 5 field cases: successes at 8832ms, 9339, 14276, 35010 and 58142ms — a 58-SECOND transcription is a person who was never answered). clearTimeout used to run HERE, in the HEADERS handler, so the BODY PARSE ran with no leash at all. Worse than the latency: those calls landed in the SUCCESS bucket, so they were invisible in the timeout rate and the instrument was lying about its own worst cases. The timer now stays armed until the parse finishes; an abort mid-parse rejects into the catch below, which is the existing fallback path. */ if(r.status===429){ return r.json().catch(function(){ return {}; }).then(function(j){ var e=new Error("q429"); e.q=(j&&j.error)||"429"; throw e; }); } if(!r.ok) throw new Error("groq "+r.status); return r.json(); })
     .then(function(d){ if(_tm)clearTimeout(_tm);   // 0827: the leash is released HERE, once the body is parsed and the call is genuinely done
     _sttOvl=Math.max(0,_sttOvl-1); var _sp=_sttSnap||{};
-    try{ var _sr={ms:Date.now()-_sg0,kb:Math.round(blob.size/1024),tgt:"groq",lane:_sp.lane||_sttLane,mx:Math.round((_sp.mx||0)*1000)/1000,pv:_sp.pv,mean:_sp.mean||0,duty:_sp.duty||0,n:_sp.n||0,pri:STT_GROQ?1:0,ovl:_sttOvl}; try{ _sttConf(d,_sr); }catch(_c){} logEv("stt",_sr); }catch(e){} var _g=_sttGate(d); if(_g.drop){ try{ logEv("stt_drop",{p:_g.p,tgt:"groq"}); }catch(_e){} if(_sttLane==="pcm"){ try{ _listenFire(); }catch(_lf){} } _sttPhase("done"); return; } try{ _sttSoft(meta,d); }catch(_bs){} _sttPhase("done"); heardText((d&&d.text||"").trim(),meta,d&&d.language); })
+    try{ var _sr={ms:Date.now()-_sg0,kb:Math.round(blob.size/1024),tgt:"groq",lane:_sp.lane||_sttLane,mx:Math.round((_sp.mx||0)*1000)/1000,pv:_sp.pv,mean:_sp.mean||0,duty:_sp.duty||0,n:_sp.n||0,pri:STT_GROQ?1:0,ovl:_sttOvl}; try{ _sttConf(d,_sr); }catch(_c){} logEv("stt",_sr); }catch(e){} var _g=_sttGate(d); if(_g.drop){ try{ logEv("stt_drop",{p:_g.p,tgt:"groq"}); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); }catch(_e){} if(_sttLane==="pcm"){ try{ _listenFire(); }catch(_lf){} } _sttPhase("done"); return; } try{ _sttSoft(meta,d); }catch(_bs){} _sttPhase("done"); heardText((d&&d.text||"").trim(),meta,d&&d.language); })
     .catch(function(e){ if(_tm)clearTimeout(_tm); _sttPhase("done"); if(e&&e.q==="daily_limit"){ toast("my free ears are used up for today. type to me, or feed me and they come back."); return; }   /* 0802 (C): quota = an upgrade moment, not an outage */
          // 0827: groq is primary for this device -> di is the backstop, same one-hop rule as the di lane
-      _sttOvl=Math.max(0,_sttOvl-1); toast(window.gbBoxEars?window.gbBoxEars(e):"my ears are down on my end. try again in a moment, or type."); }); }   /* Groq (free backstop) failed too -> terminal; DeepInfra is primary above (0729). COPY (0729): this is a TRANSPORT failure, never a mic problem, so it must not say "couldn't hear you" — that wording sent a user hunting through mic permissions for a backend outage ("keep showing that it can not hear me. All mics are on."). "didn't catch that" stays for genuinely empty/garbled audio in heardText below; the two are different events and must read differently. */
+      _sttOvl=Math.max(0,_sttOvl-1); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); toast(window.gbBoxEars?window.gbBoxEars(e):"my ears are down on my end. try again in a moment, or type."); }); }   /* Groq (free backstop) failed too -> terminal; DeepInfra is primary above (0729). COPY (0729): this is a TRANSPORT failure, never a mic problem, so it must not say "couldn't hear you" — that wording sent a user hunting through mic permissions for a backend outage ("keep showing that it can not hear me. All mics are on."). "didn't catch that" stays for genuinely empty/garbled audio in heardText below; the two are different events and must read differently. */
 function diTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext=type.indexOf("wav")>=0?"wav":(type.indexOf("mp4")>=0?"mp4":(type.indexOf("ogg")>=0?"ogg":"webm"));   // wav = the 0805 PCM lane
   var fd=new FormData(); fd.append("file",blob,"speech."+ext); fd.append("model","openai/whisper-large-v3-turbo");
   fd.append("response_format","verbose_json"); fd.append("temperature","0");
@@ -2239,7 +2239,7 @@ function looksLikeMeta(t){ var s=t.toLowerCase();                               
 function heardSegs(ph){ var out=[], parts=ph.split(/[.!?]+/), i, s;   // sentence-ish fragments only; commas stay INSIDE a fragment, so "obrigado, meu amigo" is one thought and "no, no, stop that" never reads as a loop
   for(i=0;i<parts.length;i++){ s=parts[i].replace(/\s+/g," ").replace(/^\s+|\s+$/g,""); if(s) out.push(s); }
   return out; }
-function _heardDrop(why,meta){ try{ var r={why:why}; if(meta&&typeof meta.jm==="number") r.jm=meta.jm; logEv("heard_drop",r); }catch(e){} }   /* 0925 (bench3 17:58:20Z selfmv rescue m 0.161 lp -1.25, 18:05:26Z unvoiced rescue m 0.155 lp -1.04: both transcribed, both gone with no row). A transcript the guards below refuse used to leave only a toast, so 82 of the fleet's 400 main-route clips at m 0.15-0.30 (20%) vanished from the journal. LOG-ONLY: one row per refusal, the guard's name plus the judge score when this clip had one, never a word of the transcript. */
+function _heardDrop(why,meta){ if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); try{ var r={why:why}; if(meta&&typeof meta.jm==="number") r.jm=meta.jm; logEv("heard_drop",r); }catch(e){} }   /* 0925 (bench3 17:58:20Z selfmv rescue m 0.161 lp -1.25, 18:05:26Z unvoiced rescue m 0.155 lp -1.04: both transcribed, both gone with no row). A transcript the guards below refuse used to leave only a toast, so 82 of the fleet's 400 main-route clips at m 0.15-0.30 (20%) vanished from the journal. LOG-ONLY: one row per refusal, the guard's name plus the judge score when this clip had one, never a word of the transcript. */
 function heardText(txt,meta,detectedLang){ try{ if(txt&&String(txt).trim()) _listenStash=null; else if(_sttLane==="pcm") _listenFire(); }catch(e){}   // 0823 listen: real words = never name the room; an empty settle on the pcm lane = the no-speech class
   var _orig=String(txt||"").toLowerCase().replace(/(\s+-)+\s*$/,"").replace(/[.!?\s]+$/,"").trim();   // K3 0808: the exact-phrase silence list below must judge the PRE-strip original — "Thank you *clicks*" stripped to exactly "thank you" and got eaten as a hallucination it never was. K3 0810 retro #1: trailing dash-run TYPOGRAPHY is stripped on BOTH sides of the equality (asterisk shells still differentiate) — else "you - -" diverges from its post-strip "you" and the silence list can never fire on the dash-decorated hallucinations
   txt=String(txt||"").replace(/\*(\S[^*\n]{0,38}\S|\S)\*/g," ").replace(/(\s+-)+\s*$/,"").replace(/\s+/g," ").trim();   // shells hug their asterisks (*tick*, *sad noises*); spoken math does not ("5 * 3 * 2" keeps its 3)   // 0808: Whisper annotates sounds it cannot word ("*tick* *clicks*", raw log) and those shells arrived as SPEECH; drop the shells, keep any real words, and an all-annotation clip falls through to the honest "didn't catch that" below   // 0810: trailing " - - -" runs are Whisper typography on fading audio (raw corpus: "you - -" class), never speech — same law as the bracket rule; "twenty-" keeps its hyphen (no space before it)
@@ -2275,6 +2275,7 @@ function heardText(txt,meta,detectedLang){ try{ if(txt&&String(txt).trim()) _lis
   if(!txt||!String(txt).replace(/[\s!-\/:-@\[-`{-~¡-¿؀-؟‐-›　-〿・！-／：-＠［-｀｛-･]+/g,"")){ _heardDrop("empty",meta); toast("…didn't catch that: the speech model heard no words"); return; }
   var nh=normSay(txt);                                                                              // ANTI-ECHO: if it closely matches what IT just said, it's hearing itself — drop it
   if(nh&&lastSaid&&Date.now()-lastSaidT<9000&&(nh===lastSaid||(nh.length>8&&(lastSaid.indexOf(nh)>=0||nh.indexOf(lastSaid)>=0)))){ _heardDrop("echo",meta); toast("…(that was my own voice)"); return; }
+  if(meta&&meta.gbPiece){ _gbPiece(meta.gbPiece,txt,meta,detectedLang); return; }
   if(meta&&meta.soft&&!_bodyVet(txt,meta)) meta.soft=null;   // 0925 body sounds, signal 3 and the command veto (_bodyVet): every guard above has already run; a candidate that fails either is the person's turn below, exactly as before
   if(meta&&meta.soft){ _bodySound(txt,meta); sendTxtFrom(txt,meta); return; }   // 0925 body sounds (round 2): delivered as a sound THROUGH the one funnel, so a busy, paused or cooling creature queues it like any turn and every local command runs; only the "you:" line and the language evidence are skipped, as round 1 did
   _convLangSaw(detectedLang,txt,meta);
@@ -5151,7 +5152,7 @@ function ensureEar(){ if(_an||!micStream) return; try{ actx=actx||new (window.Au
       for(var z=0;z<d.length;z++){ if(d[z]!==0){ _pcmNzT=nw; break; } }                 // 0924 (nx-mu5ra): the ear heard SOMETHING. A working mic carries its own noise floor; a dead capture link feeds exact zeros and a stalled context never calls back
       for(var i=0;i<d.length;i++){ _pcmRing[_pcmW]=d[i]; _pcmW=(_pcmW+1)%_pcmRing.length; }
       if(_pcmLive&&_pcmUtt&&_pcmUtt.n<_pcmUtt.buf.length){ var room=_pcmUtt.buf.length-_pcmUtt.n, take=Math.min(room,d.length);
-        _pcmUtt.buf.set(take===d.length?d:d.subarray(0,take),_pcmUtt.n); _pcmUtt.n+=take; } }catch(e){} };
+        _pcmUtt.buf.set(take===d.length?d:d.subarray(0,take),_pcmUtt.n); _pcmUtt.n+=take; _gbRollCheck(d,take); } }catch(e){} };
     var _pg=actx.createGain(); _pg.gain.value=0; src.connect(_pcmNode); _pcmNode.connect(_pg); _pg.connect(actx.destination);
   }catch(e){ _pcmNode=null; _pcmRing=null; } }                                           // tap failed → vadStart falls back to the MediaRecorder path untouched
   earTick(); }catch(e){} }
@@ -5518,7 +5519,42 @@ function _listenMaybe(wav,why){ if(!LISTEN_ON&&why!=="route") return;           
    the field day proved the corruption is not noise: it read close-range piano/taps/whispers at
    m 0.2-0.86 while the contiguous lane read the same clips <=0.13. Both of its jobs (route verdict,
    naming-lane guard) now run through _earJudge — one model run per clip, not two. */
-function pcmUttStop(send,tailMs){ _pcmLive=false; var u=_pcmUtt; _pcmUtt=null; if(!u) return;
+var _gbPieceNext=null, _gbUtts={}, _gbUttSeq=0, GB_ROLL_MIN_S=4, GB_ROLL_GAP_MS=450;
+function _gbRollCheck(d,take){ var u=_pcmUtt; if(!_pcmLive||!u) return;
+  var full=u.n>=u.buf.length, gap=Date.now()-vadVoiceT;
+  if(!full&&!(u.n>=GB_ROLL_MIN_S*_pcmRate&&gap>=GB_ROLL_GAP_MS&&gap<_vadHold)) return;
+  _gbRoll(u); if(full&&take<d.length&&_pcmUtt){ var rest=d.subarray(take); _pcmUtt.buf.set(rest,0); _pcmUtt.n=rest.length; } }
+function _gbRoll(u){
+  if(!u.gbId){ u.gbId=++_gbUttSeq; _gbUtts[u.gbId]={text:[],done:[],n:0,meta:null,fin:false,t0:u.t0}; }
+  var g=_gbUtts[u.gbId], p={id:u.gbId,seq:g.n++}, buf=u.buf, n=u.n;
+  _pcmUtt={buf:new Float32Array(buf.length),n:0,pre:0,t0:Date.now(),nf:u.nf,gbId:u.gbId};
+  if(n<Math.round(0.3*_pcmRate)){ _gbPiece(p,""); return; }
+  setTimeout(function(){ try{ var w=encodeWav(buf.subarray(0,n),_pcmRate,16000,null);
+    _sttLane="pcm"; _gbPieceNext=p; transcribe(new Blob([w],{type:"audio/wav"}),"audio/wav",Math.round(n/_pcmRate*1000)); }
+    catch(e){ _gbPieceNext=null; _gbPiece(p,""); } },0); }
+function _gbPiece(p,txt,meta,lang){ var g=_gbUtts[p.id]; if(!g) return;
+  g.text[p.seq]=txt||""; g.done[p.seq]=1; if(meta&&(p.fin||!g.meta)) g.meta=meta; if(p.fin){ g.fin=true; g.lang=lang; }
+  var said=g.text.filter(function(t){ return t; }).join(" ");
+  if(said&&!g.fin){ try{ showYouSaid(said+" …"); }catch(e){} }
+  _gbFlush(p.id,false); }
+function _gbFlush(id,force){ var g=_gbUtts[id]; if(!g||(!g.fin&&!force)) return;
+  for(var i=0;i<g.n&&!force;i++) if(!g.done[i]) return;
+  delete _gbUtts[id];
+  var txt=g.text.filter(function(t){ return t; }).join(" ").replace(/\s+/g," ").trim();
+  if(!txt) return;
+  try{ logEv("stt_join",{n:g.n,ms:Date.now()-g.t0,force:force?1:0}); }catch(e){}
+  try{ _convLangSaw(g.lang,txt,g.meta); }catch(e){}
+  showYouSaid(txt); sendTxtFrom(txt,g.meta); }
+function _gbFinal(u,send){ var g=_gbUtts[u.gbId], p={id:u.gbId,seq:g.n++,fin:true};
+  setTimeout(function(){ _gbFlush(u.gbId,true); },12000);
+  if(!send||u.n<Math.round(0.3*_pcmRate)||vadVoiceT<u.t0){ _gbPiece(p,"",null,null); return; }
+  setTimeout(function(){ try{ var w=encodeWav(u.buf.subarray(0,u.n),_pcmRate,16000,null);
+    _sttLane="pcm"; _gbPieceNext=p; transcribe(new Blob([w],{type:"audio/wav"}),"audio/wav",Math.round(u.n/_pcmRate*1000)); }
+    catch(e){ _gbPieceNext=null; _gbPiece(p,"",null,null); } },0); }
+function pcmUttStop(send,tailMs){ var u=_pcmUtt;
+  if(u&&u.gbId&&_gbUtts[u.gbId]){ _pcmLive=false; _pcmUtt=null; _gbFinal(u,send); return; }
+  return _gbPcmUttStop0(send,tailMs); }
+function _gbPcmUttStop0(send,tailMs){ _pcmLive=false; var u=_pcmUtt; _pcmUtt=null; if(!u) return;
   function clipTime(sample){ return {t:Math.round(u.t0+(sample-u.pre)/_pcmRate*1000),src:"capture-estimate"}; }   // utterance wall time + sample offset (including pre-roll), not a hardware capture clock
   if(!send) return;                                                                  // cancel path: drop everything, exactly like the recorder's _cancel flag
   if(Date.now()-u.t0<250){ toast("didn't catch that: the clip was too short. say it once more"); try{ logEv("drop",{w:"short",ms:Date.now()-u.t0}); }catch(e){} return; }   // same wall-clock floor + same honest else-toast as the recorder lane (0730)

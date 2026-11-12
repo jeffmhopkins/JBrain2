@@ -860,6 +860,108 @@ ROUND2_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += ROUND2_PATCHES
 
+# Speech is transcribed while the person is still talking (owner, 2026-11-12). Upstream held a
+# whole utterance and sent it at the end, so the wait after the last word grew with its length
+# (6 s for a 12 s message), and it capped one utterance at 12 s and silently dropped the rest:
+# the owner's longest message reached the creature cut mid-sentence. Now, once an utterance
+# has 4 s of audio, a pause shorter than the end-of-speech hold, or a full buffer, sends what
+# is held so far as a piece and keeps listening into a fresh buffer. Each piece runs the usual
+# transcript filters (hallucination lists, echo) and shows on screen as it lands; the end of
+# speech sends the last piece, and the creature gets one turn with the pieces joined in order.
+# A piece that never answers is given up after 12 s rather than hold the turn. Pieces skip the
+# phone's sound judge: by then the endpointer has heard seconds of voice.
+_GB_STREAM_JS = r'''var _gbPieceNext=null, _gbUtts={}, _gbUttSeq=0, GB_ROLL_MIN_S=4, GB_ROLL_GAP_MS=450;
+function _gbRollCheck(d,take){ var u=_pcmUtt; if(!_pcmLive||!u) return;
+  var full=u.n>=u.buf.length, gap=Date.now()-vadVoiceT;
+  if(!full&&!(u.n>=GB_ROLL_MIN_S*_pcmRate&&gap>=GB_ROLL_GAP_MS&&gap<_vadHold)) return;
+  _gbRoll(u); if(full&&take<d.length&&_pcmUtt){ var rest=d.subarray(take); _pcmUtt.buf.set(rest,0); _pcmUtt.n=rest.length; } }
+function _gbRoll(u){
+  if(!u.gbId){ u.gbId=++_gbUttSeq; _gbUtts[u.gbId]={text:[],done:[],n:0,meta:null,fin:false,t0:u.t0}; }
+  var g=_gbUtts[u.gbId], p={id:u.gbId,seq:g.n++}, buf=u.buf, n=u.n;
+  _pcmUtt={buf:new Float32Array(buf.length),n:0,pre:0,t0:Date.now(),nf:u.nf,gbId:u.gbId};
+  if(n<Math.round(0.3*_pcmRate)){ _gbPiece(p,""); return; }
+  setTimeout(function(){ try{ var w=encodeWav(buf.subarray(0,n),_pcmRate,16000,null);
+    _sttLane="pcm"; _gbPieceNext=p; transcribe(new Blob([w],{type:"audio/wav"}),"audio/wav",Math.round(n/_pcmRate*1000)); }
+    catch(e){ _gbPieceNext=null; _gbPiece(p,""); } },0); }
+function _gbPiece(p,txt,meta,lang){ var g=_gbUtts[p.id]; if(!g) return;
+  g.text[p.seq]=txt||""; g.done[p.seq]=1; if(meta&&(p.fin||!g.meta)) g.meta=meta; if(p.fin){ g.fin=true; g.lang=lang; }
+  var said=g.text.filter(function(t){ return t; }).join(" ");
+  if(said&&!g.fin){ try{ showYouSaid(said+" …"); }catch(e){} }
+  _gbFlush(p.id,false); }
+function _gbFlush(id,force){ var g=_gbUtts[id]; if(!g||(!g.fin&&!force)) return;
+  for(var i=0;i<g.n&&!force;i++) if(!g.done[i]) return;
+  delete _gbUtts[id];
+  var txt=g.text.filter(function(t){ return t; }).join(" ").replace(/\s+/g," ").trim();
+  if(!txt) return;
+  try{ logEv("stt_join",{n:g.n,ms:Date.now()-g.t0,force:force?1:0}); }catch(e){}
+  try{ _convLangSaw(g.lang,txt,g.meta); }catch(e){}
+  showYouSaid(txt); sendTxtFrom(txt,g.meta); }
+function _gbFinal(u,send){ var g=_gbUtts[u.gbId], p={id:u.gbId,seq:g.n++,fin:true};
+  setTimeout(function(){ _gbFlush(u.gbId,true); },12000);
+  if(!send||u.n<Math.round(0.3*_pcmRate)||vadVoiceT<u.t0){ _gbPiece(p,"",null,null); return; }
+  setTimeout(function(){ try{ var w=encodeWav(u.buf.subarray(0,u.n),_pcmRate,16000,null);
+    _sttLane="pcm"; _gbPieceNext=p; transcribe(new Blob([w],{type:"audio/wav"}),"audio/wav",Math.round(u.n/_pcmRate*1000)); }
+    catch(e){ _gbPieceNext=null; _gbPiece(p,"",null,null); } },0); }
+function pcmUttStop(send,tailMs){ var u=_pcmUtt;
+  if(u&&u.gbId&&_gbUtts[u.gbId]){ _pcmLive=false; _pcmUtt=null; _gbFinal(u,send); return; }
+  return _gbPcmUttStop0(send,tailMs); }'''
+STREAM_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "function pcmUttStop(send,tailMs){ _pcmLive=false;",
+        _GB_STREAM_JS + "\nfunction _gbPcmUttStop0(send,tailMs){ _pcmLive=false;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "_pcmUtt.buf.set(take===d.length?d:d.subarray(0,take),_pcmUtt.n); _pcmUtt.n+=take; }",
+        "_pcmUtt.buf.set(take===d.length?d:d.subarray(0,take),_pcmUtt.n); _pcmUtt.n+=take;"
+        " _gbRollCheck(d,take); }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function transcribe(blob,type,clipMs){ var _jmIn=_sttJm; _sttJm=null;",
+        "function transcribe(blob,type,clipMs){ var _jmIn=_sttJm; _sttJm=null;"
+        " var _gbP=_gbPieceNext; _gbPieceNext=null;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  var meta=_languageRequest(clipMs);",
+        "  var meta=_languageRequest(clipMs); if(_gbP) meta.gbPiece=_gbP;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  if(meta&&meta.soft&&!_bodyVet(txt,meta)) meta.soft=null;",
+        "  if(meta&&meta.gbPiece){ _gbPiece(meta.gbPiece,txt,meta,detectedLang); return; }\n"
+        "  if(meta&&meta.soft&&!_bodyVet(txt,meta)) meta.soft=null;",
+        1,
+    ),
+    # A piece the filters or the gate throw away, or that never comes back, is an empty piece.
+    (
+        "v3/next.html",
+        "function _heardDrop(why,meta){ try{",
+        "function _heardDrop(why,meta){ if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,\"\",meta); try{",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'logEv("stt_drop",{p:_g.p,tgt:"groq"});',
+        'logEv("stt_drop",{p:_g.p,tgt:"groq"}); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta);',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "_sttOvl=Math.max(0,_sttOvl-1); toast(window.gbBoxEars",
+        "_sttOvl=Math.max(0,_sttOvl-1); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,\"\",meta);"
+        " toast(window.gbBoxEars",
+        1,
+    ),
+]
+PATCHES += STREAM_PATCHES
+
 # Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
 # clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off
 # only re-sends the same clip to the queue it is waiting in (whisper-server finishes an
