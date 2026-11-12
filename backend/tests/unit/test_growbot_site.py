@@ -722,7 +722,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     assert "sys+=" not in page[
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
-    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall"' in page
+    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep"' in page
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
 
@@ -1548,6 +1548,7 @@ function gbRecall(soul,sess,q){
   return q==="taco"?{n:1,text:"\n- (fact) lunch: a taco"}:{n:0,text:""};
 }
 function traceMoment(u){ return u; }
+function gbVisitKeep(){}
 """
 
 
@@ -1657,6 +1658,111 @@ def test_recall_is_wired_into_the_turn() -> None:
     assert "s.facts = unionByTime(newer.facts," in soul
     assert "if (Array.isArray(raw.facts)) s.facts = inTimeOrder(raw.facts);" in soul
     assert "if (Array.isArray(rt.facts)) soul.facts = rt.facts;" in soul
+
+
+_SLEEP_HARNESS = r"""
+var lastDreamT=0, callsSinceDream=0, _gbSess=[], _live={log:[],scratch:{}}, logs=[], facts=[];
+function soulLog(s,t){ s.log.push(String(t).slice(0,140)); }
+function gbFactAdd(s,t){ if(facts.indexOf(t)>=0) return false; facts.push(t); return true; }
+function logEv(k,d){ logs.push([k,d]); }
+"""
+
+
+def _sleep_page(script: str) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("var _gbSleepOK=false") : page.index("var _humanT=0;")]
+    out = subprocess.run(
+        [node, "-e", f"{_SLEEP_HARNESS}\n{code}\n{script}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout)
+    assert isinstance(got, dict)
+    return got
+
+
+def test_a_long_visit_makes_the_creature_sleepy_and_it_asks() -> None:
+    """Owner, 2026-11-12: a long session makes it say it is tired and ask to sleep; it dreams
+    only once allowed. 60 replies, or 20 and half an hour awake, and never once allowed."""
+    got = _sleep_page(
+        "var r={};callsSinceDream=59;r.fresh=gbTiredLine();callsSinceDream=60;r.many=gbTiredLine();"
+        "callsSinceDream=20;_gbBootT=Date.now()-1800000;r.long=gbTiredLine();"
+        "lastDreamT=Date.now()-60000;r.slept=gbTiredLine();"
+        "callsSinceDream=60;gbSleepGrant();r.allowed=gbTiredLine();"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["fresh"] == "" and got["slept"] == "" and got["allowed"] == ""
+    assert got["many"] == got["long"] and "== GETTING SLEEPY ==" in got["many"]
+    assert "ask if you may sleep" in got["many"] and "set sleep to true" in got["many"]
+
+
+def test_permission_to_sleep_lapses_after_a_few_minutes() -> None:
+    """A dream that cannot start must not leave the person's 30 s guard off for good."""
+    got = _sleep_page(
+        "var r={before:gbSleepAllowed()};gbSleepGrant();r.granted=gbSleepAllowed();"
+        "_gbSleepAt=Date.now()-GB_SLEEP_HOLD_MS-1;r.lapsed=gbSleepAllowed();r.flag=_gbSleepOK;"
+        "r.logs=logs;console.log(JSON.stringify(r));"
+    )
+    assert got["before"] is False and got["granted"] is True
+    assert got["lapsed"] is False and got["flag"] is False
+    assert got["logs"] == [["sleep_ok", {"csd": 0}], ["sleep_expired", {}]]
+
+
+def test_a_dream_keeps_the_visit_once_even_across_a_reload() -> None:
+    """The undreamed visit rides the soul, so a dream on the next open still sees it; a
+    landed dream files its summary a sentence a line (the diary keeps 140 characters) and
+    clears it, so the same talk is never summarised twice."""
+    long = "We ate Taco Bell in the car and talked about hot sauce for a long while. " * 2
+    got = _sleep_page(
+        "var r={empty:gbDreamSession()};"
+        "for(var i=0;i<90;i++)gbVisitKeep({t:i,txt:'line '+i});"
+        "r.kept=_live.scratch.visit.length;r.sess=gbDreamSession();"
+        f"gbDreamKeep({{session_summary:{json.dumps(long + 'Then he went to work. Extra.')},"
+        "facts:['lunch: a taco','up to 5 short plain facts','None','a','b','c']});"
+        "r.after=gbDreamSession();r.visit=_live.scratch.visit;"
+        "gbDreamKeep({session_summary:'OMIT'});"
+        "r.log=_live.log;r.facts=facts;r.logs=logs;console.log(JSON.stringify(r));"
+    )
+    assert got["empty"] == "" and got["kept"] == 80
+    sess = got["sess"]
+    assert "- line 10\n" in sess and "- line 9\n" not in sess and "- line 89\n" in sess
+    assert '"session_summary":' in sess and '"facts":[' in sess
+    assert got["after"] == "" and got["visit"] == []
+    assert len(got["log"]) == 3 and all(x.startswith("📖 ") for x in got["log"])
+    assert got["log"][2] == "📖 Then he went to work."
+    assert all(len(x) < 140 for x in got["log"])
+    assert got["facts"] == ["lunch: a taco", "a", "b"]
+    assert got["logs"] == [["dream_keep", {"s": 3, "f": 3}], ["dream_keep", {"s": 0, "f": 0}]]
+
+
+def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "due=callsSinceDream>=12" not in page
+    assert (
+        "due=gbSleepAllowed() || _gbDreamOnOpen || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);"
+    ) in page
+    assert 'Date.now()-_humanT<30000&&!gbSleepAllowed()?"human":""' in page
+    assert "  if(due) dream(gbSleepAllowed()); }" in page
+    assert (
+        "if((gbSleepAllowed()||_gbDreamOnOpen)&&!_speechBusy()&&!pendingUser){ maybeDream();"
+        in page
+    )
+    assert "IDLE_DREAM_MS=300000" in page and "IDLE_DREAM_MS=120000" not in page
+    assert "_gbSleepOK=false; _gbDreamOnOpen=false;" in page
+    assert '+(_gbSleepWhy||"a quiet stillness came over it")+gbDreamSession();' in page
+    assert '_t.indexOf("🌙 dreamed")!==0 && _t.indexOf("📖")!==0;' in page
+    assert "applyDream(o,lived); gbDreamKeep(o); }" in page
+    assert "brainOverride(orCfg.dream,true),1000,90000)" in page
+    assert "_gbLive+=gbTiredLine(); if(_gbRecallCarry){" in page
+    assert "_gbSess.push({t:Date.now(),txt:got}); gbVisitKeep(" in page
+    assert "Date.now()-(+_gbLastV.t||0)>GB_OPEN_GAP_MS) _gbDreamOnOpen=true;" in page
+    assert '(o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant();' in page
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert '\'"sleep":"OMIT unless your person just said you may sleep' in prompts
 
 
 @pytest.mark.parametrize(

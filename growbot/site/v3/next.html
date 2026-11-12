@@ -182,7 +182,7 @@
 </div>
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -8494,7 +8494,7 @@ function think(event,kind,extra){
   var _recall=null; try{ if(_hreqAtIssue&&typeof diaryRecall==="function"&&extra&&typeof extra.visualUser==="string"&&extra.visualUser.trim()) _recall=diaryRecall(_live.log,extra.visualUser,now,[(_live.goals&&_live.goals.selfName)||"",typeof ownerTok==="function"?ownerTok():""]); }catch(e){ _recall=null; }   /* 1005 WHOLE-DIARY RECALL (prompts.js diaryRecall): a person's words can pull up to 3 OLDER diary lines into this prompt, only when they cue a memory or share 2+ rare words with a line. Human turns only; the creature's and owner's own names never count as a match (review: the creature's name was the top false trigger). */
   var sys=buildSystem(soulView,{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText(), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+selfStats()+(typeof vmPrompt==="function"?vmPrompt(_vmTurn):"");    // + short-term self-knowledge (introspection); speech-style rule appended HERE because buildSystem/constitution live in /v3/prompts.js (Brit 0726, item 5)
   if(_imitationAtIssue&&_imitationCtl)_gbLive+=_imitationCtl.guide(_imitationAtIssue);
-  if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; } if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
+  _gbLive+=gbTiredLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; } if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
   var slug=brainOverride((kind==="tick")?orCfg.fast:(orCfg.active||orCfg.fast),false);   // [credit screen] honor the chosen brain: free mode or an explicit dial pick
   var _decisionTokens=typeof vmHeadroomTokens==="function"?vmHeadroomTokens(_vmTurn,kind,slug):512;
   if(slug!==_slugSeen){ _slugSeen=slug; try{ logEv("model_used",{slug:slug,pick:brainChoice()||""}); }catch(e){} }   /* 0813 THE OUTCOME FIELD. The boot `model` event records the CONFIG default and, since today, the user's INTENT (`pick`) — but neither is the model the request is actually billed against, and the gap between intent and outcome is precisely where the free-brain leak lived: pick said "free", the bill said kimi. Four times this week a field reported what we MEANT rather than what HAPPENED (nf before vs, model before this, the dial theory, the fd rate). Logged only when the resolved slug CHANGES, so it is one entry per session in the normal case and it names the moment any silent substitution occurs. Without this we cannot verify the leak is actually fixed — only that we intended to fix it. */
@@ -8605,7 +8605,7 @@ function think(event,kind,extra){
     if(!(o.scratchpad&&o.scratchpad.mood)){                                                            // no mood written this turn → emotion gently colors the weather (never stale)
       var _mm=_live.scratch.mood||(_live.scratch.mood={v:0,e:0.4}), _tgt=EMO2MOOD[emotion];
       if(_tgt){ _mm.v+=(_tgt.v-_mm.v)*0.15; _mm.e+=(_tgt.e-_mm.e)*0.15; } }                            // persisted by the turn's own saveSoul — no extra save
-    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string") gbRecallAsk(o.recall,kind,extra); }catch(_fe){}
+    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string") gbRecallAsk(o.recall,kind,extra); if((o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant(); }catch(_fe){}
     var _dl=0; if(o.log&&String(o.log).replace(/^\s+/,"").indexOf("📷")!==0){ soulLog(_live,o.log); _dl=_live.log[_live.log.length-1]!==_lgAt?1:0; }   // 1005 review: "📷 ..." is the ENGINE's picture-memory line (visual-memory.js vmDiaryResult); a model copying that format would be a save claim nobody confirmed
     if(typeof o.glow==="string"&&o.glow.trim()){ var _gls=(_live.scratch.glows=_live.scratch.glows||[]), _glsHad=_gls.length; _gls.push({t:Date.now(),g:String(o.glow).replace(/\s+/g," ").trim().slice(0,120)}); _live.scratch.glows=soulRoll(_live,"glows",_gls,_glsHad); _epGlow=true; }   // [P5] felt-reward: mark a delightful/identity-shaping moment; the dream weighs these most (v2:1672). whitespace collapsed (K3 0804 r2#2): glows render line-per-entry in the dream prompt — same line-anchor spoof class as traces/rules
     if(kind==="event"&&typeof o.owner==="string"&&o.owner.trim()){ var _nm=o.owner.trim().replace(/[\n\r{}"'<>|]+/g," ").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,32);
@@ -8813,7 +8813,7 @@ function gbSessAdd(u,a){ try{
   if(m) got="they said: "+m[1].slice(0,240)+(said&&said.charAt(0)!=="("?" | you said: "+said.slice(0,200):"");
   else if(s.indexOf("you looked back through your memory")===0&&said&&said.charAt(0)!=="(") got="you remembered: "+said.slice(0,200);
   if(!got) return;
-  _gbSess.push({t:Date.now(),txt:got});
+  _gbSess.push({t:Date.now(),txt:got}); gbVisitKeep(_gbSess[_gbSess.length-1]);
   if(_gbSess.length>GB_SESS_MAX) _gbSess.shift();
 }catch(e){} }
 /* Called from inside the reply handler, so the follow-up is never started there: the turn that
@@ -8948,8 +8948,49 @@ function ladderReached(goal){
 var DREAM_DEEP=false;   // 0814: dreams ask for NO hidden reasoning — see the measurement block in _mkBody. One word to reverse.
 var lastDreamT=0, dreamFails=0, _dreamT0=0, DREAM_COOLDOWN=300000;   // _dreamT0 (0814): stamped at dream_start so dream_err can report how long the attempt RAN — with a 90s fuse, duration is the diagnosis: a fail at ~90s is the abort/budget-burn case, a fail at 4s is something else entirely   // [P5] cadence hardening: post-dream cooldown + failure backoff (180s→300s Brit 0805 "5min floor everywhere" — matches agent.html + v2; the 12-thought threshold stays, phone play paces slower than agent sessions and the floor binds either way)
 function _localDay(){ var d=new Date(); return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2); }   // LOCAL calendar day for the mood trail + dwell latch (review S3): toISOString is UTC — an EDT evening reload straddling 00:00 UTC minted two "nights" in one sitting
-var REST_AFTER_MS=35000, WATCH_GAP_MS=90000, IDLE_DREAM_MS=120000, EXPR_GAP_MS=30000;   // [P6] REST_AFTER_MS now marks quiet watch/dream eligibility, never automatic sleep
+var REST_AFTER_MS=35000, WATCH_GAP_MS=90000, IDLE_DREAM_MS=300000, EXPR_GAP_MS=30000;   // [P6] REST_AFTER_MS now marks quiet watch/dream eligibility, never automatic sleep
 var lastBeatT=0, beatN=0, lastWatchT=0, lastQuietDreamT=0, lastSpokeT=-1e9, lastReplyT=0;   // [P6] LIFE-BEATS + WATCH + read-the-room state; lastReplyT anchors beat pacing to call END (audit: slow calls caused zero-gap back-to-back beats)
+var _gbSleepOK=false, _gbSleepAt=0, _gbDreamOnOpen=false, _gbSleepWhy="", _gbBootT=Date.now(),
+  GB_SLEEP_IDLE_MS=300000, GB_OPEN_GAP_MS=600000, GB_TIRED_REPLIES=60, GB_TIRED_MIN=20,
+  GB_TIRED_MS=1800000, GB_DREAM_SESS=80, GB_SLEEP_HOLD_MS=180000;
+/* Permission to sleep lasts a few minutes: a dream that cannot start by then (energy, a busy
+   body) must not leave the person's 30 s guard off and a goodnight hanging over a live chat. */
+function gbSleepAllowed(){
+  if(_gbSleepOK&&Date.now()-_gbSleepAt>GB_SLEEP_HOLD_MS){ _gbSleepOK=false; try{ logEv("sleep_expired",{}); }catch(e){} }
+  return _gbSleepOK;
+}
+function gbSleepGrant(){ _gbSleepOK=true; _gbSleepAt=Date.now(); logEv("sleep_ok",{csd:callsSinceDream}); }
+/* The visit's lines not yet dreamed ride the soul (scratch.visit), so a dream after a reload or
+   on the next day's open still sees the conversation it should keep; a landed dream clears them,
+   so no visit is summarised twice. */
+function gbVisitKeep(x){ try{
+  var sc=_live&&_live.scratch; if(!sc||!x) return;
+  var v=Array.isArray(sc.visit)?sc.visit:(sc.visit=[]);
+  v.push({t:x.t,txt:x.txt}); if(v.length>GB_DREAM_SESS) v.splice(0,v.length-GB_DREAM_SESS);
+}catch(e){} }
+function gbVisit(){ var sc=_live&&_live.scratch; return (sc&&Array.isArray(sc.visit))?sc.visit:[]; }
+function gbTiredLine(){
+  if(gbSleepAllowed()) return "";
+  var awake=Date.now()-Math.max(lastDreamT||0,_gbBootT);
+  if(!(callsSinceDream>=GB_TIRED_REPLIES||(callsSinceDream>=GB_TIRED_MIN&&awake>=GB_TIRED_MS))) return "";
+  return "\n\n== GETTING SLEEPY ==\nyou have been awake and talking a long time since you last slept, and today wants settling into memory. at a natural pause (never in the middle of answering something), tell your person you are getting sleepy and ask if you may sleep. ask once; if they say not yet, carry on and ask again only much later. when they agree or tell you to sleep, say goodnight and set sleep to true.";
+}
+function gbDreamSession(){
+  var v=gbVisit(); if(!v.length) return "";
+  return "\n\nIts conversation with its person since it last slept, oldest first:\n"+v.map(function(x){ return "- "+String(x&&x.txt||""); }).join("\n")+
+    "\n\nAlso put in your JSON: \"session_summary\":\"1-3 plain sentences for its diary: what mattered in that conversation (people, plans, things its person told it, what they did together)\",\"facts\":[\"up to 5 short plain facts its person told it that are worth keeping\"]";
+}
+var _GB_KEEP_JUNK=/^(omit|none|nothing|n\/a|null|1-3 plain|up to 5 short)\b/i;
+function gbDreamKeep(o){ try{
+  var sum=typeof o.session_summary==="string"?o.session_summary.replace(/\s+/g," ").trim():"", n=0, k=0;
+  if(_GB_KEEP_JUNK.test(sum)) sum="";
+  // soulLog keeps 140 characters a line, so a summary is filed a sentence at a time.
+  if(sum) sum.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0,3).forEach(function(x){ soulLog(_live,"📖 "+x); k++; });
+  (Array.isArray(o.facts)?o.facts:[]).slice(0,5).forEach(function(f){ if(typeof f==="string"&&!_GB_KEEP_JUNK.test(f.trim())&&gbFactAdd(_live,f)) n++; });
+  if(_live&&_live.scratch) _live.scratch.visit=[];
+  _gbSleepWhy="";
+  logEv("dream_keep",{s:k,f:n});
+}catch(e){} }
 var _humanT=0;   // 0925 (field session nx-mt7or): when the person's last typed or transcribed turn arrived (sendTxtFrom); maybeDream waits 30 s after it
 function maybeDream(){ var _dw0=(typeof vmBusy==="function"&&vmBusy())?"vm":(seekGoal||actOn)?"activity":_motion?"motion":_speechBusy()?"speaking":"";   // never dream mid-pursuit — a 24-beat seek trips callsSinceDream>=12 and the dream would interrupt the mission (audit)
   /* 1005 (memory research 1005, a tester 09-30: a dream was due from the 12th reply, none started, NO row said why). These
@@ -8974,8 +9015,8 @@ function maybeDream(){ var _dw0=(typeof vmBusy==="function"&&vmBusy())?"vm":(see
      their last turn (_humanT, stamped in sendTxtFrom). DEFERRED, never dropped: callsSinceDream keeps counting, so the
      next reply after the lull dreams, and the cadence machine's idle dream is untouched. try: a harness slice of this
      function without these neighbours falls through to the gates above, as before. */
-  var _dw=_dw0; if(!_dw) try{ _dw=inFlight?"flight":vadOn?"vad":_pcmLive?"pcm":window._sttBusy?"stt":Date.now()<vadHoldUntil?"hold":Date.now()-_humanT<30000?"human":""; }catch(e){}
-  var idle=Date.now()-lastActT, due=callsSinceDream>=12 || (idle>120000 && callsSinceDream>=3);
+  var _dw=_dw0; if(!_dw) try{ _dw=inFlight?"flight":vadOn?"vad":_pcmLive?"pcm":window._sttBusy?"stt":Date.now()<vadHoldUntil?"hold":Date.now()-_humanT<30000&&!gbSleepAllowed()?"human":""; }catch(e){}
+  var idle=Date.now()-lastActT, due=gbSleepAllowed() || _gbDreamOnOpen || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);
   /* 0925 S4 (review): THE DEFERRAL WROTE NO ROW, so a latch stuck true (vadOn, _sttBusy) held every auto dream back and
      the journal looked healthy (silent-absence law). Now a DUE dream that this gate holds back writes ONE dream_defer
      {why,csd} per deferral episode; why is the first guard that held, in the gate's own order (flight, vad, pcm, stt,
@@ -8983,7 +9024,7 @@ function maybeDream(){ var _dw0=(typeof vmBusy==="function"&&vmBusy())?"vm":(see
      page, never one per reply (ring law). A dream that is not due yet was not deferred and writes nothing. The row sits
      in its own try so a throw can never turn a held dream into a started one. */
   if(_dw){ try{ if(due&&(_dw0?!_dreamHoldSeen[_dw]:!_dreamDeferLogged)){ if(_dw0) _dreamHoldSeen[_dw]=1; else _dreamDeferLogged=true; logEv("dream_defer",{why:_dw,csd:callsSinceDream}); } }catch(e){} return; }   /* 1005 review (S3): the 1005 holds (vm|activity|motion|speaking) keep ONE row per why per episode in their own latch. A voiced creature is "speaking" on nearly every reply, and sharing the 0925 latch would have spent it on that row and hidden the stuck vad/stt/pcm/hold/human row it exists to show. At most 4 extra rows per episode. */
-  if(due) dream(); }
+  if(due) dream(gbSleepAllowed()); }
 var _dreamDeferLogged=false;   // 0925 S4: one dream_defer row per deferral episode; cleared at dream_start
 var _dreamHoldSeen={};   // 1005: the same, per why, for the vm|activity|motion|speaking holds; cleared at dream_start
 var _dreamSkipLogged=false;   // 0902: one dream_skip row per dream cycle (reset when a dream lands)
@@ -9016,7 +9057,7 @@ function dream(force){
   if(force && Date.now()-lastDreamT < 30000){ setErr("…just dreamed — give me a minute"); return; }              // force debounce — SOLVES walk-3's double-dream: the 🌙 button re-fired 10.7s after a natural dream
   if(force){stopMotion();silence();}
   _dreamDeferLogged=false; _dreamHoldSeen={};   // 0925 S4: a dream actually starts here, so the next deferral episode may write its one dream_defer row
-  _dreamT0=Date.now();
+  _dreamT0=Date.now(); if(_gbSleepOK||_gbDreamOnOpen) _gbSleepWhy=_gbSleepOK?"its person said it could sleep, after a long time together":"a new visit began and it had not slept since the last one"; _gbSleepOK=false; _gbDreamOnOpen=false;
   logEv("dream_start",{trig:force?"forced":"auto",csd:callsSinceDream,sinceLast:Math.round((Date.now()-lastDreamT)/1000),slug:brainOverride(orCfg.dream,true),plain:window._dreamPlain?1:0});   /* 0814: dream_start and dream_err recorded NO slug and NO params, so when a user's plain retry came back empty at 20s the journal could not say which brain, which reasoning mode, or which budget produced it — and reasoning-off kimi is clean in ~4s on every provider, so it was demonstrably none of the obvious causes. An event about a failure that cannot name its own inputs is the same class as nf/vs/model: it records that something happened, not what. slug is the RESOLVED dream brain (post-brainOverride), plain says whether this is the fallback attempt. */   // diagnose the field double-dream (two completions 10.7s apart on 0702 despite this guard)
   inFlight=true; _flightT=Date.now();
   /* 0807 LATCH PREVENTION (same shape as think()). A forged moodTrail bricked exactly this window
@@ -9025,7 +9066,7 @@ function dream(force){
   try{
   var _promptNow=Date.now(), _times=_dreamTimes(_live,_promptNow,60,false);
   var recent=_live.scratch.traces.slice(-6).map(function(t){ return "- felt: "+t.u.slice(0,80)+" → said: "+t.a; }).join("\n");
-  var diary=_live.log.slice(-60).filter(function(e){ var _t=String((e&&e.txt)||""); return _t.indexOf("last night I dreamed of")!==0 && _t.indexOf("🌙 dreamed")!==0; }).map(function(e){ return "- "+e.txt; }).join("\n");   // a dream's OWN prior report is not a lived moment â DREAM_SYS says so, and dropping it here makes the evidence gate enforce it instead of trusting the model to obey
+  var diary=_live.log.slice(-60).filter(function(e){ var _t=String((e&&e.txt)||""); return _t.indexOf("last night I dreamed of")!==0 && _t.indexOf("🌙 dreamed")!==0 && _t.indexOf("📖")!==0; }).map(function(e){ return "- "+e.txt; }).join("\n");   // a dream's OWN prior report is not a lived moment â DREAM_SYS says so, and dropping it here makes the evidence gate enforce it instead of trusting the model to obey
   /* reframe (flag c): this build HAS a body — the drive is curiosity/exploration, not longing for a body. */
   var glows=(_live.scratch.glows||[]).slice(-8).map(function(g){ return "- "+(g&&g.g||g); }).join("\n");       // [P5] bright moments — the dream weighs these MOST
   var rulesTxt=(_live.scratch.rules||[]).map(function(r){ return "- "+r; }).join("\n");                         // [P5] so the dream can garden them via keep_rules
@@ -9051,7 +9092,7 @@ function dream(force){
     (glows?("\n\nRecent bright moments — weigh these MOST:\n"+_times.glows):"")+
     (prop?("\n\nIts waking mind proposed this identity shift (judge as data; approve only if it truly fits):\n"+prop):"")+
     "\n\nRecent exchanges:\n"+(_times.recent||"(none)")+
-    "\n\nDiary of its life:\n"+(_times.diary||"(empty)")+"\n\nWhy it sleeps now: a quiet stillness came over it";
+    "\n\nDiary of its life:\n"+(_times.diary||"(empty)")+"\n\nWhy it sleeps now: "+(_gbSleepWhy||"a quiet stillness came over it")+gbDreamSession();
   dreaming=true; _dreamPreSky=_skyHue; var _preSky=_skyHue; _skyHue=265; doBurst("dream"); $("say").textContent="…"; $("say").classList.add("thinking"); $("brainTxt").textContent="dreaming…";   // deep-violet dream wash on the sky/stars (direct write skips the sky logEv; restored on wake)
   try{ $("dreamCap").style.display="block"; }catch(e){}   // [0726 item 4] the caption carries the meaning ("dreaming…" in #brainTxt is hidden in play view; the zzz pixels alone read as nothing)
   }catch(_bldErr){                                       // the dream would not assemble; no call was made, nothing charged
@@ -9064,12 +9105,12 @@ function dream(force){
   var _dgen=_flightGen;                                  // 0807: if the watchdog gives up on this dream, a late answer must not write identity behind the creature's back
   var _dreamLang=_replyLanguage()||vtLang();
   var _dmo=brainOverride(orCfg.dream,true), _du0=(typeof _dreamUsd==="number")?_dreamUsd:0;   // 0914 F-75: the dream event names its brain and its cost (delta of the dream meter); the dispatch line below is left byte-identical (harnesses execute it verbatim)
-  callModel(buildDreamSystem(DREAM_SYS,_live,_convLang),[{role:"user",content:user}],brainOverride(orCfg.dream,true),700,90000).then(function(raw){   // [credit screen] free mode dreams free too; an explicit dial pick leaves dreams on the big brain   // 620→700: the evidence citations + bond_line ride in the same JSON
+  callModel(buildDreamSystem(DREAM_SYS,_live,_convLang),[{role:"user",content:user}],brainOverride(orCfg.dream,true),1000,90000).then(function(raw){   // [credit screen] free mode dreams free too; an explicit dial pick leaves dreams on the big brain   // 620→700: the evidence citations + bond_line ride in the same JSON
     if(_dgen!==_flightGen) return;                        // the watchdog gave up on this dream; a late answer must NOT write identity behind the creature's back
     inFlight=false; dreaming=false; _flightT=0; _skyHue=_preSky; $("say").classList.remove("thinking"); $("brainTxt").textContent="awake";   // hand the sky back to whatever held it before the dream
     try{ $("dreamCap").style.display="none"; }catch(e){}   // [0726 item 4] dream done → caption off (the wake line speaks next)
     _ioLog.push({t:Date.now(),kind:"dream",model:orCfg.dream,sent:user.slice(0,600),got:String(raw).slice(0,600)}); if(_ioLog.length>24) _ioLog=_ioLog.slice(-24);   // dreams visible in the brain-tab stream (the two-prompt system, seeable — audit)
-    var o=jparse(raw); if(o){ applyDream(o,lived); }        // <-- sealed write path
+    var o=jparse(raw); if(o){ applyDream(o,lived); gbDreamKeep(o); }        // <-- sealed write path
     if(o&&_moodLine){ var _cd=(typeof o.dream_say==="string")?o.dream_say.trim():"";   // DWELL LATCH (review B2 + K3 r2 #1): burn the day ONLY on a DELIVERED dwell — valid JSON with an empty or non-string dream_say must not consume the one dwell (weak dreamers, the exact population this serves) — and a 429'd dream never reaches here at all
       if(_cd){ _live.scratch.moodDwellDay=_dToday; soulLog(_live,"🌙 dreamed "+_cd.slice(0,90)); } }   // (review S5) the comfort must OUTLIVE the spoken moment: the diary is the surface the waking mind reads for the next 5 turns. DREAM_SYS names this prefix as a dream-report so it can never launder into "lived" evidence (K3 r2 #2)
     logEv("dream",{ mo:_dmo, usd:Math.round(Math.max(0,((typeof _dreamUsd==="number")?_dreamUsd:0)-_du0)*1e6)/1e6, add:String((o&&o.identity_add)||"").slice(0,90), drop:String((o&&o.identity_drop)||"").slice(0,60), wants:(o&&Array.isArray(o.wants))?o.wants.slice(0,4):undefined, fun:(o&&typeof o.fun==="number")?o.fun:undefined, tmr:String((o&&o.tomorrow_try)||"").slice(0,50) });   // recap what the dream actually changed
@@ -9718,7 +9759,7 @@ function bootOwned(){
       : ("engine loaded but globals missing [loadSoul:"+(typeof loadSoul)+" buildSystem:"+(typeof buildSystem)+" S:"+(typeof S)+" CONSTITUTION:"+(typeof CONSTITUTION)+"] — tell Brit this line.")); return; }
   _live=loadSoul(); if(typeof vmBoot==="function") vmBoot();
   try{ var _pz=_closeGoalTraces("",true); if(_pz) logEv("goal_replay_closed",{n:_pz,why:"boot_pose"}); }catch(e){}   // 0925 M5: a one-shot pose goal (lie down, stand, sit) is never restored at boot, even if it was still open (18:10:33 boot, 18:10:36 "lay down flat" set again from the replayed beat); the body install's saveSoul keeps it
-  try{ var _csd0=+(_live.scratch&&_live.scratch.csd); if(_csd0>0&&isFinite(_csd0)) callsSinceDream=Math.min(Math.floor(_csd0),60); }catch(e){}   /* 1005 DREAM ON RETURN (a tester: a deploy reload at 02:59Z reset the dream counter, then the app closed; no dream that night). The un-dreamed reply count now lives in the soul (scratch.csd, written with every reply's save, zeroed when a dream lands), so a reload or a next-day visit picks up where it left off and the ordinary gates decide: 12+ dreams after the next reply, 3+ dreams on the usual 2-min idle. Cooldown, novelty and speech gates are unchanged. */
+  try{ var _csd0=+(_live.scratch&&_live.scratch.csd); if(_csd0>0&&isFinite(_csd0)) callsSinceDream=Math.min(Math.floor(_csd0),60); var _gbLastV=gbVisit().slice(-1)[0]; if(_gbLastV&&Date.now()-(+_gbLastV.t||0)>GB_OPEN_GAP_MS) _gbDreamOnOpen=true; }catch(e){}   /* 1005 DREAM ON RETURN (a tester: a deploy reload at 02:59Z reset the dream counter, then the app closed; no dream that night). The un-dreamed reply count now lives in the soul (scratch.csd, written with every reply's save, zeroed when a dream lands), so a reload or a next-day visit picks up where it left off and the ordinary gates decide: 12+ dreams after the next reply, 3+ dreams on the usual 2-min idle. Cooldown, novelty and speech gates are unchanged. */
   try{ gbBadgeSync(); }catch(e){}   // 0808: a stashed money code stays VISIBLE across reloads until truly redeemed
   try{ if(_live&&(_live.bornAt===1||(_live.log&&_live.log.length>2))) localStorage.setItem("pb2_graduated","1"); }catch(e){}   // ONE-URL TRUTH (0710): backfill the routing flag for creatures that graduated before it existed — any real agent creature marks this browser's home as v3
   try{ if(_live&&(_live.bornAt===1||(_live.log&&_live.log.length>1))) _gbTurn1=true; }catch(e){}   // DEEP LINK (0805): a device with real history has server-side calls already — the redeem lane is anchored, so the first-turn wait is NEWBORN-ONLY (a veteran reloading to redeem must not be told to say hi first)
@@ -9929,6 +9970,7 @@ function bootOwned(){
       if(timerDue && inFlight) wakeConsume(); return; }                                    // same rule for the seek lane: the beat that actually went out IS the one turn
     /* Quiet is awake company, not automatic sleep. Explicit activity waits still own timing;
        a due wake/active goal blocked by its floors must not fall into a competing ambient turn. */
+    if((gbSleepAllowed()||_gbDreamOnOpen)&&!_speechBusy()&&!pendingUser){ maybeDream(); if(inFlight||dreaming) return; }
     if(actQuiet) return;
     if(actOn || seekGoal) return;
     if(idle>=REST_AFTER_MS){                                                              // quiet-time threshold ONLY; never silence the mouth or droop the eyes
