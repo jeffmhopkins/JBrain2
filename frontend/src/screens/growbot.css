@@ -1531,3 +1531,29 @@ details.gb-adv summary {
 a.gb-btn {
   text-decoration: none;
 }
+
+/* A persona's voice: the dropdown and its Play side by side, Play at its natural width. */
+.gb-voice {
+  margin: 0 0 12px;
+}
+.gb-voice .gb-field {
+  margin-bottom: 6px;
+}
+.gb-voice-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.gb-voice-row select {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+}
+.gb-voice-row .gb-btn {
+  flex: none;
+}
+.gb-voice-note {
+  margin: 6px 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}

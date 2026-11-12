@@ -4070,6 +4070,8 @@ export interface GrowbotPersona {
   wearing: string | null;
   /** The face its creature wears; lantern until the owner picks another. */
   face: GrowbotFace;
+  /** The box voice it speaks in (a /api/brain/voices id), or "" for the box's default. */
+  voice: string;
 }
 
 export type GrowbotFace = "lantern" | "ostrich" | "robot" | "pixel";
@@ -8333,6 +8335,15 @@ export const api = {
     const response = await request(
       `/api/growbot/personas/${encodeURIComponent(id)}`,
       jsonInit("PATCH", { face }),
+    );
+    return (await response.json()) as GrowbotWritten;
+  },
+
+  /** Not a soul write either: its next line is in the new voice. "" is the box's default. */
+  async setGrowbotPersonaVoice(id: string, voice: string): Promise<GrowbotWritten> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { voice }),
     );
     return (await response.json()) as GrowbotWritten;
   },

@@ -215,6 +215,19 @@ def test_a_persona_wears_its_own_face_lantern_by_default() -> None:
     )
 
 
+def test_a_persona_speaks_in_its_own_voice() -> None:
+    """The box's voice for the persona is read with the soul, a poll's new one is the next
+    line's, and it outranks the phone's own on both speech paths and in the clip cache."""
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.__gbBoxVoice = state.json.voice;" in shim
+    assert 'if (typeof v === "string") window.__gbBoxVoice = v;' in shim
+    assert 'voice: window.__gbBoxVoice || "", model: "kokoro"' in shim
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "function fishKey(t,emo){ return t+'|'+(window.__gbBoxVoice||vtFish.voice||'')+" in page
+    assert "body:JSON.stringify({text:t,voice:window.__gbBoxVoice||vtFish.voice||''," in page
+    assert "voice:vtFish.voice||''" not in page
+
+
 def test_the_creature_can_recolour_itself_like_the_sky() -> None:
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert prompts.index('\'"coat":"OMIT usually') < prompts.index('\'"sky":"OMIT usually')

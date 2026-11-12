@@ -253,6 +253,20 @@ PATCHES: list[tuple[str, str, str, int]] = [
         1,
     ),
     ("v3/next.html", VOICE_PICKER_OLD, '<option value="fish">box voice</option>', 1),
+    # The persona's own voice (migration 0263, growbot-box.js's __gbBoxVoice) outranks the
+    # phone's; the clip cache is keyed on it too, so a new voice never replays an old clip.
+    (
+        "v3/next.html",
+        "function fishKey(t,emo){ return t+'|'+(vtFish.voice||'')+",
+        "function fishKey(t,emo){ return t+'|'+(window.__gbBoxVoice||vtFish.voice||'')+",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "body:JSON.stringify({text:t,voice:vtFish.voice||'',",
+        "body:JSON.stringify({text:t,voice:window.__gbBoxVoice||vtFish.voice||'',",
+        1,
+    ),
     # No third-party origins: Google Fonts (the pixel face falls back to the system monospace)
     # and the feedback widget.
     (

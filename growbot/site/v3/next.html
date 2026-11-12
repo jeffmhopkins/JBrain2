@@ -1432,7 +1432,7 @@ function fishPrime(){
   }catch(e){}
 }
 
-function fishKey(t,emo){ return t+'|'+(vtFish.voice||'')+'|'+(vtFish.model||'')+'|'+(emo||''); }
+function fishKey(t,emo){ return t+'|'+(window.__gbBoxVoice||vtFish.voice||'')+'|'+(vtFish.model||'')+'|'+(emo||''); }
 
 function fishSpeed(emo){ return _fishSpeedBase(emo)*vSpeed; }   // 0821: the api clamps 0.5-2.0 (api/fish-tts.js), so the product stays in range
 function _fishSpeedBase(emo){
@@ -1456,7 +1456,7 @@ function fishFetch(t,emo){
   return fetch('/api/fish-tts',{
     method:'POST',
     headers:{'content-type':'application/json','x-fish-key':vtFish.key},
-    body:JSON.stringify({text:t,voice:vtFish.voice||'',model:vtFish.model||'s2.1-pro-free',speed:fishSpeed(emo)})
+    body:JSON.stringify({text:t,voice:window.__gbBoxVoice||vtFish.voice||'',model:vtFish.model||'s2.1-pro-free',speed:fishSpeed(emo)})
   }).then(function(r){
     if(r.status===200){ fishFails=0; return r.blob(); }
     if(r.status===401 || r.status===402){ fishDead=true; fishToast('the box voice is unavailable right now'); }

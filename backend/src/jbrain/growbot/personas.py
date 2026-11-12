@@ -23,7 +23,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Final, Literal, Protocol
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -61,6 +61,7 @@ class Persona:
     soul: dict[str, Any] | None = None
     memories: int = 0
     face: str = "lantern"
+    voice: str = ""
 
 
 @dataclass(frozen=True)
@@ -107,11 +108,15 @@ class Pulled:
     wearing: str | None
     memories: int = 0
     face: str = "lantern"
+    voice: str = ""
 
 
 PushResult = int | Literal["moved", "newer", "gone"]
 # The faces growbot-face.js draws (migration 0259's CHECK); lantern is the default.
 Face = Literal["lantern", "ostrich", "robot", "pixel"]
+# A tts-stt voice id (migration 0263's CHECK, and the shape the sidecar's /api/fish-tts
+# accepts), or "" for the box's default voice.
+VOICE_RE: Final = r"^(kokoro-[a-z0-9_]{1,40})?$"
 Away = Literal["moved", "gone"]
 # How a restore, reset or import treats the memories: keep them, clear them, or put back the
 # ones checkpoint `str` kept.
@@ -136,8 +141,10 @@ class PersonaRepo(Protocol):
         made_from: str,
         memories_from: str | None = None,
         face: Face = "lantern",
+        voice: str = "",
     ) -> Persona: ...
     async def set_face(self, ctx: SessionContext, pid: str, face: Face) -> bool: ...
+    async def set_voice(self, ctx: SessionContext, pid: str, voice: str) -> bool: ...
     async def write_soul(
         self,
         ctx: SessionContext,
@@ -190,7 +197,7 @@ class PersonaRepo(Protocol):
 
 _PERSONA = (
     "p.id::text AS id, p.name, p.version, p.made_from, p.phone_id, p.last_phone_id,"
-    " p.opened_at, p.created_at, p.updated_at, p.face,"
+    " p.opened_at, p.created_at, p.updated_at, p.face, p.voice,"
     " (SELECT count(*) FROM app.growbot_checkpoints c WHERE c.persona_id = p.id) AS checkpoints,"
     " (SELECT b.code FROM app.growbot_body b WHERE b.persona_id = p.id LIMIT 1) AS wearing,"
     " (SELECT count(*) FROM app.growbot_memories m WHERE m.persona_id = p.id) AS memories"
@@ -222,6 +229,7 @@ def _persona(r: Any, soul: bool = False) -> Persona:
         soul=dict(r.soul) if soul else None,
         memories=int(r.memories),
         face=r.face,
+        voice=r.voice,
     )
 
 
@@ -317,6 +325,7 @@ class SqlPersonaRepo:
         made_from: str,
         memories_from: str | None = None,
         face: Face = "lantern",
+        voice: str = "",
     ) -> Persona:
         """A new persona; with `memories_from`, holding a copy of that persona's memories
         (a duplicate), whose pictures it shares."""
@@ -324,10 +333,16 @@ class SqlPersonaRepo:
             pid = (
                 await session.execute(
                     text(
-                        "INSERT INTO app.growbot_personas (name, soul, made_from, face)"
-                        " VALUES (:n, CAST(:s AS jsonb), :f, :face) RETURNING id::text"
+                        "INSERT INTO app.growbot_personas (name, soul, made_from, face, voice)"
+                        " VALUES (:n, CAST(:s AS jsonb), :f, :face, :voice) RETURNING id::text"
                     ),
-                    {"n": name, "s": _json(soul), "f": made_from[:120], "face": face},
+                    {
+                        "n": name,
+                        "s": _json(soul),
+                        "f": made_from[:120],
+                        "face": face,
+                        "voice": voice,
+                    },
                 )
             ).scalar_one()
             if memories_from is not None and (src := _uuid(memories_from)) is not None:
@@ -357,6 +372,20 @@ class SqlPersonaRepo:
                     " WHERE id = :p RETURNING 1"
                 ),
                 {"p": key, "f": face},
+            )
+            return done.first() is not None
+
+    async def set_voice(self, ctx: SessionContext, pid: str, voice: str) -> bool:
+        """Like a face, not a soul write: its poll carries the voice to the creature."""
+        if (key := _uuid(pid)) is None:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            done = await session.execute(
+                text(
+                    "UPDATE app.growbot_personas SET voice = :v, updated_at = now()"
+                    " WHERE id = :p RETURNING 1"
+                ),
+                {"p": key, "v": voice},
             )
             return done.first() is not None
 
@@ -795,7 +824,7 @@ class SqlPersonaRepo:
             row = (
                 await session.execute(
                     text(
-                        f"SELECT p.version, p.memories_version, p.face,"
+                        f"SELECT p.version, p.memories_version, p.face, p.voice,"
                         f" {'p.soul' if with_soul else 'NULL'} AS soul,"
                         " (SELECT b.code FROM app.growbot_body b WHERE b.persona_id = p.id"
                         "  LIMIT 1) AS wearing"
@@ -813,7 +842,12 @@ class SqlPersonaRepo:
                 {"ph": phone_id},
             )
             return Pulled(
-                row.version, dict(row.soul or {}), row.wearing, row.memories_version, row.face
+                row.version,
+                dict(row.soul or {}),
+                row.wearing,
+                row.memories_version,
+                row.face,
+                row.voice,
             )
 
     async def push(

@@ -62,6 +62,7 @@ function persona(over: Partial<GrowbotPersona>): GrowbotPersona {
     memories: 0,
     wearing: null,
     face: "lantern",
+    voice: "",
     ...over,
   };
 }
@@ -1052,6 +1053,61 @@ describe("GrowbotScreen a persona's page", () => {
     ).toBeTruthy();
     expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({ face: "robot" });
     expect(within(faces).getByRole("radio", { name: /^Robot/ })).toHaveProperty("checked", true);
+  });
+
+  it("picks a persona's voice from the box's voices, and plays a sample first", async () => {
+    const played: string[] = [];
+    class FakeAudio {
+      onended: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(public src: string) {}
+      play() {
+        played.push(this.src);
+        return Promise.resolve();
+      }
+      pause() {}
+    }
+    vi.stubGlobal("Audio", FakeAudio);
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: () => "blob:sample",
+      revokeObjectURL: () => {},
+    });
+    const s = serve(
+      UP,
+      pageRoutes((path, init) => {
+        if (path === "/api/brain/voices") {
+          return json({ voices: ["kokoro-af_heart", "kokoro-am_puck", "kokoro-bm_fable"] });
+        }
+        if (path.startsWith("/api/brain/tts?")) return new Response(new Blob(["RIFF"]));
+        if (path === `/api/growbot/personas/${SPROUT}` && init?.method === "PATCH") {
+          return json({ persona: detail({ voice: "kokoro-am_puck" }), checkpoint: null });
+        }
+        return null;
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    const box = (await screen.findByRole("combobox", { name: "Voice" })) as HTMLSelectElement;
+    await waitFor(() => expect(box.disabled).toBe(false));
+    expect(box.value).toBe("");
+    expect(within(box).getByRole("option", { name: "Puck · American M" })).toBeTruthy();
+
+    // Play says the sample in the voice shown; the box's default is Heart.
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    await waitFor(() => expect(played).toEqual(["blob:sample"]));
+    const said = s.calls.find((c) => c.path.startsWith("/api/brain/tts?"));
+    const q = new URLSearchParams(said?.path.split("?")[1]);
+    expect(q.get("voice")).toBe("kokoro-af_heart");
+    expect(q.get("text")).toContain("Sprout");
+
+    fireEvent.change(box, { target: { value: "kokoro-am_puck" } });
+    expect(
+      await screen.findByText("Sprout speaks in Puck from its next line on Pixel 6a."),
+    ).toBeTruthy();
+    expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({ voice: "kokoro-am_puck" });
+    expect(box.value).toBe("kokoro-am_puck");
   });
 
   it("renames, duplicates and exports from Manage", async () => {

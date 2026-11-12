@@ -3382,7 +3382,13 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   - *Manage*: *Face* first (owner, 2026-11-11): a radio list, *Lantern* (the default),
     *Ostrich*, *Robot*, *Pixel*, each with a one-line description, saved as it is tapped. It is
     not a soul write, so no checkpoint and no reload: the toast says it changes on its phone in
-    a few seconds (its poll), or next time it opens. Then *Rename* (the list's name; the
+    a few seconds (its poll), or next time it opens. Then *Voice* (owner, 2026-11-12): a
+    dropdown of the box's installed voices (`/api/brain/voices`, named like Settings' read-aloud
+    picker: *Puck · American M*) headed by *Box default (Heart)*, with *Play* beside it saying a
+    line in the shown voice (*Hi, I'm <name>…*) so it can be heard before it is picked. Saved as
+    it is picked and, like the face, not a soul write: the toast says it speaks in it from its
+    next line on its phone, or next time it opens. A box with no voices says the creature shows
+    its words instead. Then *Rename* (the list's name; the
     creature still calls itself by its own name until told otherwise), *Duplicate* (memories and visual memories, no checkpoints), *Export soul
     file* (its memories but not its visual memories, which stay on the box), *Import over it*
     (the file is checked first: too big or not a soul says so with *Nothing changed*; a

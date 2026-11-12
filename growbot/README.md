@@ -336,6 +336,11 @@ A persona also wears its own face (`growbot_personas.face`, lantern by default):
 the poll carry it, `growbot-box.js` hands it to `growbot-face.js` before the face loads, and a
 `gb-box-state` event with a new one changes the face where the creature stands.
 
+It speaks in its own voice the same way (`growbot_personas.voice`, migration 0263; `""` is the
+box's default): `growbot-box.js` keeps it in `__gbBoxVoice` from the state read and every poll,
+and both speech paths (the page's fish lane and the `speechSynthesis` stand-in) send it, ahead
+of any voice the phone kept, so a new pick is the next line's voice.
+
 ### Fast turns
 
 The box's model is a hybrid: llama.cpp reuses a cached prompt only from a context checkpoint,

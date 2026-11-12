@@ -37,6 +37,7 @@ import {
   where,
   words,
 } from "../growbot";
+import { BOX_DEFAULT_VOICE, voiceLabel } from "../voices";
 import { Dialog } from "./Dialog";
 import { GrowbotCheckpoints } from "./GrowbotCheckpoints";
 import { GrowbotMemoryGrid } from "./GrowbotMemories";
@@ -103,6 +104,13 @@ export function GrowbotPersonaPage({
   const [renaming, setRenaming] = useState(false);
   // The face being saved, shown picked while it is.
   const [facing, setFacing] = useState<GrowbotFace | null>(null);
+  // The voice being saved, shown picked while it is.
+  const [voicing, setVoicing] = useState<string | null>(null);
+  // The box's voices, read when Manage first opens; null until they answer.
+  const [voices, setVoices] = useState<string[] | null>(null);
+  const [voicesError, setVoicesError] = useState(false);
+  const [sampling, setSampling] = useState(false);
+  const sample = useRef<HTMLAudioElement | null>(null);
   const [restoring, setRestoring] = useState<GrowbotCheckpoint | null>(null);
   const [mems, setMems] = useState<GrowbotMemory[] | null>(null);
   const [memError, setMemError] = useState("");
@@ -153,6 +161,27 @@ export function GrowbotPersonaPage({
   useEffect(() => {
     if (ptab === "vm") void loadMems();
   }, [ptab, loadMems, persona.version, memAsk]);
+
+  useEffect(() => {
+    if (ptab !== "manage" || voices !== null) return;
+    let stale = false;
+    api.brainVoices().then(
+      (v) => {
+        if (!stale) setVoices(v);
+      },
+      () => {
+        if (stale) return;
+        setVoices([]);
+        setVoicesError(true);
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [ptab, voices]);
+
+  // A sample left playing would talk over whatever page comes next.
+  useEffect(() => () => sample.current?.pause(), []);
 
   const p = persona;
   const live = p.phone
@@ -478,6 +507,105 @@ export function GrowbotPersonaPage({
     }
   }
 
+  /** Saved as it is picked, like a face: no reload, no checkpoint. */
+  async function pickVoice(voice: string) {
+    const was = detail?.voice ?? p.voice;
+    if (voice === was || voicing !== null) return;
+    setVoicing(voice);
+    try {
+      took(await api.setGrowbotPersonaVoice(p.id, voice));
+      const name = voice ? voiceLabel(voice).split(" · ")[0] : "the box's default voice";
+      say(
+        p.phone
+          ? `${p.name} speaks in ${name} from its next line ${onPhone(p.phone, pl)}.`
+          : `${p.name} speaks in ${name} next time it opens.`,
+      );
+    } catch (e) {
+      say(`The voice didn't change — ${message(e)}`);
+    } finally {
+      setVoicing(null);
+    }
+  }
+
+  /** Says a line in `voice` on the box, so it can be heard before it is picked. */
+  function playVoice(voice: string) {
+    sample.current?.pause();
+    sample.current = null;
+    setSampling(true);
+    const line = `Hi, I'm ${p.name}. This is how I sound when I talk to you.`;
+    api.brainTts(voice || BOX_DEFAULT_VOICE, line).then(
+      (blob) => {
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        sample.current = audio;
+        const done = () => {
+          URL.revokeObjectURL(url);
+          setSampling(false);
+          if (sample.current === audio) sample.current = null;
+        };
+        audio.onended = done;
+        audio.onerror = () => {
+          done();
+          say("The sample didn't play.");
+        };
+        audio.play().catch(() => {
+          done();
+          say("The sample didn't play.");
+        });
+      },
+      (e: unknown) => {
+        setSampling(false);
+        say(`The box didn't say the sample — ${message(e)}`);
+      },
+    );
+  }
+
+  function voicePicker() {
+    const current = voicing ?? detail?.voice ?? p.voice;
+    const listed = voices ?? [];
+    return (
+      <div className="gb-voice">
+        <label className="gb-field" htmlFor={`gb-voice-${p.id}`}>
+          Voice
+        </label>
+        <div className="gb-voice-row">
+          <select
+            id={`gb-voice-${p.id}`}
+            value={current}
+            disabled={voices === null || voicing !== null}
+            onChange={(e) => void pickVoice(e.target.value)}
+          >
+            <option value="">Box default ({voiceLabel(BOX_DEFAULT_VOICE).split(" · ")[0]})</option>
+            {/* Its saved voice stays shown when the box no longer lists it. */}
+            {current && !listed.includes(current) && (
+              <option value={current}>{voiceLabel(current)}</option>
+            )}
+            {listed.map((v) => (
+              <option key={v} value={v}>
+                {voiceLabel(v)}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="gb-btn"
+            disabled={sampling || voices === null || listed.length === 0}
+            onClick={() => playVoice(current)}
+          >
+            {sampling ? "Playing…" : "Play"}
+          </button>
+        </div>
+        {voices !== null && listed.length === 0 && (
+          <p className="gb-voice-note">
+            {voicesError
+              ? "Couldn't reach the box's voices. Try again in a moment."
+              : "The box has no voices installed, so the creature shows its words instead of speaking them."}
+          </p>
+        )}
+      </div>
+    );
+  }
+
   function manageTab() {
     const current = facing ?? detail?.face ?? p.face;
     return (
@@ -500,6 +628,7 @@ export function GrowbotPersonaPage({
             </label>
           ))}
         </fieldset>
+        {voicePicker()}
         <div className="gb-acts two first">
           <button type="button" className="gb-btn" onClick={() => setRenaming(true)}>
             Rename
