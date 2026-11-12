@@ -12,15 +12,15 @@ sent the row (build hash, deploy, mode), which is what joins a row to the code t
 
 Kept a week, pruned by the writer (`jbrain.growbot.journal`). Owner-only RLS like 0260's.
 
-Revision ID: 0261
-Revises: 0260
+Revision ID: 0262
+Revises: 0261
 Create Date: 2026-11-12
 """
 
 from alembic import op
 
-revision = "0261"
-down_revision = "0260"
+revision = "0262"
+down_revision = "0261"
 branch_labels = None
 depends_on = None
 

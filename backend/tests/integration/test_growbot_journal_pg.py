@@ -1,4 +1,4 @@
-"""Migration 0261 against real Postgres: the GrowBot diary keeps each row once, reads a window
+"""Migration 0262 against real Postgres: the GrowBot diary keeps each row once, reads a window
 oldest first a page at a time, prunes what is past its week, and is owner-only; and the call
 log's paged read (the brain log's) walks its window the same way.
 

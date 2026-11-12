@@ -3884,7 +3884,59 @@ export interface GrowbotRobot {
   revoked_at: string | null;
   last_seen_at: string | null;
   connected: boolean;
+  /** Its rider's creature page is open and takes the Body tab's moves (absent: an older box). */
+  creature?: boolean;
 }
+
+/** What the Body tab can ask the creature wearing a robot to do: walks and spins run the
+ *  creature's own policies on its phone's motion sensors, gestures are its named keyframes. */
+export type GrowbotMove =
+  | "forward"
+  | "back"
+  | "spin_left"
+  | "spin_right"
+  | "wiggle"
+  | "bow"
+  | "sway"
+  | "stop";
+
+/** The creature's answer: whether it started the move, and if not, why in its own words. */
+export interface GrowbotMoveResult {
+  ok: boolean;
+  state: string;
+  why: string;
+}
+
+/** A robot's leg calibration, upstream's `gb_walk_cal` field for field: by-eye trims (°), the
+ *  left/right swap, each leg's and the IMU's signs, and the walk gain. Kept on the box per
+ *  robot; the creature copies it in. */
+export interface GrowbotCal {
+  L_OFF: number;
+  R_OFF: number;
+  SWAP: 0 | 1;
+  L_SIGN: -1 | 1;
+  R_SIGN: -1 | 1;
+  IMU_SIGN: [-1 | 1, -1 | 1, -1 | 1];
+  gain: number;
+}
+
+/** `saved` false: nothing set from here, so each phone still uses what it holds. */
+export interface GrowbotCalOut {
+  cal: GrowbotCal;
+  saved: boolean;
+}
+
+/** One keyframe in the robot's own left/right (the box applies a saved swap). */
+export interface GrowbotStep {
+  l: number;
+  r: number;
+  ms: number;
+}
+
+export type GrowbotAct =
+  | { kind: "act"; steps: GrowbotStep[] }
+  | { kind: "wiggle" }
+  | { kind: "stop" };
 
 export interface GrowbotStatus {
   service: "up" | "down";
@@ -8158,6 +8210,35 @@ export const api = {
       method: "POST",
     });
     return (await response.json()) as GrowbotRobot;
+  },
+
+  /** One move for the creature wearing `code`; `secs` (1-15, 0 for its own pick) for a walk
+   *  or spin. Refused with words when nobody drives it or its page is not on screen. */
+  async moveGrowbotRobot(code: string, move: GrowbotMove, secs = 0): Promise<GrowbotMoveResult> {
+    const response = await request(
+      `/api/growbot/robots/${encodeURIComponent(code)}/move`,
+      jsonInit("POST", { move, secs }),
+    );
+    return (await response.json()) as GrowbotMoveResult;
+  },
+
+  async growbotCal(code: string): Promise<GrowbotCalOut> {
+    const response = await request(`/api/growbot/robots/${encodeURIComponent(code)}/cal`);
+    return (await response.json()) as GrowbotCalOut;
+  },
+
+  /** Saves the keys given, over those saved before; the rest stay each phone's own. */
+  async saveGrowbotCal(code: string, cal: Partial<GrowbotCal>): Promise<GrowbotCalOut> {
+    const response = await request(
+      `/api/growbot/robots/${encodeURIComponent(code)}/cal`,
+      jsonInit("PUT", cal),
+    );
+    return (await response.json()) as GrowbotCalOut;
+  },
+
+  /** Moves the legs now, straight to the chip (409 when the robot is not on the relay). */
+  async growbotAct(code: string, move: GrowbotAct): Promise<void> {
+    await request(`/api/growbot/robots/${encodeURIComponent(code)}/act`, jsonInit("POST", move));
   },
 
   /** Ends every phone's GrowBot session (a lost phone, say); each opens again from here. */

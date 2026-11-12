@@ -74,6 +74,9 @@ class _Fake(BaseHTTPRequestHandler):
     body_status = 200
     # The soul routes' answer: (status, body) per path, or the default below.
     soul: dict[str, tuple[int, dict[str, Any]]] = {}
+    # Each robot's saved calibration (None: never saved), and the status the api answers.
+    cals: dict[str, dict[str, Any] | None] = {}
+    cal_status = 200
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         return None
@@ -117,6 +120,12 @@ class _Fake(BaseHTTPRequestHandler):
                 return
             persona, phone = _Fake.riders.get(path.rsplit("/", 1)[1], (None, None))
             self._reply(200, json.dumps({"persona": persona, "phone": phone}).encode())
+        elif path.startswith("/internal/growbot/robots/") and path.endswith("/cal"):
+            if not authed_get(self) or _Fake.cal_status != 200:
+                self._reply(_Fake.cal_status if authed_get(self) else 401, b"{}")
+                return
+            code = path.split("/")[4]
+            self._reply(200, json.dumps({"cal": _Fake.cals.get(code)}).encode())
         elif path == "/tts":
             if _Fake.tts_status != 200:
                 self._reply(_Fake.tts_status, b"down", "text/plain")
@@ -285,6 +294,8 @@ def fake() -> Iterator[str]:
     _Fake.riders = {}
     _Fake.body_status = 200
     _Fake.soul = {}
+    _Fake.cals = {}
+    _Fake.cal_status = 200
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Fake)
     threading.Thread(target=server.serve_forever, args=(0.02,), daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
@@ -2188,6 +2199,136 @@ def test_the_creature_page_on_the_side_channel_is_no_robot(run: _Running) -> Non
     page.shut()
 
 
+def test_the_robot_list_says_whether_its_creature_listens(run: _Running) -> None:
+    phone = _phone(run)
+    assert phone.message() == {"t": "status", "awake": 0}
+    chip = _chip(run)
+    assert phone.message() == {"t": "status", "awake": 1}
+    status, body = _internal(run, "GET", "/internal/robots")
+    assert status == 200 and body["robots"][0]["creature"] is False
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    status, body = _internal(run, "GET", "/internal/robots")
+    assert [(r["code"], r["creature"]) for r in body["robots"]] == [("gb-abc123", True)]
+    page.shut()
+    chip.shut()
+    phone.shut()
+
+
+def _move(run: _Running, body: object) -> tuple[int, Any]:
+    return _internal(run, "POST", "/internal/robots/move", json.dumps(body).encode())
+
+
+def _answering(page: _Ws, reply: dict[str, Any]) -> threading.Thread:
+    """The creature page: takes one box_move and answers it with `reply` under its rid."""
+
+    def answer() -> None:
+        msg = page.message()
+        assert msg["t"] == "box_move"
+        page.text({"t": "box_ack", "rid": msg["rid"], **reply})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    return t
+
+
+def test_a_move_reaches_the_creature_and_brings_back_its_answer(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    seen: list[dict[str, Any]] = []
+
+    def answer() -> None:
+        msg = page.message()
+        seen.append(msg)
+        page.text({"t": "box_ack", "rid": msg["rid"], "ok": True, "state": "started"})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    got = _move(run, {"code": "gb-abc123", "move": "forward", "secs": 4})
+    t.join(5)
+    assert got == (200, {"ok": True, "state": "started", "why": ""})
+    assert seen[0]["move"] == "forward" and seen[0]["secs"] == 4
+    assert isinstance(seen[0]["rid"], str) and seen[0]["rid"]
+    page.shut()
+
+
+def test_a_refused_move_carries_the_creatures_words(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    why = "no orientation readings from this phone" + "!" * 300
+    t = _answering(page, {"ok": "yes", "state": "blocked", "why": why})
+    status, body = _move(run, {"code": "gb-abc123", "move": "spin_left"})
+    t.join(5)
+    # Only a literal true is ok, and its words are capped.
+    assert status == 200 and body["ok"] is False and body["state"] == "blocked"
+    assert body["why"].startswith("no orientation") and len(body["why"]) == 220
+    page.shut()
+
+
+def test_a_move_with_no_creature_listening_is_409(run: _Running) -> None:
+    chip = _chip(run)
+    assert _move(run, {"code": "gb-abc123", "move": "stop"}) == (409, {"error": "no_creature"})
+    chip.shut()
+
+
+def test_a_creature_that_never_answers_is_504(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "MOVE_ACK_S", 0.3)
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    assert _move(run, {"code": "gb-abc123", "move": "wiggle"}) == (504, {"error": "no_answer"})
+    assert page.message()["t"] == "box_move"
+    page.shut()
+
+
+def test_a_late_ack_after_the_wait_reaches_no_one(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "MOVE_ACK_S", 0.3)
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    agent = _phone(run, "/d/gb-abc123-agent")
+    agent.text({"t": "attach"})
+    assert agent.message() == {"t": "status", "awake": 1}
+    assert page.message() == {"t": "attach"}
+    assert _move(run, {"code": "gb-abc123", "move": "bow"})[0] == 504
+    msg = page.message()
+    page.text({"t": "box_ack", "rid": msg["rid"], "ok": True})
+    # With nothing waiting it is the page's frame like any other, bridged to its agents.
+    assert agent.message()["t"] == "box_ack"
+    agent.shut()
+    page.shut()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"code": "../x", "move": "stop"},
+        {"move": "stop"},
+        {"code": "gb-abc123", "move": "dance"},
+        {"code": "gb-abc123", "move": 3},
+        {"code": "gb-abc123", "move": "forward", "secs": 0.5},
+        {"code": "gb-abc123", "move": "forward", "secs": 16},
+        {"code": "gb-abc123", "move": "forward", "secs": True},
+        {"code": "gb-abc123", "move": "forward", "secs": "4"},
+        [],
+    ],
+)
+def test_a_bad_move_is_400(run: _Running, body: object) -> None:
+    assert _move(run, body)[0] == 400
+
+
+def test_a_move_is_post_only_and_needs_the_token(run: _Running) -> None:
+    assert _internal(run, "GET", "/internal/robots/move")[0] == 405
+    body = b'{"code":"gb-abc123","move":"stop"}'
+    assert _internal(run, "POST", "/internal/robots/move", body, token="wrong")[0] == 401
+
+
 def test_dropping_a_robot_closes_its_socket(run: _Running) -> None:
     phone = _phone(run)
     assert phone.message() == {"t": "status", "awake": 0}
@@ -2226,6 +2367,129 @@ def test_no_token_on_disk_believes_no_caller(run: _Running) -> None:
 def test_an_unknown_internal_route_is_404(run: _Running) -> None:
     assert _internal(run, "GET", "/internal/nope")[0] == 404
     assert _internal(run, "POST", "/internal/robots")[0] == 404
+
+
+def _act(run: _Running, frame: object, code: str = "gb-abc123") -> tuple[int, Any]:
+    body = json.dumps({"code": code, "frame": frame}).encode()
+    return _internal(run, "POST", "/internal/robots/act", body)
+
+
+def test_a_pwa_move_goes_straight_to_the_chip(run: _Running) -> None:
+    steps = [{"l": 95, "r": 85, "ms": 300}]
+    # No chip on the relay: nothing is sent, and the api says so to the PWA.
+    assert _act(run, {"t": "act", "steps": steps}) == (200, {"sent": False})
+    phone = _phone(run)
+    assert phone.message() == {"t": "status", "awake": 0}
+    chip = _chip(run)
+    # Awake once the api has verified its key: only then is it the code's chip.
+    assert phone.message() == {"t": "status", "awake": 1}
+    assert _act(run, {"t": "act", "steps": steps, "extra": "dropped"}) == (200, {"sent": True})
+    got = chip.message()
+    assert got["rid"] >= 1_500_000_000
+    assert {k: v for k, v in got.items() if k != "rid"} == {
+        "t": "act",
+        "steps": steps,
+        "mode": "replace",
+    }
+    assert _act(run, {"t": "routine", "name": "wiggle"}) == (200, {"sent": True})
+    assert chip.message()["name"] == "wiggle"
+    assert _act(run, {"t": "stop"}) == (200, {"sent": True})
+    stop = chip.message()
+    assert stop["t"] == "stop" and stop["rid"] > got["rid"]
+    chip.shut()
+    phone.shut()
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        None,
+        [],
+        {"t": "pose", "lr": "90,90"},
+        {"t": "routine", "name": "dance"},
+        {"t": "act", "steps": []},
+        {"t": "act", "steps": [{"l": 90, "r": 90, "ms": 300}] * 13},
+        {"t": "act", "steps": [{"l": 181, "r": 90, "ms": 300}]},
+        {"t": "act", "steps": [{"l": 90, "r": -1, "ms": 300}]},
+        {"t": "act", "steps": [{"l": 90, "r": 90, "ms": 10}]},
+        {"t": "act", "steps": [{"l": 90, "r": 90, "ms": 9000}]},
+        {"t": "act", "steps": [{"l": 90.5, "r": 90, "ms": 300}]},
+        {"t": "act", "steps": [{"l": True, "r": 90, "ms": 300}]},
+        {"t": "act", "steps": [{"l": 90, "r": 90}]},
+        {"t": "act", "steps": ["x"]},
+    ],
+)
+def test_a_pwa_move_is_held_to_the_chips_safe_shape(run: _Running, frame: object) -> None:
+    assert _act(run, frame)[0] == 400
+
+
+def test_a_pwa_move_needs_a_real_code_and_the_token(run: _Running) -> None:
+    assert _act(run, {"t": "stop"}, code="../x")[0] == 400
+    body = json.dumps({"code": "gb-abc123", "frame": {"t": "stop"}}).encode()
+    assert _internal(run, "POST", "/internal/robots/act", body, token="wrong")[0] == 401
+    assert run.request("POST", "/internal/robots/act", body).status == 401
+
+
+def _cal_get(run: _Running, query: str, cookie: str | None = None) -> tuple[int, Any]:
+    headers = {"Cookie": cookie} if cookie else None
+    resp = run.request("GET", "/api/box/cal" + query, headers=headers)
+    data = resp.read()
+    assert resp.getheader("Cache-Control") == "no-store"
+    return resp.status, (json.loads(data) if data else None)
+
+
+def test_the_creature_reads_its_robots_calibration_from_the_box(run: _Running) -> None:
+    _Fake.cals = {"gb-abc123": {"L_OFF": 4, "R_OFF": -3, "SWAP": 1}}
+    assert _cal_get(run, "?id=gb-abc123") == (200, {"cal": {"L_OFF": 4, "R_OFF": -3, "SWAP": 1}})
+    reads = [r for r in _Fake.seen if r["path"].endswith("/cal")]
+    assert reads[0]["path"] == "/internal/growbot/robots/gb-abc123/cal"
+    assert reads[0]["auth"] == f"Bearer {_TOKEN}"
+
+
+def test_a_never_saved_or_unreadable_calibration_is_null(run: _Running) -> None:
+    # Null, so the phone keeps its own.
+    assert _cal_get(run, "?id=gb-abc123") == (200, {"cal": None})
+    _Fake.cals = {"gb-abc123": {"L_OFF": 4}}
+    _Fake.cal_status = 503
+    run.app._cals.clear()
+    assert _cal_get(run, "?id=gb-abc123") == (200, {"cal": None})
+
+
+def test_a_phone_reads_only_the_calibration_of_the_robot_it_drives(run: _Running) -> None:
+    # gb_walk_cal is one key per phone: a link naming another robot must not leave that
+    # robot's trims on this one, so the api is never even asked.
+    _Fake.cals = {"gb-other": {"L_OFF": 9}, "gb-worn": {"R_OFF": 2}}
+    assert _cal_get(run, "?id=gb-other") == (200, {"cal": None})
+    assert not [r for r in _Fake.seen if r["path"].endswith("/cal")]
+    # A persona's phone reads the robot its persona wears now, whatever its ticket named.
+    _Fake.riders = {"gb-worn": (_PERSONA, _PHONE)}
+    cookie = _persona_cookie(run, robot="")
+    assert _cal_get(run, "?id=gb-worn", cookie) == (200, {"cal": {"R_OFF": 2}})
+    assert _cal_get(run, "?id=gb-other", cookie) == (200, {"cal": None})
+    other_phone = _persona_cookie(run, robot="", phone="phone-" + "b" * 20)
+    assert _cal_get(run, "?id=gb-worn", other_phone) == (200, {"cal": None})
+    # Asked once a while, not at every poll.
+    for _ in range(3):
+        _cal_get(run, "?id=gb-worn", cookie)
+    assert len([r for r in _Fake.seen if r["path"] == "/internal/growbot/body/gb-worn"]) == 2
+
+
+def test_the_calibration_read_is_cached_briefly(run: _Running) -> None:
+    _Fake.cals = {"gb-abc123": {"L_OFF": 1}}
+    for _ in range(3):
+        assert _cal_get(run, "?id=gb-abc123")[1] == {"cal": {"L_OFF": 1}}
+    assert len([r for r in _Fake.seen if r["path"].endswith("/cal")]) == 1
+
+
+def test_the_calibration_read_wants_a_code_a_get_and_a_session(run: _Running) -> None:
+    assert _cal_get(run, "?id=../x")[0] == 400
+    assert _cal_get(run, "")[0] == 400
+    resp = run.request("POST", "/api/box/cal?id=gb-abc123", b"{}")
+    resp.read()
+    assert resp.status == 405
+    resp = run.request("GET", "/api/box/cal?id=gb-abc123", cookie=False)
+    resp.read()
+    assert resp.status == 401
 
 
 def test_handle_checks_the_bearer_too(run: _Running, gb: types.ModuleType) -> None:
@@ -2803,3 +3067,7 @@ def test_a_memory_bigger_than_three_views_is_refused_before_its_upload(
     assert out.startswith(b"HTTP/1.1 413"), out[:80]
     req = gb.Request("POST", "/api/box/memories", "/api/box/memories", {}, "HTTP/1.1", [])
     assert gb.body_limit(req) == gb.MAX_MEMORY_BODY >= 3 * 800_000
+
+
+def test_a_deeply_nested_frame_is_no_message(gb: types.ModuleType) -> None:
+    assert gb._parse(b"[" * 100_000 + b"]" * 100_000) is None

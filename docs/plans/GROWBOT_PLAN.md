@@ -194,6 +194,13 @@ change made on one phone is invisible everywhere else.
   kind each setting is.
 - The model list the PWA offers is the box's catalog filtered to installed models, with
   vision-capable ones marked.
+- **The leg calibration landed first, and simpler** (owner, 2026-11-12: *"we also need to be
+  able to trim the legs … anything they could do in the original application"*). Upstream
+  reads `gb_walk_cal` at every move, so it needs no queue, report or reload: the box is the
+  only writer (`app.growbot_robots.cal`, migration 0261, set from the Body tab's Legs pane,
+  `api/growbot_body.py`) and `growbot-box.js` copies it into each page, the box winning key by
+  key. The pane's check moves go chip-direct (`POST /internal/robots/act`). See
+  growbot/README.md "Leg calibration".
 
 ### 2c. The creature lives on the box, as profiles the owner can switch
 
@@ -316,7 +323,7 @@ goals and actions to `/api/journal` every 8 s, human speech already hashed by `r
 the sidecar now forwards each snapshot's rows to `POST /internal/growbot/journal` on the call
 log's worker (its soul peek and join key stay behind) and answers `{"ok":true}`; a watch-id
 registration is still upstream's cloud link and is kept nowhere. `app.growbot_journal`
-(migration 0261, owner-only RLS, kept a week) keeps each row once, keyed by diary id, row
+(migration 0262, owner-only RLS, kept a week) keeps each row once, keyed by diary id, row
 time and a hash of the row, since every snapshot resends rows it sent before. The PWA's
 Body tab *Share a brain log…* (DESIGN.md "GrowBot — the brain log") posts to `POST
 /api/growbot/brain-log` and gets `growbot-brain-log-<stamp>-<N>h.zip`: `calls.jsonl` (every
@@ -445,7 +452,12 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
     Fish*, the hand-over banners, *On another phone* with a persona and the body, and the
     persona page with its tabs (soul and editor, checkpoints, manage). "This phone" is learned
     from a launch here that lands (the creature's phone id is another origin's), and the
-    launcher tile says who wears the body.
+    launcher tile says who wears the body. Since 2026-11-12 the Body tab also moves the robot
+    (owner: *"if the body is turned on … call the policies directly to have it try and do
+    movements from my pwa commands"*): a remote laid out like upstream's Policy Remote
+    (`tester/policy.html`) sends each move to the creature on the rider's phone over the
+    side channel, since the policies run on that phone's motion sensors (README "Moves from
+    JBrain").
   - **G4d — visual memories.** ✅ Migration 0258 (`growbot_memories`, owner-only under RLS
     with its isolation test); the pictures in the blob store's own `growbot-memories`
     namespace, deleted only once no memory or checkpoint names them. The phone syncs record by
@@ -456,7 +468,7 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
     *Memories* tab is the grid with an armed delete and a viewer.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic. Its store
-  landed early with the brain log (§2 "Brain log", migration 0261); reading it in the PWA and
+  landed early with the brain log (§2 "Brain log", migration 0262); reading it in the PWA and
   the note remain.
 
 ## 5. What only the owner can do

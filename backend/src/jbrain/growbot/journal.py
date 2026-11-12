@@ -1,4 +1,4 @@
-"""The GrowBot diary (migration 0261): the creature's own brain log, rows kept once.
+"""The GrowBot diary (migration 0262): the creature's own brain log, rows kept once.
 
 Upstream's page posts a snapshot of its rolling diary every few seconds, so most of each post
 is rows the box already has; a row is keyed by the page's diary id, its own timestamp and a
