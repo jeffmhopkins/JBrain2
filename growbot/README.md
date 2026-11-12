@@ -457,7 +457,9 @@ the soul download, *move him to a new phone*, the cloud watch link and the cloud
 (whose delete erased nothing here). What those rooms left on a phone (`gb_brain`,
 `gb_free_pick`, `gb_effort`, `pb_byok`, `pb_llm_*`, `pb_energy_out`, `pb2_erase`,
 `gb_nx_watch`) is dropped by `growbot-box.js` before the page reads it, so no model pick, key or
-custom endpoint steers a box creature.
+custom endpoint steers a box creature. The cloud notes card was also the brain log's only
+switch, so an old opt-out (`gb_next_log` / `pb2_journal` "0") is lifted too: the brain log goes
+to the box and is always kept.
 
 Upstream sets the spoken line at 11px and the brain panel at 11-12.5px; `growbot-box.js` raises
 them to phone sizes. A phone in desktop-site mode (Safari's *Request Desktop Website*, Chrome's

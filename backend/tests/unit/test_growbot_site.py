@@ -1196,5 +1196,6 @@ def test_the_box_creature_keeps_no_cloud_rooms_or_their_leftovers() -> None:
     assert vm.count("window.__gbBox?") == 2 and "Saved on the box for this creature." in vm
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "#bpmDownloadSoul,#bpmXfer,#bpmXferBox,#bpmWatch,#bpData{display:none!important}" in shim
+    assert '["gb_next_log", "pb2_journal"].forEach' in shim
     for key in ("gb_brain", "gb_effort", "pb_byok", "pb_llm_url", "pb_llm_key", "pb_energy_out"):
         assert f'"{key}"' in shim[shim.index("window.__gbBox = true;") :]

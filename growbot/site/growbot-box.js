@@ -1174,6 +1174,11 @@
     ["gb_brain", "gb_free_pick", "gb_effort", "pb_byok", "pb_llm_url", "pb_llm_model",
       "pb_llm_key", "pb_llm_vision", "pb_llm_json", "pb_energy_out", "pb2_erase",
       "gb_nx_watch"].forEach(function (k) { window.localStorage.removeItem(k); });
+    // The brain log goes to the box, not the cloud, and its only switch was the cloud notes
+    // card hidden below: an old opt-out would keep it off for good, so it is lifted.
+    ["gb_next_log", "pb2_journal"].forEach(function (k) {
+      if (window.localStorage.getItem(k) === "0") window.localStorage.removeItem(k);
+    });
   } catch (e) {}
   var style = document.createElement("style");
   function scale() {
