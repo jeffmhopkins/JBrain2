@@ -291,6 +291,47 @@ def test_the_creature_can_recolour_itself_like_the_sky() -> None:
     assert "localStorage.gb_face_color" in face
 
 
+def test_the_creature_switches_cameras_for_its_person_or_the_owner() -> None:
+    """The eye's lens follows an owner edit from the box and a reply's `eye` on a turn that
+    answers its person; an autonomous beat, a dream, or a lens it already has changes nothing."""
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert prompts.index('\'"eye":"OMIT almost always') < prompts.index('\'"coat":"OMIT usually')
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        'if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back"))'
+        ' gbEyeTo(o.eye==="back"?"environment":"user","self");'
+    ) in page
+    start = page.index("function gbEyeTo(to,by){")
+    code = page[start : page.index("function flipEye(target){", start)]
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    harness = (
+        "var camFacing='user', flips=[], logs=[], label={textContent:''}, h={};"
+        "var window={addEventListener:function(n,f){ h[n]=f; }};"
+        "function $(id){ return id==='bpmEye'?label:null; }"
+        "function logEv(n,d){ logs.push([n,d]); }"
+        "function flipEye(t){ flips.push(t); camFacing=t; }\n"
+        + code
+        + "h['gb-box-prefs']({detail:{changed:{gb_eye:'environment'}}});"
+        "h['gb-box-prefs']({detail:{changed:{gb_eye:'environment'}}});"
+        "h['gb-box-prefs']({detail:{changed:{gb_face:'x'}}});"
+        "var mid=label.textContent; h['gb-box-prefs']({detail:{changed:{gb_eye:null}}});"
+        "var bad=gbEyeTo('sideways','self');"
+        "console.log(JSON.stringify({flips:flips,logs:logs,mid:mid,end:label.textContent,bad:bad}));"
+    )
+    out = subprocess.run([node, "-e", harness], capture_output=True, text=True, check=True)
+    got = json.loads(out.stdout)
+    assert got["flips"] == ["environment", "user"]
+    assert got["logs"] == [
+        ["eye_set", {"to": "environment", "by": "owner"}],
+        ["eye_set", {"to": "user", "by": "owner"}],
+    ]
+    assert got["mid"] == "👁 eye: back"
+    assert got["end"] == "👁 eye: front (screen side)"
+    assert got["bad"] is False
+
+
 def test_mespeak_is_not_shipped_and_kokoro_is_the_only_engine() -> None:
     creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "/v2/mespeak.js" not in creature
@@ -576,7 +617,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     assert "sys+=" not in page[
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
-    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang"' in page
+    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"' in page
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
 

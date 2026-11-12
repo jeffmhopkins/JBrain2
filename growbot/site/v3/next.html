@@ -182,7 +182,7 @@
 </div>
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
-<script src="/v3/prompts.js?v=1008-motion-box-lang" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -5834,6 +5834,8 @@ var _eyeFreezeN=0,_eyeHealN=0,_eyeHealthyN=0,_eyeHealUntil=0,_eyeStaleLogged=fal
 var camFacing=(function(){ try{ return localStorage.gb_eye==="environment"?"environment":"user"; }catch(e){ return "user"; } })();   /* 0816 EYE CHOICE (Brit GO via manager; origin two testers "seeing everything", Brit committed publicly). SUPERSEDES the 0807 screen-forward-only ruling — but keeps its lesson: the choice is the HUMAN's, made in the brain tab, persisted, DEFAULT FRONT; the autonomous look verb stays dead (0803: "camera changing constantly, bot get confused"). One eye at a time; both-at-once is step two, gated on back-eye usage telemetry. The back camera must never become load-bearing: hardware is designing bodies with it covered (Brit 0816). */
 /* EYE FLIP (tester 0703: "it used the camera pointing at me, no way to use the other one").
    The LLM decides via the `look` output verb; the person can override with the 🔄 button. */
+function gbEyeTo(to,by){ if((to!=="user"&&to!=="environment")||to===camFacing) return false; flipEye(to); try{ var _be=$("bpmEye"); if(_be) _be.textContent="👁 eye: "+(camFacing==="user"?"front (screen side)":"back"); }catch(e){} try{ logEv("eye_set",{to:camFacing,by:by}); }catch(e){} return true; }
+window.addEventListener("gb-box-prefs",function(e){ var c=e&&e.detail&&e.detail.changed; if(c&&Object.prototype.hasOwnProperty.call(c,"gb_eye")) gbEyeTo(c.gb_eye==="environment"?"environment":"user","owner"); });
 function flipEye(target){ var next=target||(camFacing==="user"?"environment":"user");
   if(next===camFacing&&camOn) return;
   camFacing=next; try{ localStorage.gb_eye=camFacing; }catch(e){} logEv("eye_flip",{to:camFacing,live:camOn?1:0});   /* 0816 K3 F2: live:0 = a preference set while the eye was OFF — the both-at-once gate must read think.eye==="b" (frames actually built from the rear lens), never raw eye_flip counts, which now include settings-only acts */
@@ -8620,7 +8622,7 @@ function think(event,kind,extra){
     var _recoverySaid=typeof _recoverySpeechTurn!=="undefined"&&_recoverySpeechTurn,_recoveryOriginalSay=said;if(_recoverySaid)said="";
     var phoneDir=(MODE==="phone"&&o.walk&&typeof o.walk==="object"&&o.walk.dir)?String(o.walk.dir).toLowerCase():"";   // phone: a spoken movement instruction
     if(!paused){                                                                          // if paused mid-thought, don't talk/move/overwrite the caption — just keep the memory
-      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()});                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
+      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()}); if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back")) gbEyeTo(o.eye==="back"?"environment":"user","self");                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
       if(typeof _expressionPendingCancel==="function")_expressionPendingCancel();
       if(typeof _expressionPair==="function")_expressionPair(o);
       if(typeof _expressionBench!=="undefined"&&_expressionBench&&o.sound&&typeof o.sound==="object"&&!(typeof _soundAction==="function"&&_soundAction(o.sound))){o.sound="none";try{logEv("expression_sound_refused",{why:"invalid_contour"});}catch(e){}}

@@ -156,9 +156,15 @@ The owner (2026-11-10) did not like upstream's face and chose the panels' ostric
 mocks (`docs/mocks/growbot-face/`; binding spec in `docs/reference/DESIGN.md` "GrowBot — the
 creature's face"). `patches/growbot-face.js` draws it at full resolution over upstream's pixel
 sky from the same state upstream drew its own eyes from, so the brain still sets only
-`emotion`; the one new brain verb is `coat`, which recolours it. Since 2026-11-11 the face is
+`emotion`; the first new brain verb is `coat`, which recolours it. Since 2026-11-11 the face is
 each persona's own (migration 0259, `growbot_personas.face`), lantern by default (owner): picked
 on the persona's *Manage* tab, read by the phone with the soul and changed at its next poll.
+
+The second brain verb is `eye` (owner, 2026-11-12: switch between the front and back camera
+when the phone is off the body): `front` or `back`, heeded only on a turn that answers something
+the person said, since upstream retired a free `look` verb after the model flipped lenses
+constantly. The lens is upstream's `gb_eye` key, which the persona's settings record (§2b) keeps
+on the box; an owner change reaching the page as `gb-box-prefs` flips the camera where it stands.
 
 ### 2b. Settings live on the box, and the PWA owns them
 
