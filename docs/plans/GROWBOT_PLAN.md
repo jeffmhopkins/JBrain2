@@ -159,6 +159,8 @@ sky from the same state upstream drew its own eyes from, so the brain still sets
 `emotion`; the first new brain verb is `coat`, which recolours it. Since 2026-11-11 the face is
 each persona's own (migration 0259, `growbot_personas.face`), lantern by default (owner): picked
 on the persona's *Manage* tab, read by the phone with the soul and changed at its next poll.
+The fifth face, the ember (migration 0264), is a single glowing lens for the owner's adult
+persona, Dave (owner, 2026-11-12), whose light moves with the measured loudness of its voice.
 
 The second brain verb is `eye` (owner, 2026-11-12: switch between the front and back camera
 when the phone is off the body): `front` or `back`, heeded only on a turn that answers something

@@ -115,8 +115,8 @@ class Pulled:
 
 
 PushResult = int | Literal["moved", "newer", "gone"]
-# The faces growbot-face.js draws (migration 0259's CHECK); lantern is the default.
-Face = Literal["lantern", "ostrich", "robot", "pixel"]
+# The faces growbot-face.js draws (migration 0264's CHECK); lantern is the default.
+Face = Literal["lantern", "ostrich", "robot", "ember", "pixel"]
 Away = Literal["moved", "gone"]
 # How a restore, reset or import treats the memories: keep them, clear them, or put back the
 # ones checkpoint `str` kept.

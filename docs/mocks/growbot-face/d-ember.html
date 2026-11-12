@@ -1,0 +1,304 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dave lens faces — A ember (chosen), B iris, C dial</title>
+<style>
+body{margin:0;background:#0b0c0e;color:#d8dbe0;font:14px/1.4 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;padding:16px}
+h1{font-size:20px;margin:0 0 4px}p{color:#9aa0a8;margin:0 0 14px}
+.row{display:flex;flex-wrap:wrap;gap:14px}.ph{text-align:center}
+canvas{width:260px;height:340px;border-radius:18px;border:1px solid #1d2024;display:block;touch-action:none}
+.ph div{margin-top:6px;color:#c7cbd1}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+button{background:#16191d;color:#d8dbe0;border:1px solid #2a2e34;border-radius:999px;padding:8px 14px;font:inherit;cursor:pointer}
+button.on{background:#ff3b26;border-color:#ff3b26;color:#fff}
+</style></head><body>
+<h1>Dave · three lens directions, live</h1>
+<p>Pick a state. Move your pointer over a face to be "watched"; the slider tilts the phone.</p>
+<div class="btns" id="b"></div>
+<label style="display:block;margin:0 0 14px;color:#9aa0a8">Tilt <input id="tilt" type="range" min="-30" max="30" value="0"></label>
+<div class="row" id="r"></div>
+<script>/* Dave: three single-lens faces for the adult persona. Same state the creature face gets
+   (emotion, talking + talk amplitude, listening, thinking, gaze, tilt, blink), so a chosen
+   direction drops into growbot-face.js as one more FACES entry. */
+(function () {
+  "use strict";
+  var TAU = Math.PI * 2;
+
+  /* Mood → light. Red is Dave's signature; the mood moves warmth, brightness and size rather
+     than swapping hue, so he always reads as the same lens. */
+  var MOOD = {
+    calm:    { core: [255, 40, 24],  hot: [255, 236, 196], lum: 0.85, size: 1.0,  ap: 0.62, lids: [0, 0, 0, 0] },
+    curious: { core: [255, 48, 26],  hot: [255, 240, 205], lum: 0.95, size: 1.05, ap: 0.7,  lids: [0, 0, 0, 0] },
+    happy:   { core: [255, 92, 30],  hot: [255, 246, 214], lum: 1.0,  size: 1.08, ap: 0.74, lids: [0, 0, 0.16, 0.3] },
+    alert:   { core: [255, 30, 20],  hot: [255, 255, 255], lum: 1.25, size: 0.78, ap: 0.9,  lids: [0, 0, 0, 0] },
+    sleepy:  { core: [170, 18, 10],  hot: [255, 150, 110], lum: 0.5,  size: 0.9,  ap: 0.34, lids: [0.36, 0, 0.12, 0] },
+    scared:  { core: [255, 34, 40],  hot: [255, 255, 255], lum: 1.15, size: 0.62, ap: 0.95, lids: [0, 0, 0.2, 0.05] }
+  };
+  function rgba(c, a) { return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")"; }
+  function mix(a, b, k) { return [0, 1, 2].map(function (i) { return Math.round(a[i] + (b[i] - a[i]) * k); }); }
+  function disc(c, x, y, r) { c.beginPath(); c.arc(x, y, r, 0, TAU); c.fill(); }
+
+  function sky(c, W, H, m) {
+    var g = c.createRadialGradient(W / 2, H * 0.42, 10, W / 2, H * 0.42, H * 0.75);
+    g.addColorStop(0, rgba(mix([10, 10, 14], m.core, 0.10), 1));
+    g.addColorStop(1, "#040506");
+    c.fillStyle = g;
+    c.fillRect(0, 0, W, H);
+  }
+
+  /* The bezel: brushed steel ring, a black groove, then glass. Its sheen is drawn in screen
+     space, so tilting the phone turns the lens under a fixed light. */
+  function bezel(c, R, rot) {
+    c.save();
+    c.shadowColor = "rgba(0,0,0,.8)"; c.shadowBlur = R * 0.25; c.shadowOffsetY = R * 0.06;
+    c.fillStyle = "#1b1d21"; disc(c, 0, 0, R); c.restore();
+    var g = c.createConicGradient(-Math.PI / 3 - rot, 0, 0);
+    ["#5d636b", "#c9ced4", "#7a8088", "#3a3e44", "#8d939a", "#e2e6ea", "#6b7178", "#3a3e44", "#5d636b"]
+      .forEach(function (col, i, a) { g.addColorStop(i / (a.length - 1), col); });
+    c.fillStyle = g; disc(c, 0, 0, R);
+    c.strokeStyle = "rgba(255,255,255,.05)"; c.lineWidth = 0.6;
+    for (var r = R * 0.88; r < R; r += 1.6) { c.beginPath(); c.arc(0, 0, r, 0, TAU); c.stroke(); }
+    var lip = c.createLinearGradient(0, -R, 0, R);
+    lip.addColorStop(0, "rgba(255,255,255,.25)"); lip.addColorStop(1, "rgba(0,0,0,.4)");
+    c.strokeStyle = lip; c.lineWidth = 1.5; c.beginPath(); c.arc(0, 0, R - 0.75, 0, TAU); c.stroke();
+    c.fillStyle = "#020203"; disc(c, 0, 0, R * 0.86);
+    var gr = c.createLinearGradient(0, -R, 0, R);
+    gr.addColorStop(0, "rgba(0,0,0,.9)"); gr.addColorStop(1, "rgba(255,255,255,.12)");
+    c.strokeStyle = gr; c.lineWidth = 2; c.beginPath(); c.arc(0, 0, R * 0.84, 0, TAU); c.stroke();
+  }
+
+  /* The lit core: white-hot centre through the mood colour into black glass. */
+  function core(c, x, y, r, m, lum) {
+    c.save();
+    c.globalCompositeOperation = "lighter";
+    var g = c.createRadialGradient(x, y, 0, x, y, r * 2.4);
+    g.addColorStop(0, rgba(m.hot, Math.min(1, lum)));
+    g.addColorStop(0.07, rgba(mix(m.hot, m.core, 0.5), Math.min(1, lum)));
+    g.addColorStop(0.2, rgba(m.core, Math.min(1, 0.95 * lum)));
+    g.addColorStop(0.42, rgba(mix(m.core, [0, 0, 0], 0.45), 0.8 * lum));
+    g.addColorStop(0.7, rgba(mix(m.core, [0, 0, 0], 0.8), 0.45 * lum));
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = g; disc(c, x, y, r * 2.4);
+    c.restore();
+  }
+
+  /* Lids as dark shutters inside the glass, with the existing faces' geometry: uy upper cover,
+     ua its tilt, ly lower cover, lb the cheek-raise bend that makes happy read. */
+  function lids(c, Rg, L, open, m) {
+    var uy = L[0] + (1 - open) * (1 - L[0]), ua = L[1], ly = L[2], lb = L[3], h = Rg * 2;
+    var rim = rgba(m ? m.core : [255, 40, 24], 0.5 * (m ? Math.min(1, m.lum) : 1));
+    if (uy > 0.005) {
+      var ey = -Rg + h * uy;
+      c.save(); c.rotate(ua * Math.PI / 180);
+      c.fillStyle = "#030304"; c.shadowColor = "#000"; c.shadowBlur = Rg * 0.1;
+      c.fillRect(-Rg * 1.5, -Rg * 1.5, Rg * 3, Rg * 0.5 + h * uy);
+      c.shadowBlur = 0; c.strokeStyle = rim; c.lineWidth = 1.4;
+      c.beginPath(); c.moveTo(-Rg, ey); c.lineTo(Rg, ey); c.stroke();
+      c.restore();
+    }
+    if (ly > 0.005) {
+      /* The lower lid bows UP in the middle: a cheek raised under the light reads as a smile. */
+      var edge = Rg - h * ly * 0.5, peak = Rg - h * ly - h * lb * 0.35;
+      var path = function () {
+        c.beginPath(); c.moveTo(-Rg, edge);
+        c.quadraticCurveTo(0, 2 * peak - edge, Rg, edge);
+      };
+      c.save(); c.fillStyle = "#030304"; c.shadowColor = "#000"; c.shadowBlur = Rg * 0.1;
+      path(); c.lineTo(Rg, Rg * 1.5); c.lineTo(-Rg, Rg * 1.5); c.closePath(); c.fill();
+      c.shadowBlur = 0; c.strokeStyle = rim; c.lineWidth = 1.4; path(); c.stroke();
+      c.restore();
+    }
+  }
+
+  function glassSheen(c, Rg, rot) {
+    c.save(); c.rotate(-rot);
+    var g = c.createLinearGradient(-Rg, -Rg, Rg * 0.2, Rg * 0.2);
+    g.addColorStop(0, "rgba(255,255,255,.16)"); g.addColorStop(0.5, "rgba(255,255,255,.03)"); g.addColorStop(1, "rgba(255,255,255,0)");
+    c.fillStyle = g;
+    c.beginPath(); c.ellipse(-Rg * 0.28, -Rg * 0.38, Rg * 0.62, Rg * 0.3, -0.6, 0, TAU); c.fill();
+    c.fillStyle = "rgba(255,255,255,.55)";
+    c.beginPath(); c.ellipse(-Rg * 0.44, -Rg * 0.5, Rg * 0.07, Rg * 0.035, -0.6, 0, TAU); c.fill();
+    c.fillStyle = "rgba(255,255,255,.12)";
+    c.beginPath(); c.ellipse(Rg * 0.42, Rg * 0.5, Rg * 0.12, Rg * 0.04, -0.6, 0, TAU); c.fill();
+    c.restore();
+  }
+
+  function bloom(c, R, m, k) {
+    c.save(); c.globalCompositeOperation = "lighter";
+    var g = c.createRadialGradient(0, 0, R * 0.7, 0, 0, R * (1.6 + 0.5 * k));
+    g.addColorStop(0, rgba(m.core, 0.10 * k)); g.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = g; disc(c, 0, 0, R * 2.2); c.restore();
+  }
+
+  /* ---------- A · Ember: a glass eye whose light breathes with his voice ---------- */
+  function ember(c, s, m) {
+    var R = 118, Rg = R * 0.8, rot = s.tilt * Math.PI / 180;
+    var talk = s.talking ? s.talk : 0;
+    var lum = m.lum * (0.82 + 0.45 * talk) * (s.listening ? 1.06 : 1) * (0.94 + 0.06 * Math.sin(s.t / 900));
+    c.rotate(rot);
+    bloom(c, R, m, lum * (1 + talk * 1.5));
+    bezel(c, R, rot);
+    c.save(); c.beginPath(); c.arc(0, 0, Rg, 0, TAU); c.clip();
+    var bg = c.createRadialGradient(0, 0, 0, 0, 0, Rg);
+    bg.addColorStop(0, "#160303"); bg.addColorStop(1, "#020101");
+    c.fillStyle = bg; c.fillRect(-Rg, -Rg, Rg * 2, Rg * 2);
+    c.strokeStyle = rgba(m.core, 0.10); c.lineWidth = 1;
+    [0.35, 0.55, 0.78].forEach(function (k) { c.beginPath(); c.arc(0, 0, Rg * k, 0, TAU); c.stroke(); });
+    var px = s.gaze.x * Rg * 0.26, py = s.gaze.y * Rg * 0.2;
+    var r = Rg * 0.27 * m.size * (1 + 0.28 * talk) * (s.listening ? 1.12 : 1);
+    core(c, px, py, r, m, lum);
+    /* Listening draws sound IN: rings fall toward the core. */
+    if (s.listening) {
+      for (var i = 0; i < 3; i++) {
+        var k = 1 - ((s.t / 1400 + i / 3) % 1);
+        c.strokeStyle = rgba(m.core, 0.45 * (1 - k) * k * 3);
+        c.lineWidth = 2; c.beginPath(); c.arc(px, py, r * 1.2 + (Rg - r) * k, 0, TAU); c.stroke();
+      }
+    }
+    /* Talking pushes light OUT: a ring leaves the core on each syllable. */
+    if (s.talking) {
+      var q = (s.t / 420) % 1;
+      c.strokeStyle = rgba(mix(m.core, m.hot, 0.4), 0.6 * (1 - q) * talk);
+      c.lineWidth = 3; c.beginPath(); c.arc(px, py, r * 1.1 + Rg * 0.8 * q, 0, TAU); c.stroke();
+    }
+    if (s.thinking) {
+      var a = s.t / 700;
+      c.save(); c.globalCompositeOperation = "lighter";
+      for (var j = 0; j < 14; j++) {
+        c.fillStyle = rgba(m.core, 0.5 * (1 - j / 14));
+        disc(c, px + Math.cos(a - j * 0.09) * r * 2.1, py + Math.sin(a - j * 0.09) * r * 2.1, 3.2 - j * 0.15);
+      }
+      c.restore();
+    }
+    lids(c, Rg, m.lids, s.open, m);
+    glassSheen(c, Rg, rot);
+    c.restore();
+  }
+
+  /* ---------- B · Iris: a camera aperture that opens to talk ---------- */
+  function iris(c, s, m) {
+    var R = 118, Rg = R * 0.8, rot = s.tilt * Math.PI / 180, N = 7;
+    var talk = s.talking ? s.talk : 0;
+    var lum = m.lum * (0.85 + 0.4 * talk);
+    var ap = Rg * m.ap * (s.listening ? 1.12 : 1) * (0.8 + 0.42 * talk);
+    ap = Math.min(ap, Rg * 0.96);
+    var spin = (s.listening ? s.t / 2600 : 0) + (1 - ap / Rg) * 1.4 + (s.thinking ? s.t / 900 : 0);
+    c.rotate(rot);
+    bloom(c, R, m, lum * (1 + talk));
+    bezel(c, R, rot);
+    c.save(); c.beginPath(); c.arc(0, 0, Rg, 0, TAU); c.clip();
+    c.fillStyle = "#050202"; c.fillRect(-Rg, -Rg, Rg * 2, Rg * 2);
+    var ox = s.gaze.x * Rg * 0.12, oy = s.gaze.y * Rg * 0.1;
+    core(c, ox + s.gaze.x * Rg * 0.1, oy + s.gaze.y * Rg * 0.08, Rg * 0.26 * m.size * (1 + 0.3 * talk), m, lum);
+    var V = [];
+    for (var i = 0; i < N; i++) { var a = spin + i * TAU / N; V.push([ox + Math.cos(a) * ap, oy + Math.sin(a) * ap]); }
+    for (i = 0; i < N; i++) {
+      var p0 = V[(i + N - 1) % N], p1 = V[i], p2 = V[(i + 1) % N];
+      var d1 = [p1[0] - p0[0], p1[1] - p0[1]], l1 = Math.hypot(d1[0], d1[1]);
+      var d2 = [p2[0] - p1[0], p2[1] - p1[1]], l2 = Math.hypot(d2[0], d2[1]);
+      var far1 = [p1[0] + d1[0] / l1 * Rg * 3, p1[1] + d1[1] / l1 * Rg * 3];
+      var far2 = [p2[0] + d2[0] / l2 * Rg * 3, p2[1] + d2[1] / l2 * Rg * 3];
+      var mid = Math.atan2(p1[1] + p2[1], p1[0] + p2[0]);
+      var g = c.createLinearGradient(Math.cos(mid) * ap, Math.sin(mid) * ap, Math.cos(mid) * Rg, Math.sin(mid) * Rg);
+      var lit = 0.5 + 0.5 * Math.cos(mid - rot + 2.2);
+      g.addColorStop(0, "rgb(" + (28 + 26 * lit) + "," + (30 + 26 * lit) + "," + (34 + 28 * lit) + ")");
+      g.addColorStop(1, "rgb(" + (12 + 10 * lit) + "," + (13 + 10 * lit) + "," + (15 + 10 * lit) + ")");
+      c.fillStyle = g;
+      c.beginPath(); c.moveTo(p1[0], p1[1]); c.lineTo(far1[0], far1[1]); c.lineTo(far2[0], far2[1]); c.lineTo(p2[0], p2[1]); c.closePath(); c.fill();
+      c.strokeStyle = "rgba(0,0,0,.85)"; c.lineWidth = 1.6;
+      c.beginPath(); c.moveTo(p1[0], p1[1]); c.lineTo(far1[0], far1[1]); c.stroke();
+      c.strokeStyle = rgba(m.core, 0.55 * lum); c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(p1[0], p1[1]); c.lineTo(p2[0], p2[1]); c.stroke();
+    }
+    lids(c, Rg, m.lids, s.open, m);
+    glassSheen(c, Rg, rot);
+    c.restore();
+  }
+
+  /* ---------- C · Dial: a small lens in a ring of ticks that becomes his voice ---------- */
+  function noise(i, t) {
+    return 0.5 + 0.25 * Math.sin(i * 1.7 + t / 90) + 0.25 * Math.sin(i * 0.63 - t / 53);
+  }
+  function dial(c, s, m) {
+    var R = 84, Rg = R * 0.8, rot = s.tilt * Math.PI / 180, N = 72, r0 = R * 1.24;
+    var talk = s.talking ? s.talk : 0;
+    var lum = m.lum * (0.85 + 0.3 * talk);
+    c.rotate(rot);
+    bloom(c, R * 1.3, m, lum * 0.8);
+    /* The ring carries the mood the way brows and a mouth would: lit where the face would be
+       raised, dark where it would droop. */
+    for (var i = 0; i < N; i++) {
+      var a = -Math.PI / 2 + i * TAU / N, up = -Math.sin(a), side = Math.abs(Math.cos(a));
+      var mask = 1, len = 7;
+      if (s.emo === "happy") mask = up < -0.2 ? 1 : 0.15;
+      if (s.emo === "sleepy") mask = up < -0.55 ? 0.6 : 0.08;
+      if (s.emo === "alert") { mask = 1; len = 11; }
+      if (s.emo === "calm" || s.emo === "curious") mask = 0.55;
+      var v = 0, alpha = 0.18 + 0.6 * mask;
+      if (s.talking) {
+        /* Mirrored left/right so the ring reads as one voice, not noise. */
+        var mi = Math.min(i, N - i);
+        v = talk * noise(mi, s.t) * (0.4 + 0.6 * side) * 26;
+        alpha = Math.min(1, alpha + talk * 0.6);
+      }
+      if (s.listening) {
+        var sweep = ((a - s.t / 600) % TAU + TAU) % TAU;
+        alpha = Math.max(alpha * 0.45, Math.exp(-sweep * 1.1));
+        v = s.mic * noise(Math.min(i, N - i) + 7, s.t * 1.3) * 10;
+      }
+      if (s.thinking) {
+        var lag = ((s.t / 500 - (i / N) * TAU) % TAU + TAU) % TAU;
+        alpha = Math.max(0.12, Math.exp(-lag * 1.2));
+      }
+      var r1 = r0, r2 = r0 + len + v;
+      c.strokeStyle = rgba(mix(m.core, m.hot, Math.min(0.6, v / 40)), alpha * Math.min(1, lum));
+      c.lineWidth = 3.2; c.lineCap = "round";
+      c.beginPath(); c.moveTo(Math.cos(a) * r1, Math.sin(a) * r1); c.lineTo(Math.cos(a) * r2, Math.sin(a) * r2); c.stroke();
+    }
+    bezel(c, R, rot);
+    c.save(); c.beginPath(); c.arc(0, 0, Rg, 0, TAU); c.clip();
+    c.fillStyle = "#0d0202"; c.fillRect(-Rg, -Rg, Rg * 2, Rg * 2);
+    var px = s.gaze.x * Rg * 0.26, py = s.gaze.y * Rg * 0.2;
+    core(c, px, py, Rg * 0.22 * m.size * (1 + 0.15 * talk), m, lum);
+    lids(c, Rg, m.lids, s.open, m);
+    glassSheen(c, Rg, rot);
+    c.restore();
+  }
+
+  var DIRS = { ember: ember, iris: iris, dial: dial };
+
+  /* s: { dir, emo, t, talking, talk, listening, mic, thinking, gaze:{x,y}, tilt, open } */
+  window.daveDraw = function (c, W, H, s) {
+    var m = MOOD[s.emo] || MOOD.calm;
+    sky(c, W, H, m);
+    c.save();
+    c.translate(W / 2 + s.gaze.x * 10, H * 0.43 + s.gaze.y * 8);
+    DIRS[s.dir](c, s, m);
+    c.restore();
+  };
+  window.daveSyllable = function (t) {
+    return Math.max(0, Math.sin(t / 85) * 0.6 + Math.sin(t / 37) * 0.4);
+  };
+})();
+</script>
+<script>
+var STATES={Idle:{},Listening:{emo:"curious",listening:1},Talking:{talking:1},Thinking:{emo:"curious",thinking:1},Happy:{emo:"happy"},"Happy + talking":{emo:"happy",talking:1},Alert:{emo:"alert"},Sleepy:{emo:"sleepy"},Scared:{emo:"scared"}};
+var cur="Talking",gz={x:0,y:0},tg={x:0,y:0},b=document.getElementById("b");
+Object.keys(STATES).forEach(function(k){var x=document.createElement("button");x.textContent=k;x.onclick=function(){cur=k;[].forEach.call(b.children,function(e){e.className=e===x?"on":""});};if(k===cur)x.className="on";b.appendChild(x);});
+var C=[],r=document.getElementById("r");
+[["ember","A · Ember"],["iris","B · Iris"],["dial","C · Dial"]].forEach(function(d){var w=document.createElement("div");w.className="ph";var c=document.createElement("canvas");c.width=520;c.height=680;w.appendChild(c);var l=document.createElement("div");l.textContent=d[1];w.appendChild(l);r.appendChild(w);C.push([d[0],c]);
+ c.addEventListener("pointermove",function(e){var q=c.getBoundingClientRect();tg={x:((e.clientX-q.left)/q.width-0.5)*2,y:((e.clientY-q.top)/q.height-0.43)*2};});
+ c.addEventListener("pointerleave",function(){tg={x:0,y:0};});});
+var talk=0,open=1,nextBlink=performance.now()+2500,talkPhrase=0;
+function frame(t){
+ var S=STATES[cur];
+ /* Speech in phrases with gaps, the way a TTS reply sounds; on the box this would come from an
+    AnalyserNode on the Kokoro <audio> element instead. */
+ var inPhrase=(t%2600)<2000, syl=S.talking&&inPhrase?daveSyllable(t):0;
+ talk+=(syl-talk)*0.45;
+ if(t>nextBlink){open=0;nextBlink=t+2500+Math.random()*3000;} open+=(1-open)*0.25;
+ gz.x+=(tg.x-gz.x)*0.08;gz.y+=(tg.y-gz.y)*0.08;
+ var tilt=+document.getElementById("tilt").value;
+ C.forEach(function(p){var x=p[1].getContext("2d");x.setTransform(1,0,0,1,0,0);x.scale(520/360,520/360);
+  daveDraw(x,360,471,{dir:p[0],emo:S.emo||"calm",t:t,talking:!!S.talking,talk:talk,listening:!!S.listening,mic:0.4+0.4*Math.abs(Math.sin(t/300)),thinking:!!S.thinking,gaze:{x:Math.max(-1,Math.min(1,gz.x)),y:Math.max(-1,Math.min(1,gz.y))},tilt:tilt,open:Math.max(0.05,open)});});
+ requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+</script></body></html>
