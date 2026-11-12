@@ -11914,7 +11914,7 @@ body.gbkWake #landing{padding-top:76px!important}
          relaxed legs now): never pick someone up, but still LOOK once a second, so faceAsk knows a person is
          there and can ask the body for its stand */
       var sightOnly=!tracker.owns&&(!isUpright()||!isSteady(now,1000)||!s.pose);
-      if(sightOnly)idleEye=now-lastDetectAt<1000;
+      if(sightOnly)idleEye=now-lastDetectAt<(now-lastFaceAt<5000?250:1000);
       var detGap=(typeof FT_DIAL!=="undefined"&&FT_DIAL&&_ftDial)?dialGapMs():DETECT_MIN_MS;
       if(model&&model.workerMode&&!(typeof FT_DIAL!=="undefined"&&FT_DIAL&&_ftDial))
         detGap=(typeof LOW_POWER!=="undefined"&&LOW_POWER)?100:WORKER_DETECT_MIN_MS;

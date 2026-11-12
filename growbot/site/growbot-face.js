@@ -114,8 +114,10 @@
   var cur = null, lastEmo = "", talk = 0, startle = 0, blush = 0, lastTouch = 0;
   var pup = { x: 0, y: 0 }, gaze = { x: 0, y: 0 }, lastT = 0;
   /* Where the camera last saw a face, -1..1 on the screen (growbot-eyes.js). Kept only briefly:
-     a face that left the frame lets the eyes settle back instead of staring at where it was. */
-  var seen = { x: 0, y: 0, at: 0 }, SEEN_MS = 700;
+     a face that left the frame lets the eyes settle back instead of staring at where it was.
+     Longer than the slowest feed (the leg tracker's 1 s glance with nobody in view), so a
+     steady feed never lets go between boxes. */
+  var seen = { x: 0, y: 0, at: 0 }, SEEN_MS = 1300;
 
   /* The phone's roll in the screen's plane, radians, + when its right side is down (owner,
      2026-11-12: the face should feel the phone tilt). Read from gravity in our own listener;

@@ -385,6 +385,15 @@ PATCHES: list[tuple[str, str, str, int]] = [
         "            if(window.gbEyes)window.gbEyes.boxes(boxes); if(boxes.length)lastFaceAt=now;",
         1,
     ),
+    # Not following, the tracker only glanced once a second, and that is the eyes' only feed on
+    # a paired robot (the eyes never run a second detector beside it): with someone in view it
+    # looks 4 times a second, the rate it already uses when it is searching for a face.
+    (
+        "v3/next.html",
+        "      if(sightOnly)idleEye=now-lastDetectAt<1000;",
+        "      if(sightOnly)idleEye=now-lastDetectAt<(now-lastFaceAt<5000?250:1000);",
+        1,
+    ),
     # Recolouring, as on the panels: a `coat` verb beside `sky`, read with upstream's own
     # colour words (_hueOf), and logged like the sky so the diary shows when it changed.
     (

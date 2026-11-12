@@ -203,6 +203,11 @@ def test_the_eyes_load_after_the_status_strip_and_take_the_trackers_boxes() -> N
     assert eyes == (_GROWBOT / "patches" / "growbot-eyes.js").read_text(encoding="utf-8")
     assert re.search(r"https?://", eyes) is None
     assert creature.count("if(window.gbEyes)window.gbEyes.boxes(boxes);") == 2
+    # The tracker's glance is the eyes' only feed beside it, so it is quick while someone is
+    # in view, and the face holds a look longer than the slowest glance.
+    assert "if(sightOnly)idleEye=now-lastDetectAt<(now-lastFaceAt<5000?250:1000);" in creature
+    face_js = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    assert "SEEN_MS = 1300;" in face_js
     assert 'import("/v3/face-worker-client.mjs")' in eyes
     face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
     assert "see: function (x, y) {" in face
