@@ -432,7 +432,8 @@
    - At load, before any page code reads them, the box's are written into this phone's
      localStorage and every other one of them is cleared, so a new or wiped phone comes up as the
      same creature. A persona the box has none for yet (prefs null) takes this phone's own, the
-     ones it had before personas, never another persona's.
+     ones it had before personas, never another persona's; if the owner set some before any
+     phone sent its own (`adopt`), the phone's own go under the owner's.
    - While it runs, a change to one of them (a setItem, a removeItem, or upstream's own
      `localStorage.key = v`, which no hook sees, so a check every 2 s) is sent a moment later as
      a patch of just the keys that changed, so an owner's edit to another key is never undone.
@@ -581,6 +582,17 @@
       become(over(held0, pending));
       sent = {};
       Object.keys(held0).forEach(function (k) { if (ours(k) && typeof held0[k] === "string") sent[k] = held0[k]; });
+    } else if (box && typeof box === "object" && pulled.json.adopt === true) {
+      // The owner set some before any phone sent its own: this phone's own (never another
+      // persona's) go under the owner's, and all of it becomes the persona's.
+      var under = m.persona && m.persona !== persona ? {} : (!m.persona && ownSaved()) || snap();
+      become(over(under, { set: box, drop: [] }));
+      var mineAll = snap(), sentAll = sync("POST", body({ set: mineAll, drop: [] }));
+      if (sentAll.status === 200 && sentAll.json) { sent = mineAll; version = sentAll.json.version; }
+      else {
+        sent = {};
+        Object.keys(box).forEach(function (k) { if (ours(k) && typeof box[k] === "string") sent[k] = box[k]; });
+      }
     } else if (box && typeof box === "object") {
       become(box);
       sent = snap();

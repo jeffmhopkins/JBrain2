@@ -891,8 +891,10 @@ class PhonePrefsIn(PhoneIn):
 
 class PhonePrefsOut(BaseModel):
     version: int
-    # None: no phone has sent its settings yet, so this one keeps its own and sends them.
+    # None: nobody has set any yet, so this phone keeps its own and sends them.
     prefs: dict[str, str] | None
+    # The owner set these before any phone sent its own: the phone keeps its own under them.
+    adopt: bool = False
 
 
 @internal_router.post("/prefs/pull")
@@ -904,7 +906,7 @@ async def phone_prefs(request: Request, body: PhoneIn) -> PhonePrefsOut:
     got = await _repo(request).phone_prefs(_SYSTEM_OWNER, body.persona, body.phone)
     if isinstance(got, str):
         raise _away(got)
-    return PhonePrefsOut(version=got[0], prefs=got[1])
+    return PhonePrefsOut(version=got[0], prefs=got[1], adopt=got[2])
 
 
 @internal_router.post("/prefs/push")

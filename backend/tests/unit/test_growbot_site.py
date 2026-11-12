@@ -1199,3 +1199,16 @@ def test_the_box_creature_keeps_no_cloud_rooms_or_their_leftovers() -> None:
     assert '["gb_next_log", "pb2_journal"].forEach' in shim
     for key in ("gb_brain", "gb_effort", "pb_byok", "pb_llm_url", "pb_llm_key", "pb_energy_out"):
         assert f'"{key}"' in shim[shim.index("window.__gbBox = true;") :]
+
+
+def test_the_owners_settings_set_before_any_phone_go_over_the_phones_own() -> None:
+    got = _prefs_in_node(
+        {"gb_vol": "0.8", "gb_face_color": "#ffffff"},
+        {"persona": "p1"},
+        "return method === 'GET' ? [200, {version: 2, adopt: true, prefs: {gb_eye:"
+        " 'environment', gb_vol: '0.4'}}] : [200, {version: 3}];",
+        "console.log(JSON.stringify({calls, local: local()}));",
+    )
+    mine = {"gb_vol": "0.4", "gb_face_color": "#ffffff", "gb_eye": "environment"}
+    assert {k: got["local"][k] for k in mine} == mine
+    assert got["calls"][1]["body"] == {"persona": "p1", "set": mine, "drop": []}

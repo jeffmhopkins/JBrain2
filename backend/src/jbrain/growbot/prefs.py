@@ -22,6 +22,9 @@ MAX_KEYS = 64
 # The games guide is the longest value upstream keeps outside the soul, a few KB of prose.
 VALUE_MAX = 16 * 1024
 TOTAL_MAX = 64 * 1024
+# Kept with settings the owner set before any phone sent its own: the first phone then lays its
+# own under them instead of losing them. No phone key can have this name (KEY_RE).
+OWNER_ONLY = "~owner"
 
 
 class PrefsRefused(ValueError):
@@ -67,6 +70,14 @@ def patch_from(set_: Any, drop: Any) -> Patch:
     if not all(_key_ok(k) for k in drop):
         raise PrefsRefused("not a setting's name")
     return Patch(dict(set_), list(drop))
+
+
+def for_phone(prefs: dict[str, Any] | None) -> tuple[dict[str, str] | None, bool]:
+    """What a phone is shown: the settings without the marker, and whether no phone has sent
+    its own yet (so it should keep its own under them)."""
+    if prefs is None:
+        return None, False
+    return {k: v for k, v in prefs.items() if k != OWNER_ONLY}, OWNER_ONLY in prefs
 
 
 def merged(prefs: dict[str, Any] | None, patch: Patch) -> dict[str, str]:
