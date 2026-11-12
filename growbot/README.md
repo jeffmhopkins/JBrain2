@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-11
+> **Status:** Living · **Last verified:** 2026-11-12
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -310,6 +310,21 @@ cost 10-30 s on the box and outran upstream's 8 s / 12 s transcriber leashes eve
 mic never produced text). `serve.py` sizes `audio_ctx` to a WAV clip's own length (the room
 panels' 9.5 s to 2.3 s cut), and `STT_PATCHES` drop the cloud leashes and the hand-off to a
 backstop lane, which only re-sent the same clip to the same whisper.
+
+### What it is doing (the status strip)
+
+So the owner can see from the screen alone what the creature is doing, and above all when it
+takes a picture (owner, 2026-11-12), `growbot-status.js` keeps a strip of chips at the top-left
+of `/v3/next.html`: photo, looking (a model call carrying a picture), thinking, hearing (an
+utterance being recorded), transcribing, voicing (Kokoro), speaking, moving (relay leg frames),
+and, with nothing under way, listening or idle. Each chip runs a clock; a finished one shrinks to
+its icon and final time and lingers 5 s while newer chips push it aside. A photo also flashes the
+screen's edge. It watches from outside rather than patching each call site: it wraps `fetch`
+(the box's `/api/llm`, `/api/llm-stream` and `/api/fish-tts`, timed until the body is read, so a
+streamed reply counts as thinking until its last token), canvas `toDataURL("image/jpeg")`
+(upstream's `captureEye`), audio `play()` and the relay socket's `send`, and polls upstream's
+`vadOn`, `recording` and `listenMode`. It loads right after the face and before any page script
+so every call goes through it; `?status=off` leaves the page untouched.
 
 ### The brain panel and text size
 
