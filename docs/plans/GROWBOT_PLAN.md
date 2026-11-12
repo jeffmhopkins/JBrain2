@@ -411,7 +411,7 @@ replies, or 20 and half an hour awake) makes it sleepy: its turn says so, and it
 natural pause; its permission to sleep lasts three minutes and outranks the dream cooldown. The
 conversation since it last slept (newest 80 exchanges) rides the soul, so a dream after a reload
 or on the next open still sees it; that dream writes a session summary to the diary and up to 5
-facts to the fact book, then clears it, so the dream is the visit's long-term memory. The moon button still dreams on demand (`SLEEP_PATCHES`).
+facts to the fact book, then clears it, so the dream is the visit's long-term memory. Leave to sleep also ends any seek or mission under way, which would otherwise hold the dream back, and "go to sleep" or "go to bed" is leave to sleep, never a place to seek (found on the box, 2026-11-12). The moon button still dreams on demand (`SLEEP_PATCHES`).
 
 **Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
 pick 1, 3 or 6 hours and download one zip with what debugging needs. Upstream's own "brain

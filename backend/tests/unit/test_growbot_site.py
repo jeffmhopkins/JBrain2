@@ -1739,6 +1739,48 @@ def test_a_dream_keeps_the_visit_once_even_across_a_reload() -> None:
     assert got["logs"] == [["dream_keep", {"s": 3, "f": 3}], ["dream_keep", {"s": 0, "f": 0}]]
 
 
+@pytest.mark.parametrize(
+    ("said", "goal"),
+    [
+        ("okay, go to sleep", None),
+        ("go to bed little fish", None),
+        ("you can go to sleep now", None),
+        ("go to the kitchen", "the kitchen"),
+        ("find my keys", "my keys"),
+    ],
+)
+def test_go_to_sleep_lets_it_sleep_instead_of_seeking_sleep(said: str, goal: str | None) -> None:
+    """Field test, 2026-11-12: "go to sleep" set a seek for "sleep", and a seek holds every
+    dream back, so the creature it was given leave to sleep never slept."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    start = page.index("function _seekWords(t){")
+    code = page[start : page.index("function _localCmd(t)", start)]
+    out = subprocess.run(
+        [node, "-e", f"{code}\nconsole.log(JSON.stringify(_seekWords({json.dumps(said)}).goal))"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(out.stdout) == goal
+
+
+def test_leave_to_sleep_ends_what_it_was_doing() -> None:
+    """A seek still under way when its person lets it sleep ends, after the reply that took the
+    leave, so the dream is not held back as "activity" until the leave lapses."""
+    got = _sleep_page(
+        "var timers=[],ended=[],seekGoal='my keys',actOn=true,mimicOn=false;"
+        "setTimeout=function(f){timers.push(f);};"
+        "function endActivity(r){ended.push(r);seekGoal='';actOn=false;}"
+        "gbSleepGrant();var before=ended.slice();timers.shift()();"
+        "_gbSleepOK=true;gbSleepGrant();timers.shift()();"
+        "console.log(JSON.stringify({before,ended}));"
+    )
+    assert got["before"] == [] and got["ended"] == ["sleep"]
+
+
 def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "due=callsSinceDream>=12" not in page

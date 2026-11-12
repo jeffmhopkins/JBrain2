@@ -1389,7 +1389,11 @@ function gbSleepAllowed(){
   if(_gbSleepOK&&Date.now()-_gbSleepAt>GB_SLEEP_HOLD_MS){ _gbSleepOK=false; try{ logEv("sleep_expired",{}); }catch(e){} }
   return _gbSleepOK;
 }
-function gbSleepGrant(){ _gbSleepOK=true; _gbSleepAt=Date.now(); logEv("sleep_ok",{csd:callsSinceDream}); }
+/* Sleep ends whatever it was doing: a seek or mission still under way holds every dream back
+   ("activity") until the permission lapses. After this reply's handler, since endActivity
+   voids replies still in flight. */
+function gbSleepGrant(){ _gbSleepOK=true; _gbSleepAt=Date.now(); logEv("sleep_ok",{csd:callsSinceDream});
+  setTimeout(function(){ try{ if(_gbSleepOK&&(seekGoal||actOn||mimicOn)) endActivity("sleep"); }catch(e){} },0); }
 /* The visit's lines not yet dreamed ride the soul (scratch.visit), so a dream after a reload or
    on the next day's open still sees the conversation it should keep; a landed dream clears them,
    so no visit is summarised twice. */
@@ -1459,6 +1463,14 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
         1,
     ),
     ("v3/next.html", "IDLE_DREAM_MS=120000", "IDLE_DREAM_MS=300000", 1),
+    # "Go to sleep" and "go to bed" are the plainest ways to let it sleep, and upstream's seek
+    # words read them as a place to find, so the sleep it was given became a hunt for "sleep".
+    (
+        "v3/next.html",
+        "if(gm&&gm.index<=24) goal=gm[1];",
+        "if(gm&&gm.index<=24&&!/^(?:sleep|bed|nap)\\b/i.test(gm[1])) goal=gm[1];",
+        1,
+    ),
     (
         "v3/next.html",
         "_dreamT0=Date.now();",
