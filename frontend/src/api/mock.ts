@@ -523,6 +523,8 @@ function mockGbPersona(
     memories: vms.length,
     wearing: null,
     face: "lantern",
+    voice: "",
+    explore: true,
     prefs: {},
     ...over,
     soul,
@@ -754,6 +756,19 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
   const rest = m[2] ?? "";
   if (!rest && method === "GET") return json(mockGbDetail(p));
   if (!rest && method === "PATCH") {
+    const explore = body().explore;
+    if (explore !== undefined) {
+      if (typeof explore !== "boolean") return json({ detail: "not a setting" }, 422);
+      p.explore = explore;
+      return json({ persona: mockGbDetail(p), checkpoint: null });
+    }
+    const voice = body().voice;
+    if (voice !== undefined) {
+      if (!/^(kokoro-[a-z0-9_]{1,40})?$/.test(String(voice)))
+        return json({ detail: "not a voice" }, 422);
+      p.voice = String(voice);
+      return json({ persona: mockGbDetail(p), checkpoint: null });
+    }
     const face = body().face;
     if (face !== undefined) {
       if (!["lantern", "ostrich", "robot", "ember", "pixel"].includes(String(face)))
@@ -827,7 +842,7 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
     const name = `${p.name} copy`;
     const copy = mockGbPersona(
       name,
-      { made_from: `copy of ${p.name}`, face: p.face },
+      { made_from: `copy of ${p.name}`, face: p.face, voice: p.voice, explore: p.explore },
       { ...structuredClone(p.soul), meta: { ...p.soul.meta, name } },
       [],
       p.vms.map((v) => ({ ...v })),

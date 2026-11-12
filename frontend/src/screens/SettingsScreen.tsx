@@ -33,6 +33,7 @@ import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location
 import { publicOrigin } from "../publicOrigin";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
 import { TOKEN_RATES, type TokenRate, getTokenRate, setTokenRate } from "../tokenRate";
+import { voiceLabel } from "../voices";
 import { DevicesSettings } from "./DevicesSettings";
 import { ReadTextScreen } from "./ReadTextScreen";
 
@@ -121,27 +122,6 @@ const MODEL_LABEL: Record<ReadAloudModel, string> = {
   kokoro: "Kokoro",
   native: "Native",
 };
-
-// Kokoro accent/gender from the voice-id prefix (af_ = American female, etc.), for a readable
-// label in the Kokoro voice dropdown.
-const KOKORO_ACCENT: Record<string, string> = {
-  af: "American F",
-  am: "American M",
-  bf: "British F",
-  bm: "British M",
-};
-
-// Prettify a Kokoro voice id for the picker: "kokoro-af_heart" -> "Heart · American F" (name +
-// accent/gender from the prefix). An id without the accent prefix reads as "Kokoro · <name>".
-function voiceLabel(id: string): string {
-  const code = id.startsWith("kokoro-") ? id.slice("kokoro-".length) : id; // e.g. "af_heart"
-  const m = /^([ab][fm])_(.+)$/.exec(code);
-  const raw = (m?.[2] ?? code).replace(/_/g, " ");
-  const name = raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : id;
-  const prefix = m?.[1];
-  const accent = prefix ? KOKORO_ACCENT[prefix] : undefined;
-  return accent ? `${name} · ${accent}` : `Kokoro · ${name}`;
-}
 
 interface SettingsScreenProps {
   deviceLabel: string;

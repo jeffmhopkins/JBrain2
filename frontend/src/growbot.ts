@@ -488,6 +488,20 @@ export const FACES: { id: GrowbotFace; name: string; what: string }[] = [
   { id: "pixel", name: "Pixel", what: "The original pixel eyes." },
 ];
 
+/** What its quiet moments invite: exploring with its body, or keeping its person company. */
+export const QUIET_MOODS: { explore: boolean; name: string; what: string }[] = [
+  {
+    explore: true,
+    name: "Explores on its own",
+    what: "When nothing has happened for a while, it goes after its wants with its body.",
+  },
+  {
+    explore: false,
+    name: "Keeps you company",
+    what: "When it's quiet, it stays put and may make a small sound or remark.",
+  },
+];
+
 /** Which camera is the creature's eye. The box keeps it as upstream's `gb_eye` key, whose
  *  values are the browser's facingMode; anything but the back one is front, as on the phone. */
 export type Eye = "front" | "back";

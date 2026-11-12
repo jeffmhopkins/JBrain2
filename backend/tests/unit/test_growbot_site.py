@@ -373,6 +373,19 @@ def test_a_persona_wears_its_own_face_lantern_by_default() -> None:
     )
 
 
+def test_a_persona_speaks_in_its_own_voice() -> None:
+    """The box's voice for the persona is read with the soul, a poll's new one is the next
+    line's, and it outranks the phone's own on both speech paths and in the clip cache."""
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.__gbBoxVoice = state.json.voice;" in shim
+    assert 'if (typeof v === "string") window.__gbBoxVoice = v;' in shim
+    assert 'voice: window.__gbBoxVoice || "", model: "kokoro"' in shim
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "function fishKey(t,emo){ return t+'|'+(window.__gbBoxVoice||vtFish.voice||'')+" in page
+    assert "body:JSON.stringify({text:t,voice:window.__gbBoxVoice||vtFish.voice||''," in page
+    assert "voice:vtFish.voice||''" not in page
+
+
 def test_the_creature_can_recolour_itself_like_the_sky() -> None:
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert prompts.index('\'"coat":"OMIT usually') < prompts.index('\'"sky":"OMIT usually')
@@ -1750,3 +1763,39 @@ def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
     assert '(o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant();' in page
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert '\'"sleep":"OMIT unless your person just said you may sleep' in prompts
+
+
+@pytest.mark.parametrize(
+    ("explore", "want"),
+    [
+        (None, "This time is yours"),
+        ("true", "This time is yours"),
+        ("false", "QUIET COMPANY"),
+    ],
+)
+def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_not(
+    explore: str | None, want: str
+) -> None:
+    """Upstream's 11-11 quiet-beat text unless the persona turned exploring off; a page the
+    box gave no setting (no persona yet) explores too. The choice lives on the box, so the
+    page reads no URL or phone storage for it."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    words = next(line for line in page.splitlines() if line.startswith("var GB_EXPLORE_TXT="))
+    beat = re.search(
+        r'think\((window\.__gbBoxExplore!==false\?GB_EXPLORE_TXT:"QUIET COMPANY[^"]*")', page
+    )
+    assert beat is not None
+    # The beat's own gates are the ones the 90 s test above pins; only its words are chosen.
+    assert page.index(words) < page.index("if(idle>=GB_QUIET_AFTER_MS") < beat.start()
+    assert "gb_quiet" not in page and 'get("quiet")' not in page
+    setting = "" if explore is None else f"window.__gbBoxExplore={explore};"
+    # Inside a function, so the page's globals never meet whatever this Node version ships.
+    script = (
+        f"(function(){{var window={{}};{setting}{words}\n"
+        f"console.log(JSON.stringify({beat.group(1)}));}})();"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    assert want in json.loads(out.stdout)

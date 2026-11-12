@@ -452,6 +452,9 @@ async def test_the_schema_bounds_names_and_shapes(maker: async_sessionmaker) -> 
     with pytest.raises(DBAPIError):
         async with scoped_session(maker, OWNER) as session:
             await session.execute(text("UPDATE app.growbot_personas SET face = 'cat'"))
+    with pytest.raises(DBAPIError):
+        async with scoped_session(maker, OWNER) as session:
+            await session.execute(text("UPDATE app.growbot_personas SET voice = 'af_heart'"))
 
 
 # -- the routes, over the real repo ---------------------------------------------------------
@@ -604,6 +607,30 @@ async def test_routes_seed_duplicate_rename_reset_and_delete(maker: async_sessio
     assert c.patch(f"/api/growbot/personas/{dup['id']}", json={}).status_code == 422
     assert c.post(f"/api/growbot/personas/{dup['id']}/duplicate").json()["face"] == "robot"
 
+    # A voice is the persona's own too: the box's default ("") until picked, not a soul write,
+    # back to the default with "", and only a tts-stt voice id is one.
+    assert dup["voice"] == ""
+    voiced = c.patch(f"/api/growbot/personas/{dup['id']}", json={"voice": "kokoro-am_puck"})
+    assert voiced.json()["persona"]["voice"] == "kokoro-am_puck"
+    assert voiced.json()["persona"]["version"] == version
+    assert voiced.json()["persona"]["face"] == "robot"
+    copied = c.post(f"/api/growbot/personas/{dup['id']}/duplicate").json()
+    assert copied["voice"] == "kokoro-am_puck"
+    for bad_voice in ("am_puck", "kokoro-AM", "kokoro-a b", "kokoro-" + "x" * 41):
+        refused = c.patch(f"/api/growbot/personas/{dup['id']}", json={"voice": bad_voice})
+        assert refused.status_code == 422
+    assert c.patch(nobody, json={"voice": "kokoro-am_puck"}).status_code == 404
+    cleared = c.patch(f"/api/growbot/personas/{dup['id']}", json={"voice": ""}).json()
+    assert cleared["persona"]["voice"] == ""
+
+    # Exploring alone is on until the owner turns it off; not a soul write, and a copy keeps it.
+    assert dup["explore"] is True
+    calm = c.patch(f"/api/growbot/personas/{dup['id']}", json={"explore": False}).json()
+    assert calm["persona"]["explore"] is False and calm["persona"]["version"] == version
+    assert c.post(f"/api/growbot/personas/{dup['id']}/duplicate").json()["explore"] is False
+    assert c.patch(nobody, json={"explore": True}).status_code == 404
+    assert c.patch(f"/api/growbot/personas/{dup['id']}", json={"explore": "x"}).status_code == 422
+
     reset = c.post(f"/api/growbot/personas/{pid}/reset").json()
     assert reset["persona"]["soul"] == souls.fresh("Sprout")
     assert reset["checkpoint"]["name"] == "Before reset"
@@ -697,6 +724,7 @@ async def test_routes_open_hand_over_and_who_wears_fish(maker: async_sessionmake
     pulled = c.post("/internal/growbot/soul/pull", json={"persona": sprout, "phone": PHONE_A})
     assert pulled.status_code == 200 and pulled.json()["version"] == 1
     assert pulled.json()["wearing"] is None and pulled.json()["face"] == "lantern"
+    assert pulled.json()["voice"] == "" and pulled.json()["explore"] is True
     pushed = c.post(
         "/internal/growbot/soul/push",
         json={"persona": sprout, "phone": PHONE_A, "base": 1, "soul": {"soul_format": 3, "n": 1}},
@@ -713,8 +741,17 @@ async def test_routes_open_hand_over_and_who_wears_fish(maker: async_sessionmake
         "wearing": None,
         "memories": 0,
         "face": "lantern",
+        "voice": "",
         "prefs": 0,
+        "explore": True,
     }
+    # The owner's pick reaches the phone at its next poll, without a soul write.
+    assert c.patch(f"/api/growbot/personas/{sprout}", json={"voice": "kokoro-bm_fable"}).is_success
+    state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_A})
+    assert state.json()["voice"] == "kokoro-bm_fable" and state.json()["version"] == 2
+    assert c.patch(f"/api/growbot/personas/{sprout}", json={"explore": False}).is_success
+    state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_A})
+    assert state.json()["explore"] is False and state.json()["version"] == 2
     moved_state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_B})
     assert moved_state.status_code == 409
     assert c.post("/internal/growbot/soul/state", json={}).status_code == 401

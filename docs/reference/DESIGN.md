@@ -3387,7 +3387,17 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     *Back*, saved as tapped into the persona's settings on the box (`gb_eye`), and the phone
     flips the lens where it stands; the toast reads like the face's. Until a phone has first
     sent its settings it is disabled under *Open <name> on a phone once, then pick its camera
-    here.*, since that first phone makes the box's copy from its own. Then *Rename* (the list's name; the
+    here.*, since that first phone makes the box's copy from its own. Then *Voice* (owner, 2026-11-12): a
+    dropdown of the box's installed voices (`/api/brain/voices`, named like Settings' read-aloud
+    picker: *Puck · American M*) headed by *Box default (Heart)*, with *Play* beside it saying a
+    line in the shown voice (*Hi, I'm <name>…*) so it can be heard before it is picked. Saved as
+    it is picked and, like the face, not a soul write: the toast says it speaks in it from its
+    next line on its phone, or next time it opens. A box with no voices says the creature shows
+    its words instead. Then *When it's quiet* (owner, 2026-11-12): a radio list like *Face*,
+    *Explores on its own* (the default: its quiet moments invite it to go after its wants with
+    its body) or *Keeps you company* (the old quiet: it stays put, a small sound or remark at
+    most), saved as it is tapped, not a soul write; the toast says it takes effect from its next
+    quiet moment on its phone, or next time it opens. Then *Rename* (the list's name; the
     creature still calls itself by its own name until told otherwise), *Duplicate* (memories and visual memories, no checkpoints), *Export soul
     file* (its memories but not its visual memories, which stay on the box), *Import over it*
     (the file is checked first: too big or not a soul says so with *Nothing changed*; a

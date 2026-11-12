@@ -178,15 +178,16 @@ change made on one phone is invisible everywhere else.
 
 - **The pattern is `panel_settings.py`'s** (the desk panel's settings from the PWA: asked for
   here, taken by the device, reported back): a `growbot_settings` table, one row for the house's
-  robot (there is one body; personas carry only the soul, §2c, so voice, model and walk settings
-  stay with the robot and apply to every persona; only the phone riding the body reports into
-  it or takes its queue, so a persona open on a phone alone can never overwrite the leg
+  robot (there is one body; personas carry only the soul, §2c, so model and walk settings
+  stay with the robot and apply to every persona, while the voice became each persona's own,
+  like its face, on 2026-11-12 at the owner's ask, picked on its Manage tab; only the phone
+  riding the body reports into it or takes its queue, so a persona open on a phone alone can never overwrite the leg
   calibration), holding what the phone app last reported and the queue of what the owner asked for, under RLS
   with its isolation test (rule 3).
 - **The PWA** gets a GrowBot card (Settings, beside the panels) showing the settings as the app
   last reported them. A change made there is queued and reads "Waiting for GrowBot" until the
   app reports the new value, then "On GrowBot". The card covers the model per lane, vision
-  on/off, the Kokoro voice, speed and pitch (`tts_server.py` takes per-request `speed` and
+  on/off, the voice's speed and pitch (`tts_server.py` takes per-request `speed` and
   `pitch`), effort, low-power, the motion duty budget and the leg calibration.
 - **The phone app is the reporter.** Through the shim, on a `growbot.token`-authed api route on
   an RLS-scoped session (with its auth test, security paths at 100%), it picks up the queue at
@@ -370,7 +371,14 @@ audio, each short pause or a full buffer sends what is held and listening goes o
 of speech sends only the last piece; the creature gets one turn with the pieces joined. This also
 ends upstream's 12 s cap, which silently dropped the rest of a longer message. An ordinary quiet beat now waits 90 s after the last activity
 (upstream: 8 s), so the creature never cuts in just after the person stops talking
-(`QUIET_PATCHES`).
+(`QUIET_PATCHES`). What that beat says is upstream's live 11-11 text, ported from growbot.dev
+since GitHub's last snapshot (owner, 2026-11-12): "this time is yours: you may reach for one of
+your wants with your own body" in place of "you are awake together", so a creature left alone
+explores instead of waiting. It is a persona setting, *When it's quiet* on the Manage tab, on by
+default (`growbot_personas.explore`), not upstream's `?quiet` URL switch, because the phone is
+only a display. Upstream's matching "quiet settle", which thins the beats the longer nobody
+acts, is left out: it saves cloud credits, and a local beat costs none (`QUIET_TEXT_PATCHES`).
+The words ride the turn's own message, never the cached prefix.
 
 **Talk style (owner, 2026-11-12).** Upstream's creature is written for small children: ~18-word
 lines, its last 4 exchanges and 5 diary lines in view, and an adult could not hold a conversation

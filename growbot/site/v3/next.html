@@ -1432,7 +1432,7 @@ function fishPrime(){
   }catch(e){}
 }
 
-function fishKey(t,emo){ return t+'|'+(vtFish.voice||'')+'|'+(vtFish.model||'')+'|'+(emo||''); }
+function fishKey(t,emo){ return t+'|'+(window.__gbBoxVoice||vtFish.voice||'')+'|'+(vtFish.model||'')+'|'+(emo||''); }
 
 function fishSpeed(emo){ return _fishSpeedBase(emo)*vSpeed; }   // 0821: the api clamps 0.5-2.0 (api/fish-tts.js), so the product stays in range
 function _fishSpeedBase(emo){
@@ -1456,7 +1456,7 @@ function fishFetch(t,emo){
   return fetch('/api/fish-tts',{
     method:'POST',
     headers:{'content-type':'application/json','x-fish-key':vtFish.key},
-    body:JSON.stringify({text:t,voice:vtFish.voice||'',model:vtFish.model||'s2.1-pro-free',speed:fishSpeed(emo)})
+    body:JSON.stringify({text:t,voice:window.__gbBoxVoice||vtFish.voice||'',model:vtFish.model||'s2.1-pro-free',speed:fishSpeed(emo)})
   }).then(function(r){
     if(r.status===200){ fishFails=0; return r.blob(); }
     if(r.status===401 || r.status===402){ fishDead=true; fishToast('the box voice is unavailable right now'); }
@@ -4951,6 +4951,7 @@ function lastSentenceEnd(s){ var m=0,re=/([.!?…]+)\s/g,x;
    The `yield` event carries the streak so the next read is a number, not a reconstruction: the 17.4%
    above had to be inferred from log geometry because this moment logged nothing at all. */
 var GB_QUIET_AFTER_MS=90000;
+var GB_EXPLORE_TXT="QUIET — nothing has happened for a while. This time is yours: you may reach for one of your wants with your own body.";
 var YIELD_MAX=3, _yieldRun=0, _yieldSaid=0;              // _yieldSaid: 0 undecided this reply · 1 committed to HOLD · 2 committed to SPEAK THROUGH
 function _yieldNow(){                                    // true = hold the voice; false = speak anyway
   /* 0821b: BOTH outcomes are memoed, not just the hold. The first cut memoed only the hold, so when
@@ -9985,7 +9986,7 @@ function bootOwned(){
     }
     if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){                                                // ordinary awake initiative: existing four-minute spacing, no upper idle cutoff
       lastBeatT=now;
-      think("QUIET COMPANY — you are awake together. If something in your available senses, context or remembered interests is worth noticing, you may offer one small expression: a familiar cute sound, a light effect, or a brief remark. Silence is equally welcome. Do not invent sensory evidence, repeat an unanswered invitation, demand stimulation, or start a competing game. There is no requirement to speak or make a sound.","event"); return;
+      think(window.__gbBoxExplore!==false?GB_EXPLORE_TXT:"QUIET COMPANY — you are awake together. If something in your available senses, context or remembered interests is worth noticing, you may offer one small expression: a familiar cute sound, a light effect, or a brief remark. Silence is equally welcome. Do not invent sensory evidence, repeat an unanswered invitation, demand stimulation, or start a competing game. There is no requirement to speak or make a sound.","event"); return;
     }
     if(idle<5000 && now-lastSpokeT>EXPR_GAP_MS){                                             // READ THE ROOM: an unprompted beat only after the last words had room to land (~30s)
       var mLive=(typeof linMag!=="undefined"&&(linMag>2.5||spin>120));

@@ -37,6 +37,7 @@ from jbrain.db.session import SessionContext
 from jbrain.growbot import memories, prefs, souls
 from jbrain.growbot.personas import (
     NAME_MAX,
+    VOICE_RE,
     Checkpoint,
     Face,
     MemoriesDo,
@@ -114,8 +115,12 @@ class PersonaOut(BaseModel):
     memories: int
     # The face its creature wears.
     face: str
+    # The voice it speaks in: a tts-stt voice id, or "" for the box's default.
+    voice: str
     # Its settings (growbot/prefs.py), key to value; None until its phone first sent them.
     prefs: dict[str, str] | None
+    # Whether its quiet moments invite it to explore with its body (on) or keep company.
+    explore: bool
 
 
 class MemoryOut(BaseModel):
@@ -188,7 +193,9 @@ def _persona_out(p: Persona) -> PersonaOut:
         wearing=p.wearing,
         memories=p.memories,
         face=p.face,
+        voice=p.voice,
         prefs=p.prefs,
+        explore=p.explore,
     )
 
 
@@ -329,9 +336,11 @@ class NewPersonaIn(BaseModel):
 
 
 class RenameIn(BaseModel):
-    # Either or both: a new name, a new face.
+    # Any of: a new name, a new face, a new voice ("" goes back to the box's default).
     name: str | None = Field(default=None, max_length=200)
     face: Face | None = None
+    voice: str | None = Field(default=None, pattern=VOICE_RE)
+    explore: bool | None = None
 
 
 class RegionIn(BaseModel):
@@ -388,14 +397,22 @@ async def persona_detail(request: Request, owner: OwnerDep, pid: Pid) -> Persona
 
 @router.patch("/personas/{pid}")
 async def rename_persona(request: Request, owner: OwnerDep, pid: Pid, body: RenameIn) -> WrittenOut:
-    """A new name (a soul write, so its phone reloads on it), a new face (not a soul write: the
-    phone's poll carries it and the creature changes face where it stands), or both."""
-    if body.name is None and body.face is None:
-        raise HTTPException(status_code=422, detail="Give it a name or a face.")
-    # Checked before the face is saved, so a bad name writes nothing at all.
+    """A new name (a soul write, so its phone reloads on it), a new face, voice or explore
+    setting (not soul writes: the phone's poll carries them and the creature changes where it
+    stands), or any mix of them."""
+    if body.name is None and body.face is None and body.voice is None and body.explore is None:
+        raise HTTPException(
+            status_code=422, detail="Give it a name, a face, a voice or an explore setting."
+        )
+    # Checked before anything is saved, so a bad name writes nothing at all.
     name = _name(body.name) if body.name is not None else None
     ctx = _owner_ctx(owner)
-    if body.face is not None and not await _repo(request).set_face(ctx, pid, body.face):
+    repo = _repo(request)
+    if body.face is not None and not await repo.set_face(ctx, pid, body.face):
+        raise HTTPException(status_code=404, detail="no such persona")
+    if body.voice is not None and not await repo.set_voice(ctx, pid, body.voice):
+        raise HTTPException(status_code=404, detail="no such persona")
+    if body.explore is not None and not await repo.set_explore(ctx, pid, body.explore):
         raise HTTPException(status_code=404, detail="no such persona")
     p = await _get(request, ctx, pid)
     if name is None:
@@ -477,6 +494,8 @@ async def duplicate_persona(request: Request, owner: OwnerDep, pid: Pid) -> Pers
         f"copy of {p.name}",
         memories_from=p.id,
         face=cast(Face, p.face),
+        voice=p.voice,
+        explore=p.explore,
     )
     return await _detail(request, ctx, made)
 
@@ -680,6 +699,8 @@ class PulledOut(BaseModel):
     # The robot this persona wears now, or None: the phone drives the legs only while it is.
     wearing: str | None
     face: str
+    voice: str
+    explore: bool
 
 
 class PushedOut(BaseModel):
@@ -710,7 +731,14 @@ async def pull_soul(request: Request, body: PhoneIn) -> PulledOut:
     got = await _repo(request).pull(_SYSTEM_OWNER, body.persona, body.phone)
     if isinstance(got, str):
         raise _away(got)
-    return PulledOut(version=got.version, soul=got.soul, wearing=got.wearing, face=got.face)
+    return PulledOut(
+        version=got.version,
+        soul=got.soul,
+        wearing=got.wearing,
+        face=got.face,
+        voice=got.voice,
+        explore=got.explore,
+    )
 
 
 class StateOut(BaseModel):
@@ -720,8 +748,12 @@ class StateOut(BaseModel):
     memories: int
     # The face it wears: the creature changes to it where it stands.
     face: str
+    # The voice it speaks in ("" is the box's default): its next line is in it.
+    voice: str
     # Bumped by every change to its settings: the phone pulls them when it moves.
     prefs: int
+    # Whether its quiet moments invite it to explore: its next quiet moment reads it.
+    explore: bool
 
 
 @internal_router.post("/soul/state")
@@ -738,7 +770,9 @@ async def soul_state(request: Request, body: PhoneIn) -> StateOut:
         wearing=got.wearing,
         memories=got.memories,
         face=got.face,
+        voice=got.voice,
         prefs=got.prefs,
+        explore=got.explore,
     )
 
 

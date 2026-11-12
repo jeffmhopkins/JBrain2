@@ -345,6 +345,16 @@ buffer at the context's clock, and on `fishAud` or the box voice's own element
 the element through Web Audio, which a suspended iOS context would mute. The ember face
 (Dave's lens) shows that loudness as its light.
 
+It speaks in its own voice the same way (`growbot_personas.voice`, migration 0265; `""` is the
+box's default): `growbot-box.js` keeps it in `__gbBoxVoice` from the state read and every poll,
+and both speech paths (the page's fish lane and the `speechSynthesis` stand-in) send it, ahead
+of any voice the phone kept, so a new pick is the next line's voice.
+
+Whether it explores when it's quiet is the persona's too (`growbot_personas.explore`, migration
+0266, on by default): `growbot-box.js` keeps it in `__gbBoxExplore`, and the page's ordinary
+quiet beat reads it each time (`apply.py` `QUIET_TEXT_PATCHES`), so only an explicit `false`
+brings back upstream's old "quiet company" words. No URL switch or phone storage holds it.
+
 ### Settings (migration 0263)
 
 The phone is only a display (owner, 2026-11-12). What upstream keeps outside the soul, each in a

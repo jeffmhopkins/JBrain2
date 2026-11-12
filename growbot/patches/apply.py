@@ -253,6 +253,20 @@ PATCHES: list[tuple[str, str, str, int]] = [
         1,
     ),
     ("v3/next.html", VOICE_PICKER_OLD, '<option value="fish">box voice</option>', 1),
+    # The persona's own voice (migration 0265, growbot-box.js's __gbBoxVoice) outranks the
+    # phone's; the clip cache is keyed on it too, so a new voice never replays an old clip.
+    (
+        "v3/next.html",
+        "function fishKey(t,emo){ return t+'|'+(vtFish.voice||'')+",
+        "function fishKey(t,emo){ return t+'|'+(window.__gbBoxVoice||vtFish.voice||'')+",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "body:JSON.stringify({text:t,voice:vtFish.voice||'',",
+        "body:JSON.stringify({text:t,voice:window.__gbBoxVoice||vtFish.voice||'',",
+        1,
+    ),
     # No third-party origins: Google Fonts (the pixel face falls back to the system monospace)
     # and the feedback widget.
     (
@@ -1508,6 +1522,37 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += SLEEP_PATCHES
+
+# What the quiet beat says, from upstream's live page (Brit, 2026-11-11 "QUIET MOMENT TEXT",
+# after GitHub's last snapshot). The old text framed quiet as company kept with the person, so
+# a creature left alone sat still; the new one hands it the time to chase its wants with its
+# body. Each persona chooses, on by default (owner, 2026-11-12: a persona setting, not
+# upstream's ?quiet URL switch, because the phone is only a display): growbot-box.js sets
+# __gbBoxExplore from the box and only false brings the old words back. Only the words change:
+# the beat's gates, its spacing and our 90 s wait above stay, and the text rides the turn's own
+# message, so the cached system prefix is untouched. Upstream's QUIET SETTLE (beats thin out
+# the longer nobody acts) is left out: it saves cloud credits, a local beat costs none, and it
+# would hold back exactly the exploring a creature left alone is meant to do.
+GB_EXPLORE_TXT = (
+    "QUIET — nothing has happened for a while. This time is yours: you may reach for one of"
+    " your wants with your own body."
+)
+QUIET_TEXT_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "var GB_QUIET_AFTER_MS=90000;",
+        f'var GB_QUIET_AFTER_MS=90000;\nvar GB_EXPLORE_TXT="{GB_EXPLORE_TXT}";',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'think("QUIET COMPANY — you are awake together.',
+        'think(window.__gbBoxExplore!==false?GB_EXPLORE_TXT:"QUIET COMPANY — you are awake'
+        ' together.',
+        1,
+    ),
+]
+PATCHES += QUIET_TEXT_PATCHES
 
 # Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
 # clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off

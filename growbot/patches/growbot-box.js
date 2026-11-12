@@ -104,7 +104,7 @@
     fetch("/api/fish-tts", {
       method: "POST",
       headers: { "content-type": "application/json", "x-fish-key": "box" },
-      body: JSON.stringify({ text: text, voice: "", model: "kokoro", speed: u.rate || 1 }),
+      body: JSON.stringify({ text: text, voice: window.__gbBoxVoice || "", model: "kokoro", speed: u.rate || 1 }),
       signal: abort ? abort.signal : undefined,
     })
       .then(function (r) {
@@ -270,6 +270,24 @@
   if (state.status === 200 && state.json && typeof state.json.face === "string") {
     window.__gbBoxFace = state.json.face;
   }
+  // The voice it speaks in ("" is the box's default), read at every line, so a poll's new one
+  // is the next line's voice.
+  if (state.status === 200 && state.json && typeof state.json.voice === "string") {
+    window.__gbBoxVoice = state.json.voice;
+  }
+  window.addEventListener("gb-box-state", function (ev) {
+    var v = ev && ev.detail && ev.detail.voice;
+    if (typeof v === "string") window.__gbBoxVoice = v;
+  });
+  // Whether its quiet moments invite it to explore (apply.py QUIET_TEXT_PATCHES), read at each
+  // quiet moment, so a poll's change is the next one's. Anything but false is on.
+  if (state.status === 200 && state.json && typeof state.json.explore === "boolean") {
+    window.__gbBoxExplore = state.json.explore;
+  }
+  window.addEventListener("gb-box-state", function (ev) {
+    var x = ev && ev.detail && ev.detail.explore;
+    if (typeof x === "boolean") window.__gbBoxExplore = x;
+  });
   if (state.status === 204) {
     window.__gbBoxSoul = { g2: true };
     // A G2 session: the phone's own creature comes back if a persona had the key (or one
