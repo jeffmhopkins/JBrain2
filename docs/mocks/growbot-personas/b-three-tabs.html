@@ -128,11 +128,11 @@
     const repl = here && here !== p ? ` ${G.esc(here.name)} closes here — it's kept on the box.` : "";
     const fromPh = p.phone && p.phone !== "me" ? ` It moves from ${G.phName(p.phone)}.` : "";
     const bodyEm = !G.keyOk() ? `${b.name}'s key is revoked — reflash it first.`
-      : wearing && p.phone === "me" ? `Already wearing ${b.name} here.`
+      : wearing && p.phone === "me" ? `Opens again, still wearing ${b.name}.`
       : `${other && other !== p ? `${G.esc(other.name)} lets go and carries on alone ${G.on(other.phone)}.` : `It takes ${b.name}'s legs.`}${b.online ? "" : ` ${b.name} is off — its legs move once it's on.`}`;
     return G.sheetShell("launch" + p.id, `Open ${p.name}`,
       `<button class="big-choice" data-act="launch" data-arg="${p.id}:here"><span class="k"></span><span class="tx"><span class="t1">On this phone, alone</span><span class="t2">No legs.${fromPh}${repl}${wearing ? ` ${b.name} stays where it is.` : ""}</span></span></button>
-       <button class="big-choice wear" data-act="launch" data-arg="${p.id}:body"${G.keyOk() && !(wearing && p.phone === "me") ? "" : " disabled"}><span class="k"></span><span class="tx"><span class="t1">On this phone, wearing ${b.name}</span><span class="t2">${bodyEm}${fromPh}${repl}</span></span></button>
+       <button class="big-choice wear" data-act="launch" data-arg="${p.id}:body"${G.keyOk() ? "" : " disabled"}><span class="k"></span><span class="tx"><span class="t1">On this phone, wearing ${b.name}</span><span class="t2">${bodyEm}${fromPh}${repl}</span></span></button>
        <button class="big-choice" data-act="launch" data-arg="${p.id}:other"><span class="k other"></span><span class="tx"><span class="t1">On another phone…</span><span class="t2">Two codes to scan, alone or wearing ${b.name}.</span></span></button>`, "");
   }
 
