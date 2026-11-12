@@ -3290,14 +3290,19 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   persona open on a phone hands it the legs there; picking one that is not open opens it on
   this phone wearing Fish (through the first-time note when it applies). *The one it leaves
   carries on alone on its phone.* Then **Controls for <name>** (below), whose *Move* pane is the
-  robot's remote (owner, 2026-11-12), laid out like upstream's Policy Remote: a segmented policy pick (*Forward*,
-  *Backward*, *Spin ↻*, *Spin ↺*), *Seconds* (1-15, 5 by default) beside the primary *Walk
-  forward 5 s* (its label names the pick and the time), a row of gestures (*Wiggle*, *Bow*,
-  *Sway*), with the card's one *Stop* under it. Under them, what the creature said: *Walking forward for 5 s.*, or
-  its own words for why not, in rose. The walk runs on the rider phone's motion sensors, so
-  every button is disabled, with the reason in words above them, until the robot is on (*Turn
-  the robot on to move it.*) and a creature wearing it is open on screen (*Open a persona
-  wearing it and keep the creature on screen. Its phone's motion sensors run the walk.*). Last,
+  robot's remote (owner, 2026-11-12), a driving pad since the owner called the first form
+  version "crap" (same day): a round recessed pad of four rounded keys, *Forward* (chevron up,
+  toward the phone's screen), *Back*, and a *Spin* on each side (↺ left, ↻ right), with the
+  card's one *Stop* as a rose disc in its middle. A key runs its walk or spin for the chosen
+  time and stays lit in steel while it runs, a thin steel bar under the pad draining over those
+  seconds. Under the bar, what the creature said: *Walking forward for 5 s.*, or its own words
+  for why not, in rose. Then *Walks and spins run for* as pill chips (*2 s*, *5 s* by default,
+  *10 s*, *15 s*, inside the box's 1-15 bound) and *Tricks* as pill chips (*Wiggle*, *Bow*,
+  *Sway*). A strip above the pad says how to set the robot down, or, amber, why nothing can
+  move. The walk runs on the rider phone's motion sensors, so every key is disabled until the
+  robot is on (*Turn the robot on to move it.*) and a creature wearing it is open on screen
+  (*Open a persona wearing it and keep the creature on screen. Its phone's motion sensors run
+  the walk.*). Last,
   *Add a robot* (secondary). With no robot yet, the tab is *Add a robot*.
 - **Phones.** One row per phone that has opened GrowBot (a phone outline, its name, what it
   holds: *Captain Bolt · wearing Fish*, *Sprout · alone*, *nothing open*), with a violet *Fish*
@@ -3382,9 +3387,11 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
 - **Controls for <name>** (owner, 2026-11-12: *"anything they could do in the original
   application"*) is one card under each robot's *Who wears* on the Body tab
   (`components/GrowbotBodyControls.tsx`, owner 2026-11-12: the remote and the leg trim in one
-  GUI): a *Move | Legs* segmented strip, *Move* first (the remote above), and one full-width
-  rose *Stop* under both that stops the chip and the creature walking it together. *Legs* is upstream's tester leg check in its own
-  three steps: *1 · Which leg* (*Move left leg* / *Move right leg*, then the *Swap left and
+  GUI): its state beside a dot in the head (*Ready*, *No creature* in amber, *Off*), a *Move |
+  Legs* segmented strip, *Move* first (the remote above). One *Stop* stops the chip and the
+  creature walking it together: the pad's middle on *Move*, a full-width rose *Stop* under
+  *Legs*. *Legs* is upstream's tester leg check in its own three steps, each under a rule with
+  a steel number disc: *1 · Which leg* (*Move left leg* / *Move right leg*, then the *Swap left and
   right* checkbox), *2 · Straighten* (a *Left trim* and *Right trim* row each: −, slider ±30°,
   +, the value; the legs stand at the new trim once the hand stops), *3 · Direction* (*Sweep
   left/right forward*), then *Advanced* (each leg's sign, the IMU's roll/pitch/yaw signs, the

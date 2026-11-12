@@ -684,7 +684,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             {riderPick(r)}
             <GrowbotBodyControls
               robot={r}
-              move={<GrowbotMovePanel robot={r} withStop={false} />}
+              move={(stop) => <GrowbotMovePanel robot={r} onStop={stop} />}
               onStop={() => stopCreature(r)}
             />
           </div>

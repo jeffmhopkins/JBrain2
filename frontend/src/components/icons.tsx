@@ -162,6 +162,21 @@ export const ChevronRightIcon = (p: IconProps) => (
   </Icon>
 );
 
+// Turn-in-place arrows (GrowBot's spin policies), clockwise and counter-clockwise.
+export const RotateCwIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M20 12a8 8 0 1 1-2.3-5.7" />
+    <path d="M20 4v4h-4" />
+  </Icon>
+);
+
+export const RotateCcwIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 12a8 8 0 1 0 2.3-5.7" />
+    <path d="M4 4v4h4" />
+  </Icon>
+);
+
 export const BookIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15A2.5 2.5 0 0 0 6.5 22H20v-2.5" />

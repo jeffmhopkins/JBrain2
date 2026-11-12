@@ -1,15 +1,16 @@
-/** The Body tab's one controls card per robot: Legs, and Move (the policies and the remote,
- *  passed in as `move` once that pane lands; until then the card is Legs alone). Legs is
+/** The Body tab's one controls card per robot: Move (the driving pad, passed in as `move`;
+ *  without it the card is Legs alone) and Legs. Legs is
  *  upstream's tester leg check (tester/motor.html) rebuilt here so nothing needs the original
  *  app: which leg is which and the swap, the by-eye trims, each leg's sweep and sign, the IMU
  *  signs and the walk gain. Each setting changed here is saved on the box for this robot and
  *  every creature that wears it copies it in; a change also moves the legs so it can be
- *  judged by eye, as upstream's sliders do. One Stop sits under both: the chip's stop, plus
- *  `onStop` for a creature walking it. */
+ *  judged by eye, as upstream's sliders do. One Stop serves both: the chip's stop, plus
+ *  `onStop` for a creature walking it; Move wears it in the middle of its pad, Legs under. */
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotCal, type GrowbotRobot, type GrowbotStep, api } from "../api/client";
 import { GrowbotTabs } from "./GrowbotPersonaSheets";
 import { useArm } from "./growbotArm";
+import { StopIcon } from "./icons";
 
 type Pane = "move" | "legs";
 
@@ -235,7 +236,12 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
       </p>
       {!live && <p className="gb-hint dim">{OFF_HINT}</p>}
 
-      <h4 className="gb-step">1 · Which leg</h4>
+      <h4 className="gb-step">
+        <span className="gb-step-n" aria-hidden="true">
+          1
+        </span>
+        Which leg
+      </h4>
       <p className="gb-hint">
         Left and right are the robot's own, so its left is on your right when you face its screen.
         Tap each and check which leg moves; ignore which way.
@@ -276,12 +282,22 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
         </span>
       </label>
 
-      <h4 className="gb-step">2 · Straighten</h4>
+      <h4 className="gb-step">
+        <span className="gb-step-n" aria-hidden="true">
+          2
+        </span>
+        Straighten
+      </h4>
       <p className="gb-hint">Trim until both legs hang straight down.</p>
       <TrimRow side="Left" value={cal.L_OFF} onChange={(n) => setTrim("L_OFF", n)} />
       <TrimRow side="Right" value={cal.R_OFF} onChange={(n) => setTrim("R_OFF", n)} />
 
-      <h4 className="gb-step">3 · Direction</h4>
+      <h4 className="gb-step">
+        <span className="gb-step-n" aria-hidden="true">
+          3
+        </span>
+        Direction
+      </h4>
       <p className="gb-hint">
         Each leg should sweep down toward the screen (forward). If it lifts or sweeps backward, flip
         that leg below.
@@ -390,37 +406,51 @@ function Legs({ robot }: { robot: GrowbotRobot }) {
   );
 }
 
+export type GrowbotStopSaid = { text: string; bad: boolean };
+
 export function GrowbotBodyControls({
   robot,
   move,
   onStop,
 }: {
   robot: GrowbotRobot;
-  /** The Move pane (policies and the remote); without it the card is Legs alone. */
-  move?: ReactNode;
+  /** The Move pane, handed the card's Stop to wear on its pad; without it the card is Legs
+   *  alone. */
+  move?: (stop: () => Promise<GrowbotStopSaid>) => ReactNode;
   /** Also called by Stop, alongside the chip-direct stop: a creature's walk keeps streaming
    *  poses, so it must be told too. */
   onStop?: () => void;
 }) {
   const [pane, setPane] = useState<Pane>(move ? "move" : "legs");
-  const [stopNote, setStopNote] = useState("");
+  const [stopNote, setStopNote] = useState<GrowbotStopSaid | null>(null);
   const name = robot.name || robot.code;
   const live = robot.connected && !robot.revoked_at;
   const base = `gb-ctl-${robot.code}`;
   const shown: Pane = move ? pane : "legs";
+  const state = !live
+    ? { dot: "", word: "Off" }
+    : robot.creature
+      ? { dot: "ok", word: "Ready" }
+      : { dot: "warn", word: "No creature" };
 
-  function stop() {
+  function stop(): Promise<GrowbotStopSaid> {
     onStop?.();
-    api.growbotAct(robot.code, { kind: "stop" }).then(
-      () => setStopNote("Stopped. The legs are limp."),
-      (e: unknown) => setStopNote(message(e)),
+    return api.growbotAct(robot.code, { kind: "stop" }).then(
+      () => ({ text: "Stopped. The legs are limp.", bad: false }),
+      (e: unknown) => ({ text: message(e), bad: true }),
     );
   }
 
   if (robot.revoked_at) return null;
   return (
     <section className="gb-card gb-ctl" aria-label={`Controls for ${name}`}>
-      <h3>Controls for {name}</h3>
+      <div className="gb-card-head">
+        <h3>Controls for {name}</h3>
+        <span className="gb-state">
+          <span className={`gb-dot ${state.dot}`} aria-hidden="true" />
+          {state.word}
+        </span>
+      </div>
       {move && (
         <GrowbotTabs<Pane>
           base={base}
@@ -439,15 +469,25 @@ export function GrowbotBodyControls({
         role={move ? "tabpanel" : undefined}
         aria-labelledby={move ? `${base}-tab-${shown}` : undefined}
       >
-        {shown === "move" ? move : <Legs robot={robot} />}
+        {shown === "move" && move ? move(stop) : <Legs robot={robot} />}
       </div>
-      <button type="button" className="gb-btn danger block gb-stop" disabled={!live} onClick={stop}>
-        Stop
-      </button>
-      {stopNote && (
-        <p className="gb-hint" aria-live="polite">
-          {stopNote}
-        </p>
+      {shown === "legs" && (
+        <>
+          <button
+            type="button"
+            className="gb-btn danger block gb-stop"
+            disabled={!live}
+            onClick={() => void stop().then(setStopNote)}
+          >
+            <StopIcon size={16} />
+            Stop
+          </button>
+          {stopNote && (
+            <p className={`gb-hint${stopNote.bad ? " gb-bad-t" : ""}`} aria-live="polite">
+              {stopNote.text}
+            </p>
+          )}
+        </>
       )}
     </section>
   );

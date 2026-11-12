@@ -200,14 +200,36 @@ describe("GrowbotBodyControls", () => {
   it("stops the chip and tells the Move pane too", async () => {
     const calls = serve();
     const onStop = vi.fn();
-    render(<GrowbotBodyControls robot={QUORRA} move={<p>move pane</p>} onStop={onStop} />);
-    expect(screen.getByText("move pane")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    let said = "";
+    render(
+      <GrowbotBodyControls
+        robot={QUORRA}
+        move={(stop) => (
+          <button
+            type="button"
+            onClick={() =>
+              void stop().then((s) => {
+                said = s.text;
+              })
+            }
+          >
+            pad stop
+          </button>
+        )}
+        onStop={onStop}
+      />,
+    );
+    // Move wears the one Stop on its pad, so the card adds none of its own there.
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "pad stop" }));
     expect(onStop).toHaveBeenCalledOnce();
-    await screen.findByText("Stopped. The legs are limp.");
+    await waitFor(() => expect(said).toBe("Stopped. The legs are limp."));
     expect(acts(calls)).toEqual([{ kind: "stop" }]);
     fireEvent.click(screen.getByRole("tab", { name: "Legs" }));
     expect(await screen.findByRole("button", { name: "Move left leg" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await screen.findByText("Stopped. The legs are limp.");
+    expect(onStop).toHaveBeenCalledTimes(2);
   });
 
   it("shows nothing for a revoked robot", () => {
