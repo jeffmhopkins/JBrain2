@@ -954,3 +954,25 @@ async def test_an_owners_settings_before_any_phone_leave_room_for_the_phones_own
         {"gb_eye": "environment", "gb_vol": "0.4", "gb_face_color": "#ffffff"},
         False,
     )
+
+
+async def test_a_first_phone_that_pulled_before_the_owners_pick_never_overwrites_it(
+    maker: async_sessionmaker,
+) -> None:
+    """The phone pulled `None`, the owner picked the camera, then the phone sent all its own:
+    the owner's pick stands and the phone's other settings fill in around it."""
+    repo, sprout, _ = await _world(maker)
+    assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A) == (0, None, False)
+    assert await repo.patch_prefs(OWNER, sprout, prefs.patch_from({"gb_eye": "environment"}, []))
+    first = prefs.patch_from({"gb_eye": "user", "gb_vol": "0.7"}, ["gb_talk"])
+    assert await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, first) == 2
+    assert await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A) == (
+        2,
+        {"gb_eye": "environment", "gb_vol": "0.7"},
+        False,
+    )
+    # The mark is gone, so the phone's later changes land as usual.
+    again = prefs.patch_from({"gb_eye": "user"}, [])
+    assert await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, again) == 3
+    got = await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A)
+    assert got[1] == {"gb_eye": "user", "gb_vol": "0.7"}

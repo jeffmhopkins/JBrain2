@@ -678,11 +678,11 @@ export function GrowbotPersonaPage({
   }
 
   /** Saved as it is tapped, like the face: the setting lives on the box, and the phone's
-   *  poll flips the lens where it stands. Only once a phone has sent its settings: the first
-   *  phone a persona opens on makes them from its own, and a box copy holding only the camera
-   *  would make that phone drop the rest. */
+   *  poll flips the lens where it stands. Before any phone has opened the persona too: the box
+   *  marks the owner's settings, and that first phone lays its own under them
+   *  (growbot-box.js `adopt`) instead of dropping them. */
   async function pickEye(eye: Eye) {
-    if (p.prefs === null || eye === (savedEye ?? boxEye) || eyeing !== null) return;
+    if (eye === (savedEye ?? boxEye) || eyeing !== null) return;
     setEyeing(eye);
     try {
       await api.setGrowbotPersonaPrefs(p.id, { gb_eye: eye === "back" ? "environment" : "user" });
@@ -704,7 +704,7 @@ export function GrowbotPersonaPage({
   /** As the camera: a setting on the box, read by the page every thought. Kid drops the key,
    *  leaving upstream's creature. */
   async function pickTalk(talk: GrowbotTalk) {
-    if (p.prefs === null || talk === (savedTalk ?? boxTalk) || talking !== null) return;
+    if (talk === (savedTalk ?? boxTalk) || talking !== null) return;
     setTalking(talk);
     try {
       await api.setGrowbotPersonaPrefs(
@@ -759,7 +759,7 @@ export function GrowbotPersonaPage({
                 type="radio"
                 name={`gb-eye-${p.id}`}
                 checked={eye === e.id}
-                disabled={eyeing !== null || p.prefs === null}
+                disabled={eyeing !== null}
                 onChange={() => void pickEye(e.id)}
               />
               <span className="gb-tx">
@@ -768,9 +768,6 @@ export function GrowbotPersonaPage({
               </span>
             </label>
           ))}
-          {p.prefs === null && (
-            <p className="gb-hint dim">Open {p.name} on a phone once, then pick its camera here.</p>
-          )}
         </fieldset>
         {voicePicker()}
         <fieldset className="gb-choices">
@@ -781,7 +778,7 @@ export function GrowbotPersonaPage({
                 type="radio"
                 name={`gb-talk-${p.id}`}
                 checked={talkNow === t.id}
-                disabled={talking !== null || p.prefs === null}
+                disabled={talking !== null}
                 onChange={() => void pickTalk(t.id)}
               />
               <span className="gb-tx">
@@ -790,11 +787,6 @@ export function GrowbotPersonaPage({
               </span>
             </label>
           ))}
-          {p.prefs === null && (
-            <p className="gb-hint dim">
-              Open {p.name} on a phone once, then pick how it talks here.
-            </p>
-          )}
         </fieldset>
         <fieldset className="gb-choices">
           <legend>When it's quiet</legend>

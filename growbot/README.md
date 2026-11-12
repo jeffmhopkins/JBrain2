@@ -380,7 +380,7 @@ At load, after the soul, a synchronous pull replaces this phone's copy of those 
 box's (the phone's own wait in `gb_phone_prefs` for a G2 session, as the soul's do). A persona
 with none yet takes the first phone's own, never another persona's (an owner edit made before
 any phone sent its own is marked, and the pull's `adopt` tells the first phone to lay its own
-under the owner's rather than drop them). A change (a `setItem`, a
+under the owner's rather than drop them; the box holds to that even for a phone that pulled before the owner's edit landed, keeping only its keys the owner had not set, and that phone pulls again when its write shows the version moved). A change (a `setItem`, a
 `removeItem`, or upstream's `localStorage.key = v`, which a 2 s check catches) goes back 1.5 s
 later, and when the page hides, as a patch of only the keys that changed, so the owner's edit
 of another key stands. `gb_box_prefs` keeps `{persona, dirty, base, version}`: a change the box

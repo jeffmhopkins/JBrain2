@@ -630,7 +630,12 @@
       if (m.persona && m.persona !== persona) become({});
       else if (!m.persona && ownSaved()) become(ownSaved());
       var first = snap(), all = sync("POST", body({ set: first, drop: [] }));
-      if (all.status === 200 && all.json) { sent = first; version = all.json.version; }
+      if (all.status === 200 && all.json) {
+        sent = first;
+        // The owner picked one meanwhile: the box kept theirs, so this phone pulls it.
+        if (all.json.version !== version + 1) gapPull = true;
+        version = all.json.version;
+      }
       else sent = {};
     }
     setMeta({ persona: persona, dirty: keepMine || !!patchOf(sent, snap()), base: sent, version: version });

@@ -1739,6 +1739,55 @@ def test_a_dream_keeps_the_visit_once_even_across_a_reload() -> None:
     assert got["logs"] == [["dream_keep", {"s": 3, "f": 3}], ["dream_keep", {"s": 0, "f": 0}]]
 
 
+@pytest.mark.parametrize(
+    ("said", "goal"),
+    [
+        ("okay, go to sleep", None),
+        ("go to bed little fish", None),
+        ("you can go to sleep now", None),
+        ("go to the kitchen", "the kitchen"),
+        ("find my keys", "my keys"),
+    ],
+)
+def test_go_to_sleep_lets_it_sleep_instead_of_seeking_sleep(said: str, goal: str | None) -> None:
+    """Field test, 2026-11-12: "go to sleep" set a seek for "sleep", and a seek holds every
+    dream back, so the creature it was given leave to sleep never slept."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    start = page.index("function _seekWords(t){")
+    code = page[start : page.index("function _localCmd(t)", start)]
+    out = subprocess.run(
+        [node, "-e", f"{code}\nconsole.log(JSON.stringify(_seekWords({json.dumps(said)}).goal))"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(out.stdout) == goal
+
+
+def test_leave_to_sleep_ends_what_it_was_doing() -> None:
+    """A seek still under way when its person lets it sleep ends as the dream is next tried, so
+    the dream is not held back as "activity" until the leave lapses; a request of theirs that is
+    queued, or sent after the goodnight, outranks the leave."""
+    got = _sleep_page(
+        "var ended=[],seekGoal='my keys',actOn=true,mimicOn=false,pendingUser=null,_humanReqN=3;"
+        "var _humanT=Date.now()-5000;"
+        "function endActivity(r){ended.push(r);seekGoal='';actOn=false;}"
+        "var r={};gbSleepEnds();r.unasked=ended.length;"
+        "gbSleepGrant();gbSleepEnds();r.slept=ended.slice();"
+        "seekGoal='the remote';actOn=true;pendingUser='find the remote';gbSleepEnds();"
+        "r.queued=ended.length;pendingUser=null;_humanReqN=4;gbSleepEnds();r.asked=ended.length;"
+        "gbSleepGrant();gbSleepEnds();r.again=ended.length;"
+        # Words answered on the page alone (the shake game) move no request, only _humanT.
+        "mimicOn=true;gbSleepGrant();_humanT=_gbSleepAt+1;gbSleepEnds();r.game=ended.length;"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["unasked"] == 0 and got["slept"] == ["sleep"]
+    assert got["queued"] == 1 and got["asked"] == 1 and got["again"] == 2 and got["game"] == 2
+
+
 def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "due=callsSinceDream>=12" not in page
@@ -1752,6 +1801,7 @@ def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
         in page
     )
     assert "IDLE_DREAM_MS=300000" in page and "IDLE_DREAM_MS=120000" not in page
+    assert "function maybeDream(){ try{ gbSleepEnds(); }catch(e){} var _dw0=" in page
     assert "_gbSleepOK=false; _gbDreamOnOpen=false;" in page
     assert '+(_gbSleepWhy||"a quiet stillness came over it")+gbDreamSession();' in page
     assert '_t.indexOf("🌙 dreamed")!==0 && _t.indexOf("📖")!==0;' in page

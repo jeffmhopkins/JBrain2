@@ -1148,6 +1148,13 @@ class SqlPersonaRepo:
             )
         ).scalar_one()
         if phone:
+            if had is not None and OWNER_ONLY in had:
+                # The owner's settings came first: a phone fills in around them, never over
+                # them, even one that pulled before the owner's write (growbot-box.js adopt).
+                patch = Patch(
+                    {k: v for k, v in patch.set.items() if k not in had},
+                    [k for k in patch.drop if k not in had],
+                )
             had = for_phone(had)[0]
         elif had is None:
             had = {OWNER_ONLY: "1"}
