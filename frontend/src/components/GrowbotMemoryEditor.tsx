@@ -16,6 +16,8 @@ import { Sheet } from "./Sheet";
 interface Props {
   p: GrowbotPersona;
   soul: GrowbotSoul;
+  /** The version the sheet opened on: a save after the creature wrote again is refused. */
+  version: number;
   which: MemoryId;
   openOn: string | null;
   onClose: () => void;
@@ -48,7 +50,7 @@ function lines(text: string): string[] {
     .filter(Boolean);
 }
 
-export function GrowbotMemoryEditor({ p, soul, which, openOn, onClose, onSaved }: Props) {
+export function GrowbotMemoryEditor({ p, soul, version, which, openOn, onClose, onSaved }: Props) {
   const info = MEMORY.find((m) => m.id === which) ?? MEMORY[0];
   const [text, setText] = useState(() =>
     which === "identity" ? str(soul.identity) : which === "bond" ? str(soul.identityCore) : "",
@@ -63,7 +65,11 @@ export function GrowbotMemoryEditor({ p, soul, which, openOn, onClose, onSaved }
   );
   const [diary, setDiary] = useState<Line[]>(() =>
     (soul.log ?? [])
-      .filter((l): l is Line => typeof l?.txt === "string" && typeof l.t === "number")
+      // A line with no time a Date can hold stays on the box as it is (the box keeps it).
+      .filter(
+        (l): l is Line =>
+          typeof l?.txt === "string" && typeof l.t === "number" && l.t >= 0 && l.t <= 8.64e15,
+      )
       .map((l) => ({ t: l.t, txt: l.txt }))
       .sort((a, b) => b.t - a.t),
   );
@@ -112,7 +118,7 @@ export function GrowbotMemoryEditor({ p, soul, which, openOn, onClose, onSaved }
     setBusy(true);
     setErr("");
     try {
-      onSaved(await api.editGrowbotRegion(p.id, info.up as GrowbotRegion, v));
+      onSaved(await api.editGrowbotRegion(p.id, info.up as GrowbotRegion, v, version));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setBusy(false);

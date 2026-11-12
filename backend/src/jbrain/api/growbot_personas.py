@@ -332,6 +332,9 @@ class RegionIn(BaseModel):
     # Text for persona, dream, identity and identityCore; {name, description} for meta; a list
     # of {t, txt} for log; an object for the rest.
     value: Any
+    # The version the editor loaded. A memory edit replaces lists the creature keeps adding to,
+    # so one made while the phone wrote meanwhile is refused (409) rather than dropping its lines.
+    base: int | None = None
 
 
 class CheckpointIn(BaseModel):
@@ -411,7 +414,8 @@ async def edit_region(
     if region == "meta":
         name = _name(str(soul["meta"]["name"]))
     before = (f"Before editing {_REGION_LABEL[region]}", "made before an edit")
-    return await _written(request, ctx, pid, soul, before, name, p.version)
+    expect = p.version if body.base is None else body.base
+    return await _written(request, ctx, pid, soul, before, name, expect)
 
 
 @router.post("/personas/{pid}/duplicate")

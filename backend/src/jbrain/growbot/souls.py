@@ -41,6 +41,7 @@ WANTS_MAX = 4
 SELF_NAME_CAP = 32
 LOG_LINE_CAP = 140
 LOG_MAX = 1000
+DATE_MAX_MS = 8.64e15
 # Free-text regions, with the field that holds the text and its cap in sanitizeSoulCfg.
 TEXT_REGIONS = {"persona": ("constitution", 6000), "dream": ("system_prompt", 8000)}
 JSON_REGIONS = ("expression", "harness", "body")
@@ -305,10 +306,41 @@ def edit_region(soul: dict[str, Any], region: str, value: Any) -> dict[str, Any]
     return out
 
 
+def _u16(s: str) -> int:
+    """A string's length as the phone counts it (`slice` and `maxLength` count UTF-16 units)."""
+    return len(s.encode("utf-16-le")) // 2
+
+
+def _fit16(s: str, cap: int) -> str:
+    """`s` cut to `cap` UTF-16 units, never through an emoji's surrogate pair."""
+    while _u16(s) > cap:
+        s = s[:-1]
+    return s
+
+
+def _storable(s: str) -> str:
+    # A NUL or a lone surrogate cannot be stored as jsonb (memories.py `_text` refuses both).
+    if "\x00" in s or any("\ud800" <= c <= "\udfff" for c in s):
+        raise SoulError("That has a character the box can't keep. Nothing was saved.")
+    return s
+
+
+def _text(value: Any, cap: int, what: str) -> str:
+    """The owner's text cleaned as `soulClean`, refused rather than cut past the creature's cap."""
+    if not isinstance(value, str):
+        raise SoulError(f"{what} has to be text. Nothing was saved.")
+    text = _storable(clean(value, len(value)))
+    if _u16(text) > cap:
+        raise SoulError(
+            f"{what} is {_u16(text)} characters; the most it keeps is {cap}. Nothing was saved."
+        )
+    return text
+
+
 def _lines(value: Any, cap: int, most: int, what: str) -> list[str]:
-    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+    if not isinstance(value, list):
         raise SoulError(f"The {what} have to be a list of lines. Nothing was saved.")
-    out = [line for line in (clean(x, cap) for x in value) if line]
+    out = [line for line in (_text(x, cap, f"A line of the {what}") for x in value) if line]
     if len(out) > most:
         raise SoulError(
             f"That's {len(out)} {what}; the most it keeps is {most}. Nothing was saved."
@@ -320,84 +352,81 @@ def _name_clean(value: Any) -> str:
     """next.html `nameClean`, the one cleaner for a creature's name."""
     s = re.sub(r"[\n\r{}\"'<>|]+", " ", "" if value is None else str(value))
     s = re.sub(r"==+", "=", s)
-    return re.sub(r"\s+", " ", s).strip()[:SELF_NAME_CAP]
+    return _fit16(re.sub(r"\s+", " ", s).strip(), SELF_NAME_CAP)
 
 
 def _edit_memory(out: dict[str, Any], region: str, value: Any) -> None:
     """One memory surface replaced by the owner's correction, cleaned as the creature cleans
     its own writes. Only the fields the PWA shows are replaced; the rest (mood, longing, the
     ladder, a diary line's ambient flag) are kept as the creature left them."""
+    if region == "identity":
+        text = _text(value, IDENTITY_MAX, "Who it is")
+        if len(text) < IDENTITY_MIN:
+            raise SoulError(
+                f"It needs at least {IDENTITY_MIN} characters, or the creature starts over "
+                "from its seed. Nothing was saved."
+            )
+        out["identity"] = text
+    elif region == "identityCore":
+        # Empty is allowed: the bond line is then unwritten, and its dream may write it.
+        out["identityCore"] = _text(value, IDENTITY_CORE_CAP, "The bond line")
     if region in ("identity", "identityCore"):
-        raw = value if isinstance(value, str) else None
-        if raw is None:
-            raise SoulError("It has to be text. Nothing was saved.")
-        if region == "identity":
-            text = clean(raw, len(raw))
-            if len(text) < IDENTITY_MIN:
-                raise SoulError(
-                    f"It needs at least {IDENTITY_MIN} characters, or the creature starts over "
-                    "from its seed. Nothing was saved."
-                )
-            if len(text) > IDENTITY_MAX:
-                raise SoulError(
-                    f"That's {len(text)} characters; the most it keeps is {IDENTITY_MAX}. "
-                    "Nothing was saved."
-                )
-        else:
-            # Empty is allowed: the bond line is then unwritten, and its dream may write it.
-            text = clean(raw, len(raw))
-            if len(text) > IDENTITY_CORE_CAP:
-                raise SoulError(
-                    f"That's {len(text)} characters; the most it keeps is {IDENTITY_CORE_CAP}. "
-                    "Nothing was saved."
-                )
-        out[region] = text
         # soul.js mergeSoulInto keeps the identity and bond line with the newer identityAt, so a
         # tab still holding the old ones does not win them back.
         out["identityAt"] = int(time.time() * 1000)
         return
+    if region not in out:
+        # A creature that has not woken yet gets upstream's seed for these on its first load
+        # (normalizeSoul fills a missing key whole); a partial one here would replace that seed.
+        raise SoulError(
+            "It hasn't written this yet — it does when it first wakes up. Nothing was saved."
+        )
     if not isinstance(value, dict) and region != "log":
         raise SoulError("It has to be one { … } block. Nothing was saved.")
     if region == "scratch":
         scratch = obj(out.get("scratch"))
-        state = value.get("state")
-        if not isinstance(state, str):
-            raise SoulError("What it's doing right now has to be text. Nothing was saved.")
-        scratch["state"] = clean(state, STATE_CAP)
-        scratch["rules"] = _lines(value.get("rules"), RULE_CAP, RULES_MAX, "rules")
+        had = scratch.get("rules")
+        # A merge never trims, so a creature may hold more than the cap; that is not the owner's
+        # to prune before they may change anything else.
+        most = max(RULES_MAX, len(had) if isinstance(had, list) else 0)
+        scratch["state"] = _text(value.get("state"), STATE_CAP, "What it's doing right now")
+        scratch["rules"] = _lines(value.get("rules"), RULE_CAP, most, "rules")
         out["scratch"] = scratch
     elif region == "goals":
         goals = obj(out.get("goals"))
         name = value.get("selfName")
         if not isinstance(name, str):
             raise SoulError("Its name has to be text. Nothing was saved.")
-        goals["selfName"] = _name_clean(name)
+        goals["selfName"] = _storable(_name_clean(name))
         goals["wants"] = _lines(value.get("wants"), WANT_CAP, WANTS_MAX, "wants")
         out["goals"] = goals
     else:
         out["log"] = _diary(out.get("log"), value)
 
 
+def _when(t: Any) -> bool:
+    # A diary time the phone and the PWA can both read: a Date takes at most 8.64e15 ms.
+    return isinstance(t, int | float) and not isinstance(t, bool) and 0 <= t <= DATE_MAX_MS
+
+
 def _diary(had: Any, value: Any) -> list[dict[str, Any]]:
     """The diary as the owner left it: each line `{t, txt}`, matched to the line it was by `t`
-    so its other fields survive; an emptied line is dropped, and the order is by time."""
-    if not isinstance(value, list) or len(value) > LOG_MAX:
-        raise SoulError(
-            f"The diary has to be a list of at most {LOG_MAX} lines. Nothing was saved."
-        )
-    old = {e.get("t"): e for e in had if isinstance(e, dict)} if isinstance(had, list) else {}
-    out: list[dict[str, Any]] = []
+    so its other fields survive; an emptied line is dropped, and the order is by time. A stored
+    line the editor could not show (no readable time or words) is kept as it was."""
+    most = max(LOG_MAX, len(had) if isinstance(had, list) else 0)
+    if not isinstance(value, list) or len(value) > most:
+        raise SoulError(f"The diary has to be a list of at most {most} lines. Nothing was saved.")
+    stored = [e for e in had if isinstance(e, dict)] if isinstance(had, list) else []
+    old = {e["t"]: e for e in stored if _when(e.get("t"))}
+    out = [e for e in stored if not (_when(e.get("t")) and isinstance(e.get("txt"), str))]
     for e in value:
         t = e.get("t") if isinstance(e, dict) else None
-        txt = e.get("txt") if isinstance(e, dict) else None
-        if not isinstance(txt, str) or not (
-            isinstance(t, int | float) and not isinstance(t, bool) and math.isfinite(t)
-        ):
+        if not _when(t):
             raise SoulError("A diary line has to be a time and its words. Nothing was saved.")
-        line = clean(txt, LOG_LINE_CAP)
+        line = _text(e.get("txt"), LOG_LINE_CAP, "A diary line")
         if line:
             out.append({**obj(old.get(t)), "t": t, "txt": line})
-    out.sort(key=lambda e: e["t"])
+    out.sort(key=lambda e: e["t"] if _when(e.get("t")) else 0)
     return out
 
 

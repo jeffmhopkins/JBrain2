@@ -763,6 +763,7 @@ describe("GrowbotScreen a persona's page", () => {
     ).toBeTruthy();
     expect(s.calls.find((c) => c.method === "PUT")?.body).toEqual({
       value: "I am Pip. I live in the garden with Quorra.",
+      base: 1,
     });
   });
 
@@ -789,6 +790,7 @@ describe("GrowbotScreen a persona's page", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(s.calls.find((c) => c.path.endsWith("/regions/goals"))?.body).toEqual({
       value: { selfName: "Fish", wants: ["walk to Tamsin", "find the kettle"] },
+      base: 1,
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Edit diary" }));
@@ -798,7 +800,10 @@ describe("GrowbotScreen a persona's page", () => {
     });
     fireEvent.click(within(editor).getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(s.calls.find((c) => c.path.endsWith("/regions/log"))?.body).toEqual({ value: [] }),
+      expect(s.calls.find((c) => c.path.endsWith("/regions/log"))?.body).toEqual({
+        value: [],
+        base: 1,
+      }),
     );
   });
 

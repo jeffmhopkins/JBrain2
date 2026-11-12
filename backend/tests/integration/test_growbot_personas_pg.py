@@ -503,9 +503,22 @@ async def test_routes_add_edit_undo_and_restore(maker: async_sessionmaker) -> No
     ).json()
     assert who["persona"]["soul"]["identity"] == "I am Sprout and I live by the window."
     assert who["checkpoint"]["name"] == "Before editing who it is"
+    # An editor opened before the creature wrote again is refused, not allowed to drop its lines.
+    stale = c.put(
+        f"/api/growbot/personas/{pid}/regions/identityCore",
+        json={"value": "My person is Jeff.", "base": who["persona"]["version"] - 1},
+    )
+    assert stale.status_code == 409 and "Nothing was saved" in stale.json()["detail"]
+    fresh = c.put(f"/api/growbot/personas/{pid}/regions/log", json={"value": []})
+    assert fresh.status_code == 422 and "hasn't written this yet" in fresh.json()["detail"]
+    woke = {"soul_format": 3, "meta": {"name": "Fish", "kind": "snapshot"}, "goals": {}}
+    fish = c.post("/api/growbot/personas/import", json={"soul": woke}).json()["persona"]
     wants = c.put(
-        f"/api/growbot/personas/{pid}/regions/goals",
-        json={"value": {"selfName": "Fish", "wants": ["walk to my person"]}},
+        f"/api/growbot/personas/{fish['id']}/regions/goals",
+        json={
+            "value": {"selfName": "Fish", "wants": ["walk to my person"]},
+            "base": fish["version"],
+        },
     )
     assert wants.status_code == 200, wants.text
     assert wants.json()["persona"]["soul"]["goals"]["selfName"] == "Fish"
@@ -527,7 +540,7 @@ async def test_routes_add_edit_undo_and_restore(maker: async_sessionmaker) -> No
     ).json()
     assert meta["persona"]["name"] == "Pip"
     detail = c.get(f"/api/growbot/personas/{pid}").json()
-    assert [cp["auto"] for cp in detail["checkpoint_list"]] == [True, True, True, True, True]
+    assert [cp["auto"] for cp in detail["checkpoint_list"]] == [True, True, True, True]
 
 
 async def test_routes_seed_duplicate_rename_reset_and_delete(maker: async_sessionmaker) -> None:

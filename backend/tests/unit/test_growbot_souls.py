@@ -187,7 +187,14 @@ def test_editing_a_text_region_replaces_only_its_text() -> None:
         ("log", {"t": 1, "txt": "x"}, "list of at most 1000"),
         ("log", [{"t": "noon", "txt": "x"}], "a time and its words"),
         ("log", [{"t": True, "txt": "x"}], "a time and its words"),
-        ("log", [{"t": 1}], "a time and its words"),
+        ("log", [{"t": 1}], "A diary line has to be text"),
+        ("log", [{"t": 10**400, "txt": "x"}], "a time and its words"),
+        ("log", [{"t": 1e300, "txt": "x"}], "a time and its words"),
+        ("log", [{"t": -1, "txt": "x"}], "a time and its words"),
+        ("log", [{"t": 1, "txt": "nul\x00"}], "can't keep"),
+        ("identityCore", "half an emoji \ud83d", "can't keep"),
+        ("goals", {"selfName": "Pip", "wants": ["x" * 81]}, "most it keeps is 80"),
+        ("goals", {"selfName": "Pip", "wants": ["\U0001f41f" * 41]}, "82 characters"),
         ("mood", {"v": 1}, "can't be edited here"),
     ],
 )
@@ -217,7 +224,7 @@ def test_editing_right_now_keeps_its_mood_and_reflexes() -> None:
     out = souls.edit_region(
         soul,
         "scratch",
-        {"state": " sitting  still ", "rules": ["stay on the desk", "  ", "x" * 99]},
+        {"state": " sitting  still ", "rules": ["stay on the desk", "  ", "x" * 90]},
     )
     assert out["scratch"] == {
         "state": "sitting still",
@@ -245,6 +252,40 @@ def test_editing_the_diary_keeps_each_lines_flags_drops_emptied_ones_and_sorts()
         soul, "log", [{"t": 5, "txt": "new"}, {"t": 2, "txt": " "}, {"t": 1, "txt": " A  fixed "}]
     )
     assert out["log"] == [{"t": 1, "txt": "A fixed", "amb": 1}, {"t": 5, "txt": "new"}]
+
+
+def test_a_creature_that_has_not_woken_keeps_its_seed_until_it_writes_these() -> None:
+    fresh = souls.fresh("Pip")
+    for region, value in [
+        ("goals", {"selfName": "Pip", "wants": []}),
+        ("scratch", {"state": "up", "rules": []}),
+        ("log", []),
+    ]:
+        with pytest.raises(souls.SoulError, match="hasn't written this yet"):
+            souls.edit_region(fresh, region, value)
+    assert souls.edit_region(fresh, "identity", "I am Pip and I like boats.")["identity"]
+
+
+def test_rules_already_past_the_cap_do_not_block_editing_right_now() -> None:
+    rules = [f"rule {i}" for i in range(30)]
+    soul = _grown() | {"scratch": {"state": "x", "rules": rules}}
+    out = souls.edit_region(soul, "scratch", {"state": "napping", "rules": rules})
+    assert out["scratch"]["state"] == "napping" and len(out["scratch"]["rules"]) == 30
+
+
+def test_a_diary_line_the_editor_cannot_show_is_kept_and_a_bad_stored_time_never_breaks_it() -> (
+    None
+):
+    odd = [{"t": [1], "txt": "list time"}, {"t": "noon", "txt": "string time"}, {"t": 3}]
+    soul = _grown() | {"log": [*odd, {"t": 2, "txt": "b"}]}
+    out = souls.edit_region(soul, "log", [{"t": 2, "txt": "B"}])
+    assert {"t": 2, "txt": "B"} in out["log"] and len(out["log"]) == 4
+    assert all(e in out["log"] for e in odd)
+
+
+def test_its_own_name_is_cut_like_the_phone_cuts_it_never_through_an_emoji() -> None:
+    out = souls.edit_region(_grown(), "goals", {"selfName": "a" + "\U0001f41f" * 20, "wants": []})
+    assert out["goals"]["selfName"] == "a" + "\U0001f41f" * 15
 
 
 def test_editing_meta_and_the_json_regions() -> None:

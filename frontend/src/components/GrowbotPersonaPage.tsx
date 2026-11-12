@@ -410,14 +410,17 @@ export function GrowbotPersonaPage({
               <div className="gb-rh">
                 <h3>{m.label}</h3>
                 <span className="gb-up">{m.up}</span>
-                <button
-                  type="button"
-                  className="gb-linkbtn"
-                  aria-label={`Edit ${m.label.toLowerCase()}`}
-                  onClick={() => setRemembering(m.id)}
-                >
-                  Edit
-                </button>
+                {/* Before it first wakes, the creature's seed fills these in on the phone. */}
+                {(m.id === "identity" || m.id === "bond" || m.up in soul) && (
+                  <button
+                    type="button"
+                    className="gb-linkbtn"
+                    aria-label={`Edit ${m.label.toLowerCase()}`}
+                    onClick={() => setRemembering(m.id)}
+                  >
+                    Edit
+                  </button>
+                )}
               </div>
               {memory[m.id]}
             </div>
@@ -646,6 +649,7 @@ export function GrowbotPersonaPage({
         <GrowbotMemoryEditor
           p={p}
           soul={soul}
+          version={detail.version}
           which={remembering}
           openOn={p.phone ? onPhone(p.phone, pl) : null}
           onClose={() => setRemembering(null)}

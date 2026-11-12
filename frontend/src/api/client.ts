@@ -8338,10 +8338,11 @@ export const api = {
     id: string,
     region: GrowbotRegion,
     value: unknown,
+    base?: number,
   ): Promise<GrowbotWritten> {
     const response = await request(
       `/api/growbot/personas/${encodeURIComponent(id)}/regions/${region}`,
-      jsonInit("PUT", { value }),
+      jsonInit("PUT", base === undefined ? { value } : { value, base }),
     );
     return (await response.json()) as GrowbotWritten;
   },

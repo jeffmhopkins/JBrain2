@@ -3344,7 +3344,10 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     240), *Right now* and *Rules it has learned* (one per line, 24 at most), *Calls itself* and
     *Wants* (one per line, four at most), and the diary as one dated field per line, newest
     first, where emptying a line takes it out. Saving checkpoints first and toasts *Saved.* with
-    its Undo, as a region edit does.
+    its Undo, as a region edit does. A save sends the version the sheet opened on, so one made
+    after the creature wrote again is refused (*It changed on its phone while you were editing*)
+    instead of dropping its new lines. Right now, Wants and Diary have no *Edit* until the
+    creature first wakes on a phone: until then its seed fills them in.
   - *Memories* (its count on the tab, read when the tab opens): a grid of saved views, each its
     first picture (the kind's glyph while it loads or if it can't), its name or what it is (*A
     person*, *A thing*, *Handwriting*, *A scene*, *A place*), its date and *Delete* (armed: *Tap
