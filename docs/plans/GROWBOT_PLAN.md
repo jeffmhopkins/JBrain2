@@ -340,7 +340,10 @@ its own), and creature priority (done: each turn stamps
 pauses its background loop as it does for the code-mode hold, for at most 20 minutes at a
 stretch, then stamps nothing for 10 so the worker can catch up; Settings → Devices →
 *GrowBot priority* turns it off);
-(4) history made reusable. Thinking stays off.
+(4) history made reusable. Thinking stays off. Found by the replay check: the page replayed the
+creature's past replies as bare words, and the model copied that, answering about half its turns
+in plain text cut after a word or two; past replies now replay as `{"say":...}` (apply.py
+`HISTORY_PATCHES`), and the same turns then came back whole and well-formed.
 
 **Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
 pick 1, 3 or 6 hours and download one zip with what debugging needs. Upstream's own "brain

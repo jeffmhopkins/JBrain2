@@ -12,6 +12,8 @@ import hashlib
 import importlib.util
 import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -535,3 +537,25 @@ def test_the_text_is_phone_sized_even_in_desktop_site_mode() -> None:
     assert '"body>*:not(#wrap){zoom:"' in shim
     assert "return k > 1.25 ? Math.min(k, 3) : 1;" in shim
     assert 'window.addEventListener("resize", paint);' in shim
+
+
+def test_past_replies_go_back_to_the_model_in_its_own_json_shape() -> None:
+    """Replayed as bare words, the creature's history taught the model to answer in clipped
+    plain text; each past reply now rides as {"say": ...}, a bracketed note as an empty say."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert 'msgs.push({role:"assistant",content:gbTraceReply(tr[i])});' in page
+    assert 'content:tr[i].d?tr[i].a+"\\n(did: "' not in page
+    start = page.index("function gbTraceReply(t){")
+    fn = page[start : page.index("\n", start)]
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = fn + (
+        "\nconsole.log(JSON.stringify([gbTraceReply({a:'Hi \"Jeff\"'}),"
+        "gbTraceReply({a:'(stayed quiet)',d:'spin 2 s'}),gbTraceReply({})]));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    said, quiet, empty = json.loads(out.stdout)
+    assert json.loads(said) == {"say": 'Hi "Jeff"'}
+    assert quiet == '{"say":""}\n(stayed quiet)\n(did: spin 2 s)'
+    assert json.loads(empty) == {"say": ""}

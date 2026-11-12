@@ -758,6 +758,32 @@ FIXED_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += FIXED_PATCHES
 
+# The creature's past replies go back to the model in its own JSON shape (owner, 2026-11-12).
+# Upstream replays each one as the bare words it said, so the model's own history shows it
+# answering in plain text, and it copies that: in replays of real turns about half the replies
+# dropped the JSON and stopped after a word or two ("Still no", "I'm"), and each clipped reply
+# then rode the next turn's history. The same turns with the history as {"say":...} came back
+# whole and well-formed. A bracketed note ("(stayed quiet)", a brain hiccup) is an empty say
+# with the note after it, so the creature never reads the note as words it spoke.
+HISTORY_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'content:tr[i].d?tr[i].a+"\\n(did: "+tr[i].d+")":tr[i].a',
+        "content:gbTraceReply(tr[i])",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var tr=_live.scratch.traces.slice(-4), msgs=[],i;",
+        "function gbTraceReply(t){ var a=String(t.a||\"\"), note=/^\\(.*\\)$/.test(a);"
+        ' return JSON.stringify({say:note?"":a})+(note?"\\n"+a:"")'
+        '+(t.d?"\\n(did: "+t.d+")":""); }\n'
+        "  var tr=_live.scratch.traces.slice(-4), msgs=[],i;",
+        1,
+    ),
+]
+PATCHES += HISTORY_PATCHES
+
 # Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
 # clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off
 # only re-sends the same clip to the queue it is waiting in (whisper-server finishes an
