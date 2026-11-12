@@ -1357,6 +1357,158 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += RECALL_PATCHES
 
+# Sleep (owner, 2026-11-12: "dream in between sessions or if a session goes long ... the
+# creature can say it's tired and wants to sleep. And then if I give it permission to sleep or I
+# exit the session it'll have the dream"). Upstream dreamed every 12 replies, mid-conversation.
+# Now a dream comes when the person lets it sleep (a `sleep` reply field), after 5 quiet minutes
+# (the visit has ended with the page open), or at the first lull of a new visit when the last one
+# was never dreamed (a closed page cannot dream). A long visit makes it sleepy: after 60 replies,
+# or 20 and half an hour awake, its turn says so and it asks, once, at a natural pause. A dream
+# that follows a conversation sees that conversation and writes what mattered to the diary and
+# its facts to the fact book, so the dream is the visit's long-term memory.
+_GB_SLEEP_PAGE_JS = r"""var _gbSleepOK=false, _gbSleepAt=0, _gbDreamOnOpen=false, _gbSleepWhy="", _gbBootT=Date.now(),
+  GB_SLEEP_IDLE_MS=300000, GB_OPEN_GAP_MS=600000, GB_TIRED_REPLIES=60, GB_TIRED_MIN=20,
+  GB_TIRED_MS=1800000, GB_DREAM_SESS=80, GB_SLEEP_HOLD_MS=180000;
+/* Permission to sleep lasts a few minutes: a dream that cannot start by then (energy, a busy
+   body) must not leave the person's 30 s guard off and a goodnight hanging over a live chat. */
+function gbSleepAllowed(){
+  if(_gbSleepOK&&Date.now()-_gbSleepAt>GB_SLEEP_HOLD_MS){ _gbSleepOK=false; try{ logEv("sleep_expired",{}); }catch(e){} }
+  return _gbSleepOK;
+}
+function gbSleepGrant(){ _gbSleepOK=true; _gbSleepAt=Date.now(); logEv("sleep_ok",{csd:callsSinceDream}); }
+/* The visit's lines not yet dreamed ride the soul (scratch.visit), so a dream after a reload or
+   on the next day's open still sees the conversation it should keep; a landed dream clears them,
+   so no visit is summarised twice. */
+function gbVisitKeep(x){ try{
+  var sc=_live&&_live.scratch; if(!sc||!x) return;
+  var v=Array.isArray(sc.visit)?sc.visit:(sc.visit=[]);
+  v.push({t:x.t,txt:x.txt}); if(v.length>GB_DREAM_SESS) v.splice(0,v.length-GB_DREAM_SESS);
+}catch(e){} }
+function gbVisit(){ var sc=_live&&_live.scratch; return (sc&&Array.isArray(sc.visit))?sc.visit:[]; }
+function gbTiredLine(){
+  if(gbSleepAllowed()) return "";
+  var awake=Date.now()-Math.max(lastDreamT||0,_gbBootT);
+  if(!(callsSinceDream>=GB_TIRED_REPLIES||(callsSinceDream>=GB_TIRED_MIN&&awake>=GB_TIRED_MS))) return "";
+  return "\n\n== GETTING SLEEPY ==\nyou have been awake and talking a long time since you last slept, and today wants settling into memory. at a natural pause (never in the middle of answering something), tell your person you are getting sleepy and ask if you may sleep. ask once; if they say not yet, carry on and ask again only much later. when they agree or tell you to sleep, say goodnight and set sleep to true.";
+}
+function gbDreamSession(){
+  var v=gbVisit(); if(!v.length) return "";
+  return "\n\nIts conversation with its person since it last slept, oldest first:\n"+v.map(function(x){ return "- "+String(x&&x.txt||""); }).join("\n")+
+    "\n\nAlso put in your JSON: \"session_summary\":\"1-3 plain sentences for its diary: what mattered in that conversation (people, plans, things its person told it, what they did together)\",\"facts\":[\"up to 5 short plain facts its person told it that are worth keeping\"]";
+}
+var _GB_KEEP_JUNK=/^(omit|none|nothing|n\/a|null|1-3 plain|up to 5 short)\b/i;
+function gbDreamKeep(o){ try{
+  var sum=typeof o.session_summary==="string"?o.session_summary.replace(/\s+/g," ").trim():"", n=0, k=0;
+  if(_GB_KEEP_JUNK.test(sum)) sum="";
+  // soulLog keeps 140 characters a line, so a summary is filed a sentence at a time.
+  if(sum) sum.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0,3).forEach(function(x){ soulLog(_live,"📖 "+x); k++; });
+  (Array.isArray(o.facts)?o.facts:[]).slice(0,5).forEach(function(f){ if(typeof f==="string"&&!_GB_KEEP_JUNK.test(f.trim())&&gbFactAdd(_live,f)) n++; });
+  if(_live&&_live.scratch) _live.scratch.visit=[];
+  _gbSleepWhy="";
+  logEv("dream_keep",{s:k,f:n});
+}catch(e){} }
+"""
+
+SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
+    ("v3/next.html", "var _humanT=0;", _GB_SLEEP_PAGE_JS + "var _humanT=0;", 1),
+    (
+        "v3/next.html",
+        "  _gbSess.push({t:Date.now(),txt:got});",
+        "  _gbSess.push({t:Date.now(),txt:got}); gbVisitKeep(_gbSess[_gbSess.length-1]);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var idle=Date.now()-lastActT, due=callsSinceDream>=12 || (idle>120000 &&"
+        " callsSinceDream>=3);",
+        "var idle=Date.now()-lastActT, due=gbSleepAllowed() || _gbDreamOnOpen"
+        " || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);",
+        1,
+    ),
+    # Its person just let it sleep: their last words are the permission, not a turn to wait out.
+    (
+        "v3/next.html",
+        'Date.now()-_humanT<30000?"human":""',
+        'Date.now()-_humanT<30000&&!gbSleepAllowed()?"human":""',
+        1,
+    ),
+    # Permission outranks the cooldown and a failed dream's backoff; dream() keeps every other
+    # gate (energy, ownership, pause), and maybeDream has already waited out speech and motion.
+    ("v3/next.html", "  if(due) dream(); }", "  if(due) dream(gbSleepAllowed()); }", 1),
+    # The goodnight is still being spoken when the reply handler asks, and a new visit's first
+    # replies are mostly spoken too; the cadence asks again once the mouth is quiet.
+    (
+        "v3/next.html",
+        "    if(actQuiet) return;",
+        "    if((gbSleepAllowed()||_gbDreamOnOpen)&&!_speechBusy()&&!pendingUser){ maybeDream();"
+        " if(inFlight||dreaming) return; }\n    if(actQuiet) return;",
+        1,
+    ),
+    ("v3/next.html", "IDLE_DREAM_MS=120000", "IDLE_DREAM_MS=300000", 1),
+    (
+        "v3/next.html",
+        "_dreamT0=Date.now();",
+        "_dreamT0=Date.now(); if(_gbSleepOK||_gbDreamOnOpen) _gbSleepWhy=_gbSleepOK?\"its person"
+        " said it could sleep, after a long time together\":\"a new visit began and it had not"
+        " slept since the last one\"; _gbSleepOK=false; _gbDreamOnOpen=false;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '"\\n\\nWhy it sleeps now: a quiet stillness came over it";',
+        '"\\n\\nWhy it sleeps now: "+(_gbSleepWhy||"a quiet stillness came over it")'
+        "+gbDreamSession();",
+        1,
+    ),
+    # The dream's own summaries are not lived evidence for the next dream's identity work.
+    (
+        "v3/next.html",
+        'return _t.indexOf("last night I dreamed of")!==0 && _t.indexOf("🌙 dreamed")!==0;',
+        'return _t.indexOf("last night I dreamed of")!==0 && _t.indexOf("🌙 dreamed")!==0'
+        ' && _t.indexOf("📖")!==0;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var o=jparse(raw); if(o){ applyDream(o,lived); }",
+        "var o=jparse(raw); if(o){ applyDream(o,lived); gbDreamKeep(o); }",
+        1,
+    ),
+    # The summary and facts need room beside the identity work.
+    (
+        "v3/next.html",
+        "brainOverride(orCfg.dream,true),700,90000)",
+        "brainOverride(orCfg.dream,true),1000,90000)",
+        1,
+    ),
+    ("v3/next.html", "if(_gbRecallCarry){", "_gbLive+=gbTiredLine(); if(_gbRecallCarry){", 1),
+    # A new visit dreams the last one only when that one left conversation undreamed.
+    (
+        "v3/next.html",
+        "if(_csd0>0&&isFinite(_csd0)) callsSinceDream=Math.min(Math.floor(_csd0),60);",
+        "if(_csd0>0&&isFinite(_csd0)) callsSinceDream=Math.min(Math.floor(_csd0),60);"
+        " var _gbLastV=gbVisit().slice(-1)[0];"
+        " if(_gbLastV&&Date.now()-(+_gbLastV.t||0)>GB_OPEN_GAP_MS) _gbDreamOnOpen=true;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "gbRecallAsk(o.recall,kind,extra); }catch(_fe){}",
+        "gbRecallAsk(o.recall,kind,extra); if((o.sleep===true||o.sleep===\"true\")&&"
+        "kind===\"event\") gbSleepGrant(); }catch(_fe){}",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        " thinking back, and you answer with what you find next thought\",' +",
+        " thinking back, and you answer with what you find next thought\",' +\n"
+        "    '\"sleep\":\"OMIT unless your person just said you may sleep or told you to go to"
+        " sleep: then true, with a goodnight in say\",' +",
+        1,
+    ),
+]
+PATCHES += SLEEP_PATCHES
+
 # Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
 # clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off
 # only re-sends the same clip to the queue it is waiting in (whisper-server finishes an
@@ -1568,7 +1720,7 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep"',
         1,
     ),
 ]

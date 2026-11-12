@@ -393,6 +393,16 @@ turn, only on a turn that answers someone, never from the follow-up, at most one
 person speaks meanwhile or the creature cannot think, the find
 rides their turn (`RECALL_PATCHES`).
 
+**Sleep (owner, 2026-11-12).** Upstream dreamed every 12 replies, so a long conversation was
+broken by dreams. Now a dream comes when the person lets the creature sleep (a `sleep` reply
+field), after 5 quiet minutes with the page open (the visit ended), or at the first lull of a
+new visit when the last one was never dreamed, since a closed page cannot dream. A long visit (60
+replies, or 20 and half an hour awake) makes it sleepy: its turn says so, and it asks once, at a
+natural pause; its permission to sleep lasts three minutes and outranks the dream cooldown. The
+conversation since it last slept (newest 80 exchanges) rides the soul, so a dream after a reload
+or on the next open still sees it; that dream writes a session summary to the diary and up to 5
+facts to the fact book, then clears it, so the dream is the visit's long-term memory. The moon button still dreams on demand (`SLEEP_PATCHES`).
+
 **Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
 pick 1, 3 or 6 hours and download one zip with what debugging needs. Upstream's own "brain
 log" is the creature's diary (`flushLog` in next.html posts a rolling window of its inputs,

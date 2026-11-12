@@ -262,6 +262,7 @@ function buildOutputSchema(body) {
     '"log":"one diary-worthy line, OMIT for routine moments",' +
     '"fact":"OMIT unless your person just told you something worth keeping about their life, people, plans or likes: one plain line for your fact book (lunch today: a chalupa and a taco)",' +
     '"recall":"OMIT almost always. when they ask about something from before that you cannot see above, a few search words (taco bell order) to look through your fact book, diary and this conversation; make say a short natural line that you are thinking back, and you answer with what you find next thought",' +
+    '"sleep":"OMIT unless your person just said you may sleep or told you to go to sleep: then true, with a goodnight in say",' +
     '"glow":"OMIT for ordinary moments — include ONLY when a moment truly delighted you or reshaped who you are; a short phrase naming what glowed (your dreams weigh these most)",' +
     '"ladder":["OMIT unless you are reaching for a wish and have no plan yet — then 2-3 TINY steps you can PROVE with your own senses"],' +
     '"ladder_for":"REQUIRED whenever you include ladder, ignored otherwise — the wish these steps are for, copied EXACTLY from your long-arc wants; plan ONLY for the wish you are reaching for this very turn",' +
