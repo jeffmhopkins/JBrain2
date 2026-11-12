@@ -62,6 +62,7 @@ function persona(over: Partial<GrowbotPersona>): GrowbotPersona {
     memories: 0,
     wearing: null,
     face: "lantern",
+    prefs: {},
     ...over,
   };
 }
@@ -1052,6 +1053,73 @@ describe("GrowbotScreen a persona's page", () => {
     ).toBeTruthy();
     expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({ face: "robot" });
     expect(within(faces).getByRole("radio", { name: /^Robot/ })).toHaveProperty("checked", true);
+  });
+
+  it("switches a persona's camera from Manage, through its settings on the box", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const s = serve(
+      UP,
+      pageRoutes((path, init) => {
+        if (path === `/api/growbot/personas/${SPROUT}/prefs` && init?.method === "PATCH") {
+          return json({ version: 2 });
+        }
+        return null;
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    const eyes = screen.getByRole("group", { name: "Camera" });
+    expect(within(eyes).getByRole("radio", { name: /^Front/ })).toHaveProperty("checked", true);
+    fireEvent.click(within(eyes).getByRole("radio", { name: /^Back/ }));
+    expect(
+      await screen.findByText(
+        "Sprout looks through its back camera; it switches on Pixel 6a in a few seconds.",
+      ),
+    ).toBeTruthy();
+    expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({
+      set: { gb_eye: "environment" },
+      drop: [],
+    });
+    expect(within(eyes).getByRole("radio", { name: /^Back/ })).toHaveProperty("checked", true);
+    // The save re-reads the list at once, so the page follows the box from here.
+    expect(s.calls.filter((c) => c.path === "/api/growbot/personas").length).toBeGreaterThan(1);
+
+    // The box confirms, then the creature flips back to the front itself: the page follows.
+    const withEye = (gb_eye: string) => {
+      const next = overview();
+      s.ov.current = {
+        ...next,
+        personas: next.personas.map((x) => (x.id === SPROUT ? { ...x, prefs: { gb_eye } } : x)),
+      };
+    };
+    withEye("environment");
+    await act(async () => {
+      vi.advanceTimersByTime(15_100);
+    });
+    withEye("user");
+    await act(async () => {
+      vi.advanceTimersByTime(15_100);
+    });
+    await waitFor(() =>
+      expect(within(eyes).getByRole("radio", { name: /^Front/ })).toHaveProperty("checked", true),
+    );
+  });
+
+  it("waits for a persona's first phone before its camera can be picked", async () => {
+    const ov = overview();
+    ov.personas = ov.personas.map((x) => (x.id === SPROUT ? { ...x, prefs: null } : x));
+    const s = serve(UP, pageRoutes(), null, ov);
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    const eyes = screen.getByRole("group", { name: "Camera" });
+    expect(within(eyes).getByRole("radio", { name: /^Back/ })).toHaveProperty("disabled", true);
+    expect(
+      within(eyes).getByText("Open Sprout on a phone once, then pick its camera here."),
+    ).toBeTruthy();
+    fireEvent.click(within(eyes).getByRole("radio", { name: /^Back/ }));
+    expect(s.calls.some((c) => c.path.endsWith("/prefs"))).toBe(false);
   });
 
   it("renames, duplicates and exports from Manage", async () => {

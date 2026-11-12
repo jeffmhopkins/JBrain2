@@ -3382,7 +3382,12 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   - *Manage*: *Face* first (owner, 2026-11-11): a radio list, *Lantern* (the default),
     *Ostrich*, *Robot*, *Pixel*, each with a one-line description, saved as it is tapped. It is
     not a soul write, so no checkpoint and no reload: the toast says it changes on its phone in
-    a few seconds (its poll), or next time it opens. Then *Rename* (the list's name; the
+    a few seconds (its poll), or next time it opens. *Camera* next (owner, 2026-11-12): the
+    same radio list, *Front* (the default; the screen side, which face tracking needs) and
+    *Back*, saved as tapped into the persona's settings on the box (`gb_eye`), and the phone
+    flips the lens where it stands; the toast reads like the face's. Until a phone has first
+    sent its settings it is disabled under *Open <name> on a phone once, then pick its camera
+    here.*, since that first phone makes the box's copy from its own. Then *Rename* (the list's name; the
     creature still calls itself by its own name until told otherwise), *Duplicate* (memories and visual memories, no checkpoints), *Export soul
     file* (its memories but not its visual memories, which stay on the box), *Import over it*
     (the file is checked first: too big or not a soul says so with *Nothing changed*; a
