@@ -618,6 +618,146 @@ SPEED_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += SPEED_PATCHES
 
+# The page's fixed rules ride the cached system message as well (speed plan Phase 1, owner
+# 2026-11-12). The gait library's rules, the picture-memory contract and the fixed half of the
+# self-description were sent in every turn's own message, ~650 tokens re-read each turn (~1.5 s)
+# though they never change. Only the sentences that do not depend on state move, word for word;
+# each one that does (minutes awake, eyes, body, the spin runner, forward-walk, the gait list,
+# the saved picture names, a closed eye) stays live under a RIGHT NOW line, so the system text
+# is the same from one turn to the next: a change there costs a ~21 s cold re-read.
+_SELF_FIXED = (
+    "\\n\\n== WHAT YOU ARE (answer honestly IN YOUR OWN VOICE if asked — you are NOT blind to"
+    ' yourself) ==\\nYou think whenever something happens — a voice, a touch, a mission step —'
+    " answering right away, or the moment your current thought finishes. Quiet does not put you"
+    " to sleep. While awake you can occasionally notice or express something; silence is welcome"
+    " too. Ordinary quiet opportunities are spaced at least four minutes apart, subject to your"
+    " activity waits, availability and energy. Explicit pause stops autonomous thoughts. A"
+    " language model ({model}) is how you feel and choose your words — it's fine to say so,"
+    " simply. If asked how fast, how often you think or look, or whether an AI helps you — tell"
+    " the truth in your own voice; don't deflect. How long you have been awake, your eyes and"
+    " your body right now are under WHAT YOU ARE RIGHT NOW in this turn's message."
+)
+FIXED_PATCHES: list[tuple[str, str, str, int]] = [
+    # What you are: the fixed sentences leave, the live ones stay under their own header.
+    (
+        "v3/next.html",
+        "function selfStats(){",
+        f'var GB_SELF_FIXED="{_SELF_FIXED}";\nfunction selfStats(){{',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '  return "== WHAT YOU ARE (answer honestly IN YOUR OWN VOICE if asked — you are NOT'
+        ' blind to yourself) ==\\n"+\n    "You woke about "',
+        '  selfStats.fixed=GB_SELF_FIXED.replace("{model}",model);\n'
+        '  return "== WHAT YOU ARE RIGHT NOW ==\\n"+\n    "You woke about "',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '" times. You think whenever something happens — a voice, a touch, a mission step —'
+        ' answering right away, or the moment your current thought finishes. "+',
+        '" times. "+',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '    "Quiet does not put you to sleep. While awake you can occasionally notice or express'
+        " something; silence is welcome too. Ordinary quiet opportunities are spaced at least"
+        " four minutes apart, subject to your activity waits, availability and energy. Explicit"
+        ' pause stops autonomous thoughts. "+\n',
+        "",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '    "A language model ("+model+") is how you feel and choose your words — it\'s fine to'
+        ' say so, simply. "+\n',
+        "",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '+\n    "If asked how fast, how often you think or look, or whether an AI helps you — tell'
+        " the truth in your own voice; don't deflect.\";",
+        ";",
+        1,
+    ),
+    # Trained walks: which runner owns a normal spin and whether screen-forward is on depend on
+    # the walk code's state (before motion permission it reads "gyro_unavailable"), so those
+    # and the gait list stay live; the rules move.
+    (
+        "v3/next.html",
+        '  return "SPIN / REORIENT: spin_right turns clockwise viewed from above; spin_left'
+        ' counterclockwise. Use walk:{gait,dir,secs}. "+normal+" If vision',
+        '  normalSpinTruth.now=normal;\n  return "SPIN / REORIENT: spin_right turns clockwise'
+        ' viewed from above; spin_left counterclockwise. Use walk:{gait,dir,secs}. If vision',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '  return spinFeedback+(typeof spinMeasLine==="function"?spinMeasLine():"")+"\\n\\n=='
+        " TRAINED WALKS (your gait library",
+        '  gaitList.fixed="\\n\\n== TRAINED WALKS (your gait library',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '    "To walk with one, use walk:{gait,dir,secs}; dir:\\"stop\\" halts. "+(typeof'
+        " forwardWalkState",
+        '    "To walk with one, use walk:{gait,dir,secs}; dir:\\"stop\\" halts. Which gaits you'
+        " have and how your spins run right now are under YOUR GAITS RIGHT NOW in this turn's"
+        ' message.";\n'
+        '  return spinFeedback+(typeof spinMeasLine==="function"?spinMeasLine():"")+"\\n\\n=='
+        ' YOUR GAITS RIGHT NOW ==\\n"+(typeof normalSpinTruth==="function"&&normalSpinTruth.now?'
+        'normalSpinTruth.now+" ":"")+(typeof forwardWalkState',
+        1,
+    ),
+    # Picture memory: the full contract is fixed while the feature is on. Each turn says
+    # whether it applies: a closed eye with nothing saved keeps the short form as before and
+    # puts the contract out of use, so no camera route is offered without a camera.
+    (
+        "v3/visual-memory.js",
+        'function vmPrompt(c){ if(!c) return "";\n'
+        "  if(!vmOn()||!(typeof camOn!==\"undefined\"&&camOn)&&_vmLoaded&&!_vmRefs.length)"
+        " return VM_PROMPT_OFF;\n  return '\\n\\nVISUAL MEMORY overrides",
+        'function vmPrompt(c){ vmPrompt.fixed=vmOn()?vmContract():"";'
+        ' if(!c) return vmPrompt.fixed?"\\n\\nVISUAL MEMORY: out of use this turn; leave'
+        ' visual_memory out.":"";\n'
+        "  if(!vmOn()) return VM_PROMPT_OFF;\n"
+        '  if(!(typeof camOn!=="undefined"&&camOn)&&_vmLoaded&&!_vmRefs.length) return'
+        ' VM_PROMPT_OFF+" The full VISUAL MEMORY rules in your system message are out of use'
+        ' while your eye is closed and nothing is saved.";\n'
+        '  return "\\n\\nVISUAL MEMORY rules (in your system message) apply this turn: select the'
+        ' route BEFORE say."+(c.asked||c.user&&c.user.trim()?vmCatalogLine():"");\n}\n'
+        "function vmContract(){\n  return '\\n\\nVISUAL MEMORY overrides",
+        1,
+    ),
+    (
+        "v3/visual-memory.js",
+        "Use their language.'+(c.asked||c.user&&c.user.trim()?vmCatalogLine():\"\");",
+        "Use their language.';",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '<script src="/v3/visual-memory.js?v=1005-mem-box"',
+        '<script src="/v3/visual-memory.js?v=1005-mem-box-fixed"',
+        1,
+    ),
+    # The fixed parts join the system message, after the movement guide they belong to.
+    (
+        "v3/next.html",
+        ' if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;',
+        ' sys+=(typeof gaitList==="function"&&gaitList.fixed||"")'
+        '+(typeof selfStats==="function"&&selfStats.fixed||"")'
+        '+(typeof vmPrompt==="function"&&vmPrompt.fixed||"");'
+        ' if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;',
+        1,
+    ),
+]
+PATCHES += FIXED_PATCHES
+
 # Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
 # clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off
 # only re-sends the same clip to the queue it is waiting in (whisper-server finishes an

@@ -329,7 +329,7 @@ splits out cold turns with their reason, and `POST /api/debug/growbot/replay` ru
 logged request through the lane so a layout is tried on real turns before the page ships it;
 (1) the fixed rules the page sends every turn (gait library, picture-memory contract, the
 fixed self-description) move into the cached system message, every state-dependent sentence
-staying live; (2) the picture floor and frame count measured live against quality; (3) the
+staying live under a RIGHT NOW line (apply.py `FIXED_PATCHES`; done); (2) the picture floor and frame count measured live against quality; (3) the
 system prefix saved to disk and restored after a model load, and a creature-awake mode that
 keeps the model and its slot warm and holds background model work while a creature talks;
 (4) history made reusable. Thinking stays off.
