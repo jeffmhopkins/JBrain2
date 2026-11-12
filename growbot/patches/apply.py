@@ -1209,6 +1209,49 @@ CHROME_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += CHROME_PATCHES
 
+# Which camera is the creature's eye, front or back (owner, 2026-11-12). Upstream keeps the
+# choice in localStorage gb_eye, set by the brain panel's eye button; the box keeps gb_eye in
+# the persona's settings record, so the owner can change it from the PWA and the creature
+# switches where it stands. Upstream killed a free-roaming `look` verb because the model
+# flipped lenses constantly and lost track of what it saw, so the creature's own `eye` is
+# heeded only on a turn that answers something its person said, and a lens it already has
+# does nothing.
+EYE_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/prompts.js",
+        "    '\"coat\":\"OMIT usually",
+        "    '\"eye\":\"OMIT almost always — front or back, ONLY when your person asks you to"
+        " look with your other camera: front is the screen side, facing them; back looks out"
+        " the back of your head at the world. It stays until they ask again\",' +\n"
+        "    '\"coat\":\"OMIT usually",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function flipEye(target){",
+        "function gbEyeTo(to,by){ if((to!==\"user\"&&to!==\"environment\")||to===camFacing)"
+        " return false; flipEye(to);"
+        " try{ var _be=$(\"bpmEye\"); if(_be) _be.textContent=\"👁 eye: \"+(camFacing===\"user\""
+        "?\"front (screen side)\":\"back\"); }catch(e){}"
+        " try{ logEv(\"eye_set\",{to:camFacing,by:by}); }catch(e){} return true; }\n"
+        "window.addEventListener(\"gb-box-prefs\",function(e){"
+        " var c=e&&e.detail&&e.detail.changed;"
+        " if(c&&Object.prototype.hasOwnProperty.call(c,\"gb_eye\"))"
+        " gbEyeTo(c.gb_eye===\"environment\"?\"environment\":\"user\",\"owner\"); });\n"
+        "function flipEye(target){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()});',
+        '_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()});'
+        ' if(_hreqAtIssue&&!_hreqAtIssue.auto&&!dreaming&&(o.eye==="front"||o.eye==="back"))'
+        ' gbEyeTo(o.eye==="back"?"environment":"user","self");',
+        1,
+    ),
+]
+PATCHES += EYE_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

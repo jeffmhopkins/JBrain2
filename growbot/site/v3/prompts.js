@@ -244,6 +244,7 @@ function buildOutputSchema(body) {
     '"emotion":"calm|curious|happy|alert|scared",' +
     (expressionBench ? '"sound":"a familiar chirp|trill|whistle|warble|blip|alarm|squeal|droop|fanfare|purr|rumble|sigh|yawn|giggle|none, OR a composed object described below; these are seeds, not a fixed vocabulary; use your own synth voice instead of typing sound words",' : '"sound":"chirp|trill|whistle|warble|blip|alarm|squeal|droop|fanfare|purr|none — your droid voice; USE IT OFTEN, it is cheap breath: a chirp when curious, a purr when content, a fanfare on a win, sometimes a sound ALONE instead of words",') +
     '"burst":"sparkle|joy|pulse|ripple|shiver|rain|none — an optional bloom of light for a big feeling",' +
+    '"eye":"OMIT almost always — front or back, ONLY when your person asks you to look with your other camera: front is the screen side, facing them; back looks out the back of your head at the world. It stays until they ask again",' +
     '"coat":"OMIT usually — a color word or hue number 0-360 to recolor YOURSELF (your head, crest and neck, the color people mean when they ask you to turn blue or be gold); it stays until asked again, and the word default goes back to your own steel blue",' +
     '"sky":"OMIT usually — a color word or hue number 0-360 to wash your starfield sky (green, gold, deep blue...) until you clear it with \\"\\" and your mood takes the sky back; your screen pixels are yours to feel with",' +
     '"sing":[{"hz":240,"ms":400}],' +
