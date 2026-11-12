@@ -1230,52 +1230,222 @@ details.gb-help[open] summary::after {
   border-radius: var(--r-input);
 }
 
-/* The Body tab's movement remote (GrowbotMovePanel): a policy picker, how long, run. */
-.gb-seg.gb-move-pick {
+/* The Body tab's movement remote (GrowbotMovePanel): a driving pad, Stop in its middle, how
+   long and the tricks as chips under it. The pad is the Chats panel's register: quiet
+   surface-2 discs on a recessed ring, steel only where something is lit. */
+.gb-move-tip {
   margin: 12px 0 0;
-}
-.gb-move-run {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-  margin-top: 12px;
-}
-.gb-move-run .gb-btn {
-  flex: 1;
-  min-height: 48px;
-  font-size: var(--fs-note);
-}
-.gb-move-secs {
-  flex: 0 0 88px;
+  padding: 10px 12px;
+  border-radius: var(--r-input);
+  background: var(--surface-2);
   font-size: var(--fs-secondary);
+  line-height: 1.45;
   color: var(--text-2);
 }
-.gb-move-secs input {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  margin-top: 6px;
-  min-height: 48px;
+.gb-move-tip.blocked {
+  background: var(--amber-tint);
+  color: var(--warn-text);
 }
-.gb-move-stop {
-  margin-top: 12px;
+.gb-pad {
+  --pad: min(252px, 100%);
+  position: relative;
+  display: grid;
+  grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+  gap: 6px;
+  width: var(--pad);
+  aspect-ratio: 1;
+  margin: 18px auto 0;
+  padding: 10px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.gb-pad-b,
+.gb-pad-stop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease-out, border-color 120ms ease-out, transform 80ms ease-out;
+}
+.gb-pad-b {
+  border-radius: 18px;
+}
+.gb-pad-b span {
+  color: var(--text-2);
+}
+.gb-pad-b.n {
+  grid-area: 1 / 2;
+  border-radius: 22px 22px 12px 12px;
+}
+.gb-pad-b.w {
+  grid-area: 2 / 1;
+  border-radius: 22px 12px 12px 22px;
+}
+.gb-pad-b.e {
+  grid-area: 2 / 3;
+  border-radius: 12px 22px 22px 12px;
+}
+.gb-pad-b.s {
+  grid-area: 3 / 2;
+  border-radius: 12px 12px 22px 22px;
+}
+.gb-pad-b:active:not(:disabled),
+.gb-pad-stop:active:not(:disabled) {
+  transform: scale(0.95);
+}
+.gb-pad-b.on {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--steel-text);
+}
+.gb-pad-b.on span {
+  color: var(--steel-text);
+}
+.gb-pad-stop {
+  grid-area: 2 / 2;
+  border-radius: 50%;
+  background: var(--danger-tint);
+  border-color: var(--danger);
+  color: var(--danger-text);
+}
+/* Off, every part of the pad keeps its shape and dims by token (DESIGN.md Accessibility). */
+.gb-pad-b:disabled,
+.gb-pad-b:disabled span,
+.gb-pad-stop:disabled {
+  opacity: 1;
+  color: var(--text-3);
+  background: var(--surface);
+  border-color: var(--border);
+}
+.gb-move-bar {
+  width: min(160px, 60%);
+  height: 3px;
+  margin: 14px auto 0;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.gb-move-bar:empty {
+  visibility: hidden;
+}
+.gb-move-drain {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  animation: gb-drain linear forwards;
+}
+@keyframes gb-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gb-move-drain {
+    animation: none;
+  }
 }
 .gb-move-said {
   display: block;
+  min-height: 1.45em;
+  margin-top: 8px;
+  text-align: center;
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+  color: var(--text-2);
 }
-.gb-card .gb-hint.gb-move-said:empty {
-  display: none;
+.gb-move-h {
+  margin: 14px 0 8px;
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+.gb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+/* The duration chips' legend is their heading: a full row above them. */
+.gb-chips > legend.gb-move-h {
+  float: left;
+  width: 100%;
+  padding: 0;
+}
+.gb-chip {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gb-chip.on {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 500;
+}
+.gb-chip.trick {
+  color: var(--text);
+}
+.gb-chip:disabled {
+  opacity: 1;
+  color: var(--text-3);
+  background: var(--surface);
 }
 
-/* The Body tab's controls card (components/GrowbotBodyControls.tsx): Move | Legs over one Stop. */
+/* The Body tab's controls card (components/GrowbotBodyControls.tsx): Move | Legs, one Stop. */
 .gb-ctl .gb-seg {
   margin: 10px 0 4px;
 }
 .gb-step {
-  margin: 16px 0 2px;
-  font-size: var(--fs-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 2px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-note);
   font-weight: 500;
   color: var(--text);
+}
+.gb-step-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--steel-tint);
+  color: var(--steel-text);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
 }
 .gb-trim {
   display: grid;
@@ -1338,8 +1508,13 @@ details.gb-adv summary {
 .gb-legs > .gb-btn.block {
   margin-top: 16px;
 }
-.gb-stop {
+.gb-btn.gb-stop {
+  gap: 8px;
   margin-top: 14px;
+  border-color: var(--danger);
+}
+.gb-btn.gb-stop:disabled {
+  border-color: var(--border);
 }
 
 /* Walks and spins: the upstream policy check on the Body tab

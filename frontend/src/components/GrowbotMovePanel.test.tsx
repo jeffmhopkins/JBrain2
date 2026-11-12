@@ -45,36 +45,33 @@ afterEach(() => {
 });
 
 describe("GrowbotMovePanel", () => {
-  it("runs the picked policy for the picked seconds and says so", async () => {
+  it("runs a pad direction for the picked seconds and says so", async () => {
     const fetch = serve(json({ ok: true, state: "started", why: "" }));
     render(<GrowbotMovePanel robot={robot()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Spin ↺" }));
-    expect(screen.getByRole("button", { name: "Spin ↺" })).toHaveAttribute("aria-pressed", "true");
-    fireEvent.change(screen.getByLabelText("Seconds"), { target: { value: "8" } });
-    fireEvent.click(screen.getByRole("button", { name: "Spin left 8 s" }));
-    await screen.findByText("Spinning left for 8 s.");
+    const ten = screen.getByRole("button", { name: "10 s" });
+    fireEvent.click(ten);
+    expect(ten).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Spin left 10 s" }));
+    await screen.findByText("Spinning left for 10 s.");
     expect(sent(fetch)).toEqual({
       url: "/api/growbot/robots/gb-3fa91c/move",
-      body: { move: "spin_left", secs: 8 },
+      body: { move: "spin_left", secs: 10 },
     });
+    // The running direction is lit, with a bar draining for its seconds.
+    expect(screen.getByRole("button", { name: "Spin left 10 s" })).toHaveClass("on");
+    expect(document.querySelector<HTMLElement>(".gb-move-drain")?.style.animationDuration).toBe(
+      "10s",
+    );
   });
 
-  it("keeps the seconds inside the box's bounds", () => {
+  it("starts at upstream's 5 s and keeps every choice inside the box's bounds", () => {
     serve(json({}));
     render(<GrowbotMovePanel robot={robot()} />);
-    const secs = screen.getByLabelText("Seconds");
-    fireEvent.change(secs, { target: { value: "99" } });
-    expect(screen.getByRole("button", { name: "Walk forward 15 s" })).toBeEnabled();
-    fireEvent.change(secs, { target: { value: "0" } });
-    expect(screen.getByRole("button", { name: "Walk forward 1 s" })).toBeEnabled();
-    // Emptied to retype, it runs the default and shows it again once left.
-    fireEvent.change(secs, { target: { value: "" } });
-    expect(secs).toHaveValue(null);
-    fireEvent.change(secs, { target: { value: "8" } });
-    expect(secs).toHaveValue(8);
-    fireEvent.change(secs, { target: { value: "" } });
-    fireEvent.blur(secs);
-    expect(secs).toHaveValue(5);
+    expect(screen.getByRole("button", { name: "Walk forward 5 s" })).toBeEnabled();
+    for (const s of ["2 s", "5 s", "10 s", "15 s"]) {
+      fireEvent.click(screen.getByRole("button", { name: s }));
+      expect(screen.getByRole("button", { name: `Walk backward ${s}` })).toBeEnabled();
+    }
   });
 
   it("lets a later Stop's answer stand over a slow walk's", async () => {
@@ -95,6 +92,20 @@ describe("GrowbotMovePanel", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.getByText("Stopped.")).toBeInTheDocument();
     expect(screen.queryByText(/Walking forward/)).toBeNull();
+    expect(document.querySelector(".gb-move-drain")).toBeNull();
+  });
+
+  it("hands Stop to the card's shared one, and shows its answer", async () => {
+    const fetch = serve(json({ ok: true, state: "started", why: "" }));
+    const onStop = vi.fn(async () => ({ text: "Stopped. The legs are limp.", bad: false }));
+    render(<GrowbotMovePanel robot={robot()} onStop={onStop} />);
+    fireEvent.click(screen.getByRole("button", { name: "Walk forward 5 s" }));
+    await screen.findByText("Walking forward for 5 s.");
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(onStop).toHaveBeenCalledOnce();
+    await screen.findByText("Stopped. The legs are limp.");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".gb-move-drain")).toBeNull();
   });
 
   it("shows the creature's own words when it refuses", async () => {
@@ -113,20 +124,21 @@ describe("GrowbotMovePanel", () => {
 
   it("is off, and says why, while nobody can drive the robot", () => {
     const fetch = serve(json({}));
-    const { rerender } = render(<GrowbotMovePanel robot={robot({ connected: false })} />);
+    const shared = async () => ({ text: "", bad: false });
+    const { rerender } = render(
+      <GrowbotMovePanel robot={robot({ connected: false })} onStop={shared} />,
+    );
     expect(screen.getByText("Turn the robot on to move it.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Walk forward 5 s" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
     rerender(<GrowbotMovePanel robot={robot({ creature: false })} />);
     expect(screen.getByText(/keep the creature on screen/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bow" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+    // The shared Stop still stops the chip of a robot that is on with no creature.
+    rerender(<GrowbotMovePanel robot={robot({ creature: false })} onStop={shared} />);
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("leaves Stop to a shared one when asked", () => {
-    serve(json({}));
-    render(<GrowbotMovePanel robot={robot()} withStop={false} />);
-    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
   });
 });
 
