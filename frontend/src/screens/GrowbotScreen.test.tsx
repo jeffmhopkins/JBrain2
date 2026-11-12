@@ -321,7 +321,7 @@ describe("GrowbotScreen launching", () => {
     );
   });
 
-  it("refuses the body with the reason when its key is revoked, or it already wears it here", async () => {
+  it("refuses the body with the reason when its key is revoked", async () => {
     localStorage.setItem(THIS_PHONE_KEY, P6A);
     serve({
       service: "up",
@@ -335,14 +335,20 @@ describe("GrowbotScreen launching", () => {
     expect(wear).toHaveTextContent("Fish's key is revoked — reflash it first.");
   });
 
-  it("disables wearing a body it already wears on this phone", async () => {
+  it("reopens a body it already wears on this phone", async () => {
     localStorage.setItem(THIS_PHONE_KEY, P6A);
-    serve(UP);
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    fakeTab();
+    const s = serve(UP, ticketRoute);
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
     const wear = screen.getByRole("button", { name: /On this phone, wearing Fish/ });
-    expect(wear).toBeDisabled();
-    expect(wear).toHaveTextContent("Already wearing Fish here.");
+    expect(wear).toBeEnabled();
+    expect(wear).toHaveTextContent("Opens again, still wearing Fish.");
+    fireEvent.click(wear);
+    await waitFor(() =>
+      expect(tickets(s)[0]?.body).toEqual({ persona: SPROUT, code: "gb-e3b6d8" }),
+    );
   });
 
   it("explains the certificate the first time, then opens the tab inside the tap", async () => {

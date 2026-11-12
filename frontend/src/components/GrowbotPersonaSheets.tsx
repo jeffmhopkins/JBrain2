@@ -171,11 +171,13 @@ export function GrowbotLaunchSheet({ p, personas, pl, up, onHere, onOther, onClo
       {bodies.map((r) => {
         const b = r.name || r.code;
         const other = riderOfPersonas(personas, r.code);
-        const already = p.wearing === r.code && herewear;
+        // Reopening what this phone already wears is just another tab: the relay lets every tab
+        // of the rider's phone drive the body, so it is offered, never greyed out.
+        const again = p.wearing === r.code && herewear;
         const why = r.revoked_at
           ? `${b}'s key is revoked — reflash it first.`
-          : already
-            ? `Already wearing ${b} here.`
+          : again
+            ? `Opens again, still wearing ${b}.${up && r.connected ? "" : ` ${b} is off — its legs move once it's on.`}`
             : `${
                 other && other.id !== p.id
                   ? `${other.name} lets go and carries on alone${other.phone ? ` ${onPhone(other.phone, pl)}` : ""}.`
@@ -186,7 +188,7 @@ export function GrowbotLaunchSheet({ p, personas, pl, up, onHere, onOther, onClo
             key={r.code}
             type="button"
             className="gb-big wear"
-            disabled={!!r.revoked_at || already}
+            disabled={!!r.revoked_at}
             onClick={() => onHere(r.code)}
           >
             <span className="gb-k" aria-hidden="true" />
@@ -194,7 +196,7 @@ export function GrowbotLaunchSheet({ p, personas, pl, up, onHere, onOther, onClo
               <span className="gb-t1">On this phone, wearing {b}</span>
               <span className="gb-t2">
                 {why}
-                {r.revoked_at || already ? "" : `${fromPh}${repl}`}
+                {r.revoked_at || again ? "" : `${fromPh}${repl}`}
               </span>
             </span>
           </button>
