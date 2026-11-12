@@ -207,6 +207,14 @@ change made on one phone is invisible everywhere else.
   `api/growbot_body.py`) and `growbot-box.js` copies it into each page, the box winning key by
   key. The pane's check moves go chip-direct (`POST /internal/robots/act`). See
   growbot/README.md "Leg calibration".
+- **The rest of the creature's keys followed, per persona** (owner, 2026-11-12: *"the cell
+  phone should just be a display, not a data storage device"*). Rather than the report-and-queue
+  table above, every localStorage key that is the creature's (coat colour, games guide, volume,
+  speech speed, camera, low power, remembered `?flags`; `growbot-box.js` `KEYS`) lives in
+  `growbot_personas.prefs` (migration 0263): pulled into the page before it runs, each change
+  sent back as a per-key patch, and an owner's `PATCH …/prefs` taken where the creature stands
+  on the next poll. Model and effort pickers are cloud-only and are being removed from the
+  page rather than synced. See growbot/README.md "Settings".
 
 ### 2c. The creature lives on the box, as profiles the owner can switch
 

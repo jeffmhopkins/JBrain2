@@ -336,6 +336,38 @@ A persona also wears its own face (`growbot_personas.face`, lantern by default):
 the poll carry it, `growbot-box.js` hands it to `growbot-face.js` before the face loads, and a
 `gb-box-state` event with a new one changes the face where the creature stands.
 
+### Settings (migration 0263)
+
+The phone is only a display (owner, 2026-11-12). What upstream keeps outside the soul, each in a
+localStorage key of its own, is the persona's too when it is the creature's: its coat colour,
+its games guide, volume and speech speed, which camera it looks through (`gb_eye`), low power,
+visual memory on or off, *keep tracking me* per robot, whether it keeps a brain log and its
+diary id, and every remembered `?flag` (`getup`, `ftdial`, `fishwa`, `asfix`,
+`judge0`, `bodysnd`, `listen`, `stt`, `rest`, `legslew`). The list is `KEYS` and `PREFIXES` in
+`growbot-box.js`; the box keeps them in `growbot_personas.prefs` and bounds only their shape
+(64 keys, 16 KB each, 64 KB in all). What stays on the phone is about the phone, or a secret: its tilt
+calibration (`gb_up_vec`), the consent it gave, upstream's tokens and keys (a fish.audio key in
+`pb2_voicetest` among them), robots' Wi-Fi passwords (`gb_travel_cards_v1`), the open tab, the
+sync's own bookkeeping, and the diary's rolling window (its rows are on the box already). A
+duplicate copies the settings but not the diary id, so the two keep separate diaries.
+
+| Route | Answer |
+| --- | --- |
+| `GET /api/box/prefs` | `/internal/growbot/prefs/pull`: `{version, prefs, persona}`, `prefs` null until a phone first sent its own. |
+| `POST /api/box/prefs` | `{persona, set, drop}` to `/prefs/push`: `{version}`. Capped at 320 KB before it is read; 409 `other` as the soul's. |
+
+At load, after the soul, a synchronous pull replaces this phone's copy of those keys with the
+box's (the phone's own wait in `gb_phone_prefs` for a G2 session, as the soul's do). A persona
+with none yet takes the first phone's own, never another persona's (an owner edit made before
+any phone opened it is its settings, and the phone takes those instead). A change (a `setItem`, a
+`removeItem`, or upstream's `localStorage.key = v`, which a 2 s check catches) goes back 1.5 s
+later, and when the page hides, as a patch of only the keys that changed, so the owner's edit
+of another key stands. `gb_box_prefs` keeps `{persona, dirty, base, version}`: a change the box
+never got is sent on the next load, before the pull. The poll's `prefs` version tells a running
+page the owner changed them (`PATCH /api/growbot/personas/{id}/prefs {set, drop}`, also on the
+debug API): the page writes them where it stands and fires `gb-box-prefs` `{changed}`, which the
+camera listens for.
+
 ### Fast turns
 
 The box's model is a hybrid: llama.cpp reuses a cached prompt only from a context checkpoint,
