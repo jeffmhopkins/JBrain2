@@ -376,6 +376,50 @@ interface MockGbPersona extends GrowbotPersona {
   cps: (GrowbotCheckpoint & { soul: GrowbotSoul; vms: GrowbotMemory[] })[];
 }
 let mockGbVmSeq = 0;
+/** The official repo as the box last found it: two commits past the served copy, with new
+ *  walks and spins. `?growbot-upstream=current` shows an up-to-date box. */
+function mockGbUpstream() {
+  const current =
+    new URLSearchParams(globalThis.location?.search ?? "").get("growbot-upstream") === "current";
+  const pin = "4a2cfc29ea5e79a2f1d5e9df30a602729d67b71b";
+  const head = current ? pin : "9e41b07c22d1a0e5b0c3d4f5a6b7c8d9e0f1a2b3";
+  return {
+    state: current ? "current" : "behind",
+    repo_url: "https://github.com/britcruise9/GrowBot",
+    pinned: pin,
+    head,
+    head_at: "2026-11-09T10:00:00Z",
+    ahead_by: current ? 0 : 2,
+    commits: current
+      ? []
+      : [
+          {
+            sha: head,
+            title: "normal-spin: retune cw for MG90S backlash",
+            date: "2026-11-09T10:00:00Z",
+          },
+          {
+            sha: "a".repeat(40),
+            title: "policies: diy-v2 walk and spin",
+            date: "2026-11-04T10:00:00Z",
+          },
+        ],
+    policies: current
+      ? []
+      : [
+          { path: "app/policies/diy-v2/walk_fwd.json", change: "new", previous_path: null },
+          { path: "app/policies/diy-v2/spin_cw.json", change: "new", previous_path: null },
+          { path: "app/policies/normal-spin-1005/cw.json", change: "changed", previous_path: null },
+        ],
+    other_files: current ? 0 : 5,
+    compare_url: current
+      ? ""
+      : `https://github.com/britcruise9/GrowBot/compare/${pin.slice(0, 12)}...${head.slice(0, 12)}`,
+    checked_at: new Date(Date.now() - 12 * 60_000).toISOString(),
+    error: "",
+  };
+}
+
 /** A visual memory as the box keeps it; its pictures are drawn by `growbotMemoryViewUrl`. */
 function mockGbVm(
   kind: GrowbotMemory["kind"],
@@ -843,6 +887,9 @@ async function mockGrowbot(
       connected: list.filter((r) => r.connected).length,
       robots: list,
     });
+  }
+  if (path === "/api/growbot/upstream" || path === "/api/growbot/upstream/check") {
+    return json(mockGbUpstream());
   }
   if (path === "/api/growbot/robots" && method === "GET") return json(robots());
   const cal = /^\/api\/growbot\/robots\/([^/]+)\/(cal|act)$/.exec(path);

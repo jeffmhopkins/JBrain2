@@ -3401,6 +3401,14 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
 - **Ops → Services** lists `growbot` with *N of M robots connected now*; its open body lists the
   robots with their last-seen time and links to the GrowBot screen. Down, it says that no robot
   can connect until it is back.
+- **Walks and spins** (owner, 2026-11-12, binding mock
+  `docs/mocks/growbot-policies/a-body-card.html`, variant A) is the last card on the Body tab,
+  always there, robots or not: its state beside a dot (*Up to date*, *N new or changed*, *No new
+  policies*, *Upstream has moved*, *Couldn't check*), the new and changed policy files as rows
+  with a new / changed / renamed / removed tag, the commits since the box's copy behind a
+  disclosure, then how they come in (*ask Claude to "sync GrowBot to upstream"*, then *Ops →
+  Update*), the facts (your copy, upstream, checked) and *Check now* beside *See on GitHub*.
+  A box without the check shows no card. The box also notifies once per new upstream version.
 
 ## GrowBot — the brain log (owner, 2026-11-12 — binding mock: `docs/mocks/growbot-brain-log/a-share-sheet.html`, variant A; rivals B "quick buttons" and C "preview first" retained in `docs/mocks/growbot-brain-log/README.md`; plan `docs/plans/GROWBOT_PLAN.md` §2 "Brain log")
 

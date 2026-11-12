@@ -3888,6 +3888,30 @@ export interface GrowbotRobot {
   creature?: boolean;
 }
 
+/** What the box last found in the official GrowBot repo (jbrain.growbot.upstream):
+ *  `behind` when upstream's main has moved off the copy the box serves. */
+export interface GrowbotUpstreamPolicy {
+  path: string;
+  change: "new" | "changed" | "removed" | "renamed";
+  previous_path: string | null;
+}
+
+export interface GrowbotUpstream {
+  state: "current" | "behind" | "unknown";
+  repo_url: string;
+  pinned: string | null;
+  head: string | null;
+  head_at: string;
+  ahead_by: number | null;
+  commits: { sha: string; title: string; date: string }[];
+  /** null: upstream moved, but GitHub would not list the files this time. */
+  policies: GrowbotUpstreamPolicy[] | null;
+  other_files: number | null;
+  compare_url: string;
+  checked_at: string | null;
+  error: string;
+}
+
 /** What the Body tab can ask the creature wearing a robot to do: walks and spins run the
  *  creature's own policies on its phone's motion sensors, gestures are its named keyframes. */
 export type GrowbotMove =
@@ -8187,6 +8211,16 @@ export const api = {
   async growbotStatus(): Promise<GrowbotStatus> {
     const response = await request("/api/growbot/status");
     return (await response.json()) as GrowbotStatus;
+  },
+
+  async growbotUpstream(): Promise<GrowbotUpstream> {
+    const response = await request("/api/growbot/upstream");
+    return (await response.json()) as GrowbotUpstream;
+  },
+
+  async growbotCheckUpstream(): Promise<GrowbotUpstream> {
+    const response = await request("/api/growbot/upstream/check", { method: "POST" });
+    return (await response.json()) as GrowbotUpstream;
   },
 
   async growbotFlashSetup(): Promise<GrowbotFlashSetup> {

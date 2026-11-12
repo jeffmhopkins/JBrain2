@@ -351,6 +351,10 @@ class Settings(BaseSettings):
     # The GrowBot's flash set (`growbot/firmware/`: the pinned MicroPython UF2, the patched
     # robot firmware and SHA256SUMS), mounted read-only off the checkout like the panels'.
     growbot_firmware_dir: str = "/growbot-firmware"
+    # `growbot/patches/` off the same checkout, read for `upstream.json`: which upstream
+    # GrowBot commit the served copy was built from, so the box can tell when the official
+    # repo publishes new body policies (jbrain.growbot.upstream).
+    growbot_patches_dir: str = "/growbot-patches"
     # The GrowBot sidecar, for its bearer-checked `/internal/robots` (who is on the relay)
     # and `/internal/robots/drop` (close a revoked robot). Reached on `growbot_lane`.
     growbot_url: str = "http://growbot:8810"

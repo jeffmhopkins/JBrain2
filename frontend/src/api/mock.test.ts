@@ -16,6 +16,7 @@ import type {
   GrowbotPersona,
   GrowbotRobot,
   GrowbotStatus,
+  GrowbotUpstream,
   GrowbotWritten,
   JpanelMessage,
   JpanelMessages,
@@ -780,6 +781,23 @@ describe("mock GrowBot", () => {
     expect(setup.networks.every((n) => n.remembered && !("password" in n))).toBe(true);
     const ports = (await (await call("/api/endpoint/ports")).json()) as EndpointPorts;
     expect(ports.pico_boot).toBe(true);
+  });
+
+  it("serves an upstream with new walks and spins, or an up-to-date one", async () => {
+    const up = (await (await call("/api/growbot/upstream")).json()) as GrowbotUpstream;
+    expect(up.state).toBe("behind");
+    expect(up.policies?.map((p) => p.change)).toEqual(["new", "new", "changed"]);
+    const again = await call("/api/growbot/upstream/check", { method: "POST" });
+    expect(((await again.json()) as GrowbotUpstream).head).toBe(up.head);
+    window.history.replaceState(null, "", "/?growbot-upstream=current");
+    try {
+      const cur = (await (await call("/api/growbot/upstream")).json()) as GrowbotUpstream;
+      expect(cur.state).toBe("current");
+      expect(cur.head).toBe(cur.pinned);
+      expect(cur.policies).toEqual([]);
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
   });
 
   it("cycles a flash through ok, load_failed and wifi_failed, one step per poll", async () => {

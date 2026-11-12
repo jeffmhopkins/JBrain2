@@ -271,6 +271,9 @@ services:
       # robot firmware and their SHA256SUMS), the same way: the endpoint sidecar never
       # fetches, so the api hands it these bytes (docs/plans/GROWBOT_PLAN.md §3).
       - ./src/growbot/firmware:/growbot-firmware:ro
+      # Its patch set, for `upstream.json` alone: the upstream commit the served copy was
+      # built from, which the api compares with the official repo to spot new body policies.
+      - ./src/growbot/patches:/growbot-patches:ro
       # The /internal callers' tokens (api/internal_auth.py). The api is the only writer:
       # it mints `wall.token` and `mqtt.token` here on start-up, and the wall and mosquitto
       # mount this read-only — so the secret ships with the code that checks it, with no

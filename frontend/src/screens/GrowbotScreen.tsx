@@ -32,6 +32,7 @@ import {
   type Say,
 } from "../components/GrowbotPersonaSheets";
 import { GrowbotPhoneSheet } from "../components/GrowbotPhoneSheet";
+import { GrowbotUpstreamCard } from "../components/GrowbotUpstreamCard";
 import { Sheet } from "../components/Sheet";
 import { useArm } from "../components/growbotArm";
 import {
@@ -671,6 +672,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             </button>
           )}
           {brainLog}
+          <GrowbotUpstreamCard />
         </>
       );
     }
@@ -697,6 +699,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           </button>
         )}
         {brainLog}
+        <GrowbotUpstreamCard />
       </>
     );
   }
