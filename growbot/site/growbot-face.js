@@ -126,7 +126,14 @@
       if (!g || typeof g.x !== "number" || typeof g.y !== "number") return;
       var sg = window._IOS_G === -1 ? -1 : 1, x = sg * g.x, y = sg * g.y, m = Math.sqrt(x * x + y * y);
       if (!isFinite(m)) return;
-      var a = m > 1 ? Math.atan2(-x, y) : 0;
+      /* Gravity is in the device's frame and the face is drawn in the screen's: a phone turned
+         to landscape has rotated its screen too, so the screen's angle comes back off. */
+      var turn = 0;
+      try {
+        turn = screen.orientation && typeof screen.orientation.angle === "number" ? screen.orientation.angle : +window.orientation || 0;
+      } catch (e) {}
+      var a = m > 1 ? Math.atan2(-x, y) + turn * Math.PI / 180 : 0;
+      a = Math.atan2(Math.sin(a), Math.cos(a));
       roll = a * Math.min(1, Math.max(0, (m - 3) / 4));
       rollAt = Date.now();
     });

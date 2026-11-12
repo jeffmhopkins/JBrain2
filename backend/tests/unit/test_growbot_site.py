@@ -186,6 +186,8 @@ def test_the_face_feels_the_phone_tilt() -> None:
     face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
     assert 'window.addEventListener("devicemotion", function (ev) {' in face
     assert "window._IOS_G === -1 ? -1 : 1" in face
+    # Landscape turns the screen with the phone, so its angle comes back off the roll.
+    assert "Math.atan2(-x, y) + turn * Math.PI / 180" in face
     assert "aim.x = Math.max(-1.2, Math.min(1.2, aim.x + lean * 1.6));" in face
     assert "tilt: cur.tilt - lean * 180 / Math.PI * 0.45, sway: lean," in face
     assert face.count("d.sway * ") == 3
