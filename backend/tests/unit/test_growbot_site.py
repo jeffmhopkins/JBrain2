@@ -618,7 +618,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     assert "sys+=" not in page[
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
-    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"' in page
+    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk"' in page
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
 
@@ -1182,3 +1182,89 @@ def test_a_backoff_ends_when_there_is_nothing_left_to_send() -> None:
     )
     posts = [c["body"] for c in got["calls"] if c["method"] == "POST"]
     assert posts[-1] == {"persona": "p1", "set": {"gb_eye": "environment"}, "drop": []}
+
+
+def _talk_in_node(style: str | None, script: str) -> str:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    talk = prompts[
+        prompts.index("function gbTalkGrown(") : prompts.index(
+            "/* ---- the clean, gate-free system prompt."
+        )
+    ]
+    held = {} if style is None else {"gb_talk": style}
+    shim = (
+        f"var _held={json.dumps(held)};"
+        "var localStorage={getItem:function(k){return k in _held?_held[k]:null;}};"
+    )
+    out = subprocess.run(
+        [node, "-e", f"{shim}\n{talk}\n{script}"], capture_output=True, text=True, check=True
+    )
+    return out.stdout
+
+
+_TALK_PROBE = (
+    "var all=[];for(var i=0;i<20;i++)all.push({u:'u'+i,a:'a'+i});"
+    "console.log(JSON.stringify({grown:gbTalkGrown(),n:gbTalkTraces(all).length,"
+    "last:gbTalkTraces(all).slice(-1)[0].u,none:gbTalkTraces(undefined).length}));"
+)
+
+
+@pytest.mark.parametrize(
+    ("style", "grown", "n"),
+    [(None, False, 4), ("kid", False, 4), ("nonsense", False, 4), ("grownup", True, 12)],
+)
+def test_a_grown_up_creature_remembers_more_of_the_conversation(
+    style: str | None, grown: bool, n: int
+) -> None:
+    """An adult found the creature forgot a meal he named over ten minutes (owner, 2026-11-12):
+    a persona set to grown-up replays its last 12 exchanges, anything else keeps upstream's 4."""
+    got = json.loads(_talk_in_node(style, _TALK_PROBE))
+    assert got == {"grown": grown, "n": n, "last": "u19", "none": 0}
+
+
+def test_a_storage_error_reads_as_the_kid_style() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    talk = prompts[prompts.index("function gbTalkGrown(") : prompts.index("var GB_TALK_TRACES")]
+    shim = "var localStorage={getItem:function(){throw new Error('blocked');}};"
+    out = subprocess.run(
+        [node, "-e", f"{shim}\n{talk}\nconsole.log(gbTalkGrown());"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert out.stdout.strip() == "false"
+
+
+def test_the_talk_style_shapes_the_prompt() -> None:
+    """Grown-up lengthens the reply cap, adds its block to the cached prefix, and
+    the ring holds enough turns for it; the setting rides the persona's synced prefs."""
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    start = prompts.index("function buildSystem(")
+    body = prompts[start : prompts.index("\n}\n", start)]
+    static = body[body.index("var _gbStatic = ") : body.index("buildSystem.live = ")]
+    assert 'person + (gbTalkGrown() ? GB_TALK_GROWN_BLOCK : "")' in static
+    assert "var diary = soul.log.slice(-5).map(" in body
+    assert '(gbTalkGrown() ? "≤45 words" : "≤18 words")' in prompts
+    assert "≤18 words spoken aloud" not in prompts
+    assert "try it once; after that, let it go" in prompts
+    assert "not every line," not in prompts and "never as a tag on the end of a line" in prompts
+    block = json.loads(
+        _talk_in_node("grownup", "console.log(JSON.stringify(GB_TALK_GROWN_BLOCK));")
+    )
+    assert "45 words" in block and "log field" in block
+
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "var tr=gbTalkTraces(_live.scratch.traces), msgs=[],i;" in page
+    assert "_live.scratch.traces.slice(-4)" not in page
+    assert page.count("if(_live.scratch.traces.length>GB_TALK_TRACE_KEEP)") == 2
+    assert "_live.scratch.traces.length>8" not in page
+    assert "GB_TALK_TRACE_KEEP=16" in prompts
+
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert re.search(r"\bgb_talk: 1\b", shim)

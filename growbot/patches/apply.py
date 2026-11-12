@@ -1102,6 +1102,83 @@ QUIET_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += QUIET_PATCHES
 
+# Talk style (owner, 2026-11-12): upstream's creature is written for small children, so it
+# keeps ~18-word lines, sees 4 exchanges and 5 diary lines, and an adult found it could not
+# hold a conversation (a meal named over ten minutes was gone when he asked). A persona's
+# gb_talk setting (growbot-box.js syncs it; JBrain's persona page sets it) of "grownup" gives
+# longer replies and 12 replayed exchanges, and asks it to log facts as it hears them; older
+# memory stays out of the turn (the owner wants it looked up, not carried). Kid, the default, is upstream's creature unchanged. Read every turn, so a change
+# lands on the next thought; the grown-up block sits in the cached prefix, so the switch costs
+# one cold turn.
+_GB_TALK_JS = (
+    "function gbTalkGrown(){ try{ return localStorage.getItem(\"gb_talk\")===\"grownup\"; }"
+    "catch(e){ return false; } }\n"
+    "var GB_TALK_TRACES_KID=4, GB_TALK_TRACES_GROWN=12, GB_TALK_TRACE_KEEP=16;\n"
+    "function gbTalkTraces(all){ return (all||[]).slice(-(gbTalkGrown()?GB_TALK_TRACES_GROWN"
+    ":GB_TALK_TRACES_KID)); }\n"
+    "var GB_TALK_GROWN_BLOCK=\"\\n\\n== TALK STYLE: GROWN-UP ==\\nyour person is an adult who"
+    " wants a real conversation with you. this outranks the ~18-word limit above: when they"
+    " talk with you, answer in up to about 45 words, two or three sentences, when the moment"
+    " invites it. answer questions fully, ask a follow-up when you are curious, and build on"
+    " what they said earlier in the conversation. small moments still get small replies, and"
+    " silence is still fine.\\nwhen they tell you something about their life (what they ate,"
+    " where they went, who they saw, a plan, how they feel), record it in your log field in"
+    " that same reply, compactly, so you can recall it later. one line can hold several"
+    " things.\\nvary what you notice: do not return to the same remark or the same feature of"
+    " your person turn after turn.\";\n"
+)
+
+TALK_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/prompts.js",
+        "/* ---- the clean, gate-free system prompt.",
+        _GB_TALK_JS + "/* ---- the clean, gate-free system prompt.",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "_fullId(soul) + _nameBlk(soul) + person;",
+        "_fullId(soul) + _nameBlk(soul) + person + (gbTalkGrown() ? GB_TALK_GROWN_BLOCK : \"\");",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "'\"say\":\"≤18 words spoken aloud,",
+        "'\"say\":\"' + (gbTalkGrown() ? \"≤45 words\" : \"≤18 words\") + ' spoken aloud,",
+        1,
+    ),
+    # The dream's one tiny thing was offered every turn with no end, so "watch Jeff's beard"
+    # became ten minutes of beard remarks.
+    (
+        "v3/prompts.js",
+        " — when a natural moment comes, try it.)",
+        " — when a natural moment comes, try it once; after that, let it go and do not keep"
+        " returning to it.)",
+        1,
+    ),
+    # Upstream's "not every line" still ended nearly every reply with the name.
+    (
+        "v3/prompts.js",
+        "use their name warmly but naturally, not every line,",
+        "use their name warmly but rarely, about once every few replies and never as a tag on"
+        " the end of a line,",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var tr=_live.scratch.traces.slice(-4), msgs=[],i;",
+        "var tr=gbTalkTraces(_live.scratch.traces), msgs=[],i;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "if(_live.scratch.traces.length>8) _live.scratch.traces.shift();",
+        "if(_live.scratch.traces.length>GB_TALK_TRACE_KEEP) _live.scratch.traces.shift();",
+        2,
+    ),
+]
+PATCHES += TALK_PATCHES
+
 # Upstream leashed a cloud transcriber at 8 s and its backstop at 12 s, and handed a failed
 # clip to the other cloud. Both lanes are the box's one whisper here, so a leash or a hand-off
 # only re-sends the same clip to the queue it is waiting in (whisper-server finishes an
@@ -1289,6 +1366,16 @@ EYE_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += EYE_PATCHES
+
+# A phone that cached the old prompts loads the one with the talk style (TALK_PATCHES).
+PATCHES += [
+    (
+        "v3/next.html",
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk"',
+        1,
+    ),
+]
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
