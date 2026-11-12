@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js"></script><script src="/growbot-face.js"></script><script src="/growbot-status.js"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js"></script><script src="/growbot-face.js"></script><script src="/growbot-status.js"></script><script src="/growbot-eyes.js"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -11926,7 +11926,7 @@ body.gbkWake #landing{padding-top:76px!important}
         if(tracker.metrics.detectMs.length>240)tracker.metrics.detectMs.shift();
       }
       var boxes=result.boxes||[];
-      if(boxes.length&&result.source!=="flow")lastFaceAt=at;
+      if(window.gbEyes)window.gbEyes.boxes(boxes); if(boxes.length&&result.source!=="flow")lastFaceAt=at;
       if(!sightOnly){
         if(detFails&&tracker.metrics.decoded%300===0)detFails=0;
         if(result.source==="flow")tracker.observeFlow(boxes[0],at,result.anchorAt,video,token);
@@ -11958,7 +11958,7 @@ body.gbkWake #landing{padding-top:76px!important}
          relaxed legs now): never pick someone up, but still LOOK once a second, so faceAsk knows a person is
          there and can ask the body for its stand */
       var sightOnly=!tracker.owns&&(!isUpright()||!isSteady(now,1000)||!s.pose);
-      if(sightOnly)idleEye=now-lastDetectAt<1000;
+      if(sightOnly)idleEye=now-lastDetectAt<(now-lastFaceAt<5000?250:1000);
       var detGap=(typeof FT_DIAL!=="undefined"&&FT_DIAL&&_ftDial)?dialGapMs():DETECT_MIN_MS;
       if(model&&model.workerMode&&!(typeof FT_DIAL!=="undefined"&&FT_DIAL&&_ftDial))
         detGap=(typeof LOW_POWER!=="undefined"&&LOW_POWER)?100:WORKER_DETECT_MIN_MS;
@@ -11989,7 +11989,7 @@ body.gbkWake #landing{padding-top:76px!important}
             if(tracker.metrics.detectMs.length>240)tracker.metrics.detectMs.shift();
             var boxes=(result&&result.detections||[]).map(function(d){ return d.boundingBox; })
               .map(function(b){ return {x:b.originX/w,y:b.originY/h,width:b.width/w,height:b.height/h}; });
-            if(boxes.length)lastFaceAt=now;
+            if(window.gbEyes)window.gbEyes.boxes(boxes); if(boxes.length)lastFaceAt=now;
             if(!sightOnly){
             if(detFails&&tracker.metrics.decoded%300===0)detFails=0;   /* ~10s of clean detection forgives earlier failures */
             tracker.observe(boxes,now,s.video,token);
