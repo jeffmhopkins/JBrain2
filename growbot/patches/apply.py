@@ -1006,12 +1006,28 @@ STREAM_PATCHES: list[tuple[str, str, str, int]] = [
         "else if(now-vadStartT > (_pcmLive&&_pcmUtt?GB_UTT_MAX_MS:12000)){ vadStop(); _vadEndT=0; }",
         1,
     ),
-    # The mic going away mid-message still delivers what was already heard.
+    # No beat of its own while the person is mid-message or their pieces are still landing:
+    # upstream held only the first 6 s of an utterance, which a 12 s cap made enough.
+    (
+        "v3/next.html",
+        "if((vadOn&&now-vadStartT<6000)||now<vadHoldUntil){ lastActT=now; return; }",
+        "if((vadOn&&(now-vadStartT<6000||(_pcmLive&&_pcmUtt&&_pcmUtt.gbId)))||now<vadHoldUntil"
+        "||Object.keys(_gbUtts).length){ lastActT=now; return; }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_sttOvl=Math.max(0,_sttOvl-1); _sttPhase("done"); toast(',
+        '_sttOvl=Math.max(0,_sttOvl-1); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta);'
+        ' _sttPhase("done"); toast(',
+        1,
+    ),
+    # The mic going away mid-message still delivers what was heard, the held audio included.
     (
         "v3/next.html",
         "function pcmTapDown(){ try{if(",
         "function pcmTapDown(){ try{ var _gbU=_pcmUtt; if(_gbU&&_gbU.gbId&&_gbUtts[_gbU.gbId])"
-        " _gbFlush(_gbU.gbId,true); }catch(e){} try{if(",
+        " _gbFinal(_gbU,true,0); }catch(e){} try{if(",
         1,
     ),
     (

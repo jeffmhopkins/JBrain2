@@ -686,7 +686,12 @@ def test_a_lost_or_silent_piece_never_holds_the_turn() -> None:
 def test_a_streamed_utterance_outlives_the_old_twelve_second_cap() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "else if(now-vadStartT > (_pcmLive&&_pcmUtt?GB_UTT_MAX_MS:12000)){ vadStop();" in page
-    assert "_gbFlush(_gbU.gbId,true)" in page[page.index("function pcmTapDown(){") :][:300]
+    assert "_gbFinal(_gbU,true,0)" in page[page.index("function pcmTapDown(){") :][:300]
+    # Its own beats hold while a streamed message is live or its pieces are landing.
+    assert (
+        "if((vadOn&&(now-vadStartT<6000||(_pcmLive&&_pcmUtt&&_pcmUtt.gbId)))||now<vadHoldUntil"
+        "||Object.keys(_gbUtts).length){ lastActT=now; return; }"
+    ) in page
     # 30 s of talk with no pause: the full buffer rolls twice and nothing is dropped.
     nonstop = """
     utt(); feed(30000,true); pcmUttStop(true,300); run();
