@@ -578,5 +578,16 @@ def test_a_spoken_turn_sends_one_frame_unless_something_is_moving() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     line = page[page.index("var _nf=(kind===") :]
     line = line[: line.index(";")]
-    assert line.endswith(":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil)?3:1)")
+    assert line.endswith(
+        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||(extra&&extra.beat&&seekGoal)"
+        '||(extra&&typeof extra.visualUser==="string"&&_GB_LOOK_WORDS.test(extra.visualUser)))'
+        "?3:1)"
+    )
+    words = page[page.index("var _GB_LOOK_WORDS=/") :]
+    words = words[len("var _GB_LOOK_WORDS=/") : words.index("/i;")]
+    look = re.compile(words.replace("\\b", r"\b"), re.IGNORECASE)
+    for said in ("watch this", "what am I holding?", "What's this", "can you see me"):
+        assert look.search(said), said
+    for said in ("how are you", "spin to your left", "tell me a story"):
+        assert not look.search(said), said
     assert "each thought you see the freshest one, or the 3 freshest" in page

@@ -819,7 +819,27 @@ ROUND2_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0)):3;",
         ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0))"
-        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil)?3:1);",
+        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||(extra&&extra.beat&&seekGoal)"
+        "||(extra&&typeof extra.visualUser===\"string\"&&_GB_LOOK_WORDS.test(extra.visualUser)))"
+        "?3:1);",
+        1,
+    ),
+    # Three frames still ride a seek beat (watching for its goal is comparing over time) and a
+    # person's words about looking ("watch this", "what am I holding"): by the time speech is
+    # transcribed the wave may be over, and the older frames hold it.
+    (
+        "v3/next.html",
+        "events/seek-beats keep full 3-frame sight (change detection is the game).",
+        "events/seek-beats keep full 3-frame sight (change detection is the game). [box: a"
+        " spoken turn keeps 1 unless something moves, a seek beat runs or the words ask to look]",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function _stripImages(msgs){",
+        "var _GB_LOOK_WORDS=/\\b(look|looking|see|watch|show|showing|holding|hold up|wave|"
+        "waving|doing|what'?s this|what is this|what is that|what'?s that)\\b/i;\n"
+        "function _stripImages(msgs){",
         1,
     ),
     (
