@@ -321,9 +321,11 @@ and, with nothing under way, listening or idle. Each chip runs a clock; a finish
 its icon and final time and lingers 5 s while newer chips push it aside. A photo also flashes the
 screen's edge. It watches from outside rather than patching each call site: it wraps `fetch`
 (the box's `/api/llm`, `/api/llm-stream` and `/api/fish-tts`, timed until the body is read, so a
-streamed reply counts as thinking until its last token), canvas `toDataURL("image/jpeg")`
-(upstream's `captureEye`), audio `play()` and the relay socket's `send`, and polls upstream's
-`vadOn`, `recording` and `listenMode`. It loads right after the face and before any page script
+streamed reply counts as thinking until its last token) and the relay socket's `send` (a frame
+repeating the last one, as a held pose does every 200 ms, is not movement), and polls upstream's
+`vadOn`, `recording`, `listenMode` and `speakingUntil`. The photo is the moment a model call
+carries a picture: the camera itself encodes a frame into its ring every 2.5 s whether or not
+anything looks, so an encode would flash constantly. It loads right after the face and before any page script
 so every call goes through it; `?status=off` leaves the page untouched.
 
 ### The brain panel and text size

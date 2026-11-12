@@ -87,19 +87,21 @@ def test_the_creature_shows_what_it_is_doing_top_left() -> None:
     strip = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
     assert strip == (_GROWBOT / "patches" / "growbot-status.js").read_text(encoding="utf-8")
     assert re.search(r"https?://", strip) is None
-    # Each hook is the page's own call site: the model and voice lanes, captureEye's JPEG,
-    # the voice's <audio>, relay-transport's frames and the VAD's globals.
+    # Each hook is the page's own call site: the model and voice lanes, relay-transport's
+    # frames, and the globals the VAD and every voice route keep.
     assert 'u.pathname === "/api/fish-tts"' in strip
     assert 'u.pathname !== "/api/llm" && u.pathname !== "/api/llm-stream"' in strip
     assert "body.indexOf('\"image_url\"')" in strip
-    assert "HTMLCanvasElement.prototype.toDataURL = function" in strip
-    assert "HTMLMediaElement.prototype.play = function" in strip
+    assert 'if (kind === "see") snap();' in strip
     assert "WebSocket.prototype.send = function" in strip
     assert "window.vadOn || window.recording" in strip
-    assert 'eyeC.toDataURL("image/jpeg",0.55)' in creature
+    assert "window.speakingUntil" in strip
+    # The camera refills its frame ring every 2.5 s: an encode is not a look, so no hook on it.
+    assert "toDataURL" not in strip
     assert '"/api/llm?target=openrouter"' in creature
     assert "var listenMode=false, vadRec=null, vadOn=false," in creature
     assert "var micStream=null, recording=false," in creature
+    assert "var robotReady=false, speakingUntil=0," in creature
     transport = (_SITE / "relay-transport.js").read_text(encoding="utf-8")
     assert "JSON.stringify({ t: 'act', rid, steps, mode })" in transport
 

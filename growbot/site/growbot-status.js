@@ -4,9 +4,12 @@
    with its final time, for LINGER_MS, while newer chips push it aside.
 
    It watches from the outside rather than patching upstream's 12k-line page at each site:
-   the box's /api calls (fetch), the camera frame (canvas toDataURL), the voice (media play),
-   the body (the relay socket's act/routine/pose/stop frames) and the ear (upstream's own
-   vadOn/recording/listenMode globals). Loaded in <head> after the face and before any page
+   the box's /api calls (fetch), the body (the relay socket's act/routine/pose/stop frames),
+   and upstream's own globals for the ear (vadOn/recording/listenMode) and the voice
+   (speakingUntil, which every voice route sets and the face's mouth reads; an <audio> hook
+   cannot see it, since iPhone's voice plays through one endless MediaStream element). The
+   photo is the moment a model call carries a picture, not the camera's own encode: upstream
+   refills its frame ring every 2.5 s whether or not anything looks at it. Loaded in <head> after the face and before any page
    script, so every fetch and socket the page makes goes through the wrappers. Nothing here
    may throw into the page: every hook falls through to the real call. ?status=off hides it. */
 (function () {
@@ -17,6 +20,8 @@
   var MERGE_MS = 1500;
   var MOVE_IDLE_MS = 900;
   var SNAP_SHOW_MS = 1200;
+  // Upstream's blips and own-voice guards set speakingUntil ~700 ms ahead; a real line lasts.
+  var SPEAK_MIN_MS = 600;
   var MAX_CHIPS = 5;
 
   var KINDS = {
@@ -134,6 +139,7 @@
         kind = kindOfCall(input, init);
       } catch (err) {}
       if (!kind) return p;
+      if (kind === "see") snap();
       var e = begin(kind);
       p.then(
         function (r) {
@@ -147,58 +153,22 @@
     };
   }
 
-  // Upstream takes its picture with captureEye's canvas toDataURL("image/jpeg"); the 48x36
-  // luma sensor never encodes, so any JPEG worth a model's look is a photo.
-  if (!off && window.HTMLCanvasElement) {
-    var realToDataURL = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function (type) {
-      var out = realToDataURL.apply(this, arguments);
-      try {
-        if (String(type || "").indexOf("jpeg") >= 0 && this.width >= 96) snap();
-      } catch (err) {}
-      return out;
-    };
-  }
-
-  // The voice: any clip longer than the silent unlock blip growbot-box.js plays on a tap.
-  var playing = typeof WeakMap === "function" ? new WeakMap() : null;
-  function watchPlay(el) {
-    if (!playing || !el || el.__gbStatus) return;
-    el.__gbStatus = true;
-    el.addEventListener("playing", function () {
-      if (playing.get(el)) return;
-      var d = el.duration;
-      if (isFinite(d) && d < 0.35) return;
-      playing.set(el, begin("speak"));
-    });
-    var stop = function () {
-      var e = playing.get(el);
-      if (!e) return;
-      playing.delete(el);
-      end(e);
-    };
-    ["ended", "pause", "error", "emptied", "abort"].forEach(function (t) {
-      el.addEventListener(t, stop);
-    });
-  }
-  if (!off && window.HTMLMediaElement) {
-    var realPlay = HTMLMediaElement.prototype.play;
-    HTMLMediaElement.prototype.play = function () {
-      try {
-        if (this instanceof HTMLAudioElement) watchPlay(this);
-      } catch (err) {}
-      return realPlay.apply(this, arguments);
-    };
-  }
-
   // The body: relay-transport.js frames every leg command as {"t":"act"|"routine"|"pose"|"stop"}.
+  // A held pose re-sends the same frame every 200 ms for up to 10 min; standing still is not
+  // moving, so a frame equal to the last one (bar its request id) does not count.
   var moving = null;
   var movingT = 0;
+  var lastFrame = "";
   if (!off && window.WebSocket) {
     var realSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
       try {
-        if (typeof data === "string" && /^\{"t":"(act|routine|pose|stop)"/.test(data)) {
+        var frame =
+          typeof data === "string" && /^\{"t":"(act|routine|pose|stop)"/.test(data)
+            ? data.replace(/"rid":\d+,?/, "")
+            : "";
+        if (frame && frame !== lastFrame) {
+          lastFrame = frame;
           if (!moving) moving = begin("move");
           clearTimeout(movingT);
           movingT = setTimeout(function () {
@@ -211,14 +181,28 @@
     };
   }
 
-  // The ear: upstream's own state, polled, since its VAD lives in closures over globals.
+  // The ear and the voice: upstream's own state, polled.
   var hearing = null;
-  function pollEar() {
+  var speaking = null;
+  var speakSince = 0;
+  function pollPage() {
     var on = !!(window.vadOn || window.recording);
     if (on && !hearing) hearing = begin("hear");
     else if (!on && hearing) {
       end(hearing);
       hearing = null;
+    }
+    var until = typeof window.speakingUntil === "number" ? window.speakingUntil : 0;
+    var t = now();
+    if (Date.now() >= until) {
+      speakSince = 0;
+      if (speaking) end(speaking);
+      speaking = null;
+    } else if (!speakSince) {
+      speakSince = t;
+    } else if (!speaking && t - speakSince >= SPEAK_MIN_MS) {
+      speaking = begin("speak");
+      if (speaking && speaking.open === 1 && speaking.start > speakSince) speaking.start = speakSince;
     }
   }
 
@@ -301,7 +285,7 @@
 
   function render() {
     timer = 0;
-    pollEar();
+    pollPage();
     if (!root) return;
     var t = now();
     var anyOpen = false;
@@ -315,7 +299,8 @@
         if (e.el && e.el.parentNode) e.el.parentNode.removeChild(e.el);
         continue;
       }
-      if (kept.length >= MAX_CHIPS) {
+      // A chip still running is never cut: its end would land on nothing.
+      if (!open && kept.length >= MAX_CHIPS) {
         if (e.el && e.el.parentNode) e.el.parentNode.removeChild(e.el);
         continue;
       }
