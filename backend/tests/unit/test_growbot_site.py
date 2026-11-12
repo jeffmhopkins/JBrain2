@@ -1353,9 +1353,19 @@ def test_the_mouth_keeps_time_with_the_web_audio_line() -> None:
         "window.actx.currentTime=20;window._fishWaLn={st:1,arm:1,src:{buffer:buf}};"
         "r.push(window.gbFace.level());window.actx.currentTime=20.95;"
         "r.push(window.gbFace.level());"
+        # Stopped, not ended: the stale tail stamp is the one it began under, so no tail.
+        "window._fishWaTail=Date.now()+1000;window._fishWaLn={st:1,arm:2,src:{buffer:buf}};"
+        "window.gbFace.level();window._fishWaLn=null;r.push(window.gbFace.level());"
+        # Ended, but the next line is already playing from fishAud: the tail is not its mouth.
+        "window._fishWaLn={st:1,arm:2,src:{buffer:buf}};window.gbFace.level();"
+        "window._fishWaLn=null;window._fishWaTail=Date.now()+1200;"
+        "window.fishAud={paused:false,ended:false,src:'blob:b',currentTime:0};"
+        "r.push(window.gbFace.level());"
         "console.log(JSON.stringify(r));"
     )
-    preparing, early, loud, gap, soft, tail, ended, arm1_early, arm1_heard = json.loads(out)
+    got = json.loads(out)
+    preparing, early, loud, gap, soft, tail, ended, arm1_early, arm1_heard = got[:9]
+    stopped, next_line = got[9:]
     assert preparing is None
     # Heard only after the output latency: before it nothing, then the line in time.
     assert early == 0 and loud == 1 and gap == 0 and soft == pytest.approx(0.5)
@@ -1363,3 +1373,6 @@ def test_the_mouth_keeps_time_with_the_web_audio_line() -> None:
     assert tail == pytest.approx(0.5) and ended is None
     # Arm 1's second element holds the line back further still.
     assert arm1_early == 0 and arm1_heard == 1
+    # A stop leaves no tail; a fishAud line after an ended one is measured itself (null until
+    # decoded, here never, so the clock rhythm runs), not read off the previous line.
+    assert stopped is None and next_line is None

@@ -213,21 +213,24 @@
     /* The context's clock is when a line is RENDERED; it is heard later, by its output latency
        and, on arm 1, by the second element's MediaStream lag, which upstream's FISH_WA_TAIL
        note puts near 800 ms on the rig and has not benched on an iPhone. So the line is read
-       that far behind, and read on through the tail after the source ends. */
+       that far behind, and read on through the tail after the source ends; but only after it
+       ENDED (a stop stamps no tail, and a stopped mouth must stop), and never over a line an
+       element is now playing. */
     var ln = window._fishWaLn, ac = window.actx;
     if (ln && ln.st === 1 && ln.src && ln.src.buffer && ac && typeof ac.currentTime === "number") {
       if (wa.src !== ln.src) {
-        var lag = (typeof ac.outputLatency === "number" ? ac.outputLatency : 0) + (ln.arm === 1 ? WA_EL_LAG : 0);
-        wa = { src: ln.src, t0: ac.currentTime + lag, data: null };
+        var ol = ac.outputLatency, lag = (isFinite(ol) && ol > 0 ? ol : 0) + (ln.arm === 1 ? WA_EL_LAG : 0);
+        wa = { src: ln.src, t0: ac.currentTime + lag, data: null, tail: window._fishWaTail };
         try { wa.data = envelope(ln.src.buffer); } catch (e) {}
       }
       return wa.data ? at(wa.data, ac.currentTime - wa.t0) : null;
     }
-    if (wa.data && ac && typeof window._fishWaTail === "number" && Date.now() < window._fishWaTail) {
-      return at(wa.data, ac.currentTime - wa.t0);
-    }
     var a = playing(window.fishAud) || playing(window.__gbBoxAudio);
-    if (!a) return null;
+    if (!a) {
+      var tail = window._fishWaTail;
+      return wa.data && ac && typeof tail === "number" && tail !== wa.tail && Date.now() < tail
+        ? at(wa.data, ac.currentTime - wa.t0) : null;
+    }
     if (a.src !== env.src) measure(a.src);
     return env.data ? at(env.data, a.currentTime) : null;
   }
