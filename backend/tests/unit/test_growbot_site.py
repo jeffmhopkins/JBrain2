@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -619,7 +620,7 @@ function answer(i,txt){ var p=stt[i].p; _gbPiece(p,txt,{lang:"en"},"en"); }
 """
 
 
-def _run_stream(page: str, scenario: str) -> dict[str, object]:
+def _run_stream(page: str, scenario: str) -> dict[str, Any]:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
