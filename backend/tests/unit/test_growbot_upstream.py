@@ -101,6 +101,7 @@ class Box:
         self.now = datetime(2026, 11, 12, tzinfo=UTC)
         self.stored: object = None
         self.notes: list[tuple[str, str]] = []
+        self.heard = True
         self.feed: bytes | Exception = feed((PIN, "app: live copy"))
         self.compare: bytes | Exception = compare(FILES)
         self.asked: list[str] = []
@@ -124,6 +125,10 @@ class Box:
     async def save(self, record: dict[str, object]) -> None:
         self.stored = json.loads(json.dumps(record))
 
+    def notify(self, title: str, body: str) -> bool:
+        self.notes.append((title, body))
+        return self.heard
+
     def watch(self) -> UpstreamWatch:
         return UpstreamWatch(
             pin=lambda: self.pin,
@@ -131,7 +136,7 @@ class Box:
             fetch_json=self.fetch_json,
             load=self.load,
             save=self.save,
-            notify=lambda t, b: self.notes.append((t, b)),
+            notify=self.notify,
             now=lambda: self.now,
         )
 
@@ -233,7 +238,7 @@ def test_new_policies_are_listed_and_notified_once() -> None:
     assert len(box.notes) == 1
     title, body = box.notes[0]
     assert title == "New GrowBot walks and spins"
-    assert "4 new or changed body policies" in body
+    assert "Upstream has 4 body policies that differ from your robot's" in body
     assert "diy-v2/walk_fwd.json, normal-spin-1005/cw.json, policy_drrma.json and 1 more" in body
     assert "Ops → Update" in body
 
@@ -251,7 +256,10 @@ def test_one_policy_reads_singular() -> None:
     box.feed = feed((NEW, "x"), (PIN, "y"))
     box.compare = compare([{"filename": "app/policies/x/walk.json", "status": "added"}], 1)
     asyncio.run(box.watch().check())
-    assert "1 new or changed body policy: x/walk.json." in box.notes[0][1]
+    assert (
+        "Upstream has 1 body policy that differs from your robot's: x/walk.json."
+        in (box.notes[0][1])
+    )
 
 
 def test_moved_without_policies_does_not_notify() -> None:
@@ -452,3 +460,139 @@ def test_short_names_keep_where_a_contributor_export_lives() -> None:
     assert upstream._short("app/policies/diy-v1/walk_fwd.json") == "diy-v1/walk_fwd.json"
     assert upstream._short("app/policy_85mm.json") == "policy_85mm.json"
     assert upstream._short("policy/forward/forward_85mm.json") == "policy/forward/forward_85mm.json"
+
+
+# -- what the reviews asked for --------------------------------------------------------------
+
+
+def test_a_new_pin_is_checked_at_once() -> None:
+    box = Box()
+    box.feed = feed((NEW, "x"), (PIN, "y"))
+    watch = box.watch()
+    assert asyncio.run(watch.check()).state == "behind"
+    # The sync landed and Ops -> Update brought the new pin: the next wake answers it.
+    box.pin = Pin("britcruise9", "GrowBot", NEW)
+    box.later(minutes=5)
+    status = asyncio.run(watch.check())
+    assert status.state == "current"
+    assert status.pinned == NEW
+
+
+def test_a_failed_check_is_retried_within_the_hour() -> None:
+    box = Box()
+    box.feed = RuntimeError("down")
+    watch = box.watch()
+    asyncio.run(watch.check())
+    box.feed = feed((PIN, "y"))
+    box.later(minutes=30)
+    assert asyncio.run(watch.check()).state == "unknown"
+    box.later(minutes=31)
+    assert asyncio.run(watch.check()).state == "current"
+
+
+def test_a_failed_compare_is_not_asked_again_on_every_tap() -> None:
+    box = Box()
+    box.feed = feed((NEW, "x"), (PIN, "y"))
+    box.compare = RuntimeError("403")
+    watch = box.watch()
+    asyncio.run(watch.check())
+    compares = lambda: [u for u in box.asked if "api.github.com" in u]  # noqa: E731
+    assert len(compares()) == 1
+    for _ in range(5):
+        box.later(minutes=2)
+        asyncio.run(watch.check(force=True))
+    assert len(compares()) == 1
+    box.compare = compare(FILES)
+    box.later(minutes=30)
+    status = asyncio.run(watch.check(force=True))
+    assert len(compares()) == 2
+    assert status.policies is not None
+    assert status.error == ""
+
+
+def test_a_compare_at_githubs_cap_is_not_trusted() -> None:
+    box = Box()
+    box.feed = feed((NEW, "x"), (PIN, "y"))
+    many = [{"filename": f"policy/x/step_{i}.pkl", "status": "added"} for i in range(300)]
+    box.compare = compare(many)
+    status = asyncio.run(box.watch().check())
+    assert status.policies is None
+    assert "too much for GitHub to list" in status.error
+    assert box.notes == []
+
+
+def test_a_pin_gone_from_upstream_says_a_sync_is_needed() -> None:
+    from jbrain.web.fetch import WebFetchError
+
+    box = Box()
+    box.feed = feed((NEW, "x"))
+    box.compare = WebFetchError("not found", status=404)
+    status = asyncio.run(box.watch().check())
+    assert "no longer on upstream's main" in status.error
+
+
+def test_a_notification_nobody_heard_is_sent_again() -> None:
+    box = Box()
+    box.feed = feed((NEW, "x"), (PIN, "y"))
+    box.heard = False
+    watch = box.watch()
+    assert asyncio.run(watch.check()).notified_head is None
+    box.heard = True
+    box.later(hours=13)
+    assert asyncio.run(watch.check()).notified_head == NEW
+    box.later(hours=13)
+    asyncio.run(watch.check())
+    assert len(box.notes) == 2
+
+
+def test_concurrent_checks_share_one_round_trip() -> None:
+    box = Box()
+    box.feed = feed((NEW, "x"), (PIN, "y"))
+    watch = box.watch()
+
+    async def both() -> None:
+        await asyncio.gather(watch.check(force=True), watch.check(force=True))
+
+    asyncio.run(both())
+    assert len([u for u in box.asked if "api.github.com" in u]) == 1
+    assert len(box.notes) == 1
+
+
+def test_a_feed_entry_without_a_commit_link_does_not_shift_the_titles() -> None:
+    box = Box()
+    raw = feed((NEW, "two"), ("a" * 40, "one"), (PIN, "pin")).replace(
+        b"/commit/" + b"a" * 40, b"/releases/v2"
+    )
+    box.feed = raw
+    box.compare = RuntimeError("down")
+    status = asyncio.run(box.watch().check())
+    assert [(c.sha, c.title) for c in status.commits] == [(NEW, "two")]
+    assert status.ahead_by == 1
+
+
+def test_upstream_names_are_tamed_in_the_notification() -> None:
+    box = Box()
+    box.feed = feed((NEW, "x"), (PIN, "y"))
+    box.compare = compare(
+        [{"filename": "policy/Visit evil.example <now> " + "x" * 300 + ".json", "status": "added"}]
+    )
+    status = asyncio.run(box.watch().check())
+    assert status.policies is not None
+    assert len(status.policies[0].path) == upstream.MAX_PATH
+    body = box.notes[0][1]
+    assert " evil" not in body and "<" not in body
+    assert "policy/Visit_evil.example__now__xxx" in body
+    assert "..." in body
+
+
+@pytest.mark.parametrize(
+    ("repo", "commit"),
+    [
+        ("https://github.com/britcruise9/GrowBot", PIN + "\n"),
+        ("https://github.com/britcruise9/GrowBot\n", PIN),
+        ("https://github.com/britcruise9/..", PIN),
+    ],
+)
+def test_read_pin_wants_the_whole_value(tmp_path: Path, repo: str, commit: str) -> None:
+    (tmp_path / "upstream.json").write_text(json.dumps({"repo": repo, "commit": commit}))
+    assert read_pin(tmp_path) is None

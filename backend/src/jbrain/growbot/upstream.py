@@ -35,12 +35,24 @@ CHECK_EVERY = timedelta(hours=12)
 # A tap on "Check now" inside this window answers from the last check: the owner cannot
 # spend the box's share of the API limit by tapping.
 MIN_RECHECK = timedelta(seconds=60)
+# A check that failed is tried again on the next hourly wake, not in 12 hours.
+RETRY_AFTER_FAILURE = timedelta(hours=1)
+# A compare that failed for this (pin, head) is not asked again sooner than this, however often
+# the owner taps: a failure is usually the box's share of the API limit already spent.
+COMPARE_BACKOFF = timedelta(minutes=30)
 MAX_COMMITS = 20
-MAX_COMPARE_BYTES = 32_000_000
+MAX_PATH = 200
+# GitHub's compare lists at most 300 files and 250 commits; a full page may be cut short.
+COMPARE_MAX_FILES = 300
+COMPARE_MAX_COMMITS = 250
+MAX_COMPARE_BYTES = 8_000_000
 NOTIFY_KIND = "growbot_policies"
 
-_REPO_RE = re.compile(r"^https://github\.com/([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100})/?$")
-_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_REPO_RE = re.compile(r"https://github\.com/([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100})/?")
+_SHA_RE = re.compile(r"[0-9a-f]{40}")
+# What a policy's name may show in a notification: upstream is a third party, and the box
+# should not speak arbitrary upstream text to the owner under its own name.
+_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9._/-]")
 _COMMIT_URL_RE = re.compile(r"/commit/([0-9a-f]{40})\b")
 
 Change = Literal["new", "changed", "removed", "renamed"]
@@ -83,10 +95,13 @@ def read_pin(patches_dir: str | Path) -> Pin | None:
     repo, commit = raw.get("repo"), raw.get("commit")
     if not isinstance(repo, str) or not isinstance(commit, str):
         return None
-    m = _REPO_RE.match(repo)
-    if m is None or not _SHA_RE.match(commit):
+    m = _REPO_RE.fullmatch(repo)
+    if m is None or not _SHA_RE.fullmatch(commit):
         return None
-    return Pin(m.group(1), m.group(2).removesuffix(".git"), commit)
+    name = m.group(2).removesuffix(".git")
+    if not name.strip("."):
+        return None
+    return Pin(m.group(1), name, commit)
 
 
 def is_policy_path(path: str) -> bool:
@@ -135,6 +150,10 @@ class UpstreamUnavailable(Exception):
     """GitHub did not answer in a shape we can read."""
 
 
+class CompareTruncated(UpstreamUnavailable):
+    """GitHub's compare hit its own file or commit cap, so a policy may be missing from it."""
+
+
 Fetch = Callable[[str], Awaitable[bytes]]
 
 
@@ -167,6 +186,8 @@ def _parse_compare(raw: bytes) -> tuple[int, list[UpstreamCommit], list[Upstream
                 date=str(committer.get("date", ""))[:25],
             )
         )
+    if len(data["files"]) >= COMPARE_MAX_FILES or len(commits) >= COMPARE_MAX_COMMITS:
+        raise CompareTruncated("too many changes for GitHub to list")
     policies: list[UpstreamPolicy] = []
     other = 0
     for f in data["files"]:
@@ -176,7 +197,13 @@ def _parse_compare(raw: bytes) -> tuple[int, list[UpstreamCommit], list[Upstream
         prev = f.get("previous_filename") if isinstance(f.get("previous_filename"), str) else None
         if is_policy_path(name) or (prev is not None and is_policy_path(prev)):
             change = _CHANGE.get(str(f.get("status")), "changed")
-            policies.append(UpstreamPolicy(path=name, change=change, previous_path=prev))
+            policies.append(
+                UpstreamPolicy(
+                    path=name[:MAX_PATH],
+                    change=change,
+                    previous_path=prev[:MAX_PATH] if prev is not None else None,
+                )
+            )
         else:
             other += 1
     # The compare API lists commits oldest first; the owner reads newest first.
@@ -196,7 +223,7 @@ class UpstreamWatch:
         fetch_json: Fetch,
         load: Callable[[], Awaitable[object]],
         save: Callable[[dict[str, object]], Awaitable[None]],
-        notify: Callable[[str, str], None],
+        notify: Callable[[str, str], bool],
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._pin = pin
@@ -206,6 +233,9 @@ class UpstreamWatch:
         self._save = save
         self._notify = notify
         self._now = now
+        # One check at a time: two taps, or a tap racing the schedule, would otherwise each
+        # spend a compare call and each notify.
+        self._lock = asyncio.Lock()
 
     async def last(self) -> UpstreamStatus:
         raw = await self._load()
@@ -217,13 +247,20 @@ class UpstreamWatch:
         return UpstreamStatus()
 
     async def check(self, *, force: bool = False) -> UpstreamStatus:
+        async with self._lock:
+            return await self._check_locked(force)
+
+    async def _check_locked(self, force: bool) -> UpstreamStatus:
         prev = await self.last()
         now = self._now()
-        if prev.checked_at is not None:
-            gap = now - prev.checked_at
-            if gap < (MIN_RECHECK if force else CHECK_EVERY):
-                return prev
         pin = self._pin()
+        # A new pin (a sync landed with Ops -> Update) is answered at once: the card must not
+        # keep saying "sync" for hours after the sync.
+        same_pin = (pin.commit if pin else None) == prev.pinned
+        if prev.checked_at is not None and same_pin:
+            wait = MIN_RECHECK if force else RETRY_AFTER_FAILURE if prev.error else CHECK_EVERY
+            if now - prev.checked_at < wait:
+                return prev
         if pin is None:
             status = UpstreamStatus(
                 checked_at=now,
@@ -233,8 +270,11 @@ class UpstreamWatch:
             )
         else:
             status = await self._check(pin, prev, now)
-        status = self._maybe_notify(status)
+        # Saved before the notification goes out, so a failed save cannot notify twice.
         await self._save(status.model_dump(mode="json"))
+        if self._should_notify(status) and self._send(status):
+            status = status.model_copy(update={"notified_head": status.head})
+            await self._save(status.model_dump(mode="json"))
         return status
 
     async def _check(self, pin: Pin, prev: UpstreamStatus, now: datetime) -> UpstreamStatus:
@@ -260,12 +300,21 @@ class UpstreamWatch:
             return base
         base.state = "behind"
         base.compare_url = f"{pin.url}/compare/{pin.commit[:12]}...{head[:12]}"
-        if prev.pinned == pin.commit and prev.head == head and prev.policies is not None:
+        same = prev.pinned == pin.commit and prev.head == head
+        if same and prev.policies is not None:
             base.ahead_by = prev.ahead_by
             base.commits = prev.commits
             base.policies = prev.policies
             base.other_files = prev.other_files
             return base
+        backing_off = (
+            same
+            and prev.error
+            and prev.checked_at is not None
+            and now - prev.checked_at < COMPARE_BACKOFF
+        )
+        if backing_off:
+            return prev
         try:
             raw = await self._fetch_json(
                 f"https://api.github.com/repos/{pin.slug}/compare/{pin.commit}...{head}"
@@ -273,13 +322,14 @@ class UpstreamWatch:
             ahead, commits, policies, other = _parse_compare(raw)
         except Exception as exc:  # noqa: BLE001 — the feed still says upstream moved
             log.warning("growbot.upstream.compare_failed", error=repr(exc))
-            before_pin = shas.index(pin.commit) if pin.commit in shas else None
+            pairs = [(m.group(1), it) for it in items if (m := _COMMIT_URL_RE.search(it.url))]
+            before_pin = next((i for i, (s, _) in enumerate(pairs) if s == pin.commit), None)
             base.ahead_by = before_pin
             base.commits = [
                 UpstreamCommit(sha=s, title=_first_line(it.title), date=it.published)
-                for s, it in zip(shas[: before_pin or MAX_COMMITS], items, strict=False)
+                for s, it in pairs[: before_pin or MAX_COMMITS]
             ]
-            base.error = "Upstream has moved, but GitHub wouldn't list the changed files."
+            base.error = _compare_error(exc)
             return base
         base.ahead_by = ahead
         base.commits = commits[:MAX_COMMITS]
@@ -295,24 +345,41 @@ class UpstreamWatch:
         base.error = error
         return base
 
-    def _maybe_notify(self, status: UpstreamStatus) -> UpstreamStatus:
-        if (
-            status.state != "behind"
-            or not status.policies
-            or status.head is None
-            or status.head == status.notified_head
-        ):
-            return status
-        n = len(status.policies)
-        names = ", ".join(_short(p.path) for p in status.policies[:3])
-        more = f" and {n - 3} more" if n > 3 else ""
-        self._notify(
-            "New GrowBot walks and spins",
-            f"Upstream published {n} new or changed body "
-            f"{'policy' if n == 1 else 'policies'}: {names}{more}. "
-            "Ask Claude to sync GrowBot, then Ops → Update.",
+    @staticmethod
+    def _should_notify(status: UpstreamStatus) -> bool:
+        return (
+            status.state == "behind"
+            and bool(status.policies)
+            and status.head is not None
+            and status.head != status.notified_head
         )
-        return status.model_copy(update={"notified_head": status.head})
+
+    def _send(self, status: UpstreamStatus) -> bool:
+        """Notify, and say whether a device heard it: the notification feed keeps nothing, so
+        a version nobody was connected for is told again at the next check."""
+        policies = status.policies or []
+        n = len(policies)
+        names = ", ".join(_notice_name(p.path) for p in policies[:3])
+        more = f" and {n - 3} more" if n > 3 else ""
+        return self._notify(
+            "New GrowBot walks and spins",
+            f"Upstream has {n} body "
+            f"{'policy that differs' if n == 1 else 'policies that differ'} from your "
+            f"robot's: {names}{more}. Ask Claude to sync GrowBot, then Ops → Update.",
+        )
+
+
+def _compare_error(exc: Exception) -> str:
+    if isinstance(exc, CompareTruncated):
+        return "Upstream changed too much for GitHub to list; see the changes on GitHub."
+    if getattr(exc, "status", None) == 404:
+        return "Your copy's commit is no longer on upstream's main, so a sync is needed."
+    return "Upstream has moved, but GitHub wouldn't list the changed files."
+
+
+def _notice_name(path: str) -> str:
+    name = _NAME_UNSAFE.sub("_", _short(path))
+    return name if len(name) <= 60 else f"{name[:57]}..."
 
 
 def _short(path: str) -> str:

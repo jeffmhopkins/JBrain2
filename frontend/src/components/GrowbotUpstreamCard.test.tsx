@@ -119,7 +119,7 @@ describe("GrowbotUpstreamCard", () => {
     const card = await screen.findByRole("region", { name: "Walks and spins" });
     expect(within(card).getByText("No new policies")).toBeInTheDocument();
     expect(card).toHaveTextContent("published no new walks or spins");
-    expect(within(card).getByText("2 commits since your copy")).toBeInTheDocument();
+    expect(within(card).getByText("2+ commits since your copy")).toBeInTheDocument();
   });
 
   it("names a failed check and one that never ran", async () => {
@@ -150,6 +150,35 @@ describe("GrowbotUpstreamCard", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Check now" })).toBeEnabled());
     expect(screen.getByText(/not running|503/)).toBeInTheDocument();
     expect(screen.getByText("Up to date")).toBeInTheDocument();
+  });
+
+  it("says when the box could not be asked, rather than hiding", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ detail: "the upstream check is not running" }, 503)),
+    );
+    render(<GrowbotUpstreamCard />);
+    expect(await screen.findByText("Couldn't check")).toBeInTheDocument();
+    expect(screen.getByText(/not running|503/)).toBeInTheDocument();
+  });
+
+  it("keeps a never-checked box neutral and counts commits it could not total", async () => {
+    serve({
+      ...BEHIND,
+      ahead_by: null,
+      policies: null,
+      compare_url: "javascript:alert(1)",
+    });
+    render(<GrowbotUpstreamCard />);
+    expect(await screen.findByText("2+ commits since your copy, 1 other file")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "See on GitHub" })).toBeNull();
+  });
+
+  it("gives a box that has never checked a plain dot", async () => {
+    serve(upstream({ state: "unknown", head: null, checked_at: null }));
+    const { container } = render(<GrowbotUpstreamCard />);
+    expect(await screen.findByText("Not checked yet")).not.toHaveClass("gb-bad-t");
+    expect(container.querySelector(".gb-dot")?.className).toBe("gb-dot ");
   });
 
   it("stays away on a box without the check", async () => {

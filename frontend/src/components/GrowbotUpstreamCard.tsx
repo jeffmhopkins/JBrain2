@@ -4,7 +4,7 @@
 // it rather than offering an action that cannot work from a phone.
 
 import { useCallback, useEffect, useState } from "react";
-import { type GrowbotUpstream, type GrowbotUpstreamPolicy, api } from "../api/client";
+import { ApiError, type GrowbotUpstream, type GrowbotUpstreamPolicy, api } from "../api/client";
 import { ago, day } from "../growbot";
 
 const CHANGE_TAG: Record<GrowbotUpstreamPolicy["change"], string> = {
@@ -16,6 +16,24 @@ const CHANGE_TAG: Record<GrowbotUpstreamPolicy["change"], string> = {
 
 function short(path: string): string {
   return path.replace(/^app\/policies\//, "").replace(/^app\//, "");
+}
+
+// The answer when the box could not be asked at all: no check to show, just why.
+function unread(error: string): GrowbotUpstream {
+  return {
+    state: "unknown",
+    repo_url: "",
+    pinned: null,
+    head: null,
+    head_at: "",
+    ahead_by: null,
+    commits: [],
+    policies: null,
+    other_files: null,
+    compare_url: "",
+    checked_at: null,
+    error,
+  };
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
@@ -34,7 +52,11 @@ export function GrowbotUpstreamCard() {
     api
       .growbotUpstream()
       .then((u) => live && setUp(u))
-      .catch(() => live && setAbsent(true));
+      .catch((e: unknown) => {
+        if (!live) return;
+        if (e instanceof ApiError && (e.status === 404 || e.status === 405)) setAbsent(true);
+        else setUp(unread(e instanceof Error ? e.message : String(e)));
+      });
     return () => {
       live = false;
     };
@@ -56,7 +78,16 @@ export function GrowbotUpstreamCard() {
 
   const policies = up.policies ?? [];
   const behind = up.state === "behind";
-  const level = checking ? "" : behind ? "warn" : up.state === "current" ? "ok" : "bad";
+  const level =
+    checking || (up.state === "unknown" && !up.checked_at && !up.error)
+      ? ""
+      : behind
+        ? "warn"
+        : up.state === "current"
+          ? "ok"
+          : "bad";
+  // Only ever a link the box built to GitHub, never whatever a stored answer says.
+  const github = up.compare_url.startsWith("https://github.com/") ? up.compare_url : "";
   const stateText = checking
     ? "Checking GitHub…"
     : up.state === "current"
@@ -67,7 +98,7 @@ export function GrowbotUpstreamCard() {
           : policies.length
             ? `${policies.length} new or changed`
             : "No new policies"
-        : up.checked_at
+        : up.checked_at || up.error
           ? "Couldn't check"
           : "Not checked yet";
 
@@ -101,7 +132,8 @@ export function GrowbotUpstreamCard() {
       {behind && up.commits.length > 0 && (
         <details className="gb-up-more">
           <summary>
-            {plural(up.ahead_by ?? up.commits.length, "commit")} since your copy
+            {up.ahead_by === null ? `${up.commits.length}+ commits` : plural(up.ahead_by, "commit")}{" "}
+            since your copy
             {up.other_files ? `, ${plural(up.other_files, "other file")}` : ""}
           </summary>
           <ul className="gb-up-list">
@@ -146,8 +178,8 @@ export function GrowbotUpstreamCard() {
         <button type="button" className="gb-btn" onClick={() => void check()} disabled={checking}>
           {checking ? "Checking…" : "Check now"}
         </button>
-        {behind && up.compare_url && (
-          <a className="gb-btn" href={up.compare_url} target="_blank" rel="noreferrer">
+        {behind && github && (
+          <a className="gb-btn" href={github} target="_blank" rel="noreferrer">
             See on GitHub
           </a>
         )}

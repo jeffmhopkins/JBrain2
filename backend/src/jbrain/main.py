@@ -416,6 +416,12 @@ def _growbot_compare_fetch(fetcher: WebFetcher) -> Callable[[str], Awaitable[byt
     return fetch
 
 
+def _notify_heard(bus: NotifyBus | None, note: Notification) -> bool:
+    """Notify the owner and say whether any device was connected to hear it."""
+    notify_owner(bus, note)
+    return bus is not None and bus.subscriber_count > 0
+
+
 def _mint_growbot_secret(store: InternalSecrets) -> None:
     """Best-effort, like the others: without it the GrowBot sidecar is refused."""
     try:
@@ -1796,7 +1802,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             fetch_json=_growbot_compare_fetch(web_fetcher),
             load=lambda: settings_store.get(SYSTEM_CTX, GROWBOT_UPSTREAM_KEY, None),
             save=lambda record: settings_store.upsert(SYSTEM_CTX, GROWBOT_UPSTREAM_KEY, record),
-            notify=lambda title, body: notify_owner(
+            notify=lambda title, body: _notify_heard(
                 app.state.notify_bus,
                 Notification(kind=GROWBOT_UPSTREAM_NOTIFY_KIND, title=title, body=body),
             ),
