@@ -194,6 +194,13 @@ change made on one phone is invisible everywhere else.
   kind each setting is.
 - The model list the PWA offers is the box's catalog filtered to installed models, with
   vision-capable ones marked.
+- **The leg calibration landed first, and simpler** (owner, 2026-11-12: *"we also need to be
+  able to trim the legs … anything they could do in the original application"*). Upstream
+  reads `gb_walk_cal` at every move, so it needs no queue, report or reload: the box is the
+  only writer (`app.growbot_robots.cal`, migration 0261, set from the Body tab's Legs pane,
+  `api/growbot_body.py`) and `growbot-box.js` copies it into each page, the box winning key by
+  key. The pane's check moves go chip-direct (`POST /internal/robots/act`). See
+  growbot/README.md "Leg calibration".
 
 ### 2c. The creature lives on the box, as profiles the owner can switch
 

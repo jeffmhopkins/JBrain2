@@ -63,7 +63,7 @@ from collections.abc import AsyncGenerator, Callable
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 HERE = Path(__file__).resolve().parent
 
@@ -133,6 +133,16 @@ BACKOFF_LIMIT = 8
 BACKOFF_WINDOW_S = 300.0
 MAX_PEERS_PER_CHANNEL = 8
 MODELS_CACHE_S = 30.0
+# A creature polls its robot's calibration every few seconds; one api read serves them all.
+CAL_CACHE_S = 2.0
+CAL_PATH = "/api/box/cal"
+# The PWA's direct leg moves (api/growbot_body.py), checked again here since they go straight
+# to the chip: a few keyframes, inside the servo's travel, none long enough to stall it.
+ACT_MAX_STEPS = 12
+ACT_MS = (50, 2000)
+# Far above any rid a phone's relay-transport counts to, so the chip's ack to a PWA move is
+# never mistaken for the reply to a phone's own.
+ACT_RID_BASE = 1_500_000_000
 # How often a phone on the relay is asked again whether its persona still wears the body.
 RIDER_RECHECK_S = 10.0
 SOUL_WORKERS = 2
@@ -941,6 +951,32 @@ def _parse(data: bytes) -> dict[str, Any] | None:
     return msg if isinstance(msg, dict) else None
 
 
+def _act_frame(frame: Any) -> dict[str, Any] | None:
+    """The chip frame a PWA move may be, rebuilt from checked fields only, or None."""
+    if not isinstance(frame, dict):
+        return None
+    kind = frame.get("t")
+    if kind == "stop":
+        return {"t": "stop"}
+    if kind == "routine":
+        return {"t": "routine", "name": "wiggle"} if frame.get("name") == "wiggle" else None
+    steps = frame.get("steps")
+    if kind != "act" or not isinstance(steps, list) or not 0 < len(steps) <= ACT_MAX_STEPS:
+        return None
+    out: list[dict[str, int]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            return None
+        vals = [step.get(k) for k in ("l", "r", "ms")]
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in vals):
+            return None
+        l, r, ms = cast(list[int], vals)  # noqa: E741 (the wire's own name)
+        if not (0 <= l <= 180 and 0 <= r <= 180 and ACT_MS[0] <= ms <= ACT_MS[1]):
+            return None
+        out.append({"l": l, "r": r, "ms": ms})
+    return {"t": "act", "steps": out, "mode": "replace"}
+
+
 def _without_key(hello: dict[str, Any]) -> dict[str, Any]:
     """A chip's hello as phones may see it: the device key never leaves the relay."""
     return {k: v for k, v in hello.items() if k != "key"}
@@ -1033,6 +1069,8 @@ class GrowBot:
         self._root_cert = b""
         self._root_cert_at = -math.inf
         self._models_at = -math.inf
+        self._cals: dict[str, tuple[float, Any]] = {}
+        self._act_rid = ACT_RID_BASE
         self.did = hashlib.sha256(b"growbot-on-the-box").hexdigest()[:16]
 
     # -- outbound ---------------------------------------------------------------
@@ -1203,7 +1241,7 @@ class GrowBot:
         )
 
     def internal(self, req: Request) -> Response:
-        """The api's two routes: which robots are on the relay, and dropping one."""
+        """The api's routes: which robots are on the relay, dropping one, and a PWA move."""
         if not self._internal_ok(req):
             return json_response(401, {"error": "unauthorized"})
         if req.path == "/internal/robots" and req.method == "GET":
@@ -1229,7 +1267,27 @@ class GrowBot:
                 # 1008 like a failed hello: the robot's key no longer opens the relay.
                 chan.body.close(1008, "revoked")
             return json_response(200, {"dropped": dropped})
+        if req.path == "/internal/robots/act" and req.method == "POST":
+            return self._internal_act(_parse(req.body))
         return json_response(404, {"error": "no such route"})
+
+    def _internal_act(self, msg: dict[str, Any] | None) -> Response:
+        """One PWA move (the Body tab's Calibrate) straight to the chip, as upstream's tester
+        sends it: `{code, frame}`, the frame an `act`, the `wiggle` routine, or a `stop`.
+        `sent` is False when no chip is on the relay for that code."""
+        code = msg.get("code") if msg else None
+        frame = msg.get("frame") if msg else None
+        if not isinstance(code, str) or not CODE_RE.fullmatch(code):
+            return json_response(400, {"error": "code"})
+        wire = _act_frame(frame)
+        if wire is None:
+            return json_response(400, {"error": "frame"})
+        chan = self.channels.get(code)
+        if chan is None or chan.body is None:
+            return json_response(200, {"sent": False})
+        self._act_rid = self._act_rid + 1 if self._act_rid < 2_147_483_647 else ACT_RID_BASE
+        chan.body.send_text(json.dumps({**wire, "rid": self._act_rid}))
+        return json_response(200, {"sent": True})
 
     def _same_origin(self, req: Request) -> bool:
         """A request a browser sent from another origin (the PWA on :443 is same-site, so
@@ -1447,6 +1505,8 @@ class GrowBot:
         name = req.path[len("/api/") :]
         if req.path in (SOUL_PATH, SOUL_PATH + "/state"):
             return await self.soul_route(req)
+        if req.path == CAL_PATH:
+            return await self.cal_route(req)
         if req.path in (MEMORY_PATH, MEMORY_PATH + "/view", MEMORY_PATH + "/forget"):
             return await self.memory_route(req)
         if name in ("journal", "episodes") and req.method == "DELETE":
@@ -1481,6 +1541,34 @@ class GrowBot:
         if name == "fish-tts":
             return await self.tts(req)
         return json_response(404, {"error": "not found"})
+
+    async def cal_route(self, req: Request) -> Response:
+        """`GET ?id=<code>`: the robot's calibration as the PWA saved it, which growbot-box.js
+        copies into `gb_walk_cal`; `{cal: null}` when never saved, or when the api cannot say,
+        so the phone keeps what it has. Not a secret (it says how crooked two legs hang), so
+        any signed-in page may read any robot's."""
+        if req.method != "GET":
+            return json_response(405, {"error": "method not allowed"})
+        code = req.arg("id")
+        headers = [("Cache-Control", "no-store")]
+        if not CODE_RE.fullmatch(code):
+            return json_response(400, {"error": "id"}, headers)
+        return json_response(200, {"cal": await self._cal(code)}, headers)
+
+    async def _cal(self, code: str) -> Any:
+        now = time.monotonic()
+        hit = self._cals.get(code)
+        if hit is not None and now - hit[0] < CAL_CACHE_S:
+            return hit[1]
+        url = f"{self.config.api_url}/internal/growbot/robots/{code}/cal"
+        up = await self._call(http_call, url, None, self._auth(), pool=self._soul_pool)
+        got = _parse(up.body) if up.status == 200 else None
+        cal = got.get("cal") if got is not None else None
+        cal = cal if isinstance(cal, dict) else None
+        if len(self._cals) > 64:
+            self._cals.clear()
+        self._cals[code] = (time.monotonic(), cal)
+        return cal
 
     async def soul_route(self, req: Request) -> Response:
         """The persona's soul, which lives on the box (plan §2c): `GET` pulls it, `POST

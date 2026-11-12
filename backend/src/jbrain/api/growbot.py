@@ -127,7 +127,7 @@ _transport: httpx.AsyncBaseTransport | None = None
 
 
 async def _sidecar(
-    request: Request, method: str, path: str, body: dict[str, str] | None = None
+    request: Request, method: str, path: str, body: dict[str, object] | None = None
 ) -> httpx.Response | None:
     base = str(getattr(request.app.state.settings, "growbot_url", "") or "").rstrip("/")
     secrets = cast(InternalSecrets, request.app.state.growbot_secrets)

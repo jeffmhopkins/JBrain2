@@ -3360,6 +3360,19 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   reach the box, the log behind *Show the log* until something fails) → *<name> is paired*.
   Closing the sheet mid-flash leaves *Flashing — tap to watch* on the Body tab. Each failure
   says what happened and the recovery, never "see the log".
+- **Controls for <name>** (owner, 2026-11-12: *"anything they could do in the original
+  application"*) is one card under each robot's *Who wears* on the Body tab
+  (`components/GrowbotBodyControls.tsx`): a *Move | Legs* segmented strip when the Move pane
+  (the policies and the remote) is given, and one full-width danger *Stop* under both that
+  stops the chip and the creature together. *Legs* is upstream's tester leg check in its own
+  three steps: *1 · Which leg* (*Move left leg* / *Move right leg*, then the *Swap left and
+  right* checkbox), *2 · Straighten* (a *Left trim* and *Right trim* row each: −, slider ±30°,
+  +, the value; the legs stand at the new trim once the hand stops), *3 · Direction* (*Sweep
+  left/right forward*), then *Advanced* (each leg's sign, the IMU's roll/pitch/yaw signs, the
+  walk gain) and an armed *Reset calibration*. Every change saves on the box at once (the line
+  above step 1 says whether it is saved there yet), and a status line under it says what was
+  done or why a move did not go. A robot that is off keeps its calibration editable but its
+  moves and *Stop* disabled, with *Turn the robot on to move it.*
 - **Motion.** Sheets slide up, the restore confirm scales in, the persona page slides in from
   the right, banners drop in and toasts rise, 160–200 ms ease-out, each only when it first
   appears, all off under `prefers-reduced-motion`.

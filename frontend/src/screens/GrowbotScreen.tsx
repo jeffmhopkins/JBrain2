@@ -16,6 +16,7 @@ import {
   api,
 } from "../api/client";
 import { GrowbotAddSheet } from "../components/GrowbotAddSheet";
+import { GrowbotBodyControls } from "../components/GrowbotBodyControls";
 import { GrowbotFail, GrowbotLog, GrowbotPhases } from "../components/GrowbotJob";
 import { GrowbotPersonaPage } from "../components/GrowbotPersonaPage";
 import {
@@ -662,6 +663,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           <div key={r.code} className="gb-stack">
             {bodyCard(r)}
             {riderPick(r)}
+            <GrowbotBodyControls robot={r} />
           </div>
         ))}
         {flashing || (

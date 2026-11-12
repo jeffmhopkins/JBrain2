@@ -21,6 +21,7 @@ import type {
   FactOut,
   GeneratedImageOut,
   GraphEdge,
+  GrowbotCal,
   GrowbotCheckpoint,
   GrowbotFailCode,
   GrowbotFlashJob,
@@ -209,6 +210,19 @@ const mockGb = {
   job: null as GrowbotFlashJob | null,
   steps: [] as MockGbStep[],
   networks: ["Home-2G", "Workshop"],
+  // Saved calibrations by robot (absent: never saved) and the moves the screen sent.
+  cals: {} as Record<string, GrowbotCal>,
+  acts: [] as { code: string; body: unknown }[],
+};
+
+const MOCK_GB_CAL: GrowbotCal = {
+  L_OFF: 0,
+  R_OFF: 0,
+  SWAP: 0,
+  L_SIGN: -1,
+  R_SIGN: 1,
+  IMU_SIGN: [1, -1, 1],
+  gain: 1,
 };
 
 function mockGbServiceUp(): boolean {
@@ -816,6 +830,28 @@ async function mockGrowbot(
     });
   }
   if (path === "/api/growbot/robots" && method === "GET") return json(robots());
+  const cal = /^\/api\/growbot\/robots\/([^/]+)\/(cal|act)$/.exec(path);
+  if (cal) {
+    const code = decodeURIComponent(cal[1] ?? "");
+    const r = mockGb.robots.find((x) => x.code === code);
+    if (!r) return json({ detail: "no such robot" }, 404);
+    if (cal[2] === "act" && method === "POST") {
+      if (!up || !r.connected || r.revoked_at) {
+        return json({ detail: "the robot is not on the relay" }, 409);
+      }
+      mockGb.acts.push({ code, body: JSON.parse(String(init?.body ?? "{}")) });
+      return json({ sent: true });
+    }
+    if (cal[2] === "cal" && method === "GET") {
+      const saved = mockGb.cals[code];
+      return json({ cal: saved ?? MOCK_GB_CAL, saved: !!saved });
+    }
+    if (cal[2] === "cal" && method === "PUT") {
+      const next = { ...MOCK_GB_CAL, ...(JSON.parse(String(init?.body ?? "{}")) as GrowbotCal) };
+      mockGb.cals[code] = next;
+      return json({ cal: next, saved: true });
+    }
+  }
   const revoke = /^\/api\/growbot\/robots\/([^/]+)\/revoke$/.exec(path);
   if (revoke && method === "POST") {
     const r = mockGb.robots.find((x) => x.code === decodeURIComponent(revoke[1] ?? ""));

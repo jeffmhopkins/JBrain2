@@ -224,6 +224,7 @@ What the upstream app calls, and what answers on the box:
 | `DELETE /api/journal`, `DELETE /api/episodes` | 200 `{"ok":true}` (the app's erase flow reads JSON); nothing is stored to erase. |
 | `/api/gallery?…&download=1` | 404: no soul or policy gallery on the box. |
 | `/api/journal`, `episodes`, `gallery`, `ev`, `hit`, `feedback` | otherwise 204, stored nowhere. |
+| `/api/box/cal?id=<code>` | The box's own route: `{cal}`, the robot's leg calibration as the PWA saved it (the api's `/internal/growbot/robots/<code>/cal`, cached 2 s), or `{cal: null}` when never saved or the api cannot say. |
 
 When the box fails the creature, it says why. `growbot-box.js` keeps the reason a speech call
 failed (the sidecar's `error`, or how long the page waited before it gave up), and the page's
@@ -243,9 +244,28 @@ comes or goes, and `{"t":"alive","quiet_ms":N}` every 30 s while a heartbeating 
 `{"t":"hb_ack"}`, pings every socket every 20 s, and drops any socket silent for 45 s (a robot
 that loses power never closes its socket). A second chip on a code replaces the first.
 
+The api's `POST /internal/robots/act` `{code, frame}` puts one PWA move on a code's chip, past
+any phone riding it, as upstream's tester does: an `act` of at most 12 whole-degree keyframes
+(0–180°, 50–2000 ms each), the `wiggle` routine, or a `stop`, rebuilt from the checked fields
+with a rid above any a phone counts to. `{sent: false}` when no chip is on the code.
+
 `/d/<code>-agent` is upstream's side channel for an external agent: the creature page joins with
 `hello` and agents with `attach`, both behind the session cookie, and frames are bridged both
 ways. It never meets the robot's channel.
+
+## Leg calibration (the Body tab's Legs pane)
+
+Upstream keeps a robot's calibration (`gb_walk_cal`: the by-eye trims `L_OFF`/`R_OFF`, the
+left/right `SWAP`, the leg signs `L_SIGN`/`R_SIGN`, the phone's `IMU_SIGN` and the walk
+`gain`) in the localStorage of whichever phone set it in its tester. Here it belongs to the
+body: the PWA's Body tab saves it on the robot's row (`app.growbot_robots.cal`, migration 0261,
+`api/growbot_body.py`), and `growbot-box.js` copies it into `gb_walk_cal` on every page that
+loads the shim, synchronously at load (a tester page reads it once) and every 5 s while
+visible. The box's keys win, one by one; a robot never calibrated from the PWA (`null`) leaves
+the phone's own alone. Upstream reads the calibration at each move (`calNow()`, and
+relay-transport reads `SWAP` per frame), so a change lands on the next move with no reload. The
+PWA's check moves (which leg, a trim, a sweep) go chip-direct through the relay, the box
+applying a saved swap on the wire.
 
 ## Personas (wave G4b)
 

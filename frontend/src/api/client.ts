@@ -3886,6 +3886,37 @@ export interface GrowbotRobot {
   connected: boolean;
 }
 
+/** A robot's leg calibration, upstream's `gb_walk_cal` field for field: by-eye trims (°), the
+ *  left/right swap, each leg's and the IMU's signs, and the walk gain. Kept on the box per
+ *  robot; the creature copies it in. */
+export interface GrowbotCal {
+  L_OFF: number;
+  R_OFF: number;
+  SWAP: 0 | 1;
+  L_SIGN: -1 | 1;
+  R_SIGN: -1 | 1;
+  IMU_SIGN: [-1 | 1, -1 | 1, -1 | 1];
+  gain: number;
+}
+
+/** `saved` false: never set from here, so each phone still uses what it holds. */
+export interface GrowbotCalOut {
+  cal: GrowbotCal;
+  saved: boolean;
+}
+
+/** One keyframe in the robot's own left/right (the box applies a saved swap). */
+export interface GrowbotStep {
+  l: number;
+  r: number;
+  ms: number;
+}
+
+export type GrowbotAct =
+  | { kind: "act"; steps: GrowbotStep[] }
+  | { kind: "wiggle" }
+  | { kind: "stop" };
+
 export interface GrowbotStatus {
   service: "up" | "down";
   connected: number;
@@ -8150,6 +8181,24 @@ export const api = {
       method: "POST",
     });
     return (await response.json()) as GrowbotRobot;
+  },
+
+  async growbotCal(code: string): Promise<GrowbotCalOut> {
+    const response = await request(`/api/growbot/robots/${encodeURIComponent(code)}/cal`);
+    return (await response.json()) as GrowbotCalOut;
+  },
+
+  async saveGrowbotCal(code: string, cal: GrowbotCal): Promise<GrowbotCalOut> {
+    const response = await request(
+      `/api/growbot/robots/${encodeURIComponent(code)}/cal`,
+      jsonInit("PUT", cal),
+    );
+    return (await response.json()) as GrowbotCalOut;
+  },
+
+  /** Moves the legs now, straight to the chip (409 when the robot is not on the relay). */
+  async growbotAct(code: string, move: GrowbotAct): Promise<void> {
+    await request(`/api/growbot/robots/${encodeURIComponent(code)}/act`, jsonInit("POST", move));
   },
 
   /** Ends every phone's GrowBot session (a lost phone, say); each opens again from here. */
