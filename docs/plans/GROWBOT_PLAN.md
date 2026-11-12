@@ -368,7 +368,13 @@ audio, each short pause or a full buffer sends what is held and listening goes o
 of speech sends only the last piece; the creature gets one turn with the pieces joined. This also
 ends upstream's 12 s cap, which silently dropped the rest of a longer message. An ordinary quiet beat now waits 90 s after the last activity
 (upstream: 8 s), so the creature never cuts in just after the person stops talking
-(`QUIET_PATCHES`).
+(`QUIET_PATCHES`). What that beat says is upstream's live 11-11 text, ported from growbot.dev
+since GitHub's last snapshot (owner, 2026-11-12): "this time is yours: you may reach for one of
+your wants with your own body" in place of "you are awake together", so a creature left alone
+explores instead of waiting. `?quiet=2` (kept per device) is the bolder "go explore new spaces",
+`?quiet=0` the old words, `?quiet=1` the default. Upstream's matching "quiet settle", which thins
+the beats the longer nobody acts, is left out: it saves cloud credits, and a local beat costs
+none (`QUIET_TEXT_PATCHES`). The words ride the turn's own message, never the cached prefix.
 
 **Brain log.** The owner asked (2026-11-12) for a brain log he can hand upstream's developer:
 pick 1, 3 or 6 hours and download one zip with what debugging needs. Upstream's own "brain

@@ -1195,3 +1195,40 @@ def test_a_backoff_ends_when_there_is_nothing_left_to_send() -> None:
     )
     posts = [c["body"] for c in got["calls"] if c["method"] == "POST"]
     assert posts[-1] == {"persona": "p1", "set": {"gb_eye": "environment"}, "drop": []}
+@pytest.mark.parametrize(
+    ("search", "stored", "want", "kept"),
+    [
+        ("", None, "This time is yours", None),
+        ("?quiet=2", None, "go explore new spaces", "2"),
+        ("", "2", "go explore new spaces", "2"),
+        ("?quiet=0", None, "QUIET COMPANY", "0"),
+        ("?quiet=1", "2", "This time is yours", None),
+        ("?quiet=9", "0", "QUIET COMPANY", "0"),
+    ],
+)
+def test_the_quiet_beat_hands_the_creature_its_own_time_unless_the_device_chose_otherwise(
+    search: str, stored: str | None, want: str, kept: str | None
+) -> None:
+    """Upstream's 11-11 quiet-beat text is the default; ?quiet=2 and ?quiet=0 stick per device
+    and ?quiet=1 clears them, and whatever is chosen only changes what the beat says."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    arm = next(line for line in page.splitlines() if line.startswith("var QUIET_ARM="))
+    beat = re.search(r'think\((QUIET_ARM_TXT\|\|"QUIET COMPANY[^"]*")', page)
+    assert beat is not None
+    # The beat's own gates are the ones the 90 s test above pins; only its words are chosen.
+    assert page.index("if(idle>=GB_QUIET_AFTER_MS") < beat.start()
+    script = (
+        f"var location={{search:{json.dumps(search)}}};"
+        f"var localStorage={{removeItem:function(k){{delete this[k];}}}};"
+        + (f"localStorage.gb_quiet={json.dumps(stored)};" if stored is not None else "")
+        + arm
+        + f"\nconsole.log(JSON.stringify({{said:{beat.group(1)},"
+        + "kept:localStorage.gb_quiet||null}));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    got = json.loads(out.stdout)
+    assert want in got["said"]
+    assert got["kept"] == kept
