@@ -205,7 +205,7 @@ def cold_reasons(calls: list[LoggedCall]) -> dict[str, int]:
         rec = call.record
         if rec.kind != "llm" or rec.request.get("replay"):
             continue
-        sha = rec.timings.get("system_hash")
+        sha = rec.timings.get("system_hash") or None
         if _cold(rec):
             before = last.get(rec.robot)
             if before is None or sha is None:

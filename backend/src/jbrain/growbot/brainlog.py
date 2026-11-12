@@ -377,7 +377,7 @@ box instead of growbot.dev.
   second. A long system prompt is written once under `prompts/` and referenced as
   `{{"shared": "prompts/<hash>.txt"}}`.
 - `summary.json`: latency per kind and stage (n, p50, p90, max), model turns with a picture
-  apart from text-only ones.
+  apart from text-only ones, cold turns (the whole prompt re-read) and debug replays apart.
 - `diary.jsonl`: the creature's own diary rows (what it posts to `/api/journal`), oldest first,
   each once, with the diary and page load (`boot`) it came from. `diary-pages.json` holds each
   page load's header (build hash, deploy, mode, user agent).
@@ -430,6 +430,9 @@ async def build(
                         kind=rec.kind,
                         ok=rec.ok,
                         total_ms=rec.total_ms,
+                        robot=rec.robot,
+                        # A debug replay must stay out of the creature's own latency.
+                        request={"replay": True} if rec.request.get("replay") else {},
                         images=rec.images,
                         image_bytes=rec.image_bytes,
                         prompt_tokens=rec.prompt_tokens,

@@ -632,7 +632,9 @@ except Exception: print("")')
     ;;
   growbot-replay) # --body-file f.json — run a chat request (an edited logged one) through the creature's lane
     [ "${1:-}" = "--body-file" ] || { echo "usage: debug-connect.sh growbot-replay --body-file f.json" >&2; exit 2; }
-    _call POST /api/debug/growbot/replay "$(cat "$2")" | _pp
+    # A body with a real frame outgrows one argument, so curl reads the file itself.
+    curl -sS -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+      --data-binary @"$2" "$BASE/api/debug/growbot/replay" | _pp
     ;;
   growbot-brainlog) # [--hours 1|3|6] — the brain log zip (redacted), saved to the current dir
     h=1; [ "${1:-}" = "--hours" ] && h="$2"

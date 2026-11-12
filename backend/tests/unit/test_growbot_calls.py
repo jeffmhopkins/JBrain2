@@ -598,3 +598,10 @@ def test_a_replay_refuses_a_bad_body_and_needs_a_debug_token(tmp_path: Path) -> 
 
     app.dependency_overrides[current_debug_principal] = refuse
     assert client.post("/api/debug/growbot/replay", json=_chat()).status_code == 401
+
+
+def test_a_turn_with_no_system_message_never_reads_as_a_changed_one() -> None:
+    first = _llm(7000, 0)
+    first.timings["system_hash"] = 0
+    calls = [LoggedCall(1, datetime.now(UTC), first), LoggedCall(2, datetime.now(UTC), _llm(0, 5))]
+    assert growbot_calls.cold_reasons(calls)["unknown"] == 1

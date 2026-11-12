@@ -262,7 +262,6 @@ async def chat_completions(request: Request) -> Response:
         payload = json.loads(await request.body() or b"{}")
     except (json.JSONDecodeError, ValueError):
         raise HTTPException(status_code=400, detail="invalid JSON body") from None
-    request.app.state.growbot_last_turn = time.monotonic()
     return await serve_turn(request, payload)
 
 
@@ -347,6 +346,8 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
         guard = lock if lock is not None else contextlib.nullcontext()
         # The headers are out by now, so every refusal is written into the body as an OpenAI
         # error: the app shows a cut stream as a broken brain and retries blind.
+        if not replay:
+            request.app.state.growbot_last_turn = time.monotonic()
         try:
             async with guard:
                 mark("lock_ms")
@@ -416,6 +417,10 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
             _quietly(collector.finish)
             _quietly(collector.fill, rec)
             rec.total_ms = round((time.monotonic() - started) * 1000)
+            if not replay:
+                # The quiet window a replay waits for runs from the END of a turn: a cold
+                # turn can outlast it.
+                request.app.state.growbot_last_turn = time.monotonic()
             log_call(request, rec)
             await client.aclose()
 
