@@ -231,7 +231,7 @@ def test_the_creature_switches_cameras_for_its_person_or_the_owner() -> None:
     assert prompts.index('\'"eye":"OMIT almost always') < prompts.index('\'"coat":"OMIT usually')
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
-        'if(_hreqAtIssue&&!_hreqAtIssue.auto&&!dreaming&&(o.eye==="front"||o.eye==="back"))'
+        'if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back"))'
         ' gbEyeTo(o.eye==="back"?"environment":"user","self");'
     ) in page
     start = page.index("function gbEyeTo(to,by){")
@@ -550,7 +550,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     assert "sys+=" not in page[
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
-    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang"' in page
+    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"' in page
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
 

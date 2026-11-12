@@ -182,7 +182,7 @@
 </div>
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
-<script src="/v3/prompts.js?v=1008-motion-box-lang" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -8622,7 +8622,7 @@ function think(event,kind,extra){
     var _recoverySaid=typeof _recoverySpeechTurn!=="undefined"&&_recoverySpeechTurn,_recoveryOriginalSay=said;if(_recoverySaid)said="";
     var phoneDir=(MODE==="phone"&&o.walk&&typeof o.walk==="object"&&o.walk.dir)?String(o.walk.dir).toLowerCase():"";   // phone: a spoken movement instruction
     if(!paused){                                                                          // if paused mid-thought, don't talk/move/overwrite the caption — just keep the memory
-      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()}); if(_hreqAtIssue&&!_hreqAtIssue.auto&&!dreaming&&(o.eye==="front"||o.eye==="back")) gbEyeTo(o.eye==="back"?"environment":"user","self");                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
+      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()}); if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back")) gbEyeTo(o.eye==="back"?"environment":"user","self");                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
       if(typeof _expressionPendingCancel==="function")_expressionPendingCancel();
       if(typeof _expressionPair==="function")_expressionPair(o);
       if(typeof _expressionBench!=="undefined"&&_expressionBench&&o.sound&&typeof o.sound==="object"&&!(typeof _soundAction==="function"&&_soundAction(o.sound))){o.sound="none";try{logEv("expression_sound_refused",{why:"invalid_contour"});}catch(e){}}

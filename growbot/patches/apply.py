@@ -1245,8 +1245,15 @@ EYE_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         '_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()});',
         '_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()});'
-        ' if(_hreqAtIssue&&!_hreqAtIssue.auto&&!dreaming&&(o.eye==="front"||o.eye==="back"))'
+        ' if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back"))'
         ' gbEyeTo(o.eye==="back"?"environment":"user","self");',
+        1,
+    ),
+    # A phone that cached the old schema loads the one that offers `eye`.
+    (
+        "v3/next.html",
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
         1,
     ),
 ]
