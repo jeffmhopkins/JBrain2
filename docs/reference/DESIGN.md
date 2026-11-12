@@ -3342,17 +3342,20 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     after the personality. They can't be edited here, in a soul file or in the creature.*
     Thinking and Body say *While it wears Fish, the robot's own settings win over these.* A
     persona open on a phone reloads with the edit the next time it is idle, and the editor says
-    so. Then *What it remembers — tap Edit to correct*: Who it is, Bond line, Right now, Wants,
-    Diary, each with its soul key and an *Edit* link (owner, 2026-11-12: all of them editable),
-    and *<self name> writes these itself … Every edit saves a checkpoint first.* Edit opens a
+    so. Then *What it remembers — tap to edit*: Who it is, Bond line, Right now, Wants, Diary,
+    as the same tap-the-row list with a chevron (owner, 2026-11-12: all of them editable, and
+    both sections one pattern), each row's second line a one-line preview (Right now: its state,
+    mood and rule count; Wants: *Calls itself <name>* and its wants; Diary: the newest line and
+    when), and *<self name> writes these itself … Every edit saves a checkpoint first.* A row opens a
     sheet: a text box for Who it is (20 to 1600 characters) and the Bond line (empty allowed,
     240), *Right now* and *Rules it has learned* (one per line, 24 at most), *Calls itself* and
     *Wants* (one per line, four at most), and the diary as one dated field per line, newest
     first, where emptying a line takes it out. Saving checkpoints first and toasts *Saved.* with
     its Undo, as a region edit does. A save sends the version the sheet opened on, so one made
     after the creature wrote again is refused (*It changed on its phone while you were editing … close this and open it again*)
-    instead of dropping its new lines. Right now, Wants and Diary have no *Edit* until the
-    creature first wakes on a phone: until then its seed fills them in.
+    instead of dropping its new lines. Until the creature first wakes on a phone, Right now, Wants
+    and Diary are plain rows saying *It writes this when it first wakes on a phone.* (no chevron):
+    its seed fills them in.
   - *Memories* (its count on the tab, read when the tab opens): a grid of saved views, each its
     first picture (the kind's glyph while it loads or if it can't), its name or what it is (*A
     person*, *A thing*, *Handwriting*, *A scene*, *A place*), its date and *Delete* (armed: *Tap
