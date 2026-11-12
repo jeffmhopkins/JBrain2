@@ -722,7 +722,9 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     assert "sys+=" not in page[
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
-    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep"' in page
+    assert (
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall2"' in page
+    )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
 
@@ -1625,6 +1627,63 @@ def test_a_find_that_cannot_be_answered_rides_the_next_turn(setup: str, why: str
     assert got["last"] == ["recall_carry", {"why": why}]
     if why == "timeout":
         assert got["n"] == 120
+
+
+def test_what_it_just_found_stays_in_front_of_it_for_a_re_ask() -> None:
+    """Field test, 2026-11-12: the find said 25 minutes, its person talked over the answer, and
+    the re-ask got "I do not have that in memory". The find rides the next human turns for 90 s."""
+    got = _recall_page(
+        "var r={none:gbRecallKept()};gbRecallAsk('taco','event',{});timers.shift()();"
+        "r.kept=gbRecallKept();_gbRecallLast.t=Date.now()-GB_RECALL_KEEP_MS-1;"
+        "r.stale=gbRecallKept();console.log(JSON.stringify(r));"
+    )
+    assert got["none"] == "" and got["stale"] == ""
+    assert "== WHAT YOU LOOKED UP A MOMENT AGO ==" in got["kept"]
+    assert "lunch: a taco" in got["kept"] and "answer from it" in got["kept"]
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '_gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();' in page
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert "you have not looked yet, so say never answers and never says you do not know" in prompts
+
+
+@pytest.mark.parametrize(
+    ("box", "goals", "want"),
+    [
+        (True, None, "Dave"),
+        (True, {"selfName": "Sparky", "wants": ["a"]}, "Sparky"),
+        (False, None, ""),
+    ],
+)
+def test_a_fresh_box_persona_wakes_knowing_its_name(
+    box: bool, goals: dict[str, Any] | None, want: str
+) -> None:
+    """Owner, 2026-11-12: Dave greeted him with "I'm Sprout". A box creature born fresh takes its
+    persona's name; one already awake keeps its own, and a phone's own creature is untouched."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    soul_js = (_SITE / "v3" / "soul.js").read_text(encoding="utf-8")
+    soul: dict[str, Any] = {"meta": {"name": "Dave", "kind": "template"}}
+    if goals is not None:
+        soul["goals"] = goals
+    setup = "var window={__gbBoxSoul:" + ("{persona:'p1'}" if box else "{g2:true}") + "};"
+    script = (
+        f"var s=normalizeSoul({json.dumps(soul)});"
+        "console.log(JSON.stringify({name:s.goals.selfName,wants:s.goals.wants.length}));"
+    )
+    out = subprocess.run(
+        [
+            node,
+            "-e",
+            f"{setup}\nvar localStorage={{getItem:function(){{return null;}}}};\n"
+            f"{soul_js}\n{script}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    assert got["name"] == want and got["wants"] > 0
 
 
 def test_this_conversation_is_kept_in_page_memory_only() -> None:
