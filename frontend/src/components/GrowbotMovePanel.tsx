@@ -39,6 +39,12 @@ const DOING: Record<GrowbotMove, string> = {
   stop: "Stopped",
 };
 
+function clampSecs(raw: string): number {
+  const n = Math.round(Number(raw));
+  if (!raw.trim() || !Number.isFinite(n)) return DEFAULT_SECS;
+  return Math.min(MAX_SECS, Math.max(MIN_SECS, n));
+}
+
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -60,8 +66,8 @@ export function stopCreature(r: GrowbotRobot): void {
   api.moveGrowbotRobot(r.code, "stop").catch(() => undefined);
 }
 
-/** `withStop`: its own Stop, for when no shared one sits beside it (GrowbotBodyControls has
- *  one, which calls `stopCreature`). */
+/** `withStop`: its own Stop. Off when the panel sits in a card with a shared Stop, which
+ *  then calls `stopCreature` alongside its own chip-side stop. */
 export function GrowbotMovePanel({
   robot,
   withStop = true,
@@ -70,8 +76,12 @@ export function GrowbotMovePanel({
   withStop?: boolean;
 }) {
   const [policy, setPolicy] = useState<Policy>("forward");
-  const [secs, setSecs] = useState(DEFAULT_SECS);
+  // The field's own text, so it can be emptied and retyped; the run uses it clamped.
+  const [secsText, setSecsText] = useState(String(DEFAULT_SECS));
   const [busy, setBusy] = useState(false);
+  // Only the latest press speaks and frees the buttons: a slow walk's answer must not land
+  // over a Stop pressed after it.
+  const latest = useRef(0);
   const [said, setSaid] = useState<{ text: string; bad: boolean } | null>(null);
   const mounted = useRef(true);
   useEffect(
@@ -84,26 +94,25 @@ export function GrowbotMovePanel({
   const name = robot.name || robot.code;
   const run = POLICIES.find((p) => p.id === policy)?.run ?? "Run";
 
+  const secs = clampSecs(secsText);
+
   async function send(move: GrowbotMove, s = 0) {
+    const mine = ++latest.current;
     setBusy(true);
+    const live = () => mounted.current && mine === latest.current;
     try {
       const out = await api.moveGrowbotRobot(robot.code, move, s);
-      if (!mounted.current) return;
+      if (!live()) return;
       setSaid(
         out.ok
           ? { text: `${DOING[move]}${s ? ` for ${s} s` : ""}.`, bad: false }
           : { text: out.why || `${name} didn't start it.`, bad: true },
       );
     } catch (e) {
-      if (mounted.current) setSaid({ text: message(e), bad: true });
+      if (live()) setSaid({ text: message(e), bad: true });
     } finally {
-      if (mounted.current) setBusy(false);
+      if (live()) setBusy(false);
     }
-  }
-
-  function setClamped(raw: string) {
-    const n = Math.round(Number(raw));
-    if (Number.isFinite(n)) setSecs(Math.min(MAX_SECS, Math.max(MIN_SECS, n)));
   }
 
   const off = !!blocked || busy;
@@ -138,8 +147,9 @@ export function GrowbotMovePanel({
             inputMode="numeric"
             min={MIN_SECS}
             max={MAX_SECS}
-            value={secs}
-            onChange={(e) => setClamped(e.target.value)}
+            value={secsText}
+            onChange={(e) => setSecsText(e.target.value)}
+            onBlur={() => setSecsText(String(secs))}
           />
         </label>
         <button

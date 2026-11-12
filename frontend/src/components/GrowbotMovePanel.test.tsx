@@ -67,6 +67,34 @@ describe("GrowbotMovePanel", () => {
     expect(screen.getByRole("button", { name: "Walk forward 15 s" })).toBeEnabled();
     fireEvent.change(secs, { target: { value: "0" } });
     expect(screen.getByRole("button", { name: "Walk forward 1 s" })).toBeEnabled();
+    // Emptied to retype, it runs the default and shows it again once left.
+    fireEvent.change(secs, { target: { value: "" } });
+    expect(secs).toHaveValue(null);
+    fireEvent.change(secs, { target: { value: "8" } });
+    expect(secs).toHaveValue(8);
+    fireEvent.change(secs, { target: { value: "" } });
+    fireEvent.blur(secs);
+    expect(secs).toHaveValue(5);
+  });
+
+  it("lets a later Stop's answer stand over a slow walk's", async () => {
+    let release: (r: Response) => void = () => undefined;
+    const slow = new Promise<Response>((res) => {
+      release = res;
+    });
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      String(init?.body).includes("forward") ? slow : json({ ok: true, state: "stopped", why: "" }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    render(<GrowbotMovePanel robot={robot()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Walk forward 5 s" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await screen.findByText("Stopped.");
+    release(json({ ok: true, state: "accepted", why: "" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByText("Stopped.")).toBeInTheDocument();
+    expect(screen.queryByText(/Walking forward/)).toBeNull();
   });
 
   it("shows the creature's own words when it refuses", async () => {

@@ -258,7 +258,7 @@ stops every move. `POST /internal/robots/move` `{code, move, secs}` (`move` one 
 `moveLegs` with this phone's walk calibration and answers `{"t":"box_ack", rid, ok, state,
 why}` at once: what it started, or its own words for why not. The route answers `{ok, state,
 why}`, 409 `no_creature` when no page listens and 504 `no_answer` after 3 s; a `box_ack` that
-arrives with no one waiting is bridged to the agents like any other frame.
+arrives while no move waits is bridged to the agents like any other frame.
 
 ## Personas (wave G4b)
 

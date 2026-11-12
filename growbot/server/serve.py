@@ -947,7 +947,8 @@ class Channel:
 def _parse(data: bytes) -> dict[str, Any] | None:
     try:
         msg = json.loads(data)
-    except ValueError:
+    except (ValueError, RecursionError):
+        # Deep nesting under the frame cap would otherwise escape the socket's task.
         return None
     return msg if isinstance(msg, dict) else None
 

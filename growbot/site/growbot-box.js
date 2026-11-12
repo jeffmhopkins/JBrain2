@@ -966,15 +966,24 @@
 
   function answer(rid, move, secs) {
     var err = document.getElementById("err");
-    if (err) err.textContent = "";
+    // setErr also retires a "try again" left under the old caption.
+    if (typeof window.setErr === "function") window.setErr(""); else if (err) err.textContent = "";
     var before = window._moveLast, out = { t: "box_ack", rid: rid, ok: false, state: "", why: "" };
     try {
       run(move, secs);
+      if (move === "stop") {
+        // runGait files a halt word as a move it never admitted; the legs did stop.
+        out.ok = true;
+        out.state = "stopped";
+        return out;
+      }
       var a = window._moveLast;
       var mine = a && a !== before ? a : null;
-      out.state = mine ? String(mine.state || "") : (move === "stop" ? "stopped" : "");
+      out.state = mine ? String(mine.state || "") : "";
       out.why = (err && err.textContent) || (mine && mine.reason) || "";
-      out.ok = move === "stop" || (!!mine && !/^(blocked|failed|cancelled)$/.test(out.state));
+      // A move still only "requested" sent nothing to the legs (no body on this page).
+      out.ok = !!mine && /^(accepted|started|completed)$/.test(out.state);
+      if (!out.ok && !out.why) out.why = "the robot's legs aren't connected to this page";
     } catch (e) {
       out.why = String((e && e.message) || e);
     }
@@ -1012,7 +1021,10 @@
       var m;
       try { m = JSON.parse(ev.data); } catch (e) { return; }
       if (!m || m.t !== "box_move" || typeof m.rid !== "string") return;
-      var secs = typeof m.secs === "number" && isFinite(m.secs) ? m.secs : 0;
+      // A page that has since gone away (opened on another phone) takes no more moves.
+      if (gone()) { close(); return; }
+      // The box's bounds again, so a frame from another of the rider's sockets gets no longer walk.
+      var secs = typeof m.secs === "number" && m.secs >= 1 && m.secs <= 15 ? m.secs : 0;
       try { s.send(JSON.stringify(answer(m.rid, String(m.move || ""), secs))); } catch (e) {}
     };
     s.onclose = function (ev) {

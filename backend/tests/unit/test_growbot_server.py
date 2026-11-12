@@ -2846,3 +2846,7 @@ def test_a_memory_bigger_than_three_views_is_refused_before_its_upload(
     assert out.startswith(b"HTTP/1.1 413"), out[:80]
     req = gb.Request("POST", "/api/box/memories", "/api/box/memories", {}, "HTTP/1.1", [])
     assert gb.body_limit(req) == gb.MAX_MEMORY_BODY >= 3 * 800_000
+
+
+def test_a_deeply_nested_frame_is_no_message(gb: types.ModuleType) -> None:
+    assert gb._parse(b"[" * 100_000 + b"]" * 100_000) is None
