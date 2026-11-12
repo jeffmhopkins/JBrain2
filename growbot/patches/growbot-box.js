@@ -553,7 +553,7 @@
   var pulled = sync("GET");
   // A cookie that moved to another persona under this tab: nothing of it is taken.
   if (pulled.json && pulled.json.persona !== persona) pulled = { status: 0, json: null };
-  var keepMine = false;
+  var keepMine = false, gapPull = false;
   if (pulled.status === 200 && pulled.json) {
     var box = pulled.json.prefs;
     version = typeof pulled.json.version === "number" ? pulled.json.version : -1;
@@ -587,8 +587,16 @@
       // persona's) go under the owner's, and all of it becomes the persona's.
       var under = m.persona && m.persona !== persona ? {} : (!m.persona && ownSaved()) || snap();
       become(over(under, { set: box, drop: [] }));
-      var mineAll = snap(), sentAll = sync("POST", body({ set: mineAll, drop: [] }));
-      if (sentAll.status === 200 && sentAll.json) { sent = mineAll; version = sentAll.json.version; }
+      // Only what the box lacks is sent, so an owner edit landing meanwhile is not undone;
+      // sent even when empty, since any phone write ends the owner-only mark.
+      var mineAll = snap(), extra = {};
+      Object.keys(mineAll).forEach(function (k) { if (!Object.prototype.hasOwnProperty.call(box, k)) extra[k] = mineAll[k]; });
+      var sentAll = sync("POST", body({ set: extra, drop: [] }));
+      if (sentAll.status === 200 && sentAll.json) {
+        sent = mineAll;
+        if (sentAll.json.version !== version + 1) gapPull = true;
+        version = sentAll.json.version;
+      }
       else {
         sent = {};
         Object.keys(box).forEach(function (k) { if (ours(k) && typeof box[k] === "string") sent[k] = box[k]; });
@@ -715,6 +723,7 @@
   document.addEventListener("visibilitychange", function () { if (document.hidden) { check(); push(true); } });
   window.addEventListener("pagehide", function () { check(); push(true); });
   if (meta().dirty) check();
+  if (gapPull) pullOwner();
 })();
 
 /* A persona's visual memories live on the box too (plan §2c, wave G4d). Upstream keeps them in

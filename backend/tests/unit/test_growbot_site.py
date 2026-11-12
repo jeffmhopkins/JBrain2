@@ -1211,4 +1211,9 @@ def test_the_owners_settings_set_before_any_phone_go_over_the_phones_own() -> No
     )
     mine = {"gb_vol": "0.4", "gb_face_color": "#ffffff", "gb_eye": "environment"}
     assert {k: got["local"][k] for k in mine} == mine
-    assert got["calls"][1]["body"] == {"persona": "p1", "set": mine, "drop": []}
+    # Only what the box lacked, so an owner edit landing meanwhile is not undone.
+    assert got["calls"][1]["body"] == {
+        "persona": "p1",
+        "set": {"gb_face_color": "#ffffff"},
+        "drop": [],
+    }

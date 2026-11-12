@@ -59,3 +59,11 @@ def test_settings_past_the_caps_are_too_big() -> None:
         prefs.merged(many, prefs.patch_from({"one_more": "1"}, []))
     # Values the box already holds that are not text are never handed back.
     assert prefs.merged({"odd": 1}, prefs.patch_from({}, [])) == {}
+
+
+def test_the_owner_only_mark_takes_no_settings_room() -> None:
+    full = {f"k{i}": "1" for i in range(prefs.MAX_KEYS - 1)}
+    got = prefs.merged({prefs.OWNER_ONLY: "1", **full}, prefs.patch_from({"last": "1"}, []))
+    assert len(got) == prefs.MAX_KEYS + 1
+    assert prefs.for_phone(got) == ({**full, "last": "1"}, True)
+    assert prefs.for_phone(None) == (None, False)

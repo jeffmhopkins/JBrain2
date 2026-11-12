@@ -86,6 +86,8 @@ def merged(prefs: dict[str, Any] | None, patch: Patch) -> dict[str, str]:
     for key in patch.drop:
         out.pop(key, None)
     out.update(patch.set)
-    if len(out) > MAX_KEYS or sum(len(k) + len(v) for k, v in out.items()) > TOTAL_MAX:
+    # The owner-only mark is the box's own and never costs a setting its room.
+    counted = {k: v for k, v in out.items() if k != OWNER_ONLY}
+    if len(counted) > MAX_KEYS or sum(len(k) + len(v) for k, v in counted.items()) > TOTAL_MAX:
         raise PrefsTooBig("settings too big")
     return out
