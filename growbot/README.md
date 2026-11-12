@@ -383,11 +383,16 @@ The pupils follow the person in front of the phone, with no model call (owner, 2
 (`gbFace.see`), which eases the pupils and the whole eye toward it. When the box is more than
 0.7 s old, the eyes settle back. A touch's glance outranks it, and so do thinking, looking,
 resting and sleep. The box comes from the BlazeFace detector that the leg tracker already
-ships. While the tracker is detecting, it passes every box it keeps (`apply.py` hooks both of
-its result paths). When it isn't (no robot paired, a person said stop, the body is busy, or
-it is only checking once a second), `growbot-eyes.js` runs its own copy of the detector in a
-worker on the creature's open front camera. That copy runs 8 times a second, 4 in low power,
-and twice a second after 5 s with no face. It is closed after 30 s without a camera. Frames
+ships. While the tracker is on, it passes every box it keeps (`apply.py` hooks both of its
+result paths). While it is off (no robot paired, a person said stop, or the camera or
+detector failed it), `growbot-eyes.js` runs its own copy of the detector in a worker on the
+creature's open front camera. The two never run at once, because a second GPU worker could
+make the tracker miss its 350 ms frame deadline, and that drops leg tracking to the main
+thread for good. So with a robot whose legs aren't up to follow, the eyes move only at the
+tracker's once-a-second glance. The eyes' own copy runs 8 times a second (4 in low power, or
+twice a second after 5 s with no face), and it closes after 30 s without a camera. It uses
+the main-thread detector only where no worker can run at all. A failed worker retries after
+30 s and then 120 s, then gives up, logging an `eyes_detector` journal row each time. Frames
 stay in the browser, and nothing runs while the camera is off or facing the back.
 
 ### The bottom bar and the wake gate

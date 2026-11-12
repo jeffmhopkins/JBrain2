@@ -1,18 +1,19 @@
 /* The creature's eyes follow the face in front of it, on the phone, with no model call
    (owner, 2026-11-12). The face box comes from the BlazeFace detector the leg tracker already
-   ships (/v3/agent-face-track.mjs): while that tracker is detecting it hands its boxes here
-   (apply.py hooks both of its result paths), and whenever it is not (no robot paired, a person
-   said stop, the body is busy, or it only glances once a second), this file runs its own copy
-   of the same detector on the creature's open front camera. Frames never leave the browser:
-   the detector worker gets a bitmap and answers with boxes. */
+   ships (/v3/agent-face-track.mjs): while that tracker is on it hands its boxes here (apply.py
+   hooks both of its result paths), and while it is off (no robot paired, a person said stop,
+   the camera or detector failed it) this file runs its own copy of the same detector, in a
+   worker, on the creature's open front camera. Never both at once: a second GPU worker could
+   make the tracker's frame miss its 350 ms deadline, which drops leg tracking to the main
+   thread for good. Frames never leave the browser: the worker gets a bitmap and answers with
+   boxes. */
 (function () {
   "use strict";
 
   var TICK_MS = 50;
   var RATE_MS = 125, LOW_POWER_RATE_MS = 250, SEARCH_RATE_MS = 500;
-  /* The tracker's own cadence is 33-250 ms; slower than this (its once-a-second sight-only
-     glance) is too slow for eyes, so ours runs alongside it. */
-  var FED_MS = 400;
+  /* A tracker that stopped handing boxes over this long ago is not watching, enabled or not. */
+  var FED_MS = 1500;
   var SEARCH_AFTER_MS = 5000, CLOSE_AFTER_MS = 30000;
   /* A face rarely reaches the frame's edge, so a little gain lets the pupils use their range. */
   var GAIN_X = 1.6, GAIN_Y = 1.2;
@@ -60,6 +61,11 @@
     if (window.gbFace && window.gbFace.see) window.gbFace.see(at.x, at.y);
   }
 
+  function trackerWatching(t) {
+    var ft = window._faceTrack;
+    return !!(ft && ft.enabled) || t - lastFed < FED_MS;
+  }
+
   function camera() {
     var v = window.camV;
     if (!window.camOn || window.camFacing !== "user" || !v || v.readyState < 2 || v.paused) return null;
@@ -72,26 +78,32 @@
     model = null;
   }
 
-  function failed() {
+  function failed(why) {
     close();
     fails++;
     retryAt = fails > RETRY_MS.length ? Infinity : now() + RETRY_MS[fails - 1];
+    try { if (typeof window.logEv === "function") window.logEv("eyes_detector", { why: why, fails: fails }); } catch (e) {}
+  }
+
+  /* The main-thread detector only where a worker cannot run at all: on the main thread every
+     inference stalls the face's own frames, so a worker that merely failed (a slow first load
+     past the client's 10 s) is retried on the ladder instead. */
+  function canWork() {
+    return !!(window.Worker && window.OffscreenCanvas && window.createImageBitmap);
   }
 
   function load() {
     if (loading || now() < retryAt) return;
     loading = true;
-    import("/v3/face-worker-client.mjs")
-      .then(function (w) { return w.createFaceWorker(null, { flow: false }); })
-      .catch(function () {
-        return import("/v3/agent-face-track.mjs").then(function (m) { return m.faceDetector(); });
-      })
+    (canWork()
+      ? import("/v3/face-worker-client.mjs").then(function (w) { return w.createFaceWorker(null, { flow: false }); })
+      : import("/v3/agent-face-track.mjs").then(function (m) { return m.faceDetector(); }))
       .then(function (loaded) {
         loading = false;
         model = loaded;
-        if (loaded.workerMode) loaded.onIdleError = function () { if (model === loaded) failed(); };
+        if (loaded.workerMode) loaded.onIdleError = function () { if (model === loaded) failed("idle"); };
       })
-      .catch(function () { loading = false; failed(); });
+      .catch(function (err) { loading = false; failed("load: " + (err && err.message)); });
   }
 
   function ask(v, t) {
@@ -100,7 +112,7 @@
       var asked = model;
       model.detectAsync(v, t, function (result) {
         if (model === asked) { fails = 0; feed(result.boxes); }
-      }, function () { if (model === asked) failed(); }, null);
+      }, function (err) { if (model === asked) failed("frame: " + (err && err.message)); }, null);
       return;
     }
     var w = v.videoWidth, h = v.videoHeight;
@@ -111,12 +123,12 @@
         var b = d.boundingBox;
         return { x: b.originX / w, y: b.originY / h, width: b.width / w, height: b.height / h };
       }));
-    } catch (e) { failed(); }
+    } catch (e) { failed("frame"); }
   }
 
   function tick() {
     var t = now(), v = camera();
-    if (!v || t - lastFed < FED_MS) {
+    if (!v || trackerWatching(t)) {
       if (model && t - lastUse > CLOSE_AFTER_MS) close();
       return;
     }
@@ -134,6 +146,8 @@
       lastFed = now();
       feed(boxes);
     },
+    /* Whether this file would run its own detector right now. */
+    wants: function () { return !!camera() && !trackerWatching(now()); },
     toScreen: toScreen,
     pick: pick
   };

@@ -225,7 +225,7 @@ def _eyes_in_node(script: str) -> str:
 
 def test_the_eyes_look_toward_the_face_on_screen() -> None:
     """The front camera's frame is not mirrored, so a face on the frame's left is on the
-    screen's right; the biggest face wins, and the pupils' target stays in -1..1 after gain."""
+    screen's right, and the biggest face wins."""
     seen = json.loads(
         _eyes_in_node(
             "window.gbEyes.boxes([{x:0.05,y:0.1,width:0.1,height:0.1},"
@@ -237,6 +237,22 @@ def test_the_eyes_look_toward_the_face_on_screen() -> None:
     assert len(seen) == 1
     x, y = seen[0]
     assert x > 0.5 and y > 0.2
+
+
+def test_the_eyes_never_run_a_second_detector_beside_the_tracker() -> None:
+    """A second GPU worker could make the tracker's frame miss its 350 ms deadline, which drops
+    leg tracking to the main thread for good, so the eyes' own detector waits while it is on;
+    and it needs the creature's open front camera, awake and visible."""
+    out = _eyes_in_node(
+        "var v={readyState:4,paused:false};"
+        "function cam(o){window.camV=v;window.camOn=true;window.camFacing='user';"
+        "window.paused=false;window.dreaming=false;document.hidden=false;"
+        "window._faceTrack=null;for(var k in o)window[k]=o[k];return window.gbEyes.wants();}"
+        "console.log(JSON.stringify([cam({}),cam({_faceTrack:{enabled:true}}),"
+        "cam({_faceTrack:{enabled:false}}),cam({camOn:false}),cam({camFacing:'environment'}),"
+        "cam({dreaming:true}),cam({paused:true})]));"
+    )
+    assert json.loads(out) == [True, False, True, False, False, False, False]
 
 
 def test_a_persona_wears_its_own_face_lantern_by_default() -> None:
