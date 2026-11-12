@@ -178,9 +178,10 @@ page, so getting it back is one scan.
   proxies and redirects disabled. A chat message keeps only `text` parts and inline
   `data:image/…;base64,` images (no image by URL, video, audio or any other part type), so no
   message can have the model's engine fetch anything.
-- **The api's routes.** `GET /internal/robots` (`{robots: [{code, since}]}`, the robots on
-  the relay now) and `POST /internal/robots/drop` (`{code}`: close a revoked robot's socket,
-  1008) take `Authorization: Bearer <growbot.token>`, compared in constant time; without it
+- **The api's routes.** `GET /internal/robots` (`{robots: [{code, since, creature}]}`, the
+  robots on the relay now, and whether a creature page listens on each one's side channel),
+  `POST /internal/robots/drop` (`{code}`: close a revoked robot's socket, 1008) and
+  `POST /internal/robots/move` (below) take `Authorization: Bearer <growbot.token>`, compared in constant time; without it
   the request is 401 before any body is read. Caddy's site 404s `/internal*`, so they are
   reachable only from a container on `edge` or `growbot_lane` that holds the token.
 - **The robot.** The relay's chip side has no browser and no cookie: its first frame must be a
@@ -246,6 +247,18 @@ that loses power never closes its socket). A second chip on a code replaces the 
 `/d/<code>-agent` is upstream's side channel for an external agent: the creature page joins with
 `hello` and agents with `attach`, both behind the session cookie, and frames are bridged both
 ways. It never meets the robot's channel.
+
+**Moves from JBrain.** The PWA's Body tab drives the robot through this side channel. The walk
+and spin policies read the rider phone's motion sensors, so only the creature page can run
+them: `growbot-box.js` joins `/d/<code>-agent` with `hello` while the page wears a robot and is
+visible (the rider check keeps it to the rider), and leaves when hidden, since a hidden page
+stops every move. `POST /internal/robots/move` `{code, move, secs}` (`move` one of `forward`,
+`back`, `spin_left`, `spin_right`, `wiggle`, `bow`, `sway`, `stop`; `secs` 0 or 1-15) sends
+`{"t":"box_move", rid, move, secs}` to that page, which runs it through its own `runGait` or
+`moveLegs` with this phone's walk calibration and answers `{"t":"box_ack", rid, ok, state,
+why}` at once: what it started, or its own words for why not. The route answers `{ok, state,
+why}`, 409 `no_creature` when no page listens and 504 `no_answer` after 3 s; a `box_ack` that
+arrives with no one waiting is bridged to the agents like any other frame.
 
 ## Personas (wave G4b)
 

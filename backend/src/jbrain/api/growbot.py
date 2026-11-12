@@ -6,10 +6,12 @@ Three routers over one repo (`jbrain.growbot.repo`):
 - `router` — the owner (`OwnerDep`): `POST /growbot/ticket` mints a one-time, 120 s ticket and
   the link that spends it (`:8444` at home, `growbot.<host>` away); `POST`/`GET`/`DELETE
   /growbot/robots` mint or rotate a robot's device key (shown once), list the robots (with
-  whether each is on the relay now), and forget one; `POST /growbot/sessions/reset` signs
-  every phone out. Flashing, revoking and the status card are `api/growbot_flash.py` (G2).
+  whether each is on the relay now, and whether its creature listens for moves), and forget
+  one; `POST /growbot/robots/{code}/move` asks the creature wearing it to walk, spin, gesture
+  or stop; `POST /growbot/sessions/reset` signs every phone out. Flashing, revoking and the
+  status card are `api/growbot_flash.py` (G2).
 - `debug_router` — a debug token (`DebugDep`, mounted only with debug access on): the same
-  five, because the owner runs the box with no terminal (CLAUDE.md #10).
+  six, because the owner runs the box with no terminal (CLAUDE.md #10).
 - `internal_router` — the GrowBot sidecar (`growbot.token`, mounted under `/internal`, which
   Caddy never routes): redeem a ticket, verify a chip's key, and read the LAN root certificate.
 
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import re
 import secrets
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated, Literal, cast
 from urllib.parse import quote, urlsplit
@@ -106,9 +109,12 @@ class RobotOut(BaseModel):
     last_seen_at: datetime | None = None
     # On the relay right now, as the growbot sidecar reports it (False when it is down).
     connected: bool = False
+    # Its rider's creature page is open and listening for the Body tab's moves.
+    creature: bool = False
 
 
-def robot_out(info: RobotInfo, connected: set[str]) -> RobotOut:
+def robot_out(info: RobotInfo, connected: Mapping[str, bool]) -> RobotOut:
+    """`connected` maps each code on the relay to whether its creature listens for moves."""
     return RobotOut(
         code=info.code,
         name=info.name,
@@ -117,6 +123,7 @@ def robot_out(info: RobotInfo, connected: set[str]) -> RobotOut:
         revoked_at=info.revoked_at,
         last_seen_at=info.last_seen_at,
         connected=info.code in connected,
+        creature=connected.get(info.code, False),
     )
 
 
@@ -127,7 +134,7 @@ _transport: httpx.AsyncBaseTransport | None = None
 
 
 async def _sidecar(
-    request: Request, method: str, path: str, body: dict[str, str] | None = None
+    request: Request, method: str, path: str, body: dict[str, object] | None = None
 ) -> httpx.Response | None:
     base = str(getattr(request.app.state.settings, "growbot_url", "") or "").rstrip("/")
     secrets = cast(InternalSecrets, request.app.state.growbot_secrets)
@@ -148,8 +155,9 @@ async def _sidecar(
         return None
 
 
-async def relay_robots(request: Request) -> set[str] | None:
-    """The codes on the relay now, or None when the growbot sidecar is down or refuses."""
+async def relay_robots(request: Request) -> dict[str, bool] | None:
+    """The codes on the relay now, each with whether its creature listens for moves, or None
+    when the growbot sidecar is down or refuses."""
     resp = await _sidecar(request, "GET", "/internal/robots")
     if resp is None or resp.status_code != 200:
         return None
@@ -159,7 +167,11 @@ async def relay_robots(request: Request) -> set[str] | None:
         return None
     if not isinstance(rows, list):
         return None
-    return {str(r["code"]) for r in rows if isinstance(r, dict) and isinstance(r.get("code"), str)}
+    return {
+        r["code"]: r.get("creature") is True
+        for r in rows
+        if isinstance(r, dict) and isinstance(r.get("code"), str)
+    }
 
 
 async def drop_robot(request: Request, code: str) -> bool:
@@ -234,8 +246,59 @@ async def _put_robot(request: Request, ctx: SessionContext, body: RobotIn) -> Ro
 
 async def _list_robots(request: Request, ctx: SessionContext) -> list[RobotOut]:
     robots = await _repo(request).list_robots(ctx)
-    connected = await relay_robots(request) if robots else set()
-    return [robot_out(r, connected or set()) for r in robots]
+    connected = await relay_robots(request) if robots else {}
+    return [robot_out(r, connected or {}) for r in robots]
+
+
+# What the Body tab can ask the creature wearing a robot to do (growbot/server/serve.py MOVES).
+# Walks and spins run the creature's own policies on its phone's motion sensors; the gestures
+# are body.json's named keyframes; stop halts whatever runs.
+Move = Literal["forward", "back", "spin_left", "spin_right", "wiggle", "bow", "sway", "stop"]
+
+
+class MoveIn(BaseModel):
+    move: Move
+    # How long a walk or spin runs; 0 lets the creature pick, as it does for its own brain.
+    secs: int = Field(default=0, ge=0, le=15)
+
+
+class MoveOut(BaseModel):
+    # The creature started it (a stop always counts); otherwise `why` is its own words.
+    ok: bool
+    state: str = ""
+    why: str = ""
+
+
+_MOVE_REFUSED = {
+    409: "Nobody is driving it: open a persona wearing it, and keep the creature on screen.",
+    504: "The creature didn't answer. Is its page still on screen?",
+}
+
+
+async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) -> MoveOut:
+    robots = await _repo(request).list_robots(ctx)
+    if not any(r.code == code and r.revoked_at is None for r in robots):
+        raise HTTPException(status_code=404, detail="no such robot")
+    resp = await _sidecar(
+        request,
+        "POST",
+        "/internal/robots/move",
+        {"code": code, "move": body.move, "secs": body.secs},
+    )
+    if resp is None:
+        raise HTTPException(status_code=503, detail="GrowBot isn't running on the box.")
+    if resp.status_code in _MOVE_REFUSED:
+        raise HTTPException(status_code=resp.status_code, detail=_MOVE_REFUSED[resp.status_code])
+    try:
+        got = resp.json() if resp.status_code == 200 else None
+        out = MoveOut.model_validate(got) if isinstance(got, dict) else None
+    except ValueError:
+        out = None
+    if out is None:
+        log.warning("growbot.move_failed", code=code, status=resp.status_code)
+        raise HTTPException(status_code=502, detail="GrowBot couldn't pass the move on.")
+    log.info("growbot.move", code=code, move=body.move, ok=out.ok, state=out.state)
+    return out
 
 
 async def _delete_robot(request: Request, ctx: SessionContext, code: str) -> Response:
@@ -267,6 +330,12 @@ async def list_robots(request: Request, owner: OwnerDep) -> list[RobotOut]:
 @router.delete("/robots/{code}", status_code=204)
 async def delete_robot(request: Request, owner: OwnerDep, code: Code) -> Response:
     return await _delete_robot(request, _owner_ctx(owner), code)
+
+
+@router.post("/robots/{code}/move")
+async def move_robot(request: Request, owner: OwnerDep, code: Code, body: MoveIn) -> MoveOut:
+    """Ask the creature wearing `code` to walk, spin, gesture or stop, from the Body tab."""
+    return await _move(request, _owner_ctx(owner), code, body)
 
 
 # The sidecar keys every `gb_session` from this file too (growbot/server/serve.py `Sessions`),
@@ -321,6 +390,12 @@ async def debug_list_robots(request: Request, _p: DebugDep) -> list[RobotOut]:
 async def debug_delete_robot(request: Request, _p: DebugDep, code: Code) -> Response:
     request.state.debug_detail = f"growbot forget {code}"
     return await _delete_robot(request, _DEBUG_OWNER, code)
+
+
+@debug_router.post("/robots/{code}/move")
+async def debug_move_robot(request: Request, _p: DebugDep, code: Code, body: MoveIn) -> MoveOut:
+    request.state.debug_detail = f"growbot move {code} {body.move}"
+    return await _move(request, _DEBUG_OWNER, code, body)
 
 
 # Lenient bodies: any JSON object short of a right answer is a 401, never a 422 the sidecar
