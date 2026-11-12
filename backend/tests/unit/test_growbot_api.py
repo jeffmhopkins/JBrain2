@@ -9,13 +9,15 @@ tests/integration/test_growbot_rls.py.
 from __future__ import annotations
 
 import hmac
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -65,9 +67,14 @@ class FakeRepo:
         self.robots[code] = (hash_token(key), created, self.now if old else None)
         return key
 
+    revoked: set[str] = field(default_factory=set)
+
     async def list_robots(self, ctx: SessionContext) -> list[RobotInfo]:
         self.contexts.append(ctx)
-        return [RobotInfo(c, r[1], r[2]) for c, r in sorted(self.robots.items())]
+        return [
+            RobotInfo(c, r[1], r[2], revoked_at=self.now if c in self.revoked else None)
+            for c, r in sorted(self.robots.items())
+        ]
 
     async def delete_robot(self, ctx: SessionContext, code: str) -> bool:
         self.contexts.append(ctx)
@@ -233,6 +240,129 @@ def test_the_debug_routes_refuse_without_a_debug_token(tmp_path: Path, repo: Fak
     assert client.post("/api/debug/growbot/robots", json={"code": "gb-x"}).status_code == 401
     assert client.delete("/api/debug/growbot/robots/gb-x").status_code == 401
     assert repo.contexts == []
+
+
+# --- moves from the Body tab -----------------------------------------------------------------
+
+
+@dataclass
+class Sidecar:
+    """The growbot sidecar's /internal/robots/move: answers with `status` and `body`."""
+
+    status: int = 200
+    body: Any = field(default_factory=lambda: {"ok": True, "state": "started", "why": ""})
+    down: bool = False
+    sent: list[dict[str, Any]] = field(default_factory=list)
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        if self.down:
+            raise httpx.ConnectError("down")
+        assert request.url.path == "/internal/robots/move"
+        self.sent.append(json.loads(request.content))
+        return httpx.Response(self.status, json=self.body)
+
+
+@pytest.fixture
+def sidecar(monkeypatch: pytest.MonkeyPatch) -> Sidecar:
+    car = Sidecar()
+    monkeypatch.setattr(growbot, "_transport", httpx.MockTransport(car.handler))
+    return car
+
+
+def _mover(tmp_path: Path, repo: FakeRepo) -> TestClient:
+    app, _ = _app(tmp_path, repo)
+    app.state.settings.growbot_url = "http://growbot:8000"
+    repo.robots["gb-a1"] = ("h", repo.now, None)
+    return TestClient(app)
+
+
+def test_a_move_goes_to_the_sidecar_and_back(
+    tmp_path: Path, repo: FakeRepo, sidecar: Sidecar
+) -> None:
+    client = _mover(tmp_path, repo)
+    resp = client.post("/api/growbot/robots/gb-a1/move", json={"move": "forward", "secs": 5})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "state": "started", "why": ""}
+    assert sidecar.sent == [{"code": "gb-a1", "move": "forward", "secs": 5}]
+    client.post("/api/growbot/robots/gb-a1/move", json={"move": "stop"})
+    assert sidecar.sent[-1] == {"code": "gb-a1", "move": "stop", "secs": 0}
+
+
+def test_a_refused_move_is_still_an_answer(
+    tmp_path: Path, repo: FakeRepo, sidecar: Sidecar
+) -> None:
+    sidecar.body = {"ok": False, "state": "blocked", "why": "robot not answering"}
+    client = _mover(tmp_path, repo)
+    resp = client.post("/api/growbot/robots/gb-a1/move", json={"move": "spin_left"})
+    assert resp.json() == {"ok": False, "state": "blocked", "why": "robot not answering"}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"move": "dance"}, {"move": "forward", "secs": 16}, {"move": "forward", "secs": -1}, {}],
+)
+def test_a_bad_move_never_reaches_the_sidecar(
+    tmp_path: Path, repo: FakeRepo, sidecar: Sidecar, body: dict[str, Any]
+) -> None:
+    client = _mover(tmp_path, repo)
+    assert client.post("/api/growbot/robots/gb-a1/move", json=body).status_code == 422
+    assert client.post("/api/growbot/robots/nope/move", json={"move": "stop"}).status_code == 422
+    assert sidecar.sent == []
+
+
+def test_an_unknown_or_revoked_robot_is_404(
+    tmp_path: Path, repo: FakeRepo, sidecar: Sidecar
+) -> None:
+    client = _mover(tmp_path, repo)
+    assert client.post("/api/growbot/robots/gb-zz/move", json={"move": "stop"}).status_code == 404
+    repo.revoked.add("gb-a1")
+    assert client.post("/api/growbot/robots/gb-a1/move", json={"move": "stop"}).status_code == 404
+    assert sidecar.sent == []
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "want"),
+    [
+        (409, {"error": "no_creature"}, 409),
+        (504, {"error": "no_answer"}, 504),
+        (400, {"error": "move"}, 502),
+        (200, ["not", "an", "answer"], 502),
+        (200, {"ok": "maybe"}, 502),
+    ],
+)
+def test_the_sidecars_refusals_say_what_to_do(
+    tmp_path: Path, repo: FakeRepo, sidecar: Sidecar, status: int, body: Any, want: int
+) -> None:
+    sidecar.status, sidecar.body = status, body
+    client = _mover(tmp_path, repo)
+    resp = client.post("/api/growbot/robots/gb-a1/move", json={"move": "bow"})
+    assert resp.status_code == want and resp.json()["detail"]
+
+
+def test_a_sidecar_that_is_down_is_503(tmp_path: Path, repo: FakeRepo, sidecar: Sidecar) -> None:
+    sidecar.down = True
+    client = _mover(tmp_path, repo)
+    resp = client.post("/api/growbot/robots/gb-a1/move", json={"move": "sway"})
+    assert resp.status_code == 503
+
+
+def test_moves_need_the_owner_or_a_debug_token(
+    tmp_path: Path, repo: FakeRepo, sidecar: Sidecar
+) -> None:
+    client = _mover(tmp_path, repo)
+    resp = client.post("/api/debug/growbot/robots/gb-a1/move", json={"move": "wiggle"})
+    assert resp.status_code == 200 and sidecar.sent[-1]["move"] == "wiggle"
+
+    def refuse() -> PrincipalInfo:
+        raise HTTPException(status_code=403, detail="no")
+
+    app = cast(FastAPI, client.app)
+    app.dependency_overrides[owner_only] = refuse
+    app.dependency_overrides[current_debug_principal] = refuse
+    assert client.post("/api/growbot/robots/gb-a1/move", json={"move": "stop"}).status_code == 403
+    resp = client.post("/api/debug/growbot/robots/gb-a1/move", json={"move": "stop"})
+    assert resp.status_code == 403
+    assert len(sidecar.sent) == 1
 
 
 # --- the sidecar's routes -------------------------------------------------------------------

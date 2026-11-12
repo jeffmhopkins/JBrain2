@@ -927,6 +927,126 @@
   window.addEventListener("resize", paint);
 })();
 
+/* Moves from JBrain (the PWA's Body tab). Walks and spins run on this phone's motion sensors,
+   so the box cannot run them itself: while this page wears a robot it joins that robot's side
+   channel (/d/<code>-agent, the relay's rider check keeps it to the rider) as `hello`, and each
+   {"t":"box_move", rid, move, secs} runs through the creature's own runGait or moveLegs, as if
+   its brain had asked, with the walk calibration this phone already has. It answers at once
+   with {"t":"box_ack", rid, ok, state, why}: what it started, or the creature's own words for
+   why not. Only a visible page joins, since a hidden one stops every move anyway. */
+(function () {
+  "use strict";
+  if (location.pathname !== "/v3/next.html") return;
+  var q = new URLSearchParams(location.search);
+  var code = q.get("id") || "";
+  if (q.get("mode") !== "legs" || !/^gb-[A-Za-z0-9]{1,32}$/.test(code)) return;
+  var RETRY_MIN_MS = 2000, RETRY_MAX_MS = 60000;
+  var ws = null, retry = RETRY_MIN_MS, timer = 0, replaced = false;
+
+  function gone() { return !!(window.__gbBoxSoul && window.__gbBoxSoul.away); }
+
+  function run(move, secs) {
+    var spec = null;
+    if (move === "forward") spec = { dir: "fwd" };
+    else if (move === "back") spec = { dir: "back" };
+    else if (move === "spin_left") spec = { gait: "spin_left", dir: "left" };
+    else if (move === "spin_right") spec = { gait: "spin_right", dir: "right" };
+    else if (move === "stop") spec = { dir: "stop" };
+    if (spec) {
+      if (typeof window.runGait !== "function") throw new Error("the creature has not loaded its legs yet");
+      if (secs > 0 && move !== "stop") spec.secs = secs;
+      window.runGait(spec);
+    } else if (move === "wiggle" || move === "bow" || move === "sway") {
+      if (typeof window.moveLegs !== "function") throw new Error("the creature has not loaded its legs yet");
+      window.moveLegs({ gesture: move });
+    } else {
+      throw new Error("not a move this creature knows");
+    }
+  }
+
+  function answer(rid, move, secs) {
+    var err = document.getElementById("err");
+    // setErr also retires a "try again" left under the old caption.
+    if (typeof window.setErr === "function") window.setErr(""); else if (err) err.textContent = "";
+    var before = window._moveLast, out = { t: "box_ack", rid: rid, ok: false, state: "", why: "" };
+    try {
+      run(move, secs);
+      if (move === "stop") {
+        // runGait files a halt word as a move it never admitted; the legs did stop.
+        out.ok = true;
+        out.state = "stopped";
+        return out;
+      }
+      var a = window._moveLast;
+      var mine = a && a !== before ? a : null;
+      out.state = mine ? String(mine.state || "") : "";
+      out.why = (err && err.textContent) || (mine && mine.reason) || "";
+      // A move still only "requested" sent nothing to the legs (no body on this page).
+      out.ok = !!mine && /^(accepted|started|completed)$/.test(out.state);
+      if (!out.ok && !out.why) out.why = "the robot's legs aren't connected to this page";
+    } catch (e) {
+      out.why = String((e && e.message) || e);
+    }
+    out.why = String(out.why).slice(0, 220);
+    return out;
+  }
+
+  function close() {
+    clearTimeout(timer);
+    timer = 0;
+    if (ws) { var s = ws; ws = null; try { s.close(1000); } catch (e) {} }
+  }
+
+  function later() {
+    clearTimeout(timer);
+    if (document.hidden || replaced || gone()) return;
+    timer = setTimeout(open, retry);
+    retry = Math.min(retry * 2, RETRY_MAX_MS);
+  }
+
+  function open() {
+    timer = 0;
+    if (ws || document.hidden || replaced || gone()) return;
+    var s;
+    try {
+      s = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host +
+        "/d/" + encodeURIComponent(code) + "-agent");
+    } catch (e) { later(); return; }
+    ws = s;
+    s.onopen = function () {
+      retry = RETRY_MIN_MS;
+      try { s.send(JSON.stringify({ t: "hello", box: "moves" })); } catch (e) {}
+    };
+    s.onmessage = function (ev) {
+      var m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m || m.t !== "box_move" || typeof m.rid !== "string") return;
+      // A page that has since gone away (opened on another phone) takes no more moves.
+      if (gone()) { close(); return; }
+      // The box's bounds again, so a frame from another of the rider's sockets gets no longer walk.
+      var secs = typeof m.secs === "number" && m.secs >= 1 && m.secs <= 15 ? m.secs : 0;
+      try { s.send(JSON.stringify(answer(m.rid, String(m.move || ""), secs))); } catch (e) {}
+    };
+    s.onclose = function (ev) {
+      if (ws !== s) return;
+      ws = null;
+      // Another tab of this phone took the channel: it keeps it until this one is looked at.
+      if (ev && ev.reason === "replaced") replaced = true;
+      later();
+    };
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) { close(); return; }
+    replaced = false;
+    retry = RETRY_MIN_MS;
+    open();
+  });
+  window.addEventListener("pagehide", close);
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", open);
+  else open();
+})();
+
 /* GrowBot on the box: the robot's leg calibration lives on the box, set from the PWA's Body tab
    (backend api/growbot_body.py), and is copied into this page's gb_walk_cal, where upstream's
    creature, walks, spins and tester pages all read it (calNow(), relay-transport's SWAP). The

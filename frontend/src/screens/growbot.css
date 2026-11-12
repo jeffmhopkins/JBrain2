@@ -1139,6 +1139,43 @@ details.gb-help[open] summary::after {
   border-radius: var(--r-input);
 }
 
+/* The Body tab's movement remote (GrowbotMovePanel): a policy picker, how long, run. */
+.gb-seg.gb-move-pick {
+  margin: 12px 0 0;
+}
+.gb-move-run {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 12px;
+}
+.gb-move-run .gb-btn {
+  flex: 1;
+  min-height: 48px;
+  font-size: var(--fs-note);
+}
+.gb-move-secs {
+  flex: 0 0 88px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.gb-move-secs input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  min-height: 48px;
+}
+.gb-move-stop {
+  margin-top: 12px;
+}
+.gb-move-said {
+  display: block;
+}
+.gb-card .gb-hint.gb-move-said:empty {
+  display: none;
+}
+
 /* The Body tab's controls card (components/GrowbotBodyControls.tsx): Move | Legs over one Stop. */
 .gb-ctl .gb-seg {
   margin: 10px 0 4px;
