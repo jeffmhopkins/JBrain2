@@ -450,7 +450,8 @@
    - At load, before any page code reads them, the box's are written into this phone's
      localStorage and every other one of them is cleared, so a new or wiped phone comes up as the
      same creature. A persona the box has none for yet (prefs null) takes this phone's own, the
-     ones it had before personas, never another persona's.
+     ones it had before personas, never another persona's; if the owner set some before any
+     phone sent its own (`adopt`), the phone's own go under the owner's.
    - While it runs, a change to one of them (a setItem, a removeItem, or upstream's own
      `localStorage.key = v`, which no hook sees, so a check every 2 s) is sent a moment later as
      a patch of just the keys that changed, so an owner's edit to another key is never undone.
@@ -472,7 +473,7 @@
     gb_eye: 1, gb_face_color: 1, gb_face_dir: 1, gb_next_games3: 1, gb_vol: 1, pb2_voice: 1,
     gb_low_power: 1, gb_next_log: 1, pb2_journal: 1, gb_nx_sid: 1, gb_getup: 1, gb_ftdial: 1, gb_ftdial_set: 1,
     gb_fishwa: 1, gb_asfix: 1, gb_judge0: 1, gb_bodysnd: 1, gb_listen: 1, gb_stt: 1,
-    gb_rest: 1, gb_legslew: 1
+    gb_rest: 1, gb_legslew: 1, gb_talk: 1
   };
   // Per persona namespace (visual memory on or off) and per robot (keep tracking me).
   var PREFIXES = ["gb_vismem_native/", "gb_ft_latch:"];
@@ -570,7 +571,7 @@
   var pulled = sync("GET");
   // A cookie that moved to another persona under this tab: nothing of it is taken.
   if (pulled.json && pulled.json.persona !== persona) pulled = { status: 0, json: null };
-  var keepMine = false;
+  var keepMine = false, gapPull = false;
   if (pulled.status === 200 && pulled.json) {
     var box = pulled.json.prefs;
     version = typeof pulled.json.version === "number" ? pulled.json.version : -1;
@@ -599,6 +600,25 @@
       become(over(held0, pending));
       sent = {};
       Object.keys(held0).forEach(function (k) { if (ours(k) && typeof held0[k] === "string") sent[k] = held0[k]; });
+    } else if (box && typeof box === "object" && pulled.json.adopt === true) {
+      // The owner set some before any phone sent its own: this phone's own (never another
+      // persona's) go under the owner's, and all of it becomes the persona's.
+      var under = m.persona && m.persona !== persona ? {} : (!m.persona && ownSaved()) || snap();
+      become(over(under, { set: box, drop: [] }));
+      // Only what the box lacks is sent, so an owner edit landing meanwhile is not undone;
+      // sent even when empty, since any phone write ends the owner-only mark.
+      var mineAll = snap(), extra = {};
+      Object.keys(mineAll).forEach(function (k) { if (!Object.prototype.hasOwnProperty.call(box, k)) extra[k] = mineAll[k]; });
+      var sentAll = sync("POST", body({ set: extra, drop: [] }));
+      if (sentAll.status === 200 && sentAll.json) {
+        sent = mineAll;
+        if (sentAll.json.version !== version + 1) gapPull = true;
+        version = sentAll.json.version;
+      }
+      else {
+        sent = {};
+        Object.keys(box).forEach(function (k) { if (ours(k) && typeof box[k] === "string") sent[k] = box[k]; });
+      }
     } else if (box && typeof box === "object") {
       become(box);
       sent = snap();
@@ -721,6 +741,7 @@
   document.addEventListener("visibilitychange", function () { if (document.hidden) { check(); push(true); } });
   window.addEventListener("pagehide", function () { check(); push(true); });
   if (meta().dirty) check();
+  if (gapPull) pullOwner();
 })();
 
 /* A persona's visual memories live on the box too (plan §2c, wave G4d). Upstream keeps them in
@@ -1185,6 +1206,19 @@
 (function () {
   // The page is run by the box: apply.py hides upstream's cloud-only settings behind this.
   window.__gbBox = true;
+  // What those settings left on a phone: a model or effort pick (the box picks the model), an
+  // OpenRouter or custom-endpoint key and URL, the credits wall, and the cloud journal's erase
+  // and watch link. Dropped before the page reads them, so none of it steers the creature.
+  try {
+    ["gb_brain", "gb_free_pick", "gb_effort", "pb_byok", "pb_llm_url", "pb_llm_model",
+      "pb_llm_key", "pb_llm_vision", "pb_llm_json", "pb_energy_out", "pb2_erase",
+      "gb_nx_watch"].forEach(function (k) { window.localStorage.removeItem(k); });
+    // The brain log goes to the box, not the cloud, and its only switch was the cloud notes
+    // card hidden below: an old opt-out would keep it off for good, so it is lifted.
+    ["gb_next_log", "pb2_journal"].forEach(function (k) {
+      if (window.localStorage.getItem(k) === "0") window.localStorage.removeItem(k);
+    });
+  } catch (e) {}
   var style = document.createElement("style");
   function scale() {
     var portrait = window.innerHeight >= window.innerWidth;
@@ -1216,6 +1250,10 @@
       // The same cloud rooms reached another way: the money-code badge, and the full
       // panel's key and credits tabs behind the voice row's hand-off.
       "#giftBtn,#bpTabByok,#bpTabCredits{display:none!important}" +
+      // The full panel's MIND tab: the soul download and the move to a new phone (the box
+      // keeps the soul, and JBrain moves it), the cloud watch link, and the cloud notes card
+      // whose delete erased nothing here.
+      "#bpmDownloadSoul,#bpmXfer,#bpmXferBox,#bpmWatch,#bpData{display:none!important}" +
       "div:has(>[data-gb-cloud]){grid-template-columns:repeat(2,1fr)!important}" +
       (k > 1 ? "body>*:not(#wrap){zoom:" + k.toFixed(3) + "}" : "");
   }

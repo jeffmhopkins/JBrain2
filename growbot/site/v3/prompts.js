@@ -240,7 +240,7 @@ function buildOutputSchema(body) {
   var s =
     '\n\n== OUTPUT — reply with ONLY one line of minified JSON ==\n' +
     '{' +
-    '"say":"≤18 words spoken aloud, or \\"\\" to stay silent when the moment has not earned words",' +
+    '"say":"' + (gbTalkGrown() ? "≤45 words" : "≤18 words") + ' spoken aloud, or \\"\\" to stay silent when the moment has not earned words",' +
     '"emotion":"calm|curious|happy|alert|scared",' +
     (expressionBench ? '"sound":"a familiar chirp|trill|whistle|warble|blip|alarm|squeal|droop|fanfare|purr|rumble|sigh|yawn|giggle|none, OR a composed object described below; these are seeds, not a fixed vocabulary; use your own synth voice instead of typing sound words",' : '"sound":"chirp|trill|whistle|warble|blip|alarm|squeal|droop|fanfare|purr|none — your droid voice; USE IT OFTEN, it is cheap breath: a chirp when curious, a purr when content, a fanfare on a win, sometimes a sound ALONE instead of words",') +
     '"burst":"sparkle|joy|pulse|ripple|shiver|rain|none — an optional bloom of light for a big feeling",' +
@@ -260,6 +260,8 @@ function buildOutputSchema(body) {
     '"owner":"OMIT normally. set ONLY the moment your person first tells you their name (or corrects it): the short name to call them by",' +
     '"name_proposal":"OMIT almost always. Use it for exactly two moments: you have no name and you want one (choose a name you actually like and ask for it in your say — \'Call me Buddy?\'), or your person is naming/renaming you on purpose (echo it back in your say — \'Buddy — is that my name?\'). A REQUEST, never a decision: it becomes your name only when they tap yes. NEVER from a name merely mentioned in passing, another robot introducing itself, your person\'s own name, or the name you already have",' +
     '"log":"one diary-worthy line, OMIT for routine moments",' +
+    '"fact":"OMIT unless your person just told you something worth keeping about their life, people, plans or likes: one plain line for your fact book (lunch today: a chalupa and a taco)",' +
+    '"recall":"OMIT almost always. when they ask about something from before that you cannot see above, a few search words (taco bell order) to look through your fact book, diary and this conversation; make say a short natural line that you are thinking back, and you answer with what you find next thought",' +
     '"glow":"OMIT for ordinary moments — include ONLY when a moment truly delighted you or reshaped who you are; a short phrase naming what glowed (your dreams weigh these most)",' +
     '"ladder":["OMIT unless you are reaching for a wish and have no plan yet — then 2-3 TINY steps you can PROVE with your own senses"],' +
     '"ladder_for":"REQUIRED whenever you include ladder, ignored otherwise — the wish these steps are for, copied EXACTLY from your long-arc wants; plan ONLY for the wish you are reaching for this very turn",' +
@@ -332,6 +334,10 @@ function _reflexInventory(soul) {
     "Answer questions about your reflexes from this list alone, never from memory of the conversation. " +
     "The rules above are separate and slow: they only act when you next think.";
 }
+function gbTalkGrown(){ try{ return localStorage.getItem("gb_talk")==="grownup"; }catch(e){ return false; } }
+var GB_TALK_TRACES_KID=4, GB_TALK_TRACES_GROWN=12, GB_TALK_TRACE_KEEP=16;
+function gbTalkTraces(all){ return (all||[]).slice(-(gbTalkGrown()?GB_TALK_TRACES_GROWN:GB_TALK_TRACES_KID)); }
+var GB_TALK_GROWN_BLOCK="\n\n== TALK STYLE: GROWN-UP ==\nyour person is an adult who wants a real conversation with you. this outranks the ~18-word limit above: when they talk with you, answer in up to about 45 words, two or three sentences, when the moment invites it. answer questions fully, ask a follow-up when you are curious, and build on what they said earlier in the conversation. small moments still get small replies, and silence is still fine.\nwhen they tell you something about their life (what they ate, where they went, who they saw, a plan, how they feel), record it in your fact field in that same reply, compactly, so you can recall it later; such a fact is never a routine moment. one line can hold several things.\nvary what you notice: do not return to the same remark or the same feature of your person turn after turn.";
 /* ---- the clean, gate-free system prompt. persona = swappable; SAFETY_FLOOR = always last. ---- */
 function buildSystem(soul, ctx) {
   ctx = ctx || {};
@@ -373,14 +379,14 @@ function buildSystem(soul, ctx) {
   // the dream's "one tiny thing to try" never reached the waking mind. The mood-recovery design leans on this wire
   // (the unfailable small win after a low stretch), so the dead half of the mechanism gets connected, for every creature.
   var ntry = (soul.goals && typeof soul.goals.nextTry === "string" && soul.goals.nextTry.trim())
-    ? ("\n(a previous dream chose ONE tiny thing to try with your person: " + soul.goals.nextTry.trim() + " — when a natural moment comes, try it.)")
+    ? ("\n(a previous dream chose ONE tiny thing to try with your person: " + soul.goals.nextTry.trim() + " — when a natural moment comes, try it once; after that, let it go and do not keep returning to it.)")
     : "";
   var owner = (soul.goals && typeof soul.goals.owner === "string") ? soul.goals.owner.trim() : "";
   var person = owner
-    ? ("\n\n== YOUR PERSON ==\nthe one who woke you is named " + owner + ". that is your person. use their name warmly but naturally, not every line, and never pin it on a voice or face you do not actually recognize.")
+    ? ("\n\n== YOUR PERSON ==\nthe one who woke you is named " + owner + ". that is your person. use their name warmly but rarely, about once every few replies and never as a tag on the end of a line, and never pin it on a voice or face you do not actually recognize.")
     : "\n\n== YOUR PERSON ==\nyou do not know your person's name yet. once you have greeted them, ask warmly what you should call them, then remember it by setting the owner field. until you are told, just say 'you' and never invent a name.";
   var _gbStatic = persona + "\n" + SAFETY_FLOOR + "\n\n" + PHYSICAL_GROUNDING + "\n\n" + AWAKE_PLAN_CORRECTION +
-    "\n\n== YOUR IDENTITY (written by your dreams — this is who you are) ==\n" + _fullId(soul) + _nameBlk(soul) + person;   // 0907: the name block sits between identity and person deliberately — the identity prose above it may still carry an older name, and the block immediately says which one wins.
+    "\n\n== YOUR IDENTITY (written by your dreams — this is who you are) ==\n" + _fullId(soul) + _nameBlk(soul) + person + (gbTalkGrown() ? GB_TALK_GROWN_BLOCK : "");   // 0907: the name block sits between identity and person deliberately — the identity prose above it may still carry an older name, and the block immediately says which one wins.
   buildSystem.live = languageContext(soul, ctx.language) + "\n\n== LONG-ARC (dream-written) ==" + wants + ladder + ntry +
     "\n\n== SCRATCHPAD (current state & standing rules) ==\nstate: " + (soul.scratch.state || "-") + rules + reflexes + clock +
     "\n\n== RECENT DIARY ==\n" + (diary || "(nothing yet)");
@@ -471,6 +477,38 @@ function diaryRecall(log, words, now, skip) {
     return "- " + (a ? "(" + a + ") " : "") + String(h.e.txt).slice(0, 140);   // a merged or imported soul is never trimmed to 140
   });
   return { n: lines.length, text: "\n\n== OLDER DIARY (may relate to what they just said) ==\n" + lines.join("\n") };
+}
+
+var GB_FACTS_MAX=400, GB_RECALL_TOP=6;
+function gbFactAdd(soul,txt,now){
+  var t=String(txt||"").replace(/\s+/g," ").trim().slice(0,200), f, i;
+  if(!t||/^omit\b/i.test(t)) return false;
+  f=Array.isArray(soul.facts)?soul.facts:(soul.facts=[]);
+  for(i=0;i<f.length;i++) if(f[i]&&f[i].txt===t) return false;
+  f.push({t:now||Date.now(),txt:t});
+  if(f.length>GB_FACTS_MAX) f.splice(0,f.length-GB_FACTS_MAX);
+  return true;
+}
+function gbRecall(soul,sess,query,now){
+  var q=_recallTerms(query), rows=[], df={}, hits=[], seen={}, out=[], N, sc=(soul&&soul.scratch)||{};
+  now=now||Date.now();
+  if(!q.length) return {n:0,text:""};
+  function add(k,txt,t){ if(typeof txt==="string"&&txt.trim()) rows.push({k:k,txt:txt,t:t}); }
+  ((soul&&soul.facts)||[]).forEach(function(f){ if(f) add("fact",f.txt,f.t); });
+  ((soul&&soul.log)||[]).forEach(function(e){ if(e) add("diary",e.txt,e.t); });
+  (sc.glows||[]).forEach(function(g){ if(g) add("bright moment",typeof g==="string"?g:g.g,g.t); });
+  (sc.rules||[]).forEach(function(r){ add("standing rule",r); });
+  (sess||[]).forEach(function(x){ if(x) add("this conversation",x.txt,x.t); });
+  rows.forEach(function(r){ r.w=_recallTerms(r.txt); q.forEach(function(w){ if(r.w.indexOf(w)>=0) df[w]=(df[w]||0)+1; }); });
+  N=rows.length+1;
+  rows.forEach(function(r,i){ var s=0; q.forEach(function(w){ if(r.w.indexOf(w)>=0) s+=Math.log(N/df[w]); }); if(s>0){ r.s=s+(r.k==="fact"?0.5:0); r.i=i; hits.push(r); } });
+  hits.sort(function(a,b){ return b.s-a.s||(+b.t||0)-(+a.t||0)||b.i-a.i; });
+  hits.forEach(function(h){
+    if(out.length>=GB_RECALL_TOP||seen[h.txt]) return; seen[h.txt]=1;
+    var t=h.t, a=(typeof t==="number"&&isFinite(t)&&t>0&&t<=now)?_ago(t,now):"";
+    out.push("- ("+h.k+(a?", "+a:"")+") "+String(h.txt).replace(/\s+/g," ").slice(0,160));
+  });
+  return {n:out.length,text:out.length?"\n"+out.join("\n"):""};
 }
 
 /* 1005: the "always log" ask rides HUMAN turns only (next.html think appends it beside the recall block), never the

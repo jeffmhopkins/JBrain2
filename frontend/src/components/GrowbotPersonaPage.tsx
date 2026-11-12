@@ -20,6 +20,7 @@ import {
   EYES,
   type Eye,
   FACES,
+  type GrowbotTalk,
   MEMORY,
   type MemoryId,
   type Places,
@@ -27,6 +28,7 @@ import {
   REGIONS,
   type RegionInfo,
   SAFETY_NOTE,
+  TALKS,
   ago,
   clip,
   day,
@@ -37,6 +39,7 @@ import {
   regionText,
   robotName,
   selfName,
+  talkOf,
   when,
   where,
   words,
@@ -126,6 +129,15 @@ export function GrowbotPersonaPage({
   // returned to where it was before the save.
   if (eyeSaved && eyeSaved.over !== boxEye) setEyeSaved(null);
   const savedEye = eyeSaved && eyeSaved.over === boxEye ? eyeSaved.eye : null;
+  // The same for the talk style: picked while it saves, then held until the box's copy moves.
+  const [talking, setTalking] = useState<GrowbotTalk | null>(null);
+  const [talkSaved, setTalkSaved] = useState<{
+    talk: GrowbotTalk;
+    over: GrowbotTalk | null;
+  } | null>(null);
+  const boxTalk = persona.prefs ? talkOf(persona.prefs) : null;
+  if (talkSaved && talkSaved.over !== boxTalk) setTalkSaved(null);
+  const savedTalk = talkSaved && talkSaved.over === boxTalk ? talkSaved.talk : null;
   const [restoring, setRestoring] = useState<GrowbotCheckpoint | null>(null);
   const [mems, setMems] = useState<GrowbotMemory[] | null>(null);
   const [memError, setMemError] = useState("");
@@ -195,7 +207,6 @@ export function GrowbotPersonaPage({
     };
   }, [ptab, voices]);
 
-  // A sample left playing would talk over whatever page comes next.
   // A sample still rendering when the page closes must not start playing after it.
   const closed = useRef(false);
   useEffect(() => {
@@ -690,8 +701,35 @@ export function GrowbotPersonaPage({
     }
   }
 
+  /** As the camera: a setting on the box, read by the page every thought. Kid drops the key,
+   *  leaving upstream's creature. */
+  async function pickTalk(talk: GrowbotTalk) {
+    if (p.prefs === null || talk === (savedTalk ?? boxTalk) || talking !== null) return;
+    setTalking(talk);
+    try {
+      await api.setGrowbotPersonaPrefs(
+        p.id,
+        talk === "grownup" ? { gb_talk: "grownup" } : {},
+        talk === "grownup" ? [] : ["gb_talk"],
+      );
+      setTalkSaved({ talk, over: boxTalk });
+      onChanged();
+      const how = talk === "grownup" ? "like a grown-up" : "like a kid";
+      say(
+        p.phone
+          ? `${p.name} talks ${how} from its next thought ${onPhone(p.phone, pl)}.`
+          : `${p.name} talks ${how} next time it opens.`,
+      );
+    } catch (e) {
+      say(`The talk style didn't change — ${message(e)}`);
+    } finally {
+      setTalking(null);
+    }
+  }
+
   function manageTab() {
     const current = facing ?? detail?.face ?? p.face;
+    const talkNow = talking ?? savedTalk ?? boxTalk ?? "kid";
     const eye = eyeing ?? savedEye ?? boxEye ?? "front";
     return (
       <section className="gb-card">
@@ -735,6 +773,29 @@ export function GrowbotPersonaPage({
           )}
         </fieldset>
         {voicePicker()}
+        <fieldset className="gb-choices">
+          <legend>Talk style</legend>
+          {TALKS.map((t) => (
+            <label key={t.id} className={`gb-choice${talkNow === t.id ? " sel" : ""}`}>
+              <input
+                type="radio"
+                name={`gb-talk-${p.id}`}
+                checked={talkNow === t.id}
+                disabled={talking !== null || p.prefs === null}
+                onChange={() => void pickTalk(t.id)}
+              />
+              <span className="gb-tx">
+                {t.name}
+                <em>{t.what}</em>
+              </span>
+            </label>
+          ))}
+          {p.prefs === null && (
+            <p className="gb-hint dim">
+              Open {p.name} on a phone once, then pick how it talks here.
+            </p>
+          )}
+        </fieldset>
         <fieldset className="gb-choices">
           <legend>When it's quiet</legend>
           {QUIET_MOODS.map((m) => {

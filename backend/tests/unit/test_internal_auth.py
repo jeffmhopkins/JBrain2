@@ -80,8 +80,8 @@ class _YesPersonaRepo:
     async def phone_forget(self, ctx: object, pid: str, phone: str, ids: list[str]) -> int:
         return 1
 
-    async def phone_prefs(self, ctx: object, pid: str, phone: str) -> tuple[int, None]:
-        return 0, None
+    async def phone_prefs(self, ctx: object, pid: str, phone: str) -> tuple[int, None, bool]:
+        return 0, None, False
 
     async def phone_patch_prefs(self, ctx: object, pid: str, phone: str, patch: object) -> int:
         return 1
