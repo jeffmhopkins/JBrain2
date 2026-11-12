@@ -763,8 +763,8 @@ PATCHES += FIXED_PATCHES
 # answering in plain text, and it copies that: in replays of real turns about half the replies
 # dropped the JSON and stopped after a word or two ("Still no", "I'm"), and each clipped reply
 # then rode the next turn's history. The same turns with the history as {"say":...} came back
-# whole and well-formed. A bracketed note ("(stayed quiet)", a brain hiccup) is an empty say
-# with the note after it, so the creature never reads the note as words it spoke.
+# whole and well-formed. The page's own notes ("(stayed quiet)", a brain hiccup) become an empty
+# say with the note after it, so the creature never reads a note as words it spoke.
 HISTORY_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
@@ -775,10 +775,19 @@ HISTORY_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         "var tr=_live.scratch.traces.slice(-4), msgs=[],i;",
-        "function gbTraceReply(t){ var a=String(t.a||\"\"), note=/^\\(.*\\)$/.test(a);"
-        ' return JSON.stringify({say:note?"":a})+(note?"\\n"+a:"")'
-        '+(t.d?"\\n(did: "+t.d+")":""); }\n'
+        "function gbTraceReply(t){ var a=String(t.a||\"\"),"
+        ' note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a};'
+        ' if(t.e) r.emotion=t.e;'
+        ' return JSON.stringify(r)+(note?"\\n"+a:"")+(t.d?"\\n(did: "+t.d+")":""); }\n'
         "  var tr=_live.scratch.traces.slice(-4), msgs=[],i;",
+        1,
+    ),
+    # The reply's emotion rides the trace, so the replayed history keeps the whole shape the
+    # model is asked for and it does not learn to drop the field.
+    (
+        "v3/next.html",
+        ",m:moved,t:Date.now()};",
+        ',m:moved,t:Date.now(),e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)};',
         1,
     ),
 ]

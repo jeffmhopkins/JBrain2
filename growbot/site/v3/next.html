@@ -8414,7 +8414,7 @@ function think(event,kind,extra){
      that has already been trimmed passes through unchanged.
      What is genuinely lost: the creature can no longer look back at what it sensed three turns ago
      (was it darker then). The conversation itself — what was said and what it did — is untouched. */
-  function gbTraceReply(t){ var a=String(t.a||""), note=/^\(.*\)$/.test(a); return JSON.stringify({say:note?"":a})+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
+  function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
   var tr=_live.scratch.traces.slice(-4), msgs=[],i;
   for(i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }   // age-stamp replayed turns — it had NO sense of elapsed time (Brit 0702)
   var _mstrip=""; try{ _mstrip=motionStripNow(); }catch(e){} var userMsg="senses: "+gist()+"\nsensor readout (your real numbers): "+sensSnapshot()+(_mstrip?"\n"+_mstrip:"")+"\nmoment: "+event;   // 1005: the strip rides only when something moved; replayed turns drop it with the senses (traceMoment)
@@ -8697,7 +8697,7 @@ function think(event,kind,extra){
     if(!_gbTurn1){ _gbTurn1=true;   // DEEP LINK (0805): the first COMPLETED call anchors the redeem lane server-side — the stashed code may now be spent
       if(gbPendingCode()){ try{ gbBadgeSync(); }catch(e){} toast("🎁 the code from your link is ready — tap 🧠 brain, then ⚡ credits. it's already typed in"); try{ gbPendingSync(); }catch(_e){} } }
     if(kind!=="tick" && (!(extra&&extra.beat) || said || phoneDir)){
-      var _tr={u:String(event||"").replace(/\s+/g," "),a:(said?said.replace(/\s+/g," "):"")||"(stayed quiet)",m:moved,t:Date.now()};   // 0918 r2: the EVENT, not a parse of the composed message if(extra&&extra.beat) _tr.b=1;   // K3 r2 #3: traces replay into the DREAM prompt — collapse whitespace at write so a crafted multi-line say can never start a line that spoofs the "Its inner weather" trigger (or any other line-anchored instruction)
+      var _tr={u:String(event||"").replace(/\s+/g," "),a:(said?said.replace(/\s+/g," "):"")||"(stayed quiet)",m:moved,t:Date.now(),e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)};   // 0918 r2: the EVENT, not a parse of the composed message if(extra&&extra.beat) _tr.b=1;   // K3 r2 #3: traces replay into the DREAM prompt — collapse whitespace at write so a crafted multi-line say can never start a line that spoofs the "Its inner weather" trigger (or any other line-anchored instruction)
       try{ if(MODE==="legs"&&!_wheels&&_moveLast&&_moveLast.id>_beforeMove){ if(_moveLast.ended) _tr.d=_moveDesc(_moveLast); else _moveLast.tr=_tr; } }catch(_de){}   // 0929 (audit step 1): what this turn's move did, replayed as "did:" (see the trace replay in think). Only an ENDED move is written: one still running gets d from _moveEnd when it ends, so the soul saved just below never keeps a "running" that a reload would replay as true. Legs only: wheels are their own job
       var _lastTr=_live.scratch.traces[_live.scratch.traces.length-1];
       if(_tr.b&&_lastTr&&_lastTr.b) _live.scratch.traces[_live.scratch.traces.length-1]=_tr;   // PURSUE beats occupy ONE ring slot — 4 spoken beats were evicting the user's pre-seek words in ~30s (audit lobotomy vector)

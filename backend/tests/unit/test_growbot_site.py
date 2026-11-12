@@ -541,21 +541,28 @@ def test_the_text_is_phone_sized_even_in_desktop_site_mode() -> None:
 
 def test_past_replies_go_back_to_the_model_in_its_own_json_shape() -> None:
     """Replayed as bare words, the creature's history taught the model to answer in clipped
-    plain text; each past reply now rides as {"say": ...}, a bracketed note as an empty say."""
+    plain text; each past reply now rides as {"say", "emotion"}, a page note as an empty say."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert 'msgs.push({role:"assistant",content:gbTraceReply(tr[i])});' in page
     assert 'content:tr[i].d?tr[i].a+"\\n(did: "' not in page
+    assert ',e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)};' in page
     start = page.index("function gbTraceReply(t){")
     fn = page[start : page.index("\n", start)]
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
-    script = fn + (
-        "\nconsole.log(JSON.stringify([gbTraceReply({a:'Hi \"Jeff\"'}),"
-        "gbTraceReply({a:'(stayed quiet)',d:'spin 2 s'}),gbTraceReply({})]));"
+    cases = (
+        "[gbTraceReply({a:'Hi \"Jeff\"',e:'happy'}),"
+        "gbTraceReply({a:'(stayed quiet)',d:'spin 2 s'}),"
+        "gbTraceReply({a:'(brain hiccup \u2014 out of energy, no answer)'}),"
+        "gbTraceReply({a:'(purrs) hi'}),gbTraceReply({})]"
     )
+    script = f"{fn}\nconsole.log(JSON.stringify({cases}));"
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
-    said, quiet, empty = json.loads(out.stdout)
-    assert json.loads(said) == {"say": 'Hi "Jeff"'}
+    said, quiet, hiccup, spoken, empty = json.loads(out.stdout)
+    assert json.loads(said) == {"say": 'Hi "Jeff"', "emotion": "happy"}
     assert quiet == '{"say":""}\n(stayed quiet)\n(did: spin 2 s)'
+    assert hiccup.startswith('{"say":""}\n(brain hiccup')
+    # A say the model wrote in brackets is still words it spoke.
+    assert json.loads(spoken) == {"say": "(purrs) hi"}
     assert json.loads(empty) == {"say": ""}
