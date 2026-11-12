@@ -448,3 +448,51 @@ def test_a_long_awake_stretch_gives_the_worker_a_break(
         assert marks() > held
 
     asyncio.run(run())
+
+
+def test_a_restore_whose_turn_failed_is_released_by_the_next_turn(tmp_path: Path) -> None:
+    store = _Store()
+    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_cold(cached=7000), status=503))
+    app.state.kv_prefix = store
+    with TestClient(app) as client:
+        client.post(_COMPLETIONS, json=_turn(), headers=auth)
+        assert len(store.restores) == 1 and store.used == []
+        app.state.growbot_llm_client_factory = _Gateway(chunks=_cold(cached=7000))
+        assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
+        assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
+    # One restore, released once, by the first turn that reached the slot.
+    assert len(store.restores) == 1 and len(store.used) == 1
+
+
+def test_a_failed_stamp_does_not_restart_the_awake_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jbrain.api import growbot_llm
+
+    clock = [1000.0]
+    monkeypatch.setattr(growbot_llm.time, "monotonic", lambda: clock[0])
+    app, _auth, _gw = _app(tmp_path, gateway=_Gateway())
+
+    class _Store2:
+        async def mark_growbot_awake(self, _ctx: object) -> None:
+            return None
+
+    app.state.settings_store = _Store2()
+
+    class _Req:
+        pass
+
+    req = _Req()
+    req.app = app  # type: ignore[attr-defined]
+
+    async def run() -> None:
+        growbot_llm._mark_awake(req)  # type: ignore[arg-type]
+        await asyncio.sleep(0)
+        since = app.state.growbot_awake_since
+        clock[0] += 61.0
+        app.state.growbot_awake_stamped = None  # what a failed write leaves
+        growbot_llm._mark_awake(req)  # type: ignore[arg-type]
+        await asyncio.sleep(0)
+        assert app.state.growbot_awake_since == since
+
+    asyncio.run(run())

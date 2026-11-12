@@ -185,7 +185,8 @@ def _mark_awake(request: Request) -> None:
     if now < getattr(state, "growbot_awake_break_until", 0.0):
         return
     since = getattr(state, "growbot_awake_since", None)
-    if not isinstance(since, float) or not isinstance(last, float) or now - last > GROWBOT_AWAKE_S:
+    # A failed stamp clears `last` to retry, which must not restart the streak and its cap.
+    if not isinstance(since, float) or (isinstance(last, float) and now - last > GROWBOT_AWAKE_S):
         since = state.growbot_awake_since = now
     if now - since >= _AWAKE_HOLD_MAX_S:
         state.growbot_awake_break_until = now + _AWAKE_BREAK_S
@@ -468,6 +469,7 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                 )
                 if restored:
                     mark("restore_ms")
+                    state.growbot_prefix_unused = (model, level)
                 # Judged on the model actually sent, after admission, as jcode's proxy does.
                 _apply_level(payload, level, model)
                 async with (
@@ -484,8 +486,12 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                         body = _server_error("the on-box model refused the turn", "gateway_error")
                         yield error_bytes(body, stream=stream)
                         return
-                    if restored:
-                        # The prompt has reached the slot, even if the phone hangs up now.
+                    # The first turn to reach the slot after a restore releases the store's
+                    # memo, even if the phone hangs up now. Not only the restoring turn: that
+                    # one can fail before the slot, and later turns are no long quiet.
+                    unused = getattr(state, "growbot_prefix_unused", None)
+                    if unused == (model, level):
+                        state.growbot_prefix_unused = None
                         _quietly(prefix.consumed, state.kv_prefix, model, system, level)
                     async for chunk in upstream.aiter_raw():
                         _quietly(collector.feed, chunk)
