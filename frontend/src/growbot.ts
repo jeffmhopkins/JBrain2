@@ -501,6 +501,19 @@ export const QUIET_MOODS: { explore: boolean; name: string; what: string }[] = [
   },
 ];
 
+/** Which camera is the creature's eye. The box keeps it as upstream's `gb_eye` key, whose
+ *  values are the browser's facingMode; anything but the back one is front, as on the phone. */
+export type Eye = "front" | "back";
+
+export const EYES: { id: Eye; name: string; what: string }[] = [
+  { id: "front", name: "Front", what: "The screen side, looking at you. Face tracking needs it." },
+  { id: "back", name: "Back", what: "Out the back of the phone, at the world." },
+];
+
+export function eyeOf(prefs: Record<string, string> | null | undefined): Eye {
+  return prefs?.gb_eye === "environment" ? "back" : "front";
+}
+
 /** The creature's own memories. It writes them itself, as it goes and in its dreams; the owner
  *  may correct each one, and `up` is the soul key (and the box's region) it lives in. */
 export const MEMORY = [

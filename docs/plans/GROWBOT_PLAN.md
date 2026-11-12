@@ -164,7 +164,8 @@ The second brain verb is `eye` (owner, 2026-11-12: switch between the front and 
 when the phone is off the body): `front` or `back`, heeded only on a turn that answers something
 the person said, since upstream retired a free `look` verb after the model flipped lenses
 constantly. The lens is upstream's `gb_eye` key, which the persona's settings record (§2b) keeps
-on the box; an owner change reaching the page as `gb-box-prefs` flips the camera where it stands.
+on the box; the owner picks it on the persona's *Manage* tab (*Camera*), and the change reaching
+the page as `gb-box-prefs` flips the camera where it stands.
 
 ### 2b. Settings live on the box, and the PWA owns them
 

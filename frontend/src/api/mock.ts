@@ -525,6 +525,7 @@ function mockGbPersona(
     face: "lantern",
     voice: "",
     explore: true,
+    prefs: {},
     ...over,
     soul,
     vms,
@@ -779,6 +780,13 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
     if (!name) return json({ detail: "Give it a name." }, 422);
     p.name = name;
     return mockGbWrite(p, { ...p.soul, meta: { ...p.soul.meta, name } }, null);
+  }
+  if (rest === "prefs" && method === "PATCH") {
+    const { set, drop } = body() as { set?: Record<string, string>; drop?: string[] };
+    const next = { ...(p.prefs ?? {}) };
+    for (const k of drop ?? []) delete next[k];
+    p.prefs = { ...next, ...(set ?? {}) };
+    return json({ version: Date.now() });
   }
   if (!rest && method === "DELETE") {
     mockGbP.personas = mockGbP.personas.filter((x) => x !== p);

@@ -3382,7 +3382,12 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   - *Manage*: *Face* first (owner, 2026-11-11): a radio list, *Lantern* (the default),
     *Ostrich*, *Robot*, *Pixel*, each with a one-line description, saved as it is tapped. It is
     not a soul write, so no checkpoint and no reload: the toast says it changes on its phone in
-    a few seconds (its poll), or next time it opens. Then *Voice* (owner, 2026-11-12): a
+    a few seconds (its poll), or next time it opens. *Camera* next (owner, 2026-11-12): the
+    same radio list, *Front* (the default; the screen side, which face tracking needs) and
+    *Back*, saved as tapped into the persona's settings on the box (`gb_eye`), and the phone
+    flips the lens where it stands; the toast reads like the face's. Until a phone has first
+    sent its settings it is disabled under *Open <name> on a phone once, then pick its camera
+    here.*, since that first phone makes the box's copy from its own. Then *Voice* (owner, 2026-11-12): a
     dropdown of the box's installed voices (`/api/brain/voices`, named like Settings' read-aloud
     picker: *Puck · American M*) headed by *Box default (Heart)*, with *Play* beside it saying a
     line in the shown voice (*Hi, I'm <name>…*) so it can be heard before it is picked. Saved as
