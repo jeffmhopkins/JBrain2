@@ -532,6 +532,13 @@
     Object.keys(from).forEach(function (k) { if (!Object.prototype.hasOwnProperty.call(to, k)) { drop.push(k); n++; } });
     return n ? { set: set, drop: drop } : null;
   }
+  function over(base, p) {
+    var out = {};
+    Object.keys(base).forEach(function (k) { out[k] = base[k]; });
+    Object.keys(p.set).forEach(function (k) { out[k] = p.set[k]; });
+    p.drop.forEach(function (k) { delete out[k]; });
+    return out;
+  }
   function body(p) { return JSON.stringify({ persona: persona, set: p.set, drop: p.drop }); }
 
   var m = meta();
@@ -561,19 +568,19 @@
           box = after.json.prefs;
           version = after.json.version;
         } else if (box && typeof box === "object") {
-          var both = {};
-          Object.keys(box).forEach(function (k) { both[k] = box[k]; });
-          Object.keys(pending.set).forEach(function (k) { both[k] = pending.set[k]; });
-          pending.drop.forEach(function (k) { delete both[k]; });
-          box = both;
+          box = over(box, pending);
         }
       } else if (got.status !== 400 && got.status !== 413) {
-        // Not taken yet, never refused: the page runs on it and the loop below sends it.
+        // Not taken yet, never refused: the page runs on the box's copy with it laid over, so
+        // the owner's edits made meanwhile land too, and the loop below sends it.
         keepMine = true;
       }
     }
     if (keepMine) {
-      sent = m.base;
+      var held0 = box && typeof box === "object" ? box : m.base;
+      become(over(held0, pending));
+      sent = {};
+      Object.keys(held0).forEach(function (k) { if (ours(k) && typeof held0[k] === "string") sent[k] = held0[k]; });
     } else if (box && typeof box === "object") {
       become(box);
       sent = snap();
@@ -612,7 +619,8 @@
     if (held) return;
     if (inflight) { schedule(SEND_AFTER_MS); return; }
     var now = snap(), p = patchOf(sent, now);
-    if (!p) return;
+    // Nothing left to send ends any backoff, so the next change is sent on time.
+    if (!p) { retry = 0; return; }
     if (meta().persona !== persona) { held = true; return; }
     inflight = true;
     var before = version;

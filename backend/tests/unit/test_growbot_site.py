@@ -1038,3 +1038,39 @@ def test_an_owners_edit_between_the_phones_own_writes_is_pulled() -> None:
     )
     assert [c["method"] for c in got["calls"]] == ["GET", "POST", "GET"]
     assert got["events"] == [{"changed": {"gb_eye": "environment"}}]
+
+
+def test_an_owners_edit_made_while_a_change_waited_still_lands() -> None:
+    meta = json.dumps(
+        {"persona": "p1", "dirty": True, "base": {"gb_vol": "0.5", "gb_eye": "user"}, "version": 3}
+    )
+    got = _prefs_in_node(
+        {"gb_vol": "0.2", "gb_eye": "user", "gb_box_prefs": meta},
+        {"persona": "p1"},
+        "if (method === 'GET') return [200, {version: 4, prefs: {gb_vol: '0.5', gb_eye:"
+        " 'environment'}}];"
+        " return calls.filter(c => c.method === 'POST').length > 1"
+        " ? [200, {version: 5}] : [503, {error: 'busy'}];",
+        "await settle(); console.log(JSON.stringify({calls, local: local()}));",
+    )
+    assert got["local"]["gb_eye"] == "environment" and got["local"]["gb_vol"] == "0.2"
+    posts = [c["body"] for c in got["calls"] if c["method"] == "POST"]
+    assert posts[-1] == {"persona": "p1", "set": {"gb_vol": "0.2"}, "drop": []}
+
+
+def test_a_backoff_ends_when_there_is_nothing_left_to_send() -> None:
+    got = _prefs_in_node(
+        {},
+        {"persona": "p1"},
+        "if (method === 'GET') return [200, {version: 1, prefs: {}}];"
+        " return calls.filter(c => c.method === 'POST').length > 1"
+        " ? [200, {version: 2}] : [503, {error: 'busy'}];",
+        " const step = async () => { const t = timers; timers = []; t.forEach(f => f());"
+        " await new Promise(r => global.setImmediate(r)); };"
+        ' store.setItem("gb_vol", "0.4"); await step();'
+        ' store.removeItem("gb_vol"); await step();'
+        ' store.setItem("gb_eye", "environment"); await step();'
+        " console.log(JSON.stringify({calls}));",
+    )
+    posts = [c["body"] for c in got["calls"] if c["method"] == "POST"]
+    assert posts[-1] == {"persona": "p1", "set": {"gb_eye": "environment"}, "drop": []}
