@@ -93,6 +93,13 @@ _FIELDS: Final = frozenset(
 )
 # A camera frame is tens of KiB; this bounds one inline image's base64 text.
 MAX_IMAGE_CHARS: Final = 4 * 1024 * 1024
+# The picture floor, in tokens, the creature's frames are encoded to (Flash-Next's engine
+# reads it per request: deploy/apply-llama-image-floor.sh). The box serves a 2048 floor so a
+# note photo keeps its fine print; the creature's 320 px camera frame is ~75 tokens of real
+# detail, and that floor blew it up to ~2,100, three frames a turn, ~33 s of prefill (owner,
+# 2026-11-12). 256 still upscales a frame a little, so nothing it shows is lost. The page
+# cannot set it: the field is not in _FIELDS.
+CREATURE_IMAGE_MIN_TOKENS: Final = 256
 # The levels a client may ask for; anything else, or none, runs with thinking off.
 _LEVELS: Final = frozenset({"none", "low", "medium", "high"})
 _DEFAULT_LEVEL: Final = "none"
@@ -258,6 +265,10 @@ async def chat_completions(request: Request) -> Response:
     if images and not local_catalog.supports_vision(served):
         return _openai_error(400, f"{served} cannot see images", "vision_not_supported")
     payload["model"] = served
+    if images:
+        # The box's own picture floor for this turn's frames, not the served one: see
+        # CREATURE_IMAGE_MIN_TOKENS. An engine without the patch ignores the field.
+        payload["image_min_tokens"] = CREATURE_IMAGE_MIN_TOKENS
     level = _client_level(payload)
     for key in ("reasoning_effort", "reasoning"):
         payload.pop(key, None)

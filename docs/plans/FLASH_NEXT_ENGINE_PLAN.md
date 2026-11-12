@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
+> **Status:** In progress · **Last verified:** 2026-11-12 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -194,7 +194,11 @@ every other range is dropped; §3a).
   `-np 10 --kv-unified -c 524288 --slot-save-path …` (one shared pool; no single sequence may exceed
   `n_ctx_train` = 262,144, which the agent's reservation equals), `-ctk q8_0 -ctv q8_0`, `-fa 1`, `-cram 0`,
   `--ctx-checkpoints 8 --checkpoint-min-step 1024`, `--jinja`, the F16 mmproj with the
-  existing `--image-min-tokens` floor.
+  existing `--image-min-tokens` floor. The image also carries `deploy/apply-llama-image-floor.sh`
+  (2026-11-12): a chat request's own `image_min_tokens` replaces that floor for its images
+  only (a thread-local around its tokenization; the bitmap's cache id gains `@min<N>`), so the
+  GrowBot creature's 320 px frames ask for 256 while note photos keep 2048. A request without
+  the field is served exactly as before.
 - **MTP: not adopted in v1, pending measurement.** Upstream now has a qwen4exp MTP draft
   context; our one-slot rule for speculation is our own (`llama_swap_config.py`), and the
   evidence on multi-slot MTP conflicts (#27836 reported cross-slot contamination and a net

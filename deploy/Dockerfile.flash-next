@@ -64,6 +64,7 @@ ARG LLAMA_CPP_COMMIT=869034b4bb93a425ea989d30fc3d000f5a461d58
 ARG PATCH_RESTORE_CHECKPOINT=1
 COPY deploy/ensure-build-tools.sh /ensure-build-tools.sh
 COPY deploy/apply-llama-patches.sh /apply-llama-patches.sh
+COPY deploy/apply-llama-image-floor.sh /apply-llama-image-floor.sh
 RUN set -eux; \
     printf '%s' "${LLAMA_CPP_COMMIT}" | grep -Eq '^[0-9a-f]{40}$' \
         || { echo "FATAL: LLAMA_CPP_COMMIT must be a full 40-char commit SHA, got '${LLAMA_CPP_COMMIT}'"; exit 1; }; \
@@ -77,6 +78,9 @@ RUN set -eux; \
     else \
         echo "PATCH_RESTORE_CHECKPOINT!=1 — building stock llama.cpp at ${LLAMA_CPP_COMMIT}"; \
     fi; \
+    # Always: a request's own `image_min_tokens` (the GrowBot creature asks for a small
+    # floor; everything else keeps the served 2048). Without the field nothing changes.
+    /apply-llama-image-floor.sh /llama; \
     # LLAMA_USE_PREBUILT_UI=OFF: the server's web UI is otherwise fetched from a Hugging Face
     # bucket at BUILD time, an unpinned network input. Nothing here uses that UI (the api
     # talks to the OpenAI endpoints through llama-swap), so the server embeds an empty table.

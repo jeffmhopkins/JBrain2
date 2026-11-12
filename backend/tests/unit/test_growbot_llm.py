@@ -549,3 +549,16 @@ def test_a_gateway_error_status_is_an_openai_error(tmp_path: Path, stream: bool)
     assert r.status_code == 200
     assert "boom" not in r.text
     assert _error(r, stream)["code"] == "gateway_error"
+
+
+def test_the_creatures_frames_ask_for_their_own_small_floor(tmp_path: Path) -> None:
+    app, auth, gw = _app(tmp_path, residency=_Residency())
+    client = TestClient(app)
+    sent = _chat(content=[_IMAGE], image_min_tokens=4096)
+    assert client.post(_COMPLETIONS, json=sent, headers=auth).status_code == 200
+    assert gw.sent[-1]["json"]["image_min_tokens"] == growbot_llm.CREATURE_IMAGE_MIN_TOKENS
+    # A text-only turn names no floor, and the page can never pick one.
+    assert (
+        client.post(_COMPLETIONS, json=_chat(image_min_tokens=9), headers=auth).status_code == 200
+    )
+    assert "image_min_tokens" not in gw.sent[-1]["json"]
