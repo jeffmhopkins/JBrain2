@@ -136,6 +136,9 @@ MODELS_CACHE_S = 30.0
 # How often a phone on the relay is asked again whether its persona still wears the body.
 RIDER_RECHECK_S = 10.0
 SOUL_WORKERS = 2
+# The call log's rows (a transcript, a spoken line) go to the api on one worker of their own,
+# after the call they describe; past this many waiting, a row is dropped, never the call.
+LOG_PENDING_MAX = 32
 # A soul the phone pushes: the api's 1 MB soul cap, plus room for the JSON around it.
 MAX_SOUL_BODY = 1_100_000
 SOUL_PATH = "/api/box/persona"
@@ -1019,6 +1022,8 @@ class GrowBot:
         # doors and the brain calls, so a slow api queues neither tickets nor a page's pull.
         self._soul_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-soul")
         self._rider_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-rider")
+        self._log_pool: Executor = ThreadPoolExecutor(1, "growbot-log")
+        self._log_slots = threading.BoundedSemaphore(LOG_PENDING_MAX)
         self.rider_backoff = Backoff()
         self._proxy_addrs: set[str] = set()
         self._opening: collections.Counter[str] = collections.Counter()
@@ -1655,6 +1660,33 @@ class GrowBot:
         out["stream"] = stream
         return json.dumps(out).encode()
 
+    def _who(self, req: Request) -> dict[str, str]:
+        """The persona and robot a call was for, from the phone's session, for the log."""
+        claims = self._claims(req)
+        if claims is None:
+            return {}
+        who = {"robot": claims.robot} if claims.robot else {}
+        if claims.persona:
+            who["persona"] = claims.persona
+        return who
+
+    def log_call(self, row: dict[str, Any]) -> None:
+        """Send one call-log row to the api, off the call's path: the phone already has its
+        answer, and a slow or failing api costs the row, never the creature."""
+        if not self._log_slots.acquire(blocking=False):
+            return
+
+        def send() -> None:
+            try:
+                self._api_post("/internal/growbot/calls", row)
+            finally:
+                self._log_slots.release()
+
+        try:
+            self._log_pool.submit(send)
+        except RuntimeError:
+            self._log_slots.release()
+
     async def llm(self, req: Request, *, stream: bool) -> Response:
         models = await self._call(self.models)
         body = self.llm_body(req.body, stream, models)
@@ -1662,6 +1694,11 @@ class GrowBot:
             return json_response(400, {"error": {"message": "bad chat body"}})
         url = self.config.api_url + "/internal/growbot/llm/v1/chat/completions"
         headers = {"Content-Type": "application/json", **self._auth()}
+        who = self._who(req)
+        if "persona" in who:
+            headers["X-Growbot-Persona"] = who["persona"]
+        if "robot" in who:
+            headers["X-Growbot-Robot"] = who["robot"]
         return await stream_upstream(
             url, body, headers, sse=stream, executor=self._streams
         )
@@ -1690,6 +1727,7 @@ class GrowBot:
         # only after a successful request, so a failed one's small window would cut the next.
         fields["audio_ctx"] = str(audio_window(audio.data) or 0)
         body, ctype = build_multipart(fields, audio)
+        started = time.monotonic()
         up = await self._call(
             http_call,
             self.config.stt_url + "/audio/transcriptions",
@@ -1699,10 +1737,29 @@ class GrowBot:
             STT_TIMEOUT_S,
             pool=self._streams,
         )
+        took = round((time.monotonic() - started) * 1000)
+        clip = wav_seconds(audio.data)
+        row: dict[str, Any] = {
+            "kind": "stt",
+            "total_ms": took,
+            "model": "whisper",
+            "detail": {
+                "audio_bytes": len(audio.data),
+                "audio_ctx": int(fields["audio_ctx"]),
+                "language": fields.get("language", ""),
+                "prompt": fields.get("prompt", "")[:200],
+            },
+            "timings": {"upstream_ms": took}
+            | ({"audio_s": round(clip, 2)} if clip is not None else {}),
+            **self._who(req),
+        }
         if up.status != 200:
+            self.log_call({**row, "ok": False, "error": _stt_failure(up)})
             # Not 429: upstream reads that as a spent daily allowance and stops listening.
             return json_response(503, {"error": _stt_failure(up)})
-        return json_response(200, normalise_transcript(up.body))
+        heard = normalise_transcript(up.body)
+        self.log_call({**row, "ok": True, "text": str(heard.get("text", ""))[:8000]})
+        return json_response(200, heard)
 
     async def tts(self, req: Request) -> Response:
         try:
@@ -1728,10 +1785,28 @@ class GrowBot:
             ):
                 params[key] = f"{max(lo, min(hi, float(value))):.3f}"
         url = self.config.tts_url + "/tts?" + urllib.parse.urlencode(params)
+        started = time.monotonic()
         up = await self._call(
             http_call, url, None, None, "GET", 60.0, pool=self._streams
         )
-        if up.status != 200 or not up.body:
+        took = round((time.monotonic() - started) * 1000)
+        ok = up.status == 200 and bool(up.body)
+        spoken = wav_seconds(up.body) if ok else None
+        self.log_call(
+            {
+                "kind": "tts",
+                "ok": ok,
+                "total_ms": took,
+                "model": "kokoro",
+                "error": "" if ok else f"tts HTTP {up.status} {up.why}".strip(),
+                "text": text,
+                "detail": {"voice": params.get("voice", ""), "audio_bytes": len(up.body)},
+                "timings": {"upstream_ms": took}
+                | ({"audio_s": round(spoken, 2)} if spoken is not None else {}),
+                **self._who(req),
+            }
+        )
+        if not ok:
             # Never 401/402: upstream latches the voice dead for the session on those.
             return json_response(503, {"error": "tts unavailable"})
         return Response(200, up.body, "audio/wav", [("Cache-Control", "no-store")])

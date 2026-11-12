@@ -41,6 +41,8 @@
 #      --budget caps each step's thinking; --loop runs the fast loop or the B1 fallback for
 #      this goal only. scripts/browse-bench.sh runs the six-task benchmark through this.)
 #   scripts/debug-connect.sh logs api --tail 100
+#   scripts/debug-connect.sh growbot-calls --minutes 30 --kind llm --full   # the creature's turns
+#   scripts/debug-connect.sh growbot-latency --minutes 120   # where a creature turn's time went
 #   scripts/debug-connect.sh host                      # host RAM + per-container + per-process RSS
 #   scripts/debug-connect.sh disk [--refresh]          # where the disk went: fs, docker df, project dirs
 #     (Images/containers/volumes/build cache with reclaimable bytes, and du of PROJECT_DIR one
@@ -608,6 +610,24 @@ except Exception: print("")')
     tail=200
     [ "${1:-}" = "--tail" ] && { tail="$2"; shift 2; }
     _call GET "/api/debug/logs/$svc?tail=$tail"
+    ;;
+
+  growbot-calls) # [--minutes N] [--kind llm|stt|tts] [--limit N] [--full] — the creature's call log
+    q="minutes=60"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --minutes) q="${q/minutes=60/minutes=$2}"; shift 2 ;;
+        --kind) q="$q&kind=$2"; shift 2 ;;
+        --limit) q="$q&limit=$2"; shift 2 ;;
+        --full) q="$q&full=true"; shift ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
+      esac
+    done
+    _call GET "/api/debug/growbot/calls?$q" | _pp
+    ;;
+  growbot-latency) # [--minutes N] — the call log's latency split by kind, stage, picture or not
+    m=60; [ "${1:-}" = "--minutes" ] && m="$2"
+    _call GET "/api/debug/growbot/calls/summary?minutes=$m" | _pp
     ;;
 
   host) _call GET /api/debug/host | _pp ;;   # host memory/swap/disk/load + per-container + per-process RSS

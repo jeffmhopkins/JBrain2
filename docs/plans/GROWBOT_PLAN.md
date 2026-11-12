@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** In progress · **Last verified:** 2026-11-11 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
+> **Status:** In progress · **Last verified:** 2026-11-12 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -290,10 +290,24 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
   GUI gate rewrites DESIGN.md's GrowBot screen for this (a persona list with *Open* on each, in
   place of today's per-robot *Open GrowBot* and *Open GrowBot without a robot*).
 
-**Data.** Until G4, the box stores nothing but the settings row (§2b) and the robot's device key (§3). Camera frames and transcripts pass
-through to the model and STT and are not kept. The creature's memory (G4, §2c) and the diary (G5) go
+**Data.** Until G4, the box stores nothing but the settings row (§2b) and the robot's device key (§3). Camera frames
+pass through to the model and are not kept. The creature's memory (G4, §2c) and the diary (G5) go
 through the api into Postgres under RLS with an isolation test (rule 3), and are treated as
 sensitive: they name people the camera saw.
+
+**Call log.** The owner asked (2026-11-12) for every prompt and reply kept, so the creature's
+slowness and its answers can be analysed: `app.growbot_calls` (migration 0260, owner-only RLS,
+kept a week). The model lane (`api/growbot_llm.py`) writes an `llm` row per turn after it
+ends: the request as sent to the engine with each picture replaced by its media type and
+base64 size (never the pixels), the reply rebuilt from the stream (words, thinking, tool
+calls), the persona and robot the sidecar names from the phone's session, the engine's token
+counts, and where the time went (`lock_ms`, `admit_ms`, `first_byte_ms`, `first_token_ms`, the
+engine's own `engine_prefill_ms` / `engine_decode_ms`). The sidecar posts an `stt` row (the
+transcript, the clip's length, whisper's time) and a `tts` row (the line spoken, Kokoro's time)
+to `POST /internal/growbot/calls` on a one-worker pool after the phone has its answer, dropping
+rows past 32 waiting rather than queueing without end. A failed write never fails a turn. Read
+with the debug API: `GET /api/debug/growbot/calls` and `…/calls/summary`, which splits picture
+turns from text ones (`../runbooks/DEBUG_ACCESS.md`).
 
 **The relay** is the same process, at `wss://jbrain.local:8444/d/<code>` and
 `/d/<code>-agent`, reimplementing the envelopes above plus the key check.

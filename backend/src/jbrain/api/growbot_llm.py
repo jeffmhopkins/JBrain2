@@ -16,6 +16,11 @@ pool) it takes jcode's swap lock, the box-wide one-model-at-a-time rule; on a po
 nothing swaps, so its own lock keeps a robot's one-line reply from queueing behind a long
 coding turn.
 
+Every turn is written to the call log (`jbrain.growbot.calls`, migration 0260) once its reply
+has passed through: the request as sent, the reply, and where the time went (the lock, the
+admission, the engine's first byte and first word, its prefill and decode), so a slow creature
+can be read stage by stage from the debug API. The write runs after the turn, off its path.
+
 Authenticated by `growbot.token` (api/internal_auth.py) and mounted under `/internal`, which
 Caddy never routes. Unlike jcode, the box picks the reasoning level: the creature answers in
 a sentence many times a minute, and a hybrid reasoner left at its template default thinks for
@@ -24,10 +29,12 @@ thousands of tokens first.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
 import re
+import time
 from typing import TYPE_CHECKING, Any, Final
 
 import httpx
@@ -35,6 +42,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from jbrain.api.internal_auth import require_growbot
+from jbrain.db.session import SessionContext
+from jbrain.growbot.calls import CallLog, CallRecord, ReplyCollector, redact_images
 from jbrain.llm import engine as engines
 from jbrain.llm import gpu_guard, local_catalog
 from jbrain.llm.kv_pool_guard import KvPoolBusyError
@@ -91,6 +100,44 @@ _DEFAULT_LEVEL: Final = "none"
 # would let the creature's page make the box request any address it names (SSRF from the box).
 _INLINE_IMAGE: Final = re.compile(r"^data:image/[A-Za-z0-9.+-]+;base64,")
 _PART_TYPES: Final = frozenset({"text", "image_url"})
+# Who a turn was for, as the sidecar names it from the phone's session; only for the log.
+_PERSONA_RE: Final = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_ROBOT_RE: Final = re.compile(r"^gb-[A-Za-z0-9]{1,32}$")
+_SYSTEM_OWNER: Final = SessionContext(principal_kind="owner")
+# The log writes in flight, held so the loop does not collect one before it lands.
+_WRITES: set[asyncio.Task[None]] = set()
+
+
+def _header(request: Request, name: str, pattern: re.Pattern[str]) -> str:
+    value = request.headers.get(name, "")
+    return value if pattern.fullmatch(value) else ""
+
+
+def _quietly(fn: Any, *args: Any) -> None:
+    """Run a call-log step that must never cut the reply: before this log the relay passed
+    the engine's bytes through untouched, and an odd chunk still must."""
+    try:
+        fn(*args)
+    except Exception:  # noqa: BLE001 - the log never fails a turn
+        log.warning("growbot-llm call log could not read the reply", exc_info=True)
+
+
+def log_call(request: Request, rec: CallRecord) -> None:
+    """Write `rec` to the call log in the background: a turn never waits on its own log line,
+    and a failed write costs a warning, never the turn."""
+    calls: CallLog | None = getattr(request.app.state, "growbot_calls", None)
+    if calls is None:
+        return
+
+    async def write() -> None:
+        try:
+            await calls.record(_SYSTEM_OWNER, rec)
+        except Exception:  # noqa: BLE001 - the log never fails a turn
+            log.warning("growbot-llm call log write failed", exc_info=True)
+
+    task = asyncio.get_running_loop().create_task(write())
+    _WRITES.add(task)
+    task.add_done_callback(_WRITES.discard)
 
 
 def _unsafe_part(messages: list[Any]) -> str | None:
@@ -188,6 +235,7 @@ async def list_models(request: Request) -> Response:
 async def chat_completions(request: Request) -> Response:
     """Forward the app's chat completion to the on-box gateway, admitted by residency, held
     to the GrowBot slot and streamed back verbatim (SSE when the body sets `stream`)."""
+    started = time.monotonic()
     gateway_url = getattr(request.app.state.settings, "local_llm_url", "") or ""
     if not gateway_url:
         raise HTTPException(status_code=503, detail="on-box LLM is not configured")
@@ -232,6 +280,26 @@ async def chat_completions(request: Request) -> Response:
     lock = getattr(state, "growbot_llm_lock" if pooled else "jcode_llm_swap_lock", None)
     factory = getattr(state, "growbot_llm_client_factory", None) or httpx.AsyncClient
     stream = bool(payload.get("stream"))
+    logged, images, image_bytes = redact_images(payload)
+    rec = CallRecord(
+        kind="llm",
+        ok=True,
+        total_ms=0,
+        persona_id=_header(request, "x-growbot-persona", _PERSONA_RE) or None,
+        robot=_header(request, "x-growbot-robot", _ROBOT_RE),
+        model=served,
+        images=images,
+        image_bytes=image_bytes,
+        request={**logged, "reasoning_level": level},
+    )
+    collector = ReplyCollector(stream, started)
+
+    def mark(stage: str) -> None:
+        rec.timings[stage] = round((time.monotonic() - started) * 1000)
+
+    def failed(why: str) -> None:
+        rec.ok = False
+        rec.error = rec.error or why
 
     async def relay() -> AsyncIterator[bytes]:
         nonlocal prompt_tokens
@@ -243,6 +311,7 @@ async def chat_completions(request: Request) -> Response:
         # error: the app shows a cut stream as a broken brain and retries blind.
         try:
             async with guard:
+                mark("lock_ms")
                 if residency is not None:
                     try:
                         admitted = await residency.ensure_room(served)
@@ -250,6 +319,7 @@ async def chat_completions(request: Request) -> Response:
                         # A deliberate refusal ends the turn here, before the POST that would
                         # make the gateway load the model unadmitted.
                         log.warning("growbot-llm refused model=%s: %s", served, exc)
+                        failed(f"refused: {exc}")
                         yield error_bytes(
                             _server_error(str(exc), "model_unavailable"), stream=stream
                         )
@@ -262,7 +332,8 @@ async def chat_completions(request: Request) -> Response:
                     if admitted and admitted != served:
                         payload["model"] = admitted
                         prompt_tokens = fit_openai_request(admitted, payload, GROWBOT_ROLE)
-                model = str(payload["model"])
+                mark("admit_ms")
+                model = rec.model = str(payload["model"])
                 # Judged on the model actually sent, after admission, as jcode's proxy does.
                 _apply_level(payload, level, model)
                 async with (
@@ -270,24 +341,44 @@ async def chat_completions(request: Request) -> Response:
                     client.stream("POST", "/chat/completions", json=payload) as upstream,
                 ):
                     status = getattr(upstream, "status_code", 200)
+                    mark("first_byte_ms")
                     if status >= 400:
                         # The 200 is already out; say it in the body, which the sidecar and
                         # the app read as a failed turn rather than as the creature's words.
                         log.warning("growbot-llm gateway answered %s model=%s", status, model)
+                        failed(f"gateway HTTP {status}")
                         body = _server_error("the on-box model refused the turn", "gateway_error")
                         yield error_bytes(body, stream=stream)
                         return
                     async for chunk in upstream.aiter_raw():
+                        _quietly(collector.feed, chunk)
                         yield chunk
         except SlotCapError as exc:
+            failed(f"slot cap: {exc}")
             yield error_bytes(context_length_exceeded(exc), stream=stream)
         except KvPoolBusyError as exc:
+            failed(f"pool busy: {exc}")
             yield error_bytes(pool_busy(exc), stream=stream)
         except httpx.HTTPError as exc:
             log.warning("growbot-llm gateway unreachable: %s", exc)
+            failed(f"gateway unreachable: {exc}")
             body = _server_error("the on-box model did not answer", "gateway_unavailable")
             yield error_bytes(body, stream=stream)
+        except (asyncio.CancelledError, GeneratorExit):
+            # The phone went away mid-reply (the server cancels the body); the partial turn
+            # is still worth a row, since a hung-up turn is often the slow one.
+            failed("phone disconnected")
+            raise
+        except Exception as exc:
+            failed(f"proxy error: {type(exc).__name__}")
+            raise
         finally:
+            # The row first, all synchronous: inside a cancelled scope every await below
+            # raises again, so logging after `aclose` would lose exactly the hung-up turns.
+            _quietly(collector.finish)
+            _quietly(collector.fill, rec)
+            rec.total_ms = round((time.monotonic() - started) * 1000)
+            log_call(request, rec)
             await client.aclose()
 
     media = "text/event-stream" if stream else "application/json"
