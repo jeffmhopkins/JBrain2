@@ -330,9 +330,9 @@ export function GrowbotPersonaPage({
     const wants = (soul.goals?.wants ?? []).map(words).filter(Boolean);
     // One line each, as the settings rows above show theirs; the sheet holds the whole of it.
     const memory: Record<MemoryId, string> = {
-      identity: soul.identity || "Not written yet — it writes this as it wakes up.",
-      bond: soul.identityCore || "Not written yet — it writes this once, in a dream.",
-      scratch: `${soul.scratch?.state || "nothing yet"}${mood ? ` · feeling ${mood}` : ""}${
+      identity: asText(soul.identity) || "Not written yet — it writes this as it wakes up.",
+      bond: asText(soul.identityCore) || "Not written yet — it writes this once, in a dream.",
+      scratch: `${asText(soul.scratch?.state) || "nothing yet"}${mood ? ` · feeling ${mood}` : ""}${
         rules.length ? ` · ${rules.length} rule${rules.length === 1 ? "" : "s"}` : ""
       }`,
       goals: [`Calls itself ${me}`, ...wants].join(" · "),
