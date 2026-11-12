@@ -145,6 +145,25 @@
   } catch (e) {}
   var lean = 0;
 
+  /* Whether its voice is sounding right now. Upstream's speakingUntil guards the ear, not the
+     mouth: an estimate at 140 ms a character dated when the line is queued, before Kokoro has
+     made it. A slow synth or a long line outlived it and the mouth stopped mid-sentence, and a
+     quick line left it moving in silence (owner, 2026-11-12: the mouth must move whenever it
+     talks). So the mouth asks the players: the Web Audio route's line, fishAud, a song, or the
+     device synth, which counts only inside the guard because iOS can leave `speaking` stuck
+     true. Only an engine with no player to ask (the larynx) falls back to the guard alone. */
+  function voiced(guard) {
+    var w = window, now = Date.now();
+    if (typeof w._songUntil === "number" && now < w._songUntil) return true;
+    var ln = w._fishWaLn;
+    if (ln && ln.st === 1) return true;
+    var a = w.fishAud;
+    if (a && !a.paused && !a.ended && /^blob:/.test(String(a.src || ""))) return true;
+    var ss = w.speechSynthesis;
+    if (ss && ss.speaking && !ss.paused && guard) return true;
+    return w.vtEngine === "fish" || w.vtEngine === "device" ? false : !!guard;
+  }
+
   function shade(hex, f) {
     var n = parseInt(hex.slice(1), 16);
     return "rgb(" + Math.round(((n >> 16) & 255) * f) + "," + Math.round(((n >> 8) & 255) * f) + "," + Math.round((n & 255) * f) + ")";
@@ -357,7 +376,7 @@
     c.lineWidth = 9 * s;
     if (d.mouth === "o") {
       c.beginPath();
-      c.ellipse(0, my + 18 * s, 18 * s, (20 + d.talk * 10) * s, 0, 0, Math.PI * 2);
+      c.ellipse(0, my + 18 * s, (18 - d.talk * 4) * s, (20 + d.talk * 18) * s, 0, 0, Math.PI * 2);
       c.fill();
     } else {
       /* The mouth opens OUT of the smile line, so the smile becomes its bottom lip and the gape
@@ -475,8 +494,11 @@
     startle *= 0.94;
     if (s.touchT && s.touchT !== lastTouch) { lastTouch = s.touchT; blush = 1; }
     blush *= 0.97;
-    var talking = s.talking && !s.dreaming;
-    var syll = talking ? Math.max(0, Math.sin(s.t / 85) * 0.6 + Math.sin(s.t / 37) * 0.4) : 0;
+    /* Asleep too: a voice that sounds moves the mouth whatever the face is doing. The syllables
+       never fully close mid-line, so even a 15 fps frame or a mouth that barely opens (the
+       robot's "o") reads as speech rather than a twitch. */
+    var talking = voiced(s.talking);
+    var syll = talking ? 0.2 + 0.8 * Math.max(0, Math.sin(s.t / 85) * 0.6 + Math.sin(s.t / 37) * 0.4) : 0;
     talk += (syll - talk) * 0.45;
 
     /* Upstream's openness runs 0.06-1.3 with the emotion folded in; here the lid shape carries
@@ -550,6 +572,8 @@
       seen = { x: Math.max(-1, Math.min(1, x)), y: Math.max(-1, Math.min(1, y)), at: Date.now() };
     },
     colour: function () { return BODY; },
+    /* Whether the mouth would move now, given upstream's speakingUntil guard; for the tests. */
+    voiced: voiced,
     /* What each face's lids leave open at the eye's centreline, per emotion, 0-1: the pupil's
        guarantee, read by the site tests. */
     openings: function () {
