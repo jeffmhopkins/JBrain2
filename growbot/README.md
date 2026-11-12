@@ -335,6 +335,10 @@ paired from JBrain.
 A persona also wears its own face (`growbot_personas.face`, lantern by default): the pull and
 the poll carry it, `growbot-box.js` hands it to `growbot-face.js` before the face loads, and a
 `gb-box-state` event with a new one changes the face where the creature stands.
+Every face's mouth moves while its voice is actually sounding, whatever the mood: the face asks
+the players (the Kokoro line on Web Audio or `fishAud`, a song, the device synth) rather than
+upstream's `speakingUntil`, which is the ear's queue-time estimate and both outlived and fell
+short of real lines.
 
 ### Settings (migration 0263)
 
