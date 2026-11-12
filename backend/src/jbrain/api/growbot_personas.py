@@ -60,7 +60,7 @@ Cid = Annotated[str, Path(pattern=_UUID)]
 Mid = Annotated[str, Path(pattern="^r[0-9a-f]{1,32}$")]
 View = Annotated[int, Path(ge=0, lt=memories.MAX_VIEWS)]
 Code = Annotated[str, Path(pattern=_CODE)]
-Region = Annotated[str, Path(pattern="^(" + "|".join(souls.REGIONS) + ")$")]
+Region = Annotated[str, Path(pattern="^(" + "|".join(souls.EDITABLE) + ")$")]
 
 # What the region labels read as in an automatic checkpoint's name (the screen's words).
 _REGION_LABEL = {
@@ -70,6 +70,11 @@ _REGION_LABEL = {
     "dream": "dreams",
     "harness": "thinking",
     "body": "body",
+    "identity": "who it is",
+    "identityCore": "the bond line",
+    "scratch": "right now",
+    "goals": "wants",
+    "log": "the diary",
 }
 
 
@@ -281,7 +286,10 @@ async def _written(
     if done == "stale":
         raise HTTPException(
             status_code=409,
-            detail="It changed on its phone while you were editing. Nothing was saved — try again.",
+            detail=(
+                "It changed on its phone while you were editing. Nothing was saved — close this "
+                "and open it again to see what it wrote."
+            ),
         )
     persona, cp = done
     return WrittenOut(
@@ -324,8 +332,12 @@ class RenameIn(BaseModel):
 
 
 class RegionIn(BaseModel):
-    # Text for persona and dream, {name, description} for meta, an object for the rest.
+    # Text for persona, dream, identity and identityCore; {name, description} for meta; a list
+    # of {t, txt} for log; an object for the rest.
     value: Any
+    # The version the editor loaded. A memory edit replaces lists the creature keeps adding to,
+    # so one made while the phone wrote meanwhile is refused (409) rather than dropping its lines.
+    base: int | None = None
 
 
 class CheckpointIn(BaseModel):
@@ -405,7 +417,8 @@ async def edit_region(
     if region == "meta":
         name = _name(str(soul["meta"]["name"]))
     before = (f"Before editing {_REGION_LABEL[region]}", "made before an edit")
-    return await _written(request, ctx, pid, soul, before, name, p.version)
+    expect = p.version if body.base is None else body.base
+    return await _written(request, ctx, pid, soul, before, name, expect)
 
 
 @router.post("/personas/{pid}/duplicate")

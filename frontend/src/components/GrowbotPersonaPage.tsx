@@ -19,6 +19,7 @@ import { useBackLayer } from "../backLayers";
 import {
   FACES,
   MEMORY,
+  type MemoryId,
   type Places,
   REGIONS,
   type RegionInfo,
@@ -39,6 +40,7 @@ import {
 import { Dialog } from "./Dialog";
 import { GrowbotCheckpoints } from "./GrowbotCheckpoints";
 import { GrowbotMemoryGrid } from "./GrowbotMemories";
+import { GrowbotMemoryEditor } from "./GrowbotMemoryEditor";
 import { GrowbotTabs, type Say } from "./GrowbotPersonaSheets";
 import { Sheet } from "./Sheet";
 import { useArm } from "./growbotArm";
@@ -62,6 +64,10 @@ interface Props {
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+function isObject(v: unknown): boolean {
+  return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
 function asText(v: unknown): string {
@@ -93,6 +99,7 @@ export function GrowbotPersonaPage({
   const [error, setError] = useState("");
   const [ptab, setPtab] = useState<PTab>("soul");
   const [editing, setEditing] = useState<RegionInfo | null>(null);
+  const [remembering, setRemembering] = useState<MemoryId | null>(null);
   const [renaming, setRenaming] = useState(false);
   // The face being saved, shown picked while it is.
   const [facing, setFacing] = useState<GrowbotFace | null>(null);
@@ -399,7 +406,7 @@ export function GrowbotPersonaPage({
         </div>
         <Floor />
         <div className="gb-sec-h">
-          What it remembers<span className="r">read-only</span>
+          What it remembers<span className="r">tap Edit to correct</span>
         </div>
         <section className="gb-card">
           {MEMORY.map((m) => (
@@ -407,14 +414,27 @@ export function GrowbotPersonaPage({
               <div className="gb-rh">
                 <h3>{m.label}</h3>
                 <span className="gb-up">{m.up}</span>
+                {/* Before it first wakes, the creature's seed fills these in on the phone. */}
+                {(m.id === "identity" ||
+                  m.id === "bond" ||
+                  (m.up === "log" ? Array.isArray(soul.log) : isObject(soul[m.up]))) && (
+                  <button
+                    type="button"
+                    className="gb-linkbtn"
+                    aria-label={`Edit ${m.label.toLowerCase()}`}
+                    onClick={() => setRemembering(m.id)}
+                  >
+                    Edit
+                  </button>
+                )}
               </div>
               {memory[m.id]}
             </div>
           ))}
         </section>
         <p className="gb-hint dim">
-          {me} writes these itself, as it goes and in its dreams, so they're read-only here. To take
-          one back, restore a checkpoint.
+          {me} writes these itself, as it goes and in its dreams, and goes on from whatever you
+          correct. Every edit saves a checkpoint first.
         </p>
       </>
     );
@@ -621,6 +641,26 @@ export function GrowbotPersonaPage({
           onClose={() => setEditing(null)}
           onSaved={(out) => {
             setEditing(null);
+            took(out);
+            const cp = out.checkpoint;
+            say(
+              `Saved.${cp ? ` “${cp.name}” is in checkpoints if you want it back.` : ""}${live}`,
+              cp ? { undo: undoTo(cp) } : undefined,
+            );
+          }}
+        />
+      )}
+
+      {remembering && detail && (
+        <GrowbotMemoryEditor
+          p={p}
+          soul={soul}
+          version={detail.version}
+          which={remembering}
+          openOn={p.phone ? onPhone(p.phone, pl) : null}
+          onClose={() => setRemembering(null)}
+          onSaved={(out) => {
+            setRemembering(null);
             took(out);
             const cp = out.checkpoint;
             say(

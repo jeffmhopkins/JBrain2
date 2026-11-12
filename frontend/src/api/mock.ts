@@ -691,6 +691,11 @@ const MOCK_GB_LABEL: Record<string, string> = {
   dream: "dreams",
   harness: "thinking",
   body: "body",
+  identity: "who it is",
+  identityCore: "the bond line",
+  scratch: "right now",
+  goals: "wants",
+  log: "the diary",
 };
 
 function mockGbPersonas(path: string, method: string, init?: RequestInit): Response | null {
@@ -777,6 +782,26 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
       }
       if (region === "persona") soul.persona = { constitution: value };
       else soul.dream = { system_prompt: value };
+    } else if (region === "identity") {
+      const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+      if (text.length < 20) {
+        return json(
+          {
+            detail:
+              "It needs at least 20 characters, or the creature starts over from its seed. Nothing was saved.",
+          },
+          422,
+        );
+      }
+      soul.identity = text;
+      soul.identityAt = Date.now();
+    } else if (region === "identityCore") {
+      soul.identityCore = typeof value === "string" ? value.trim() : "";
+      soul.identityAt = Date.now();
+    } else if (region === "scratch" || region === "goals") {
+      soul[region] = { ...(soul[region] as object), ...(value as object) };
+    } else if (region === "log" && Array.isArray(value)) {
+      soul.log = value as { t: number; txt: string }[];
     } else if (region === "meta") {
       const v = (value ?? {}) as { name?: string; description?: string };
       if (!v.name?.trim()) return json({ detail: "Give it a name. Nothing was saved." }, 422);

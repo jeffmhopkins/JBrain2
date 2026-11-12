@@ -731,6 +731,82 @@ describe("GrowbotScreen a persona's page", () => {
     expect(s.calls.some((c) => c.path.endsWith(`/checkpoints/${made.id}/restore`))).toBe(true);
   });
 
+  it("corrects who it is from what it remembers, refusing one too short to keep", async () => {
+    const made = cp({
+      id: "00000000-0000-4000-8000-00000000c00a",
+      name: "Before editing who it is",
+    });
+    const s = serve(
+      UP,
+      pageRoutes((path, init) =>
+        path.endsWith("/regions/identity") && init?.method === "PUT"
+          ? json({ persona: detail(), checkpoint: made })
+          : null,
+      ),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("button", { name: "Edit who it is" }));
+    const editor = screen.getByRole("dialog", { name: "Who it is — Sprout" });
+    const box = within(editor).getByRole("textbox");
+    expect((box as HTMLTextAreaElement).value).toBe(
+      "I am Sprout. I live on the desk by the window.",
+    );
+    fireEvent.change(box, { target: { value: "I am Pip." } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Save" }));
+    expect(within(editor).getByText(/It needs at least 20 characters/)).toBeTruthy();
+    expect(s.calls.some((c) => c.method === "PUT")).toBe(false);
+    fireEvent.change(box, { target: { value: "I am Pip. I live in the garden with Quorra." } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Save" }));
+    expect(
+      await screen.findByText(/^Saved\. “Before editing who it is” is in checkpoints/),
+    ).toBeTruthy();
+    expect(s.calls.find((c) => c.method === "PUT")?.body).toEqual({
+      value: "I am Pip. I live in the garden with Quorra.",
+      base: 1,
+    });
+  });
+
+  it("corrects what it wants and its diary, line by line", async () => {
+    const s = serve(
+      UP,
+      pageRoutes((path, init) =>
+        /\/regions\/(goals|log)$/.test(path) && init?.method === "PUT"
+          ? json({ persona: detail(), checkpoint: null })
+          : null,
+      ),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("button", { name: "Edit wants" }));
+    let editor = screen.getByRole("dialog", { name: "Wants — Sprout" });
+    fireEvent.change(within(editor).getByLabelText("Calls itself"), { target: { value: "Fish" } });
+    const wants = within(editor).getByLabelText("Wants");
+    fireEvent.change(wants, { target: { value: "a\nb\nc\nd\ne" } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Save" }));
+    expect(within(editor).getByText(/That's 5 wants; the most it keeps is 4/)).toBeTruthy();
+    fireEvent.change(wants, { target: { value: " walk to Tamsin \n\nfind the kettle" } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(s.calls.find((c) => c.path.endsWith("/regions/goals"))?.body).toEqual({
+      value: { selfName: "Fish", wants: ["walk to Tamsin", "find the kettle"] },
+      base: 1,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit diary" }));
+    editor = screen.getByRole("dialog", { name: "Diary — Sprout" });
+    fireEvent.change(within(editor).getByDisplayValue("Saw the blue mug again."), {
+      target: { value: "" },
+    });
+    fireEvent.click(within(editor).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(s.calls.find((c) => c.path.endsWith("/regions/log"))?.body).toEqual({
+        value: [],
+        base: 1,
+      }),
+    );
+  });
+
   it("refuses a bad JSON region in place, and shows the box's refusal word for word", async () => {
     const s = serve(
       UP,

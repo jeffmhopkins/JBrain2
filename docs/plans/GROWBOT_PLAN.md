@@ -246,8 +246,12 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
 - **Checkpoints and seeds (owner, 2026-11-10): *"from the jbrain pwa review all the saved
   files, the soul file etc. And memories. And then if I want I can create a set point and I can
   use that as a restore point. And then we can make different personas that we can flash not
-  just the default."*** The PWA shows each persona's soul and its visual memories. The memory surfaces and goals are
-  read-only, since the creature writes them; the config regions (persona, expression, meta,
+  just the default."*** The PWA shows each persona's soul and its visual memories. The creature writes its memory
+  surfaces and goals itself, and the owner may correct each of them too (owner, 2026-11-12:
+  *"basically all these should be editable by me"*): who it is, the bond line, right now (state
+  and rules), wants (its own name and up to four wants) and the diary, each capped and cleaned
+  where `soul.js` caps it, checkpointed first, and the identity and bond line stamped
+  `identityAt` so the phone's merge keeps them; its dreams go on from the correction. The config regions (persona, expression, meta,
   dream, harness, body) are editable (owner, 2026-11-10: *"a way to edit personas files and
   make backups"*), each save checkpointed first and passed through the same
   `sanitizeSoulCfg` and size cap as an import. A

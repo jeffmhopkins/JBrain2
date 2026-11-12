@@ -173,13 +173,121 @@ def test_editing_a_text_region_replaces_only_its_text() -> None:
         ("expression", "[1]", "one { … } block"),
         ("harness", [1], "one { … } block"),
         ("body", {"x": "y" * 70_000}, "too big"),
-        ("identity", "I am new", "can't be edited here"),
-        ("log", [], "can't be edited here"),
+        ("identity", "I am new", "at least 20 characters"),
+        ("identity", 7, "has to be text"),
+        ("identity", "x" * 1601, "1601 characters"),
+        ("identityCore", "x" * 241, "241 characters"),
+        ("identityCore", None, "has to be text"),
+        ("scratch", "napping", "one { … } block"),
+        ("scratch", {"state": 3, "rules": []}, "has to be text"),
+        ("scratch", {"state": "up", "rules": "be kind"}, "list of lines"),
+        ("scratch", {"state": "up", "rules": [f"rule {i}" for i in range(25)]}, "25 rules"),
+        ("goals", {"selfName": "Pip", "wants": ["a", "b", "c", "d", "e"]}, "5 wants"),
+        ("goals", {"selfName": None, "wants": []}, "name has to be text"),
+        ("log", {"t": 1, "txt": "x"}, "list of at most 1000"),
+        ("log", [{"t": "noon", "txt": "x"}], "a time and its words"),
+        ("log", [{"t": True, "txt": "x"}], "a time and its words"),
+        ("log", [{"t": 1}], "A diary line has to be text"),
+        ("log", [{"t": 10**400, "txt": "x"}], "a time and its words"),
+        ("log", [{"t": 1e300, "txt": "x"}], "a time and its words"),
+        ("log", [{"t": -1, "txt": "x"}], "a time and its words"),
+        ("log", [{"t": 1, "txt": "nul\x00"}], "can't keep"),
+        ("identityCore", "half an emoji \ud83d", "can't keep"),
+        ("goals", {"selfName": "Pip", "wants": ["x" * 81]}, "most it keeps is 80"),
+        ("goals", {"selfName": "Pip", "wants": ["\U0001f41f" * 41]}, "82 characters"),
+        ("mood", {"v": 1}, "can't be edited here"),
     ],
 )
 def test_a_bad_edit_is_refused_with_words(region: str, value: object, words: str) -> None:
     with pytest.raises(souls.SoulError, match=words):
         souls.edit_region(_grown(), region, value)
+
+
+def test_editing_who_it_is_replaces_the_identity_and_stamps_it_newer() -> None:
+    soul = _grown() | {"identityAt": 5}
+    out = souls.edit_region(soul, "identity", "  I am Pip.\n  I love   the garden.  ")
+    assert out["identity"] == "I am Pip. I love the garden."
+    assert out["identityAt"] > 5
+    assert out["identityCore"] == soul["identityCore"]
+    assert soul["identityAt"] == 5
+
+
+def test_editing_the_bond_line_may_empty_it_and_stamps_it_newer() -> None:
+    out = souls.edit_region(_grown(), "identityCore", "  My person is Jeff. ")
+    assert out["identityCore"] == "My person is Jeff." and out["identityAt"] > 0
+    assert souls.edit_region(_grown(), "identityCore", " ")["identityCore"] == ""
+
+
+def test_editing_right_now_keeps_its_mood_and_reflexes() -> None:
+    scratch = {"state": "x", "rules": [], "mood": {"v": 0.3, "e": 0.5}, "reflexes": ["r"]}
+    soul = _grown() | {"scratch": scratch}
+    out = souls.edit_region(
+        soul,
+        "scratch",
+        {"state": " sitting  still ", "rules": ["stay on the desk", "  ", "x" * 90]},
+    )
+    assert out["scratch"] == {
+        "state": "sitting still",
+        "rules": ["stay on the desk", "x" * 90],
+        "mood": {"v": 0.3, "e": 0.5},
+        "reflexes": ["r"],
+    }
+
+
+def test_editing_wants_renames_it_and_keeps_its_other_goals() -> None:
+    soul = _grown() | {"goals": {"selfName": "Sprout", "wants": ["w"], "longing": 0.4}}
+    out = souls.edit_region(
+        soul, "goals", {"selfName": ' Fish "the" <Great> ', "wants": ["walk to Tamsin", ""]}
+    )
+    assert out["goals"] == {
+        "selfName": "Fish the Great",
+        "wants": ["walk to Tamsin"],
+        "longing": 0.4,
+    }
+
+
+def test_editing_the_diary_keeps_each_lines_flags_drops_emptied_ones_and_sorts() -> None:
+    soul = _grown() | {"log": [{"t": 1, "txt": "a", "amb": 1}, {"t": 2, "txt": "b", "amb": 0}]}
+    out = souls.edit_region(
+        soul, "log", [{"t": 5, "txt": "new"}, {"t": 2, "txt": " "}, {"t": 1, "txt": " A  fixed "}]
+    )
+    assert out["log"] == [{"t": 1, "txt": "A fixed", "amb": 1}, {"t": 5, "txt": "new"}]
+
+
+def test_a_creature_that_has_not_woken_keeps_its_seed_until_it_writes_these() -> None:
+    fresh = souls.fresh("Pip")
+    for region, value in [
+        ("goals", {"selfName": "Pip", "wants": []}),
+        ("scratch", {"state": "up", "rules": []}),
+        ("log", []),
+    ]:
+        with pytest.raises(souls.SoulError, match="hasn't written this yet"):
+            souls.edit_region(fresh, region, value)
+    assert souls.edit_region(fresh, "identity", "I am Pip and I like boats.")["identity"]
+    with pytest.raises(souls.SoulError, match="hasn't written this yet"):
+        souls.edit_region(fresh | {"scratch": None}, "scratch", {"state": "up", "rules": []})
+
+
+def test_rules_already_past_the_cap_do_not_block_editing_right_now() -> None:
+    rules = [f"rule {i}" for i in range(30)]
+    soul = _grown() | {"scratch": {"state": "x", "rules": rules}}
+    out = souls.edit_region(soul, "scratch", {"state": "napping", "rules": rules})
+    assert out["scratch"]["state"] == "napping" and len(out["scratch"]["rules"]) == 30
+
+
+def test_a_diary_line_the_editor_cannot_show_is_kept_and_a_bad_stored_time_never_breaks_it() -> (
+    None
+):
+    odd = [{"t": [1], "txt": "list time"}, {"t": "noon", "txt": "string time"}, {"t": 3}]
+    soul = _grown() | {"log": [*odd, {"t": 2, "txt": "b"}]}
+    out = souls.edit_region(soul, "log", [{"t": 2, "txt": "B"}])
+    assert {"t": 2, "txt": "B"} in out["log"] and len(out["log"]) == 4
+    assert all(e in out["log"] for e in odd)
+
+
+def test_its_own_name_is_cut_like_the_phone_cuts_it_never_through_an_emoji() -> None:
+    out = souls.edit_region(_grown(), "goals", {"selfName": "a" + "\U0001f41f" * 20, "wants": []})
+    assert out["goals"]["selfName"] == "a" + "\U0001f41f" * 15
 
 
 def test_editing_meta_and_the_json_regions() -> None:
