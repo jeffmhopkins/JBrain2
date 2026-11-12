@@ -9703,7 +9703,7 @@ function bootOwned(){
         if(!pbDevTok){ if(tries>0) setTimeout(function(){ _wgAdoptFill(tries-1); },1500); return; }
         fetch("/api/device",{headers:{"x-pb-device":pbDevTok},cache:"no-store"}).then(function(r){ return r.json(); }).then(function(j){
           try{ if(typeof gbStoreGuardFrom==="function") gbStoreGuardFrom(j); }catch(e){}   // 0928 STORAGE GUARD: an adopted (or paid-for, R2: funded on v2 before graduating) creature asks the browser to keep him, once per device, even if the gate is already down
-          var a=$("wgAdopt"); if(!a||!window._wakeGateUp) return;
+          var a=$("wgAdopt"); if(!a||!window._wakeGateUp||window.__gbBox) return;
           if(j&&j.hasPass){ a.innerHTML='<span style="color:#7CFC9E">🏠 adopted, i\'m yours</span><br><button id="wgMembers" style="margin-top:6px;font:11px ui-monospace,monospace;padding:7px 14px;border-radius:7px;border:1px solid #2f6b46;background:#0a0f14;color:#7CFC9E;cursor:pointer">members area →</button><br><button id="wgSoulDl" style="margin-top:6px;font:10px ui-monospace,monospace;padding:5px 10px;border-radius:6px;border:1px solid #3a3a5e;background:#0a0f14;color:#8f86c0;cursor:pointer">💾 download his soul backup</button>';
             $("wgMembers").addEventListener("click",function(){ location.href="/members"; });
             /* 0802 (Brit + a tester): soul download WITHOUT waking — but ONLY for adopters, so it
@@ -11256,7 +11256,7 @@ function wake(e){ var t=e&&e.type, pd=t==="pointerdown";
    var ae=document.activeElement; if(ae&&g("gbk").contains(ae)&&(ae===g("gbkTxt")||ae!==ptrF)){ wake(); return; }
    if(document.body.classList.contains("editing")){ wake(); return; }
    if(g("gbkBrainP")&&g("gbkBrainP").style.display==="flex"){ wake(); return; }
-   setFade(true); },9000); }
+   },9000); }
 /* order matters: wake is registered BEFORE the once-setter, so the very first pointerdown
    never arms the 9s clock. On a returning creature that first tap is the host's wake gate,
    above this bar, which is not even visible yet; the first tap on the visible design is the

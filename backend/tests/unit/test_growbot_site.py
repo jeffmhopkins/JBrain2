@@ -106,6 +106,38 @@ def test_the_creature_shows_what_it_is_doing_top_left() -> None:
     assert "JSON.stringify({ t: 'act', rid, steps, mode })" in transport
 
 
+def test_the_strip_keeps_what_is_under_way_at_the_left_edge() -> None:
+    """Running chips sort ahead of finished ones each render, and the strip drops below an
+    overlay's logo bar instead of covering it."""
+    strip = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
+    assert "if (ao !== bo) return ao ? -1 : 1;" in strip
+    assert "return ao ? b.start - a.start : b.end - a.end;" in strip
+    assert strip.index("order(t);") < strip.index(
+        "for (var i = 0; i < entries.length; i++) {\n      var e"
+    )
+    assert 'document.querySelectorAll(".gb-entry-nav")' in strip
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '<nav class="gb-entry-nav"' in creature
+
+
+def test_the_bottom_bar_never_fades() -> None:
+    """Brain, pause, mute and the type box stay on screen (owner, 2026-11-12)."""
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "setFade(true)" not in creature
+    assert "function setFade(f){" in creature
+
+
+def test_the_wake_gate_shows_no_store_card_on_the_box() -> None:
+    """Upstream's adopted / members / adopt-me card is its store; the box has none."""
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "if(!a||!window._wakeGateUp||window.__gbBox) return;" in creature
+    assert creature.index("gbStoreGuardFrom(j); }catch(e){}   // 0928") < creature.index(
+        "||window.__gbBox) return;"
+    )
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.__gbBox = true;" in shim
+
+
 def test_the_pixel_eyes_give_way_only_while_the_new_face_is_on() -> None:
     """Upstream's eyes are skipped, not deleted: ?face=pixel or a throw brings them back."""
     creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
