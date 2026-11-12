@@ -1768,22 +1768,21 @@ def test_go_to_sleep_lets_it_sleep_instead_of_seeking_sleep(said: str, goal: str
 
 
 def test_leave_to_sleep_ends_what_it_was_doing() -> None:
-    """A seek still under way when its person lets it sleep ends, after the reply that took the
-    leave, so the dream is not held back as "activity" until the leave lapses."""
+    """A seek still under way when its person lets it sleep ends as the dream is next tried, so
+    the dream is not held back as "activity" until the leave lapses; a request of theirs that is
+    queued, or sent after the goodnight, outranks the leave."""
     got = _sleep_page(
-        "var timers=[],ended=[],seekGoal='my keys',actOn=true,mimicOn=false,actGen=0;"
-        "var inFlight=false;"
-        "setTimeout=function(f){timers.push(f);};"
-        "function endActivity(r){ended.push(r);seekGoal='';actOn=false;actGen++;}"
-        "gbSleepGrant();var before=ended.slice();timers.shift()();"
-        "_gbSleepOK=true;gbSleepGrant();timers.shift()();var idle=ended.slice();"
-        # Words queued behind the goodnight start a new seek in the same handler: they win.
-        "seekGoal='the remote';actOn=true;gbSleepGrant();seekGoal='my phone';inFlight=true;"
-        "timers.shift()();"
-        "console.log(JSON.stringify({before,idle,ended,seek:seekGoal}));"
+        "var ended=[],seekGoal='my keys',actOn=true,mimicOn=false,pendingUser=null,_humanReqN=3;"
+        "function endActivity(r){ended.push(r);seekGoal='';actOn=false;}"
+        "var r={};gbSleepEnds();r.unasked=ended.length;"
+        "gbSleepGrant();gbSleepEnds();r.slept=ended.slice();"
+        "seekGoal='the remote';actOn=true;pendingUser='find the remote';gbSleepEnds();"
+        "r.queued=ended.length;pendingUser=null;_humanReqN=4;gbSleepEnds();r.asked=ended.length;"
+        "gbSleepGrant();gbSleepEnds();r.again=ended.length;"
+        "console.log(JSON.stringify(r));"
     )
-    assert got["before"] == [] and got["idle"] == ["sleep"]
-    assert got["ended"] == ["sleep"] and got["seek"] == "my phone"
+    assert got["unasked"] == 0 and got["slept"] == ["sleep"]
+    assert got["queued"] == 1 and got["asked"] == 1 and got["again"] == 2
 
 
 def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
@@ -1799,6 +1798,7 @@ def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
         in page
     )
     assert "IDLE_DREAM_MS=300000" in page and "IDLE_DREAM_MS=120000" not in page
+    assert "function maybeDream(){ gbSleepEnds(); var _dw0=" in page
     assert "_gbSleepOK=false; _gbDreamOnOpen=false;" in page
     assert '+(_gbSleepWhy||"a quiet stillness came over it")+gbDreamSession();' in page
     assert '_t.indexOf("🌙 dreamed")!==0 && _t.indexOf("📖")!==0;' in page
