@@ -181,7 +181,30 @@ export function GrowbotPersonaPage({
   }, [ptab, voices]);
 
   // A sample left playing would talk over whatever page comes next.
-  useEffect(() => () => sample.current?.pause(), []);
+  // A sample still rendering when the page closes must not start playing after it.
+  const closed = useRef(false);
+  useEffect(() => {
+    closed.current = false;
+    return () => {
+      closed.current = true;
+      sample.current?.pause();
+    };
+  }, []);
+  // Nor does one keep talking under another tab, and voices the box didn't answer with are
+  // asked for again when Manage reopens.
+  useEffect(() => {
+    if (ptab === "manage") return;
+    if (sample.current) {
+      sample.current.pause();
+      sample.current = null;
+      setSampling(false);
+    }
+  }, [ptab]);
+  useEffect(() => {
+    if (ptab === "manage" || !voicesError) return;
+    setVoices(null);
+    setVoicesError(false);
+  }, [ptab, voicesError]);
 
   const p = persona;
   const live = p.phone
@@ -535,6 +558,7 @@ export function GrowbotPersonaPage({
     const line = `Hi, I'm ${p.name}. This is how I sound when I talk to you.`;
     api.brainTts(voice || BOX_DEFAULT_VOICE, line).then(
       (blob) => {
+        if (closed.current) return;
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         sample.current = audio;
@@ -554,6 +578,7 @@ export function GrowbotPersonaPage({
         });
       },
       (e: unknown) => {
+        if (closed.current) return;
         setSampling(false);
         say(`The box didn't say the sample — ${message(e)}`);
       },
@@ -598,7 +623,7 @@ export function GrowbotPersonaPage({
         {voices !== null && listed.length === 0 && (
           <p className="gb-voice-note">
             {voicesError
-              ? "Couldn't reach the box's voices. Try again in a moment."
+              ? "Couldn't reach the box's voices. Open Manage again in a moment to retry."
               : "The box has no voices installed, so the creature shows its words instead of speaking them."}
           </p>
         )}
