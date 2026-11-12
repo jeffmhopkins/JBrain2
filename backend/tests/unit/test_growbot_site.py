@@ -1195,6 +1195,8 @@ def test_a_backoff_ends_when_there_is_nothing_left_to_send() -> None:
     )
     posts = [c["body"] for c in got["calls"] if c["method"] == "POST"]
     assert posts[-1] == {"persona": "p1", "set": {"gb_eye": "environment"}, "drop": []}
+
+
 @pytest.mark.parametrize(
     ("explore", "want"),
     [
