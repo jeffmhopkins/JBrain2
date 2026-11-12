@@ -4079,7 +4079,7 @@ export interface GrowbotPersona {
   prefs: Record<string, string> | null;
 }
 
-export type GrowbotFace = "lantern" | "ostrich" | "robot" | "pixel";
+export type GrowbotFace = "lantern" | "ostrich" | "robot" | "ember" | "pixel";
 
 export interface GrowbotCheckpoint {
   id: string;

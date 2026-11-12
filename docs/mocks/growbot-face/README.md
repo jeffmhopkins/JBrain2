@@ -1,6 +1,6 @@
 # GrowBot → the creature's default face
 
-Kind: Living (mock set) · Status: **A chosen** (owner, 2026-11-10) · Last verified: 2026-11-10
+Kind: Living (mock set) · Status: **A chosen** (owner, 2026-11-10); **D ember** added for Dave (owner, 2026-11-12) · Last verified: 2026-11-12
 
 The owner is not a fan of the face GrowBot draws today (`growbot/site/v3/next.html:drawFace`:
 two 12 px rectangle eyes on a 96 x 160 pixel canvas, upscaled, over the mood sky) and asked for
@@ -40,3 +40,20 @@ panels' look, so it is now a short ringed neck on the bird's body; the robot gai
 neck. The owner also asked that colours still change, which is the `coat` verb
 (`docs/reference/DESIGN.md` "GrowBot — the creature's face"). B and C stay here as the rivals,
 and stay reachable in the app with `?face=robot|lantern`.
+
+## D: the ember, Dave's lens (owner, 2026-11-12)
+
+The owner asked for a face for his adult persona, Dave, evocative of a calm, watchful AI lens
+from 2001-era film: one glowing eye, a dark bezel, minimal, and an original design rather than
+a replica of any prop. `d-ember.html` shows three lens directions live, with a state switcher,
+a pointer the eye follows and a tilt slider:
+
+| | Direction | How a mouthless lens talks |
+|---|---|---|
+| A | **Ember** — glass lens, lit core as pupil | The core swells and brightens with the voice; a ring of light leaves it per syllable; listening pulls rings inward |
+| B | **Iris** — seven-blade aperture behind glass | The aperture flutters open with the voice and turns slowly while listening |
+| C | **Dial** — small lens in a ring of 72 light ticks | The ring becomes a mirrored radial waveform of the voice; a sweep runs round it while listening |
+
+The owner picked **A** and it is built as the `ember` face (`growbot/patches/growbot-face.js`,
+spec in `docs/reference/DESIGN.md` "The ember — Dave's lens"). B and C stay here as the rivals.
+

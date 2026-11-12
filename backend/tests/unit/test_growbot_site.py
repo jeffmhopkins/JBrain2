@@ -151,7 +151,7 @@ def test_the_pixel_eyes_give_way_only_while_the_new_face_is_on() -> None:
     assert "if(dreaming&&!_gbF){" in creature
     assert "if(_gbF) _gbF.draw(cx,W,H,{" in creature
     face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
-    assert re.search(r'var DEFAULT = "(ostrich|robot|lantern)";', face)
+    assert re.search(r'var DEFAULT = "(ostrich|robot|lantern|ember)";', face)
     assert 'face !== "pixel" && !broken' in face
     assert "broken = true;" in face
 
@@ -216,6 +216,8 @@ var log=[];
 function ctx(){ var o={canvas:{width:720,height:1480}};
   return new Proxy(o,{get:function(t,k){ if(k in t) return t[k];
     if(k==="getTransform") return function(){ return {a:2,b:0,c:0,d:2,e:0,f:0}; };
+    if(/^create.*Gradient$/.test(k)) return function(){ log.push(k);
+      return {addColorStop:function(o,c){ log.push("stop("+o+","+c+")"); }}; };
     return function(){ log.push(k+"("+Array.prototype.map.call(arguments,function(v){
       return typeof v==="number"?v.toFixed(2):typeof v; }).join(",")+")"); }; },
     set:function(t,k,v){ log.push(k+"="+v); return true; }}); }
@@ -256,7 +258,7 @@ def _frames(face: str, voice: bool) -> dict[str, list[str]]:
     return json.loads(out.stdout)
 
 
-@pytest.mark.parametrize("face", ["lantern", "ostrich", "robot"])
+@pytest.mark.parametrize("face", ["lantern", "ostrich", "robot", "ember"])
 def test_every_face_moves_its_mouth_in_every_mood_while_it_talks(face: str) -> None:
     """The same frames drawn with and without a voice playing differ only in the mouth, so a
     face and mood whose mouth stood still while it talked would draw them identically; and the
@@ -280,7 +282,7 @@ def test_the_face_feels_the_phone_tilt() -> None:
     assert "Math.atan2(-x, y) + turn * Math.PI / 180" in face
     assert "aim.x = Math.max(-1.2, Math.min(1.2, aim.x + lean * 1.6));" in face
     assert "tilt: cur.tilt - lean * 180 / Math.PI * 0.45, sway: lean," in face
-    assert face.count("d.sway * ") == 3
+    assert face.count("d.sway * ") == 4
 
 
 def test_the_eyes_load_after_the_status_strip_and_take_the_trackers_boxes() -> None:
@@ -1407,6 +1409,74 @@ def test_the_owners_settings_set_before_any_phone_go_over_the_phones_own() -> No
     }
 
 
+def test_the_mouth_keeps_time_with_the_measured_voice() -> None:
+    """The line now playing is decoded offline into 20 ms loudness steps and read at the
+    player's own time, so a pause between words closes the mouth; never through the element's
+    own Web Audio graph, which a suspended iOS context would mute."""
+    out = _face_in_node(
+        "var waits=[];window.fetch=function(src){ return Promise.resolve({arrayBuffer:"
+        "function(){ return Promise.resolve(src); }}); };"
+        "window.OfflineAudioContext=function(){ this.decodeAudioData=function(buf,ok){"
+        "var d=new Float32Array(400);for(var i=0;i<400;i++) d[i]=i<200?0.5:i<300?0:0.125;"
+        "ok({sampleRate:1000,getChannelData:function(){ return d; }}); }; };"
+        "var fetch=window.fetch;"
+        "window.fishAud={paused:false,ended:false,src:'blob:a',currentTime:0.05};"
+        "var first=window.gbFace.level();"
+        "setTimeout(function(){ var a=window.fishAud, r=[first];"
+        "[0.05,0.25,0.35,0.9].forEach(function(t){"
+        " a.currentTime=t; r.push(window.gbFace.level()); });"
+        "a.paused=true; r.push(window.gbFace.level());"
+        "console.log(JSON.stringify(r)); },0);"
+    )
+    first, loud, gap, soft, past, paused = json.loads(out)
+    assert first is None and paused is None
+    assert loud == 1 and gap == 0 and soft == pytest.approx(0.5) and past == 0
+    face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    assert "createMediaElementSource" not in face
+
+
+def test_the_mouth_keeps_time_with_the_web_audio_line() -> None:
+    """On an iPhone the Kokoro line plays from a decoded buffer on Web Audio, with no element
+    holding a blob: the face reads that buffer at the context's clock from when it first saw
+    the line play, and a line still preparing tells it nothing."""
+    out = _face_in_node(
+        "var d=new Float32Array(400);for(var i=0;i<400;i++) d[i]=i<200?0.5:i<300?0:0.125;"
+        "var buf={sampleRate:1000,getChannelData:function(){ return d; }};"
+        "window.actx={currentTime:10,outputLatency:0.1};"
+        "window._fishWaLn={st:0,arm:2,src:{buffer:buf}};var r=[window.gbFace.level()];"
+        "window._fishWaLn.st=1;r.push(window.gbFace.level());"
+        "[10.15,10.35,10.45].forEach(function(t){ window.actx.currentTime=t;"
+        " r.push(window.gbFace.level()); });"
+        "window._fishWaLn=null;window._fishWaTail=Date.now()+1000;r.push(window.gbFace.level());"
+        "window._fishWaTail=0;r.push(window.gbFace.level());"
+        "window.actx.currentTime=20;window._fishWaLn={st:1,arm:1,src:{buffer:buf}};"
+        "r.push(window.gbFace.level());window.actx.currentTime=20.95;"
+        "r.push(window.gbFace.level());"
+        # Stopped, not ended: the stale tail stamp is the one it began under, so no tail.
+        "window._fishWaTail=Date.now()+1000;window._fishWaLn={st:1,arm:2,src:{buffer:buf}};"
+        "window.gbFace.level();window._fishWaLn=null;r.push(window.gbFace.level());"
+        # Ended, but the next line is already playing from fishAud: the tail is not its mouth.
+        "window._fishWaLn={st:1,arm:2,src:{buffer:buf}};window.gbFace.level();"
+        "window._fishWaLn=null;window._fishWaTail=Date.now()+1200;"
+        "window.fishAud={paused:false,ended:false,src:'blob:b',currentTime:0};"
+        "r.push(window.gbFace.level());"
+        "console.log(JSON.stringify(r));"
+    )
+    got = json.loads(out)
+    preparing, early, loud, gap, soft, tail, ended, arm1_early, arm1_heard = got[:9]
+    stopped, next_line = got[9:]
+    assert preparing is None
+    # Heard only after the output latency: before it nothing, then the line in time.
+    assert early == 0 and loud == 1 and gap == 0 and soft == pytest.approx(0.5)
+    # The line's end is still heard through the tail, then the clock rhythm takes over.
+    assert tail == pytest.approx(0.5) and ended is None
+    # Arm 1's second element holds the line back further still.
+    assert arm1_early == 0 and arm1_heard == 1
+    # A stop leaves no tail; a fishAud line after an ended one is measured itself (null until
+    # decoded, here never, so the clock rhythm runs), not read off the previous line.
+    assert stopped is None and next_line is None
+
+
 _PROMPTS_IN_NODE = (
     "const fs=require('fs'),vm=require('vm');"
     "const ctx={console,URLSearchParams,location:{search:''},"
@@ -1623,4 +1693,3 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
     assert want in json.loads(out.stdout)
-

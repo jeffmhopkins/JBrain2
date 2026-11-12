@@ -484,6 +484,7 @@ export const FACES: { id: GrowbotFace; name: string; what: string }[] = [
   { id: "lantern", name: "Lantern", what: "Two glowing eyes, no body." },
   { id: "ostrich", name: "Ostrich", what: "The panels' ostrich: crest, eyes and a ringed neck." },
   { id: "robot", name: "Robot", what: "Square robot eyes." },
+  { id: "ember", name: "Ember", what: "One red lens that glows with its voice." },
   { id: "pixel", name: "Pixel", what: "The original pixel eyes." },
 ];
 

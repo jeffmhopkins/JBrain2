@@ -4,19 +4,19 @@ docs/plans/GROWBOT_PLAN.md §2c. Upstream's 11-11 quiet-beat text hands a creatu
 the time to reach for its wants with its body; the old text kept it waiting as company. The
 owner asked (2026-11-12) for that to be a persona setting, on by default, rather than a phone
 URL switch: the phone reads it with the soul and its poll carries a change, like the face
-(0259) and the voice (0264). Existing personas get it on too.
+(0259) and the voice (0265). Existing personas get it on too.
 
 The column rides `growbot_personas`' owner-only RLS; no new table, so no new isolation test.
 
-Revision ID: 0265
-Revises: 0264
+Revision ID: 0266
+Revises: 0265
 Create Date: 2026-11-12
 """
 
 from alembic import op
 
-revision = "0265"
-down_revision = "0264"
+revision = "0266"
+down_revision = "0265"
 branch_labels = None
 depends_on = None
 
