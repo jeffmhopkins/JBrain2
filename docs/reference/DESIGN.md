@@ -3380,7 +3380,7 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     toast (*Deleted “Day 1”.*) has none. Under the days, *Delete the N automatic ones* (danger,
     armed: *Tap again — deletes N, keeps the named ones*) clears every automatic one at once.
   - *Manage*: *Face* first (owner, 2026-11-11): a radio list, *Lantern* (the default),
-    *Ostrich*, *Robot*, *Pixel*, each with a one-line description, saved as it is tapped. It is
+    *Ostrich*, *Robot*, *Ember*, *Pixel*, each with a one-line description, saved as it is tapped. It is
     not a soul write, so no checkpoint and no reload: the toast says it changes on its phone in
     a few seconds (its poll), or next time it opens. *Camera* next (owner, 2026-11-12): the
     same radio list, *Front* (the default; the screen side, which face tracking needs) and
@@ -3456,7 +3456,7 @@ rare, deliberate act, so it lives behind one secondary button and asks everythin
 
 ## GrowBot — the creature's face (owner, 2026-11-10 — binding mock: `docs/mocks/growbot-face/a-ostrich.html`, variant A; rivals B "the panels' robot" and C "lantern eyes" retained in `docs/mocks/growbot-face/README.md`; built in `growbot/patches/growbot-face.js`)
 
-A persona wears one of four faces, the lantern by default (owner, 2026-11-11; picked under
+A persona wears one of five faces, the lantern by default (owner, 2026-11-11; picked under
 *Manage*). This section specifies the ostrich face: the panels' ostrich, so a GrowBot wearing it
 and a JPanel in the same room are visibly the same family.
 
@@ -3485,8 +3485,29 @@ and a JPanel in the same room are visibly the same family.
 - **Each persona wears its own face** (owner, 2026-11-11): *Lantern* by default, chosen per
   persona on its page's *Manage* tab, and a phone already showing it changes face where it
   stands at its next poll. Without a persona (a G2 session) the phone's own choice, else lantern.
-- `?face=lantern|ostrich|robot|pixel` overrides that; `?face=pixel`, or a throw in the new face,
-  shows upstream's own face.
+- `?face=lantern|ostrich|robot|ember|pixel` overrides that; `?face=pixel`, or a throw in the new
+  face, shows upstream's own face.
+
+### The ember — Dave's lens (owner, 2026-11-12 — binding mock: `docs/mocks/growbot-face/d-ember.html`, variant A of three lens directions; rivals B "iris" and C "dial" in the same mock)
+
+The owner's adult persona, Dave, wears a calm, watchful lens in the spirit of 2001-era film AI,
+drawn as an original design and not a copy of any film prop.
+
+- **One lens, one light.** A brushed-steel bezel, black glass with faint inner element rings,
+  and a lit core that is the pupil: white-hot at the centre through red into the dark. It
+  follows a seen face, rolls with the phone's tilt, and the bezel's sheen and glass glint stay
+  put while the lens turns under them.
+- **Red is his signature.** A mood moves the light's warmth, brightness and size and the lids,
+  never its hue: happy warms toward amber, alert and scared shrink the core and burn it white,
+  sleepy and tired dim it. A chosen `coat` recolours the core.
+- **Lighter lids.** One big eye shows a lid far more than two small ones, so the moods' lids
+  sit lighter on it (the pupil's 36% floor still holds); each lid has a lit edge, and a blink
+  closes them to one glowing line.
+- **The light is the voice.** No mouth: while a line plays the core swells and brightens with
+  the line's measured loudness and a ring leaves the core on each syllable's rise, so a pause
+  between words dims it. While the person speaks (the ear's VAD), faint rings fall inward.
+  Thinking runs a small comet round the core.
+- **A dark room.** The mood sky shows only as a tint behind the lens.
 
 ## Room endpoint — the robot pet's body (settled 2026-09-13; binding mock: `docs/mocks/room-endpoint/pet-face.html`, round record `docs/mocks/room-endpoint/README.md`, plan `docs/plans/ROOM_ENDPOINT_PLAN.md`)
 

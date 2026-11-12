@@ -756,7 +756,7 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
   if (!rest && method === "PATCH") {
     const face = body().face;
     if (face !== undefined) {
-      if (!["lantern", "ostrich", "robot", "pixel"].includes(String(face)))
+      if (!["lantern", "ostrich", "robot", "ember", "pixel"].includes(String(face)))
         return json({ detail: "not a face" }, 422);
       p.face = face as GrowbotPersona["face"];
       return json({ persona: mockGbDetail(p), checkpoint: null });

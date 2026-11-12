@@ -592,6 +592,10 @@ async def test_routes_seed_duplicate_rename_reset_and_delete(maker: async_sessio
     assert faced["persona"]["face"] == "robot" and faced["persona"]["version"] == version
     assert faced["persona"]["name"] == "Pip" and faced["checkpoint"] is None
     assert c.patch(f"/api/growbot/personas/{dup['id']}", json={"face": "cat"}).status_code == 422
+    # Dave's lens (migration 0264) is a face the database takes, not only the API.
+    lens = c.patch(f"/api/growbot/personas/{dup['id']}", json={"face": "ember"}).json()
+    assert lens["persona"]["face"] == "ember"
+    c.patch(f"/api/growbot/personas/{dup['id']}", json={"face": "robot"})
     nobody = "/api/growbot/personas/00000000-0000-4000-8000-000000000000"
     assert c.patch(nobody, json={"face": "robot"}).status_code == 404
     # A bad name refuses the whole edit, face included; an empty edit is refused too.

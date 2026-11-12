@@ -151,7 +151,7 @@ def test_the_pixel_eyes_give_way_only_while_the_new_face_is_on() -> None:
     assert "if(dreaming&&!_gbF){" in creature
     assert "if(_gbF) _gbF.draw(cx,W,H,{" in creature
     face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
-    assert re.search(r'var DEFAULT = "(ostrich|robot|lantern)";', face)
+    assert re.search(r'var DEFAULT = "(ostrich|robot|lantern|ember)";', face)
     assert 'face !== "pixel" && !broken' in face
     assert "broken = true;" in face
 
@@ -216,6 +216,8 @@ var log=[];
 function ctx(){ var o={canvas:{width:720,height:1480}};
   return new Proxy(o,{get:function(t,k){ if(k in t) return t[k];
     if(k==="getTransform") return function(){ return {a:2,b:0,c:0,d:2,e:0,f:0}; };
+    if(/^create.*Gradient$/.test(k)) return function(){ log.push(k);
+      return {addColorStop:function(o,c){ log.push("stop("+o+","+c+")"); }}; };
     return function(){ log.push(k+"("+Array.prototype.map.call(arguments,function(v){
       return typeof v==="number"?v.toFixed(2):typeof v; }).join(",")+")"); }; },
     set:function(t,k,v){ log.push(k+"="+v); return true; }}); }
@@ -256,7 +258,7 @@ def _frames(face: str, voice: bool) -> dict[str, list[str]]:
     return json.loads(out.stdout)
 
 
-@pytest.mark.parametrize("face", ["lantern", "ostrich", "robot"])
+@pytest.mark.parametrize("face", ["lantern", "ostrich", "robot", "ember"])
 def test_every_face_moves_its_mouth_in_every_mood_while_it_talks(face: str) -> None:
     """The same frames drawn with and without a voice playing differ only in the mouth, so a
     face and mood whose mouth stood still while it talked would draw them identically; and the
@@ -280,7 +282,7 @@ def test_the_face_feels_the_phone_tilt() -> None:
     assert "Math.atan2(-x, y) + turn * Math.PI / 180" in face
     assert "aim.x = Math.max(-1.2, Math.min(1.2, aim.x + lean * 1.6));" in face
     assert "tilt: cur.tilt - lean * 180 / Math.PI * 0.45, sway: lean," in face
-    assert face.count("d.sway * ") == 3
+    assert face.count("d.sway * ") == 4
 
 
 def test_the_eyes_load_after_the_status_strip_and_take_the_trackers_boxes() -> None:
@@ -1306,3 +1308,29 @@ def test_the_owners_settings_set_before_any_phone_go_over_the_phones_own() -> No
         "set": {"gb_face_color": "#ffffff"},
         "drop": [],
     }
+
+
+def test_the_mouth_keeps_time_with_the_measured_voice() -> None:
+    """The line now playing is decoded offline into 20 ms loudness steps and read at the
+    player's own time, so a pause between words closes the mouth; never through the element's
+    own Web Audio graph, which a suspended iOS context would mute."""
+    out = _face_in_node(
+        "var waits=[];window.fetch=function(src){ return Promise.resolve({arrayBuffer:"
+        "function(){ return Promise.resolve(src); }}); };"
+        "window.OfflineAudioContext=function(){ this.decodeAudioData=function(buf,ok){"
+        "var d=new Float32Array(400);for(var i=0;i<400;i++) d[i]=i<200?0.5:i<300?0:0.125;"
+        "ok({sampleRate:1000,getChannelData:function(){ return d; }}); }; };"
+        "var fetch=window.fetch;"
+        "window.fishAud={paused:false,ended:false,src:'blob:a',currentTime:0.05};"
+        "var first=window.gbFace.level();"
+        "setTimeout(function(){ var a=window.fishAud, r=[first];"
+        "[0.05,0.25,0.35,0.9].forEach(function(t){"
+        " a.currentTime=t; r.push(window.gbFace.level()); });"
+        "a.paused=true; r.push(window.gbFace.level());"
+        "console.log(JSON.stringify(r)); },0);"
+    )
+    first, loud, gap, soft, past, paused = json.loads(out)
+    assert first is None and paused is None
+    assert loud == 1 and gap == 0 and soft == pytest.approx(0.5) and past == 0
+    face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    assert "createMediaElementSource" not in face
