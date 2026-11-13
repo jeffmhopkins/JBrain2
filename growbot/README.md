@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-12
+> **Status:** Living · **Last verified:** 2026-11-13
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -403,6 +403,11 @@ only its history and its moment. The creature's slot (`slot_roles`, GrowBot) nev
 another slot, where that checkpoint does not exist, and is freed only after every background
 slot. The cost: a second phone (or persona) open at once waits behind the first and replaces
 its cached prompt, so two creatures talking together are each slow.
+
+While the person is still talking, the page sends that turn minus their words, a one-token
+warm-up the sidecar passes on as `X-Growbot-Warm`, so the engine has read the history and the
+camera frames by the time the transcript lands; the turn then carries the words as its own last
+message and only those are left to read (`WARM_PATCHES`, `docs/plans/GROWBOT_PLAN.md` §2).
 
 Speech is the same lesson as the panels': whisper encodes a fixed 30 s window, so a 3 s clip
 cost 10-30 s on the box and outran upstream's 8 s / 12 s transcriber leashes every time (the

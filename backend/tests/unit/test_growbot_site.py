@@ -1851,12 +1851,12 @@ def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "due=callsSinceDream>=12" not in page
     assert (
-        "due=gbSleepAllowed() || _gbDreamOnOpen || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);"
+        "due=gbSleepAllowed() || gbOpenDreamDue() || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);"
     ) in page
     assert 'Date.now()-_humanT<30000&&!gbSleepAllowed()?"human":""' in page
     assert "  if(due) dream(gbSleepAllowed()); }" in page
     assert (
-        "if((gbSleepAllowed()||_gbDreamOnOpen)&&!_speechBusy()&&!pendingUser){ maybeDream();"
+        "if((gbSleepAllowed()||gbOpenDreamDue())&&!_speechBusy()&&!pendingUser){ maybeDream();"
         in page
     )
     assert "IDLE_DREAM_MS=300000" in page and "IDLE_DREAM_MS=120000" not in page
@@ -1908,6 +1908,317 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
     assert want in json.loads(out.stdout)
+
+
+_WARM_HARNESS = r"""
+var window={}, document={hidden:false}, logs=[], sent=[], aborted=0, net="ok";
+var _live={scratch:{traces:[{t:Date.now()-30000,u:"moment: hi",a:"hello"}]}};
+var camOn=true, camFacing="user", MODE="robot", _wheels=false, inFlight=false, orCfg={fast:"m"};
+var coolUntil=0, paused=false, dreaming=false, energyState="awake", _gbRecallCarry="";
+var frameDiff=0, _rideOn=false, selfMoveUntil=0, pbDevTok="", _convLang="en";
+var vadStartT=1, vadOn=true;
+var eyeBuf=[{t:Date.now()-2000,j:"AAA"},{t:Date.now()-1000,j:"BBB"}];
+var MEMLOG_ASK="\n\nMEMLOG", _stats=1, _tired="";
+function soulOwned(){ return true; } function llmCfg(){ return null; }
+function gbTalkTraces(t){ return t; } function traceMoment(u){ return u; }
+function buildSystem(){ buildSystem.live="\n\nLIVE"; return "SYS"; }
+function moveGuideText(){ moveGuideText.live=""; return ""; }
+function selfStats(){ selfStats.fixed=""; return "stats "+_stats; }
+function vmPrompt(c){ vmPrompt.fixed=""; return c?"\n\nVM":""; }
+function gbTiredLine(){ return _tired; }
+function vmTurnContext(){} function vmStreamSpeech(){} function vmReplyGuard(){}
+function brainOverride(s){ return s; }
+function _mkBody(slug,n,oai){ return {model:slug,max_tokens:n,messages:oai}; }
+function logEv(k,d){ logs.push([k,d]); }
+window.gbBoxLive=function(msgs,live){ var l=msgs[msgs.length-1],
+  h="HEAD"+live+"\n== THIS MOMENT ==\n";
+  l.content=typeof l.content==="string"?h+l.content:[{type:"text",text:h}].concat(l.content);
+  return true; };
+function AbortController(){ this.signal={}; this.abort=function(){ aborted++; }; }
+window.AbortController=AbortController;
+function fetch(url,o){ sent.push({url:url,headers:o.headers,body:JSON.parse(o.body)});
+  var done={then:function(g){ g(); }};
+  return {then:function(f){ var failed=false;
+    var tx=net==="ok"?'{"choices":[{}]}':'{"error":{"message":"no"}}', got=null;
+    if(net==="down") failed=true;
+    else got=f({ok:net!=="bad",status:net==="bad"?409:200,text:function(){ return tx; }});
+    return {then:function(f2){ if(!failed) f2(got);
+      return {catch:function(h){ if(failed) h(new Error("x")); return done; }}; }}; }}; }
+function cur(o){ return Object.assign({sys:_gbWarm.sys,bl:"\n\nLIVE",mg:"",ss:"stats 2",
+  vm:"\n\nVM",blind:false},o||{}); }
+var ask={humanReq:{}}, one=[{t:Date.now(),j:"NEW"}];
+"""
+
+
+def _warm_page(script: str) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("var _gbWarm=null") : page.index("function think(event,kind,extra){")]
+    out = subprocess.run(
+        [node, "-e", f"{_WARM_HARNESS}\n{code}\n{script}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout)
+    assert isinstance(got, dict)
+    return got
+
+
+def test_the_warm_up_is_the_turn_minus_the_words() -> None:
+    """Owner, 2026-11-13: the box reads the turn while the person talks. The warm-up must be
+    the spoken turn's own messages up to its last one, byte for byte, or the engine has
+    nothing to resume from; it asks for one token and says it is a warm-up. The turn takes
+    the warm-up's frames, so what it remembers is what the model saw."""
+    got = _warm_page(
+        "gbWarmUp(); var c=cur(), req=sent[0], t=gbWarmTake('event',ask,one);"
+        "var fits=gbWarmFits(t,c), live=c.bl+c.mg+'\\n\\n'+c.ss+c.vm+'\\n\\nMEMLOG';"
+        "var m=gbWarmMsgs(t,live,(c.bl+c.mg+'\\n\\n'+c.ss+c.vm).length,"
+        "'senses: x\\nmoment: they just said hi');"
+        "console.log(JSON.stringify({req:req,m:m,fits:fits,frames:t.frames,logs:logs,"
+        "left:_gbWarm}));"
+    )
+    req = got["req"]
+    assert req["url"] == "/api/llm?target=openrouter"
+    assert req["headers"]["x-gb-warm"] == "1"
+    body = req["body"]
+    assert body["max_tokens"] == 1
+    warm = body["messages"]
+    assert warm[0]["role"] == "system" and warm[0]["content"].startswith("SYS\n\nSPEECH STYLE")
+    assert warm[-1] == {"role": "user", "content": "."}
+    turn = got["m"]
+    assert got["fits"] is True and warm[1:-1] == turn[:-1]
+    assert turn[-1] == {"role": "user", "content": "senses: x\nmoment: they just said hi"}
+    pre = warm[-2]["content"]
+    assert pre[0]["text"].startswith("HEAD\n\nLIVE\n\nstats 1\n\nVM\n\nMEMLOG")
+    assert [p["type"] for p in pre[1:]] == ["text", "image_url"]
+    assert pre[2]["image_url"]["url"].endswith("BBB")
+    assert [f["j"] for f in got["frames"]] == ["BBB"]
+    assert got["logs"] == [["warm", {"nf": 1}]] and got["left"] is None
+
+
+def test_what_the_warm_up_could_not_know_rides_with_the_words() -> None:
+    got = _warm_page(
+        "gbWarmUp(); var t=gbWarmTake('event',ask,one);"
+        "var base='\\n\\nLIVE\\n\\nstats 2\\n\\nVM';"
+        "var live=base+'\\n\\nIMITATE'+'\\n\\nMEMLOG'+'\\n\\nRECALL';"
+        "var m=gbWarmMsgs(t,live,base.length,'moment: hi');"
+        "console.log(JSON.stringify({last:m[m.length-1].content}));"
+    )
+    assert got["last"] == "IMITATE\n\nRECALL\n\n== THIS MOMENT ==\nmoment: hi"
+
+
+def test_a_warm_up_is_taken_once_and_only_when_nothing_moved() -> None:
+    got = _warm_page(
+        "var r={}; function again(){ _gbWarmT=0; _gbWarmBusy=false; gbWarmUp(); }"
+        "again(); r.tick=!!gbWarmTake('tick',null,one); r.kept=!!_gbWarm;"
+        "r.used=!!gbWarmTake('event',ask,one); r.twice=!!gbWarmTake('event',ask,one);"
+        "again(); r.three=!!gbWarmTake('event',ask,one.concat(one,one));"
+        "again(); r.blindTurn=!!gbWarmTake('event',ask,[]);"
+        "again(); _gbWarm.ft-=10001; r.stale=!!gbWarmTake('event',ask,one);"
+        "again(); _live.scratch.traces.push({t:Date.now(),u:'x',a:'y'});"
+        "r.moved=!!gbWarmTake('event',ask,one);"
+        "again(); _gbWarm.t-=GB_WARM_MAX_MS+1; r.old=!!gbWarmTake('event',ask,one);"
+        "again(); camFacing='environment'; r.eye=!!gbWarmTake('event',ask,one);"
+        "again(); _live.scratch.traces[_live.scratch.traces.length-1].d='walked forward';"
+        "r.did=!!gbWarmTake('event',ask,one);"
+        "r.why=logs.filter(function(l){ return l[0]==='warm_skip'; })"
+        ".map(function(l){ return l[1].w; });"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got == {
+        "tick": False,
+        "kept": True,
+        "used": True,
+        "twice": False,
+        "three": False,
+        "blindTurn": False,
+        "stale": False,
+        "moved": False,
+        "old": False,
+        "eye": False,
+        "did": False,
+        "why": ["frames", "frames", "stale", "moved", "old", "moved", "moved"],
+    }
+
+
+def test_a_warm_up_whose_state_moved_is_not_sent() -> None:
+    """The state block sits in the warm-up's prefix, so a turn whose scratchpad, goal (a
+    spoken "stop"), language or picture-memory line changed builds its own. Self-stats are
+    compared without their numbers: the thought count always moves on by one."""
+    got = _warm_page(
+        "gbWarmUp(); var w=_gbWarm, r={};"
+        "r.numbers=gbWarmFits(w,cur({ss:'stats 99'}));"
+        "r.sys=gbWarmFits(w,cur({sys:'other'}));"
+        "r.state=gbWarmFits(w,cur({bl:'\\n\\nLIVE now in spanish'}));"
+        "r.goal=gbWarmFits(w,cur({mg:'== YOUR CURRENT GOAL =='}));"
+        "r.stats=gbWarmFits(w,cur({ss:'moving 2'}));"
+        "r.vm=gbWarmFits(w,cur({vm:'\\n\\nVM saved: mug'}));"
+        "r.blind=gbWarmFits(w,cur({blind:true}));"
+        "r.why=logs.filter(function(l){ return l[0]==='warm_skip'; })"
+        ".map(function(l){ return l[1].w; });"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got.pop("numbers") is True
+    assert got.pop("why") == ["sys", "state", "goal", "stats", "vm", "blind"]
+    assert not any(got.values())
+
+
+def test_a_failed_warm_up_is_never_used() -> None:
+    """A refused warm-up (a model the box would have to load, a template that will not take
+    the split) or a dropped connection leaves the turn to build itself as before."""
+    got = _warm_page(
+        "var r={}; net='down'; gbWarmUp(); r.down=_gbWarm; r.busy=_gbWarmBusy;"
+        "_gbWarmT=0; net='body'; gbWarmUp(); r.body=_gbWarm;"
+        "_gbWarmT=0; net='ok'; gbWarmUp(); r.ok=!!_gbWarm;"
+        "_gbWarmT=0; net='bad'; gbWarmUp(); r.bad=_gbWarm; r.busy2=_gbWarmBusy;"
+        "_gbWarmT=0; net='ok'; var n=sent.length; gbWarmUp(); r.off=sent.length===n;"
+        "r.fails=logs.filter(function(l){ return l[0]==='warm_fail'; });"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["down"] is None and got["body"] is None and got["ok"] is True
+    assert got["bad"] is None and got["busy"] is False and got["busy2"] is False
+    assert got["off"] is True
+    assert got["fails"] == [
+        ["warm_fail", {"w": "net"}],
+        ["warm_fail", {"w": "body"}],
+        ["warm_fail", {"w": "http 409"}],
+    ]
+
+
+def test_a_warm_up_that_fails_after_the_turn_took_it_is_not_sent() -> None:
+    got = _warm_page(
+        "var r={}, real=fetch, later=null;"
+        "fetch=function(u,o){ sent.push(1); return {then:function(f){ later=f;"
+        " var end={then:function(){}};"
+        " return {then:function(){ return {catch:function(){ return end; }}; }}; }}; };"
+        "gbWarmUp(); var t=gbWarmTake('event',ask,one);"
+        "later({ok:false,status:500,text:function(){ return ''; }});"
+        "r.fits=gbWarmFits(t,{sys:t.sys,bl:t.bl,mg:t.mg,ss:'stats 1',vm:t.vm,blind:false});"
+        "r.why=logs[logs.length-1];"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["fits"] is False and got["why"][1]["w"] == "failed"
+
+
+def test_noise_that_never_becomes_a_turn_stops_the_warm_ups() -> None:
+    """A television opens utterances that never become a turn. After three in a row the page
+    stops warming (and so stops holding the creature's own thoughts) until someone speaks."""
+    got = _warm_page(
+        "var r={}; function utt(k){ vadStartT=k; _gbWarmT=0; gbWarmUp(); return sent.length; }"
+        "r.a=utt(10); r.hold=gbWarmFresh(); vadStartT=11; r.otherUtt=gbWarmFresh();"
+        "r.b=utt(11); r.c=utt(12); r.d=utt(13); r.e=utt(14);"
+        "gbWarmTake('event',ask,one); r.f=utt(15);"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got == {
+        "a": 1,
+        "hold": True,
+        "otherUtt": False,
+        "b": 2,
+        "c": 3,
+        "d": 3,
+        "e": 3,
+        "f": 4,
+    }
+
+
+def test_the_warm_up_waits_its_turn_and_stays_out_of_the_way() -> None:
+    """One at a time, at most every few seconds, never over a thought in flight, a dream, a
+    hidden page or a recall the next turn has to carry, and never with the eye open but blind."""
+    got = _warm_page(
+        "var r={}; gbWarmUp(); r.first=sent.length; gbWarmUp(); r.gap=sent.length;"
+        "function n(set){ _gbWarmT=0; _gbWarmBusy=false; set(); gbWarmUp(); return sent.length; }"
+        "r.fresh=gbWarmFresh();"
+        "r.flight=n(function(){ inFlight=true; }); inFlight=false;"
+        "r.dream=n(function(){ dreaming=true; }); dreaming=false;"
+        "r.hidden=n(function(){ document.hidden=true; }); document.hidden=false;"
+        "r.carry=n(function(){ _gbRecallCarry='x'; }); _gbRecallCarry='';"
+        "r.blind=n(function(){ eyeBuf=[]; });"
+        "r.off=n(function(){ camOn=false; });"
+        "r.offNf=sent[sent.length-1].body.messages.slice(-2)[0].content.indexOf('HEAD')===0;"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["first"] == 1 and got["gap"] == 1 and got["fresh"] is True
+    assert got["flight"] == got["dream"] == got["hidden"] == got["carry"] == got["blind"] == 1
+    assert got["off"] == 2 and got["offNf"] is True
+
+
+def test_the_page_warms_while_the_person_talks_and_the_turn_takes_it() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    vad = page[page.index("function vadTick(){") : page.index("function vadStart(){")]
+    assert "if(voice&&now-vadStartT>=GB_WARM_VOICE_MS) gbWarmUp();" in vad
+    think = page[page.index("function think(event,kind,extra){") :]
+    take = think.index("var _gw=gbWarmTake(kind,extra,frames); if(_gw) frames=_gw.frames;")
+    assert take < think.index("_lastLook={") < think.index("vmTurnContext(frames,")
+    assert think.index("if(_gw&&gbWarmFits(_gw,") < think.index("else if(typeof window.gbBoxLive")
+    hold = think.index('if(kind!=="event"&&vadOn&&gbWarmFresh()) return;')
+    assert hold < think.index("inFlight=true")
+    assert think.count("function gbTraceReply") == 0 and "msgs=gbHist(now);" in think
+
+
+def test_the_warm_up_builds_the_system_text_as_the_turn_does() -> None:
+    """If the two drift apart, every warm-up is skipped and the speed-up silently goes."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    warm = page[page.index("function gbWarmUp(){") : page.index("function gbWarmFresh(){")]
+    think = page[page.index("function think(event,kind,extra){") :]
+    build = re.compile(
+        r"var sys=buildSystem\((\w+)(?:\(\))?,(\{language:_convLang\}\).*?\+moveGuideText\(\))"
+    )
+    (w_view, w_rest), (t_view, t_rest) = build.findall(warm)[0], build.findall(think)[0]
+    assert (w_view, t_view) == ("gbSoulView", "soulView") and w_rest == t_rest
+    assert "SPEECH STYLE" in w_rest
+    assert 'live=bl+mg+"\\n\\n"+ss+vm' in warm
+    assert 'bl=buildSystem.live||"", mg=moveGuideText.live||""' in warm
+    assert '_gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\\n\\n"+_gbSS+_gbVm,' in think
+    fixed = re.compile(r"sys\+=\(typeof gaitList[^;]*;")
+    assert fixed.findall(warm)[0] == fixed.findall(think)[0]
+    view = page[page.index("function gbSoulView(){") : page.index("function gbWarmUp(){")]
+    view = re.sub(r"\bv\b", "soulView", view)
+    steps = re.compile(
+        r"var soulView=\(MODE===\"phone\"\)[^;]*;|if\(MODE!==\"phone\"&&_wheels.*?\)\)\)\)"
+        r"|soulView=Object\.assign\(\{\},soulView,.*?\}\)\}\);",
+        re.S,
+    )
+    turn = steps.findall(think[: think.index("var _replyLang=")])
+    assert len(turn) == 3 and all(step in view for step in turn)
+
+
+def test_nothing_reaches_the_model_before_the_wake_tap() -> None:
+    """Owner, 2026-11-13: the dream a new visit owes ran on the sleep screen. Every model
+    call (a thought, a dream, a warm-up) waits for the wake tap."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    for head in ("function think(event,kind,extra){\n", "function dream(force){\n"):
+        assert page[page.index(head) + len(head) :].startswith("  if(window._wakeGateUp) return;")
+    warm = page[page.index("function gbWarmUp(){") : page.index("function gbWarmFresh(){")]
+    assert "if(window._wakeGateUp||_gbWarmOff" in warm
+    assert 'function _askWaitWhy(q){\n  if(window._wakeGateUp) return "gate";' in page
+    assert "window._wakeGateUp=false; _gbWokeT=Date.now();" in page
+    assert "due=gbSleepAllowed() || gbOpenDreamDue()" in page
+    assert "if((gbSleepAllowed()||gbOpenDreamDue())&&" in page
+    gated = page[page.index("function dream(force){") :]
+    gated = gated[: gated.index("_gbDreamOnOpen=false")]
+    assert gated.index("if(window._wakeGateUp) return;") < gated.index("_dreamT0=Date.now();")
+
+
+def test_the_dream_a_visit_owes_waits_past_the_hello() -> None:
+    """It waits for the wake tap and 30 s more, so the creature does not greet and sleep."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("var _gbWokeT=0") : page.index("var _gbWarm=null")]
+    script = (
+        "var window={_wakeGateUp:true}, _gbDreamOnOpen=true, r={};"
+        f"{code}"
+        "r.gate=gbOpenDreamDue(); window._wakeGateUp=false; _gbWokeT=Date.now();"
+        "r.hello=gbOpenDreamDue(); _gbWokeT-=GB_WOKE_HOLD_MS; r.later=gbOpenDreamDue();"
+        "_gbDreamOnOpen=false; r.none=gbOpenDreamDue(); console.log(JSON.stringify(r));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout) == {"gate": False, "hello": False, "later": True, "none": False}
 
 
 def test_the_ember_sits_in_the_middle_of_the_screen() -> None:

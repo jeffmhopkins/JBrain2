@@ -29,7 +29,7 @@ from jbrain.growbot.calls import (
     ReplyCollector,
     redact_images,
 )
-from jbrain.llm import prefill
+from jbrain.llm import local_catalog, prefill
 from jbrain.storage import FsInternalSecrets
 from tests.unit.test_growbot_llm import _COMPLETIONS, _IMAGE, _VL, _chat, _Gateway, _Residency
 
@@ -605,3 +605,38 @@ def test_a_turn_with_no_system_message_never_reads_as_a_changed_one() -> None:
     first.timings["system_hash"] = 0
     calls = [LoggedCall(1, datetime.now(UTC), first), LoggedCall(2, datetime.now(UTC), _llm(0, 5))]
     assert growbot_calls.cold_reasons(calls)["unknown"] == 1
+
+
+def test_a_warm_up_is_marked_and_kept_out_of_the_creatures_numbers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pool = next(m.kv_pool for m in local_catalog.CATALOG if m.kv_pool is not None)
+    monkeypatch.setattr(local_catalog, "pool_of", lambda _model: pool)
+    log = _Log()
+    app, auth = _app(tmp_path, log)
+    with TestClient(app) as client:
+        r = client.post(_COMPLETIONS, json=_chat(), headers={**auth, "X-Growbot-Warm": "1"})
+        assert r.status_code == 200
+        (rec,) = _wait(log)
+    assert rec.request["warmup"] is True
+    assert growbot_calls.summarize([LoggedCall(1, datetime.now(UTC), rec)]).keys() == {"llm_warmup"}
+
+
+def test_only_the_exact_warm_flag_marks_a_turn(tmp_path: Path) -> None:
+    log = _Log()
+    app, auth = _app(tmp_path, log)
+    with TestClient(app) as client:
+        client.post(_COMPLETIONS, json=_chat(), headers={**auth, "X-Growbot-Warm": "true"})
+        (rec,) = _wait(log)
+    assert "warmup" not in rec.request
+
+
+def test_a_warm_up_never_loads_a_model(tmp_path: Path) -> None:
+    """Off a slot pool a turn may swap models in; a warm-up a room noise started must not."""
+    log = _Log()
+    app, auth = _app(tmp_path, log)
+    with TestClient(app) as client:
+        r = client.post(_COMPLETIONS, json=_chat(), headers={**auth, "X-Growbot-Warm": "1"})
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "warmup_unpooled"
+    assert log.rows == []

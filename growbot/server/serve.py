@@ -1988,6 +1988,9 @@ class GrowBot:
             headers["X-Growbot-Persona"] = who["persona"]
         if "robot" in who:
             headers["X-Growbot-Robot"] = who["robot"]
+        # The page reading a turn ahead while the person talks; the lane logs it apart.
+        if req.header("x-gb-warm") == "1":
+            headers["X-Growbot-Warm"] = "1"
         return await stream_upstream(
             url, body, headers, sse=stream, executor=self._streams
         )
