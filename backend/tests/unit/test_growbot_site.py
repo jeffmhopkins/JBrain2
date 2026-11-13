@@ -1857,6 +1857,7 @@ var _live={scratch:{traces:[{t:Date.now()-30000,u:"moment: hi",a:"hello"}]}};
 var camOn=true, camFacing="user", MODE="robot", _wheels=false, inFlight=false, orCfg={fast:"m"};
 var coolUntil=0, paused=false, dreaming=false, energyState="awake", _gbRecallCarry="";
 var frameDiff=0, _rideOn=false, selfMoveUntil=0, pbDevTok="", _convLang="en";
+var vadStartT=1, vadOn=true;
 var eyeBuf=[{t:Date.now()-2000,j:"AAA"},{t:Date.now()-1000,j:"BBB"}];
 var MEMLOG_ASK="\n\nMEMLOG", _stats=1, _tired="";
 function soulOwned(){ return true; } function llmCfg(){ return null; }
@@ -1879,9 +1880,11 @@ window.AbortController=AbortController;
 function fetch(url,o){ sent.push({url:url,headers:o.headers,body:JSON.parse(o.body)});
   var done={then:function(g){ g(); }};
   return {then:function(f){ var failed=false;
-    if(net==="down") failed=true; else f({ok:net==="ok",status:net==="ok"?200:409,
-      text:function(){ return ""; }});
-    return {catch:function(h){ if(failed) h(new Error("x")); return done; }}; }}; }
+    var tx=net==="ok"?'{"choices":[{}]}':'{"error":{"message":"no"}}', got=null;
+    if(net==="down") failed=true;
+    else got=f({ok:net!=="bad",status:net==="bad"?409:200,text:function(){ return tx; }});
+    return {then:function(f2){ if(!failed) f2(got);
+      return {catch:function(h){ if(failed) h(new Error("x")); return done; }}; }}; }}; }
 function cur(o){ return Object.assign({sys:_gbWarm.sys,bl:"\n\nLIVE",mg:"",ss:"stats 2",
   vm:"\n\nVM",blind:false},o||{}); }
 var ask={humanReq:{}}, one=[{t:Date.now(),j:"NEW"}];
@@ -1960,6 +1963,8 @@ def test_a_warm_up_is_taken_once_and_only_when_nothing_moved() -> None:
         "r.moved=!!gbWarmTake('event',ask,one);"
         "again(); _gbWarm.t-=GB_WARM_MAX_MS+1; r.old=!!gbWarmTake('event',ask,one);"
         "again(); camFacing='environment'; r.eye=!!gbWarmTake('event',ask,one);"
+        "again(); _live.scratch.traces[_live.scratch.traces.length-1].d='walked forward';"
+        "r.did=!!gbWarmTake('event',ask,one);"
         "r.why=logs.filter(function(l){ return l[0]==='warm_skip'; })"
         ".map(function(l){ return l[1].w; });"
         "console.log(JSON.stringify(r));"
@@ -1975,7 +1980,8 @@ def test_a_warm_up_is_taken_once_and_only_when_nothing_moved() -> None:
         "moved": False,
         "old": False,
         "eye": False,
-        "why": ["frames", "frames", "stale", "moved", "old", "moved"],
+        "did": False,
+        "why": ["frames", "frames", "stale", "moved", "old", "moved", "moved"],
     }
 
 
@@ -2005,15 +2011,59 @@ def test_a_failed_warm_up_is_never_used() -> None:
     """A refused warm-up (a model the box would have to load, a template that will not take
     the split) or a dropped connection leaves the turn to build itself as before."""
     got = _warm_page(
-        "var r={}; net='bad'; gbWarmUp(); r.bad=_gbWarm; r.busy=_gbWarmBusy;"
-        "_gbWarmT=0; net='down'; gbWarmUp(); r.down=_gbWarm; r.busy2=_gbWarmBusy;"
+        "var r={}; net='down'; gbWarmUp(); r.down=_gbWarm; r.busy=_gbWarmBusy;"
+        "_gbWarmT=0; net='body'; gbWarmUp(); r.body=_gbWarm;"
         "_gbWarmT=0; net='ok'; gbWarmUp(); r.ok=!!_gbWarm;"
+        "_gbWarmT=0; net='bad'; gbWarmUp(); r.bad=_gbWarm; r.busy2=_gbWarmBusy;"
+        "_gbWarmT=0; net='ok'; var n=sent.length; gbWarmUp(); r.off=sent.length===n;"
         "r.fails=logs.filter(function(l){ return l[0]==='warm_fail'; });"
         "console.log(JSON.stringify(r));"
     )
-    assert got["bad"] is None and got["down"] is None and got["ok"] is True
-    assert got["busy"] is False and got["busy2"] is False
-    assert got["fails"] == [["warm_fail", {"w": "http 409"}], ["warm_fail", {"w": "net"}]]
+    assert got["down"] is None and got["body"] is None and got["ok"] is True
+    assert got["bad"] is None and got["busy"] is False and got["busy2"] is False
+    assert got["off"] is True
+    assert got["fails"] == [
+        ["warm_fail", {"w": "net"}],
+        ["warm_fail", {"w": "body"}],
+        ["warm_fail", {"w": "http 409"}],
+    ]
+
+
+def test_a_warm_up_that_fails_after_the_turn_took_it_is_not_sent() -> None:
+    got = _warm_page(
+        "var r={}, real=fetch, later=null;"
+        "fetch=function(u,o){ sent.push(1); return {then:function(f){ later=f;"
+        " var end={then:function(){}};"
+        " return {then:function(){ return {catch:function(){ return end; }}; }}; }}; };"
+        "gbWarmUp(); var t=gbWarmTake('event',ask,one);"
+        "later({ok:false,status:500,text:function(){ return ''; }});"
+        "r.fits=gbWarmFits(t,{sys:t.sys,bl:t.bl,mg:t.mg,ss:'stats 1',vm:t.vm,blind:false});"
+        "r.why=logs[logs.length-1];"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["fits"] is False and got["why"][1]["w"] == "failed"
+
+
+def test_noise_that_never_becomes_a_turn_stops_the_warm_ups() -> None:
+    """A television opens utterances that never become a turn. After three in a row the page
+    stops warming (and so stops holding the creature's own thoughts) until someone speaks."""
+    got = _warm_page(
+        "var r={}; function utt(k){ vadStartT=k; _gbWarmT=0; gbWarmUp(); return sent.length; }"
+        "r.a=utt(10); r.hold=gbWarmFresh(); vadStartT=11; r.otherUtt=gbWarmFresh();"
+        "r.b=utt(11); r.c=utt(12); r.d=utt(13); r.e=utt(14);"
+        "gbWarmTake('event',ask,one); r.f=utt(15);"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got == {
+        "a": 1,
+        "hold": True,
+        "otherUtt": False,
+        "b": 2,
+        "c": 3,
+        "d": 3,
+        "e": 3,
+        "f": 4,
+    }
 
 
 def test_the_warm_up_waits_its_turn_and_stays_out_of_the_way() -> None:
@@ -2055,9 +2105,15 @@ def test_the_warm_up_builds_the_system_text_as_the_turn_does() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     warm = page[page.index("function gbWarmUp(){") : page.index("function gbWarmFresh(){")]
     think = page[page.index("function think(event,kind,extra){") :]
-    build = re.compile(r"var sys=buildSystem\((\w+)(?:\(\))?,(\{language:_convLang\}\)[^;]*?)[,;]")
+    build = re.compile(
+        r"var sys=buildSystem\((\w+)(?:\(\))?,(\{language:_convLang\}\).*?\+moveGuideText\(\))"
+    )
     (w_view, w_rest), (t_view, t_rest) = build.findall(warm)[0], build.findall(think)[0]
     assert (w_view, t_view) == ("gbSoulView", "soulView") and w_rest == t_rest
+    assert "SPEECH STYLE" in w_rest
+    assert 'live=bl+mg+"\\n\\n"+ss+vm' in warm
+    assert 'bl=buildSystem.live||"", mg=moveGuideText.live||""' in warm
+    assert '_gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\\n\\n"+_gbSS+_gbVm,' in think
     fixed = re.compile(r"sys\+=\(typeof gaitList[^;]*;")
     assert fixed.findall(warm)[0] == fixed.findall(think)[0]
     view = page[page.index("function gbSoulView(){") : page.index("function gbWarmUp(){")]
@@ -2069,3 +2125,15 @@ def test_the_warm_up_builds_the_system_text_as_the_turn_does() -> None:
     )
     turn = steps.findall(think[: think.index("var _replyLang=")])
     assert len(turn) == 3 and all(step in view for step in turn)
+
+
+def test_nothing_reaches_the_model_before_the_wake_tap() -> None:
+    """Owner, 2026-11-13: the dream a new visit owes ran on the sleep screen. Every model
+    call (a thought, a dream, a warm-up) waits for the wake tap."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    for head in ("function think(event,kind,extra){\n", "function dream(force){\n"):
+        assert page[page.index(head) + len(head) :].startswith("  if(window._wakeGateUp) return;")
+    warm = page[page.index("function gbWarmUp(){") : page.index("function gbWarmFresh(){")]
+    assert "if(window._wakeGateUp||_gbWarmOff" in warm
+    assert '$("wgWake").addEventListener("click",function(){' in page
+    assert "window._wakeGateUp=false;" in page

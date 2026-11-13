@@ -578,3 +578,12 @@ async def test_a_debug_replay_stays_out_of_the_creatures_latency() -> None:
     summary = json.loads(files["summary.json"])
     assert summary["llm_image"]["total_ms"]["n"] == 1
     assert summary["llm_replay"]["total_ms"]["n"] == 1
+
+
+async def test_a_warm_up_stays_out_of_the_creatures_latency() -> None:
+    warm = _call(2)
+    warm.record.request["warmup"] = True
+    files, _ = await _build([_call(1), warm])
+    summary = json.loads(files["summary.json"])
+    assert summary["llm_image"]["total_ms"]["n"] == 1
+    assert summary["llm_warmup"]["total_ms"]["n"] == 1

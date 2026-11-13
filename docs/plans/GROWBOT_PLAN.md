@@ -393,10 +393,14 @@ the next spoken turn, under 12 s old, and only if the history, system text, eye,
 picture-memory line are unchanged and its newest frame is under 10 s old; the turn then sees and
 remembers the warm-up's frames, and its labels and self-stats numbers are up to 12 s stale. What
 it could not know (a recall, an imitation guide) rides with the words, and a turn that wants
-more frames than it holds ("look at this") is built as before. A refused or failed warm-up is
-never used. Warm-ups log as `llm_warmup` in the call summary, do not stamp the creature awake (a
-television can start one), and are refused off a slot pool, where one could load a model; an
-autonomous thought waits while an utterance is open (`WARM_PATCHES`).
+more frames than it holds ("look at this") is built as before. A refused or failed warm-up
+(an HTTP error or an error in its body) is never used. Warm-ups log as `llm_warmup` in the call
+summary and the brain log, do not stamp the creature awake (a television can start one), and are
+refused off a slot pool, where one could load a model, which turns them off for the visit. An
+autonomous thought waits only while the utterance that started the warm-up is open, and after
+three utterances in a row that never became a turn the page stops warming until someone speaks
+(`WARM_PATCHES`). Nothing reaches the model while the sleep screen is up: the dream a new visit
+owes used to run there, before the wake tap, and now waits for it (`WAKE_GATE_PATCHES`).
 
 **Talk style (owner, 2026-11-12).** Upstream's creature is written for small children: ~18-word
 lines, its last 4 exchanges and 5 diary lines in view, and an adult could not hold a conversation

@@ -431,8 +431,9 @@ async def build(
                         ok=rec.ok,
                         total_ms=rec.total_ms,
                         robot=rec.robot,
-                        # A debug replay must stay out of the creature's own latency.
-                        request={"replay": True} if rec.request.get("replay") else {},
+                        # A debug replay or a warm-up must stay out of the creature's own
+                        # latency.
+                        request={k: True for k in ("replay", "warmup") if rec.request.get(k)},
                         images=rec.images,
                         image_bytes=rec.image_bytes,
                         prompt_tokens=rec.prompt_tokens,

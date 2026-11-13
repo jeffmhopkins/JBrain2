@@ -1804,18 +1804,20 @@ PATCHES += [
 # picture-memory line. A warm-up's newest frame must still be under 10 s old, the page's rule
 # for any frame, and the turn sees and remembers those same frames. What the warm-up could not
 # know (a recall, an imitation guide) rides with the words. Anything else runs as before.
-_GB_WARM_JS = r"""var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, GB_WARM_MAX_MS=12000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
+_GB_WARM_JS = r"""var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=12000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 function gbHist(now){ var tr=gbTalkTraces(_live.scratch.traces), msgs=[], i;
   for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
   return msgs; }
-function gbWarmKey(){ var t=(_live&&_live.scratch&&_live.scratch.traces)||[], l=t[t.length-1]; return t.length+":"+(l&&l.t||0)+":"+(camOn?1:0)+":"+camFacing; }
+function gbWarmKey(){ var t=(_live&&_live.scratch&&_live.scratch.traces)||[], l=t[t.length-1]; return t.length+":"+(l?(l.t||0)+":"+gbTraceReply(l):"")+":"+(camOn?1:0)+":"+camFacing; }
 function gbSoulView(){ var v=(MODE==="phone")?Object.assign({},_live,{body:null}):_live;
   if(MODE!=="phone"&&_wheels&&v.body&&!((v.body.walk&&v.body.walk.present===false)||/wheel/i.test(String(v.body.id||"")+" "+String((v.body.geometry&&v.body.geometry.drive)||""))))
     v=Object.assign({},v,{body:Object.assign({},v.body,{walk:Object.assign({},v.body.walk||{},{present:false})})});
   return v; }
 function gbWarmUp(){ var now=Date.now();
-  if(_gbWarmBusy||now-_gbWarmT<GB_WARM_GAP_MS||typeof window.gbBoxLive!=="function") return;
+  if(window._wakeGateUp||_gbWarmOff||_gbWarmBusy||now-_gbWarmT<GB_WARM_GAP_MS||typeof window.gbBoxLive!=="function") return;
+  if(_gbWarm&&_gbWarm.utt!==vadStartT){ _gbWarm=null; _gbWarmMiss++; }
+  if(_gbWarmMiss>=GB_WARM_MISS) return;
   if(inFlight||!orCfg||!_live||now<coolUntil||paused||document.hidden||dreaming||energyState==="asleep"||_gbRecallCarry) return;
   if(!soulOwned()||(typeof vmBusy==="function"&&vmBusy())||llmCfg()) return;
   _gbWarmT=now;
@@ -1836,20 +1838,22 @@ function gbWarmUp(){ var now=Date.now();
     var hist=gbHist(now), body=_mkBody(brainOverride(orCfg.active||orCfg.fast,false),1,[{role:"system",content:sys}].concat(hist,[pre,{role:"user",content:"."}]));
     var hdr={"content-type":"application/json","x-gb-warm":"1"}; if(pbDevTok) hdr["x-pb-device"]=pbDevTok;
     var ctl=window.AbortController?new AbortController():null, fuse=setTimeout(function(){ try{ if(ctl) ctl.abort(); }catch(e){} },GB_WARM_FUSE_MS);
-    var w=_gbWarm={t:now,key:gbWarmKey(),sys:sys,hist:hist,pre:pre,frames:frames,nf:frames.length,ft:frames.length?frames[frames.length-1].t:0,bl:bl,mg:mg,ss:gbShape(ss),vm:vm,tired:tired,memlog:memlog}; _gbWarmBusy=true;
+    var w=_gbWarm={t:now,utt:vadStartT,key:gbWarmKey(),sys:sys,hist:hist,pre:pre,frames:frames,nf:frames.length,ft:frames.length?frames[frames.length-1].t:0,bl:bl,mg:mg,ss:gbShape(ss),vm:vm,tired:tired,memlog:memlog}; _gbWarmBusy=true;
     try{ logEv("warm",{nf:frames.length}); }catch(e){}
-    function drop(why){ if(_gbWarm===w){ _gbWarm=null; try{ logEv("warm_fail",{w:why}); }catch(e){} } }
+    function drop(why){ w.bad=true; if(_gbWarm===w) _gbWarm=null; try{ logEv("warm_fail",{w:why}); }catch(e){} }
     fetch("/api/llm?target=openrouter",{method:"POST",headers:hdr,body:JSON.stringify(body),signal:ctl?ctl.signal:undefined})
-      .then(function(r){ if(!r.ok) drop("http "+r.status); return r.text(); }).catch(function(){ drop("net"); })
+      .then(function(r){ if(!r.ok){ drop("http "+r.status); if(r.status===409) _gbWarmOff=true; } return r.text(); })
+      .then(function(tx){ var j=null; try{ j=JSON.parse(tx); }catch(e){} if(!w.bad&&(!j||j.error)) drop("body"); })
+      .catch(function(){ if(!w.bad) drop("net"); })
       .then(function(){ clearTimeout(fuse); _gbWarmBusy=false; });
   }catch(e){ _gbWarm=null; _gbWarmBusy=false; }
 }
-function gbWarmFresh(){ return !!(_gbWarm&&Date.now()-_gbWarm.t<GB_WARM_MAX_MS); }
+function gbWarmFresh(){ return !!(_gbWarm&&_gbWarm.utt===vadStartT&&Date.now()-_gbWarm.t<GB_WARM_MAX_MS); }
 function gbShape(s){ return String(s||"").replace(/\d+(?:\.\d+)?/g,"#"); }
 function gbWarmSkip(w,why){ try{ logEv("warm_skip",{w:why,age:Date.now()-w.t}); }catch(e){} return null; }
 function gbWarmTake(kind,extra,frames){
   if(kind!=="event"||!(extra&&extra.humanReq)) return null;
-  var w=_gbWarm, now=Date.now(); _gbWarm=null;
+  var w=_gbWarm, now=Date.now(); _gbWarm=null; _gbWarmMiss=0;
   if(!w) return null;
   if(now-w.t>GB_WARM_MAX_MS) return gbWarmSkip(w,"old");
   if(w.key!==gbWarmKey()) return gbWarmSkip(w,"moved");
@@ -1857,7 +1861,7 @@ function gbWarmTake(kind,extra,frames){
   if(w.nf&&now-w.ft>10000) return gbWarmSkip(w,"stale");
   return w; }
 function gbWarmFits(w,c){
-  var why=c.sys!==w.sys?"sys":c.bl!==w.bl?"state":c.mg!==w.mg?"goal":gbShape(c.ss)!==w.ss?"stats":c.vm!==w.vm?"vm":c.blind?"blind":"";
+  var why=w.bad?"failed":c.sys!==w.sys?"sys":c.bl!==w.bl?"state":c.mg!==w.mg?"goal":gbShape(c.ss)!==w.ss?"stats":c.vm!==w.vm?"vm":c.blind?"blind":"";
   if(why){ gbWarmSkip(w,why); return false; } return true; }
 function gbWarmMsgs(w,live,liveN,userMsg){
   var late=live.slice(liveN).replace(w.tired,"").replace(w.memlog,"").replace(/^\s+/,"");
@@ -1866,7 +1870,9 @@ function gbWarmMsgs(w,live,liveN,userMsg){
 WARM_PATCHES: list[tuple[str, str, str, int]] = [
     ("v3/next.html", "function think(event,kind,extra){", _GB_WARM_JS + "function think(event,kind,extra){", 1),
     # An autonomous thought sent while the person talks would overwrite the engine's warm-up.
-    # Only while they talk: a television can start warm-ups too, and must not silence it.
+    # Only while the utterance that started the warm-up is open, and warm-ups stop after three
+    # utterances in a row that never became a turn: a television can start them too, and must
+    # not silence the creature.
     (
         "v3/next.html",
         '  var now=Date.now();\n  if(energyState==="asleep"){ if(kind!=="event"',
@@ -1926,6 +1932,27 @@ WARM_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += WARM_PATCHES
+
+# Nothing reaches the model while the sleep screen is up (owner, 2026-11-13: "the local llm
+# shouldn't process anything until I say wake up"). The dream a new visit owes (SLEEP_PATCHES)
+# ran on that screen, before the wake tap; now it, and any thought, waits for the tap.
+WAKE_GATE_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'function think(event,kind,extra){\n  if(typeof vmBusy==="function"&&vmBusy()) return;',
+        'function think(event,kind,extra){\n  if(window._wakeGateUp) return;\n'
+        '  if(typeof vmBusy==="function"&&vmBusy()) return;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'function dream(force){\n  if(typeof vmBusy==="function"&&vmBusy()) return;',
+        'function dream(force){\n  if(window._wakeGateUp) return;\n'
+        '  if(typeof vmBusy==="function"&&vmBusy()) return;',
+        1,
+    ),
+]
+PATCHES += WAKE_GATE_PATCHES
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
