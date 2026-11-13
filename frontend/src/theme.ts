@@ -1,5 +1,5 @@
-// Theme manager: system | dark | light | dark-bright, default system,
-// persisted in localStorage. Applies [data-theme] on <html> and keeps the PWA
+// Theme manager: system | dark | light | dark-bright, default dark-bright (Dark+, the
+// owner's standard), persisted in localStorage. Applies [data-theme] on <html> and keeps the PWA
 // theme-color meta in step so the browser chrome matches the app.
 // "dark-bright" is a dark variant that only lifts --border for stronger edges.
 
@@ -7,6 +7,11 @@ export type ThemePref = "system" | "dark" | "light" | "dark-bright";
 export type ResolvedTheme = "dark" | "light" | "dark-bright";
 
 const STORAGE_KEY = "jbrain.theme";
+
+// What every surface — the app, dash, debug console, and every share link — opens in for
+// a viewer who never picked a theme. A share recipient has nothing stored on this origin,
+// so this is what decides how a shared conversation looks to them.
+export const DEFAULT_THEME: ThemePref = "dark-bright";
 
 // Must match --bg in tokens.css for each theme. dark-bright shares the dark bg.
 const THEME_BG: Record<ResolvedTheme, string> = {
@@ -17,7 +22,9 @@ const THEME_BG: Record<ResolvedTheme, string> = {
 
 export function getThemePref(): ThemePref {
   const stored = localStorage.getItem(STORAGE_KEY);
-  return stored === "dark" || stored === "light" || stored === "dark-bright" ? stored : "system";
+  return stored === "system" || stored === "dark" || stored === "light" || stored === "dark-bright"
+    ? stored
+    : DEFAULT_THEME;
 }
 
 export function resolveTheme(pref: ThemePref, systemDark: boolean): ResolvedTheme {
@@ -41,23 +48,16 @@ function apply(theme: ResolvedTheme): void {
 }
 
 export function setThemePref(pref: ThemePref): void {
-  // "system" clears the override so a future OS change wins again.
-  if (pref === "system") localStorage.removeItem(STORAGE_KEY);
-  else localStorage.setItem(STORAGE_KEY, pref);
+  // "system" is stored like any pick: clearing the key would fall back to DEFAULT_THEME.
+  localStorage.setItem(STORAGE_KEY, pref);
   apply(resolveTheme(pref, systemPrefersDark()));
 }
 
-/**
- * `fallback` is the theme used while nothing is stored, without persisting it: a scoped
- * surface (the shared Minecraft map) can open in its own look for a recipient who never
- * picked one, while anyone with a saved pick on this origin still gets theirs.
- */
-export function initTheme(fallback: ThemePref = "system"): void {
-  const current = () => (localStorage.getItem(STORAGE_KEY) ? getThemePref() : fallback);
-  apply(resolveTheme(current(), systemPrefersDark()));
+export function initTheme(): void {
+  apply(resolveTheme(getThemePref(), systemPrefersDark()));
   window
     .matchMedia("(prefers-color-scheme: dark)")
     .addEventListener("change", (event: MediaQueryListEvent) => {
-      if (current() === "system") apply(event.matches ? "dark" : "light");
+      if (getThemePref() === "system") apply(event.matches ? "dark" : "light");
     });
 }
