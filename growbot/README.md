@@ -454,6 +454,27 @@ camera. It uses the main-thread detector only where no worker can run at all. A 
 retries after 30 s and then 120 s, then gives up, logging an `eyes_detector` journal row each
 time. Frames stay in the browser, and nothing runs while the camera is off or facing the back.
 
+### What was said stays on screen
+
+Talking over the creature used to lose what it was saying: a new reply overwrote the one
+caption (owner, 2026-11-13). `growbot-talklog.js` keeps both sides of the conversation and
+shows them two ways. A fading trail above the caption holds the last three lines from the
+past 4 minutes, older ones dimmer, the person's on the right. Tapping a line opens it in
+place. A log drawer, opened from the trail's *log* pill or a swipe up on the trail, holds the
+whole week with a search box. In both, the part of a reply the person never heard is dimmed
+behind a *✂ you cut in* marker, with *hear the rest* to have it spoken.
+
+What was heard comes from upstream's own sentence queue (`TALKLOG_PATCHES` in `apply.py`).
+Each streamed sentence is queued with the caption offset it ends at. `_chainNext` starting it
+marks it playing, and the next `_chainNext` marks it finished. `silence()` runs on every
+interruption (barge-in, a new reply over an old one, pause), and it marks what was playing or
+still queued as cut. A sentence cut mid-play counts as unheard. So does caption text the page
+held back while the person talked (`_yieldNow`). A muted creature is caption-only by choice,
+so nothing is dimmed. The person's lines come from the one input funnel (`sendTxtFrom`), typed
+or spoken. Body sounds are left out. The lines stay on the phone, in localStorage per persona
+(`gb_talk_log:<persona>`, 300 lines, a week), and are never sent anywhere. The drawer's
+*clear* removes them. `?talklog=off` leaves the page as upstream drew it.
+
 ### The bottom bar and the wake gate
 
 `CHROME_PATCHES` fit upstream's chrome to a box-run creature (owner, 2026-11-12). The bottom bar
