@@ -448,6 +448,24 @@ reply share one follow-up. Unlike a search it has no 15 s gap (a re-ask must be 
 and a follow-up that asks it gets the time in its next thought. Every tool call shows a chip in the status strip while it runs
 (`CLOCK_PATCHES`).
 
+**Math and timers (owner, 2026-11-13).** A `calc` reply field hands arithmetic and unit
+conversions to a small parser on the page (numbers, + - * / ^, parentheses, a few functions,
+never eval), answered like the clock; a sum it cannot do is said plainly. A `timer` field
+(`{minutes, about}`, or `{cancel, about}`) sets a reminder that rides the soul
+(`scratch.timers`, at most 8, at most a day), so a reload keeps it; each turn lists what is
+pending, the page checks every 5 s, and a due one is told in a follow-up thought, late and
+saying so when the phone was locked or closed past it.
+
+**Brain tools (owner, 2026-11-12, 2026-11-13).** A persona can search the owner's JBrain notes
+(`brain`, a few search words, answered in a follow-up thought from a few short dated lines) and
+file a new note (`jot`, filed like a PWA note: provenance `agent`, source `growbot:<persona>`,
+then ingested). Only on the owner's own phone: the persona's Manage tab turns it on for the
+phone holding the persona at that moment (migration 0267, `brain_phone_id`), and the api
+(`api/growbot_brain.py`) refuses every call unless that phone holds the persona right now. Past
+that gate the call runs as the owner across every domain (owner, 2026-11-13: "searching notes
+should not be domain restricted with owner key"). The page offers the two fields only while the
+box's poll says this phone may; each call is in the call log as kind `brain`.
+
 **Its name.** Upstream's seed says "I am Sprout" and the creature's own name (`goals.selfName`) is set only when its person confirms one, so a persona named Dave woke up as Sprout. A box creature born fresh (a new, reset or seeded persona) now starts out with its persona's name; one already awake keeps its own, which the owner edits under Soul as "Calls itself" (`NAME_PATCHES`, owner 2026-11-12).
 
 **Sleep (owner, 2026-11-12).** Upstream dreamed every 12 replies, so a long conversation was
