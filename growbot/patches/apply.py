@@ -2363,7 +2363,7 @@ TALKLOG_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "if(!text) return; var t=speakable(speakSafe(text)); if(!t) return; _sayCap=Date.now();",
         "if(!text) return; var t=speakable(speakSafe(text)); if(!t) return; _sayCap=Date.now();"
-        " if(window.gbTalk){ gbTalk.cut(_chainQ,false); gbTalk.solo(text); }",
+        " if(window.gbTalk){ gbTalk.cut(_chainQ,_voiceActive); gbTalk.solo(text); }",
         1,
     ),
     # A tap on the trail or the drawer is never a push-to-talk hold.

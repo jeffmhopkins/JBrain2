@@ -73,7 +73,12 @@
       log = (Array.isArray(raw) ? raw : []).filter(function (e) {
         return e && typeof e.text === "string" && typeof e.t === "number" && e.t > cutoff && (e.who === "me" || e.who === "you");
       }).slice(-KEEP);
-      log.forEach(function (e) { e.id = nextId++; if (!Array.isArray(e.chunks)) e.chunks = []; });
+      log.forEach(function (e) {
+        e.id = nextId++;
+        if (!Array.isArray(e.chunks)) e.chunks = [];
+        // A reload ended the voice: whatever was still playing or queued was never heard.
+        e.chunks.forEach(function (c) { if (c.st === "p" || c.st === "q") { c.st = "x"; e.cut = true; } });
+      });
     } catch (e) { log = []; }
   }
 
@@ -83,10 +88,8 @@
     saveTimer = setTimeout(function () {
       try {
         store.setItem(storeKey(), JSON.stringify(log.slice(-KEEP).map(function (e) {
-          // A reload ends the voice: whatever was still playing or queued was never heard.
-          var open = e.chunks.some(function (c) { return c.st === "p" || c.st === "q"; });
-          return { who: e.who, text: e.text, t: e.t, cut: !!e.cut || open, held: !!e.held, soloCut: !!e.soloCut,
-            chunks: e.chunks.map(function (c) { return { s: c.s, e: c.e, st: c.st === "p" || c.st === "q" ? "x" : c.st }; }) };
+          return { who: e.who, text: e.text, t: e.t, cut: !!e.cut, held: !!e.held, soloCut: !!e.soloCut,
+            chunks: e.chunks.map(function (c) { return { s: c.s, e: c.e, st: c.st }; }) };
         })));
       } catch (e) {}
     }, 800);
@@ -127,8 +130,10 @@
 
   // _chainNext runs when the previous sentence finished (or on the first one).
   function next() {
-    if (playing && playing.st === "p") playing.st = "ok";
+    var done = playing && playing.st === "p";
+    if (done) playing.st = "ok";
     playing = null;
+    if (done) save();
   }
 
   function start(it) {
@@ -177,24 +182,30 @@
 
   /* ---------- the caption, watched ---------- */
 
-  // The settled caption swaps a dash for a comma (upstream's final `said`); the stream did not.
-  function norm(s) { return s.replace(/\s*—\s*/g, ", "); }
+  /* The settled caption (upstream's final `said`) differs from the streamed one: trimmed, a
+     dash turned into a comma, real newlines where the stream had spaces, and on a reply cut by
+     the token limit, shortened to its last whole sentence. */
+  function norm(s) { return s.replace(/\s*—\s*/g, ", ").replace(/\s+/g, " ").trim(); }
 
-  // The same reply, grown: the streamed caption, its settled form, or a move added after it.
+  // The same reply: grown (streaming, or a move added after it), or settled shorter. A short
+  // stray line is never taken as a shortened reply.
   function related(a, b) {
     var na = norm(a), nb = norm(b);
-    return na.length > 0 && nb.indexOf(na) === 0;
+    if (!na.length) return false;
+    return nb.indexOf(na) === 0 || (nb.length >= 24 && na.indexOf(nb) === 0);
   }
 
   // Chunk offsets were measured on the streamed text; carry them over to its settled form.
   function settle(e, t) {
-    if (norm(e.text) !== e.text && norm(t) === t) {
-      var old = e.text;
-      e.chunks.forEach(function (c) {
-        c.s = norm(old.slice(0, c.s)).length;
-        c.e = norm(old.slice(0, c.e)).length;
-      });
+    var old = e.text;
+    var dash = (old.match(/—/g) || []).length > (t.match(/—/g) || []).length;
+    var lead = /^\s/.test(t) ? 0 : old.length - old.replace(/^\s+/, "").length;
+    function at(i) {
+      var p = old.slice(0, i);
+      if (dash) p = p.replace(/\s*—\s*/g, ", ");
+      return Math.max(0, p.length - lead);
     }
+    if (dash || lead) e.chunks.forEach(function (c) { c.s = at(c.s); c.e = at(c.e); });
     e.text = t.slice(0, MAX_CHARS);
   }
 

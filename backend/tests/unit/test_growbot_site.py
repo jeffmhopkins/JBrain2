@@ -2638,7 +2638,8 @@ def test_the_conversation_stays_on_screen_after_the_caption_moves_on() -> None:
         "function _chainNext(){ if(window.gbTalk) gbTalk.next();",
         "replyLang=it.lang; if(window.gbTalk) gbTalk.start(it);",
         "function silence(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",
-        "_sayCap=Date.now(); if(window.gbTalk){ gbTalk.cut(_chainQ,false); gbTalk.solo(text); }",
+        "_sayCap=Date.now(); if(window.gbTalk){ gbTalk.cut(_chainQ,_voiceActive);"
+        " gbTalk.solo(text); }",
         "function _ctxHush(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",
         '#modebar,#brainPanel,#sgNudge,#gbTrail,#gbLog")) return;',
         '#gbk,#gbkBrainP,#gbkBack,#gbTrail,#gbLog";',
@@ -2751,13 +2752,45 @@ def test_a_muted_creature_dims_nothing() -> None:
     assert _runs(lines[0]) == [(True, "Quiet words.")]
 
 
-def test_a_tab_keeps_writing_to_the_persona_it_loaded_and_a_reload_unhears_the_queue() -> None:
+def test_a_tab_keeps_writing_to_the_persona_it_loaded() -> None:
     out = _talklog_in_node(
-        "mem.gb_box_soul=JSON.stringify({persona:'other'}); T.begin(); var it={}; T.upto=5;"
-        " T.queued(it); T.caption('Hello there.');"
-        "setTimeout(function(){ console.log(JSON.stringify({keys:Object.keys(mem).sort(),"
-        " saved:JSON.parse(mem['gb_talk_log:dave'])})); }, 1000);"
+        "mem.gb_box_soul=JSON.stringify({persona:'other'}); T.begin(); T.caption('Hello there.');"
+        "setTimeout(function(){ console.log(JSON.stringify(Object.keys(mem).sort())); }, 1000);"
     )
-    assert out["keys"] == ["gb_box_soul", "gb_talk_log:dave"]
-    assert out["saved"][0]["cut"] is True
-    assert out["saved"][0]["chunks"] == [{"s": 0, "e": 5, "st": "x"}]
+    assert out == ["gb_box_soul", "gb_talk_log:dave"]
+
+
+def test_a_reply_heard_to_the_end_is_saved_heard_and_one_cut_by_a_reload_is_not() -> None:
+    """The settled caption lands while the last sentence still plays; the sentence finishing
+    saves again, so a reload after it shows the reply whole."""
+    heard = _talklog_in_node(
+        "T.begin(); var it={}; T.upto=12; T.queued(it); T.caption('Hello there.'); T.next();"
+        " T.start(it); setTimeout(function(){ T.next(); setTimeout(function(){"
+        " console.log(mem['gb_talk_log:dave']); }, 1000); }, 1000);"
+    )
+    assert heard[0]["cut"] is False
+    assert heard[0]["chunks"] == [{"s": 0, "e": 12, "st": "ok"}]
+    stored = json.dumps(
+        [{"who": "me", "text": "Hello there.", "t": 9e15, "chunks": [{"s": 0, "e": 12, "st": "q"}]}]
+    )
+    lines = _talklog_in_node("console.log(JSON.stringify(T.lines()));", stored)
+    assert lines[0]["cut"] is True
+    assert _runs(lines[0]) == [(False, "Hello there.")]
+
+
+def test_a_settled_caption_trimmed_or_cut_to_its_last_sentence_is_the_same_line() -> None:
+    lines = _talklog_in_node(
+        "T.begin(); T.caption('  Line one is here.\\nLine two is longer and gets cut off');"
+        " T.caption('Line one is here. Line two is longer.'.slice(0,17));"
+        " T.caption('Hm.'); console.log(JSON.stringify(T.lines()));"
+    )
+    assert [line["text"] for line in lines] == [
+        "  Line one is here.\nLine two is longer and gets cut off",
+        "Line one is here.",
+        "Hm.",
+    ]
+    lines = _talklog_in_node(
+        "T.begin(); T.caption('  Line one is here, and it runs on.\\nLine two gets cut');"
+        " T.caption('Line one is here, and it runs on.'); console.log(JSON.stringify(T.lines()));"
+    )
+    assert [line["text"] for line in lines] == ["Line one is here, and it runs on."]
