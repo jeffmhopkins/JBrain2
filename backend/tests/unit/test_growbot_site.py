@@ -2409,8 +2409,9 @@ def test_the_rail_carries_the_speaker_and_the_mic_mode() -> None:
     assert "#gbkCells{display:grid;grid-template-columns:repeat(4,1fr);" in page
     assert 'GB_MIC_LABEL={open:"open mic",push:"push talk",muted:"mic muted"}' in page
     assert '(M?"speaker off":"speaker")' in page
-    # Only open mic and muted shade the mode cell (owner, 2026-11-13: push to talk is unshaded).
-    assert 'setC(mm,"gbkCell"+(MM==="open"?" on":(MM==="muted"?" gbkWarn on":"")));' in page
+    # Only a muted mic shades the mode cell (owner, 2026-11-13: push to talk and open mic are
+    # unshaded).
+    assert 'setC(mm,"gbkCell"+(MM==="muted"?" gbkWarn on":""));' in page
     # A press on the creature in push mode is the talk button, after the first tap's handoff of
     # the senses (so a camera carried over from v2 still reopens) and ahead of every petting path.
     pet = page[page.index('document.addEventListener("pointerdown",function(e){ voiceUnlock();') :]
