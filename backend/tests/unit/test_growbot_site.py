@@ -2278,7 +2278,7 @@ var GB_MIC="open", vadOn=false, recording=false, listenMode=true, speakingUntil=
 var _an={getByteTimeDomainData:function(b){ for(var i=0;i<b.length;i++) b[i]=i%2?250:6; }};
 var _anBuf=new Uint8Array(64), micRms=0, noiseFloor=0.01, _qFloor=0.01, _clipMax=0, _clipSum=0;
 var _clipN=0, _clipHot=0, _ambDuty=0, _ambDuty2=0, _ambOn=false, hum={pitch:-1};
-var actx={sampleRate:48000}, paused=false, micStream=null, _micInFlight=false;
+var actx={sampleRate:48000}, paused=false, micStream=null, _micInFlight=false, _micGen=0;
 function micHealthy(){ return true; }
 function detectPitch(){ return 220; }
 function fireReflex(k){ calls.push(["reflex",k]); }
@@ -2369,11 +2369,11 @@ def test_the_rail_carries_the_speaker_and_the_mic_mode() -> None:
     assert '(M?"speaker off":"speaker")' in page
     # Only open mic and muted shade the mode cell (owner, 2026-11-13: push to talk is unshaded).
     assert 'setC(mm,"gbkCell"+(MM==="open"?" on":(MM==="muted"?" gbkWarn on":"")));' in page
-    # A press on the creature in push mode is the talk button, ahead of the host's own mic asks
-    # on the same tap (which would drop its talkStart) and of every petting path.
+    # A press on the creature in push mode is the talk button, after the first tap's handoff of
+    # the senses (so a camera carried over from v2 still reopens) and ahead of every petting path.
     pet = page[page.index('document.addEventListener("pointerdown",function(e){ voiceUnlock();') :]
-    ptt = pet.index('if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false')
-    assert ptt < pet.index("if(_micRetryArmed&&!micStream") < pet.index("if(window.__wakeSenses")
+    ptt = pet.index('if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false)')
+    assert pet.index("if(window.__wakeSenses") < pet.index('#brainPanel,#sgNudge")) return;') < ptt
     assert ptt < pet.index("spawnSparks(") < pet.index('fireReflex("tap")')
     # paint() writes the chip once per paint, and a press never lands on a child it replaces.
     assert " else { setH(mc,hasTxt?snd():" in page and "#gbkMic *{pointer-events:none}" in page
@@ -2400,3 +2400,17 @@ def test_a_push_survives_the_mic_landing_late_another_finger_and_a_hidden_page()
     assert got["dropped"] == [["start"]] and got["landed"] == [["start"], ["start"]]
     assert got["other"] == [] and got["own"] == [["stop"]]
     assert got["after"] == [["start"]] and got["paused"] == []
+
+
+def test_a_push_hidden_while_the_mic_is_asked_for_records_nothing_on_return() -> None:
+    """Re-review of #1862: the ask still in flight is made stale, so the stream that lands when
+    the person comes back starts no clip; with a stream already there, nothing is retried."""
+    got = _mic_page(
+        "GB_MIC='push'; gbPttDown({pointerId:1}); _micInFlight=true; document.hidden=true;"
+        "listeners.visibilitychange(); var r={gen:_micGen,flight:_micInFlight};"
+        "document.hidden=false; micStream={}; _micInFlight=false; calls=[]; run(); run();"
+        "r.after=calls; calls=[]; gbPttDown({pointerId:2}); run(); run(); r.healthy=calls;"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["gen"] == 1 and got["flight"] is False and got["after"] == []
+    assert got["healthy"] == [["start"]]

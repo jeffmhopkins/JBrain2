@@ -5810,14 +5810,19 @@ function gbMicSet(m){ if(m!=="push"&&m!=="muted") m="open"; if(m===GB_MIC) retur
   if(m==="muted"&&recording) talkAbort();
   try{ logEv("mic_mode",{m:m}); }catch(e){}
   toast(m==="open"?"open mic. just talk":m==="push"?"push to talk. hold the screen or the mic button while you speak":"mic muted. I can't hear you, but you can type"); }
-var _gbPtt=false, _gbPttStop=false, _gbPttUntil=0, _gbPttId=null, _gbPttTry=0;
+var _gbPtt=false, _gbPttStop=false, _gbPttUntil=0, _gbPttId=null, _gbPttTry=0, _gbPttWait=false;
 function gbPttDown(e){ if(GB_MIC!=="push"||_gbPtt||window._wakeGateUp||paused) return;
   _gbPtt=true; _gbPttStop=false; _gbPttId=e&&e.pointerId!=null?e.pointerId:null; _gbPttTry=Date.now()+12000;
-  if(!recording){ talkStart(); setTimeout(gbPttRetry,150); } }
+  if(!recording){ _gbPttWait=!(micStream&&micHealthy()); talkStart(); if(_gbPttWait) setTimeout(gbPttRetry,150); } }
 // A press that lands while another mic ask is in flight (the host's own recovery ask on the same
-// tap) has its talkStart dropped; once the stream is there, the hold still becomes a clip.
-function gbPttRetry(){ if(!_gbPtt||recording||Date.now()>_gbPttTry) return;
-  if(micStream&&!_micInFlight&&micHealthy()) talkStart(); setTimeout(gbPttRetry,150); }
+// tap) has its talkStart dropped; once that stream is there, the hold still becomes a clip. One
+// retry only: a talkStart that had a stream and still did not record has said why.
+function gbPttRetry(){ if(!_gbPtt||recording||!_gbPttWait||Date.now()>_gbPttTry) return;
+  if(micStream&&!_micInFlight&&micHealthy()){ _gbPttWait=false; talkStart(); return; } setTimeout(gbPttRetry,150); }
+// Hidden mid-press with the mic still being asked for: the ask is made stale, so a stream that
+// lands on the way back starts no clip (upstream's hide handler only stops a clip under way).
+function gbPttHide(){ if((_gbPtt||_gbPttStop)&&!recording&&_micInFlight){ _micGen++; _micInFlight=false; }
+  _gbPtt=false; _gbPttStop=false; }
 function gbPttUp(e){ if(!_gbPtt) return; if(e&&_gbPttId!=null&&e.pointerId!==_gbPttId) return; _gbPtt=false;
   if(recording){ talkStop(); return; }
   _gbPttStop=true; _gbPttUntil=Date.now()+13000; setTimeout(gbPttSettle,40); }
@@ -5826,9 +5831,10 @@ function gbPttSettle(){ if(!_gbPttStop||_gbPtt) return;
   if(Date.now()<_gbPttUntil) setTimeout(gbPttSettle,40); else _gbPttStop=false; }
 document.addEventListener("pointerup",gbPttUp);
 document.addEventListener("pointercancel",gbPttUp);
-document.addEventListener("visibilitychange",function(){ if(document.hidden){ _gbPtt=false; _gbPttStop=false; } });
-window.addEventListener("pagehide",function(){ _gbPtt=false; _gbPttStop=false; });
-document.addEventListener("contextmenu",function(e){ if(GB_MIC==="push"&&e.target&&e.target.closest&&e.target.closest("#face,#gbkMic")) e.preventDefault(); });
+document.addEventListener("visibilitychange",function(){ if(document.hidden) gbPttHide(); });
+window.addEventListener("pagehide",gbPttHide);
+document.addEventListener("contextmenu",function(e){ if(GB_MIC==="push"&&e.target&&e.target.closest&&(e.target.closest("#gbkMic")||!e.target.closest(GB_PTT_NOT))) e.preventDefault(); });
+var GB_PTT_NOT="input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge,#gbk,#gbkBrainP,#gbkBack";
 function vadCancel(){ vadOn=false;
   if(_pcmLive){ try{ pcmUttStop(false,0); }catch(e){} return; }                          // PCM lane: drop the clip, ring keeps rolling
   try{ if(vadRec){ vadRec._cancel=true; vadRec.stop(); } }catch(e){} }   // mark cancelled → that recorder's onstop drops the clip
@@ -10024,13 +10030,13 @@ function bootOwned(){
 
   document.addEventListener("pointerdown",function(e){ voiceUnlock(); if(!window._wakeGateUp) ensureIMU(); audioBirth(); reqWakeLock();   // 0818: audioBirth = the old audioRevive PLUS creating the contexts that do not exist yet — the Firefox-Android silence (a lazily-born context never gets a gesture, and Gecko will not play it)
     try{ if(window.GBA&&!window._gbaPresent){ window._gbaPresent=1; GBA.mark("present"); } }catch(_pe){}   // 0811 no-tap telemetry: ANY first touch = a human is physically there, once per load — a resurrected background tab never fires this
-    if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false&&!(e.target.closest&&e.target.closest("input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge"))){ gbPttDown(e); return; }
     if(_micRetryArmed&&!micStream&&!window._wakeGateUp&&!captureBlocked()){ _micRetryArmed=false; askMic(function(st){ micStream=micStream||st; ensureEar(); reflectListen(); },function(){}); }   // 0811: the one-shot ear recovery, fired inside the trusted gesture iOS honors (see askMic)
     // first tap: motion perm + audio unlock + wake lock. [0726 item 2b] ensureIMU deferred while the gate is up: (a) a stray touch on the sleep screen must not pop the iOS motion prompt behind/over the gate; (b) this passive-pointerdown call fired BEFORE the wake tap's click and burned imuReady, so the gate handler's own ensureIMU() (the trusted click iOS honors) always no-opped; the wake tap now owns the first, trusted request
     if(window.__wakeSenses&&!captureBlocked()){ var _ws=window.__wakeSenses; window.__wakeSenses=null;   // 0917 R2b: !pauseFrozen() DEFERS this handoff rather than spending it — the senses v2 measured as open are reopened on the first tap after the resume, not dropped   // v2→v3 handoff: reopen the senses birth already approved, on this first trusted tap (perms persist same-origin → no re-prompt)
       try{ if(_ws.cam && !camOn) ensureCam(); }catch(e){}
       try{ if(_ws.ear && !micStream) askMic(function(st){ micStream=micStream||st; ensureEar(); },function(){}); }catch(e){} }
     var x=e.target; if(x.closest&&x.closest("input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge")) return;  // controls/edit/trace/brain-tab/storage line = not a touch; tapping the CREATURE is (audit: brain-panel touches were petting)
+    if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false){ gbPttDown(e); return; }
     try{ var _tr=$("typeRow"); if(_tr&&_tr.classList.contains("open")) typeRowSet(false,false); }catch(_e){}   // [0726 item 1] tapping elsewhere folds the type row (transient; the closest() guard above already spared taps on the row itself + the ⌨ button)
     var r=cv.getBoundingClientRect(), nx=Math.max(0,Math.min(1,(e.clientX-r.left)/(r.width||1))), ny=Math.max(0,Math.min(1,(e.clientY-r.top)/(r.height||1)));   // the touch point in the creature's screen space
     spawnSparks(nx,ny,34,null,2.6);                           // instant visual feedback AT the finger — sparks bloom where you touch, not centered (v2 parity)
@@ -10655,7 +10661,8 @@ body:not(.editing) #brainTabBtn{display:none!important}
 #gbkMic.gbkPtt{width:auto;padding:0 12px;gap:8px;display:flex;align-items:center;font:400 11px 'Departure Mono',ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;background:#16243A;color:#8FB8FF;border:1px solid #8FB8FF}
 #gbkMic.gbkPtt.hold{background:#FFB24D;color:#2E1A00;border-color:#FFB24D}
 #gbkMic.gbkMuted{color:#FFB24D}
-body.gbkPushMode #face{touch-action:none;-webkit-touch-callout:none}
+body.gbkPushMode #face{touch-action:none}
+body.gbkPushMode #liveCard,body.gbkPushMode #face{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 #gbkMic *{pointer-events:none}
 </style>
 <div id="gbk">
