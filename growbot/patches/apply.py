@@ -1332,7 +1332,9 @@ function gbToolPillEnd(kind,only){ try{
   if(e&&window.gbStatus) window.gbStatus.end(e);
 }catch(err){} }
 /* After the reply handler: a chip whose call was skipped (a gap, a tick) has nothing to wait for. */
-function gbToolPillsSettle(){ for(var k in _gbToolPills) if(!_gbFollow||_gbFollow.tags.indexOf(k)<0) gbToolPillEnd(k); }
+/* A call still out to the box (a notes search, a note being filed) is held until it answers. */
+var _gbToolHeld={};
+function gbToolPillsSettle(){ for(var k in _gbToolPills) if(!_gbToolHeld[k]&&(!_gbFollow||_gbFollow.tags.indexOf(k)<0)) gbToolPillEnd(k); }
 /* The line said while it looks: the model's own only when every word of it is thinking back, else
    one of these. It has not looked yet, so an answer or "I don't know" there is a guess the find
    then contradicts (field, 2026-11-13: "I found <two names>" before the find named all four). */
@@ -1355,6 +1357,8 @@ function gbRecallStreaming(full){
   if(/^\s*\{\s*"clock"\s*:\s*(true\b|"(true|yes|now)")/i.test(s)){ gbToolPill("clock"); return true; }
   m=/^\s*\{\s*"calc"\s*:\s*"([^"]*)"/.exec(s);
   if(m&&gbCalcWanted(m[1])){ gbToolPill("calc"); return true; }
+  m=/^\s*\{\s*"brain"\s*:\s*"([^"]*)"/.exec(s);
+  if(m&&gbRecallWords(m[1])&&gbBrainOn()){ gbToolPill("brain"); return true; }
   return false;
 }
 /* The clock (owner, 2026-11-13: "we also need a tool for time"). Its turn carries only the
@@ -1386,11 +1390,14 @@ function gbClockAsk(v,kind,extra){
 /* Like the thinking-back line: the model's own only when it only says it is doing that. */
 var GB_TOOL_LINES={
     clock:["Let me check the time.","One moment, let me look at the clock.","Let me see what time it is."],
-    calc:["Let me work that out.","One moment, let me figure that.","Let me do the math."]},
-  GB_TOOL_SAY_KEY={clock:/\b(check|checking|clock|time)\b/,calc:/\b(work|working|figure|figuring|math|calculate|calculating)\b/},
+    calc:["Let me work that out.","One moment, let me figure that.","Let me do the math."],
+    brain:["Let me look in your notes.","One moment, I'm checking your notes.","Let me look that up."]},
+  GB_TOOL_SAY_KEY={clock:/\b(check|checking|clock|time)\b/,calc:/\b(work|working|figure|figuring|math|calculate|calculating)\b/,
+    brain:/\b(notes?|look|looking|check|checking)\b/},
   GB_TOOL_SAY_OK={let:1,me:1,check:1,checking:1,the:1,time:1,clock:1,one:1,moment:1,sec:1,second:1,hmm:1,hm:1,ok:1,okay:1,
     look:1,looking:1,at:1,see:1,what:1,it:1,is:1,i:1,ill:1,quick:1,a:1,just:1,wait:1,work:1,working:1,that:1,this:1,
-    out:1,figure:1,figuring:1,do:1,doing:1,math:1,calculate:1,calculating:1,on:1},
+    out:1,figure:1,figuring:1,do:1,doing:1,math:1,calculate:1,calculating:1,on:1,
+    your:1,notes:1,note:1,in:1,through:1,up:1,im:1},
   GB_CLOCK_LINES=GB_TOOL_LINES.clock;
 function gbToolLine(kind,say){
   var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean), L=GB_TOOL_LINES[kind];
@@ -1480,6 +1487,47 @@ function gbTimerTick(){ try{
   });
 }catch(e){} }
 if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
+/* The owner's notes (owner, 2026-11-13): a persona the owner turned brain access on for, on his
+   own phone, searches his notes (`brain`) and files new ones (`jot`). The box is the gate and
+   checks every call; the page only offers the fields when the box says this phone may. A search
+   is answered by a follow-up thought like a memory search; a note's say already confirms it,
+   and a note the box would not file is owned up to on the next thought. */
+var GB_BRAIN_PATH="/api/box/brain", GB_BRAIN_GAP_MS=10000, _gbBrainT=0;
+function gbBrainOn(){ try{ return window.__gbBoxBrain===true&&!!(window.__gbBoxSoul&&window.__gbBoxSoul.persona); }catch(e){ return false; } }
+function gbBrainPost(sub,body){
+  body.persona=window.__gbBoxSoul.persona;
+  return fetch(GB_BRAIN_PATH+sub,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),credentials:"same-origin"})
+    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return {status:r.status,json:j||{}}; }); });
+}
+function gbBrainAsk(q,kind,extra){
+  var now=Date.now(), words=gbRecallWords(q);
+  if(!words||!gbBrainOn()) return;
+  if(kind!=="event"){ logEv("brain_skip",{why:"kind"}); return; }
+  if(extra&&extra.recallFollow){ logEv("brain_skip",{why:"follow"}); return; }
+  if(now-_gbBrainT<GB_BRAIN_GAP_MS){ logEv("brain_skip",{why:"gap"}); return; }
+  _gbBrainT=now; gbToolPill("brain"); _gbToolHeld.brain=1;
+  var ev="you looked through your person's own notes for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer them with it, in your own voice and briefly; if it does not answer what they asked, say plainly that their notes do not say.";
+  function found(text){ delete _gbToolHeld.brain; gbToolFollow("brain",text,ev); }
+  gbBrainPost("/search",{q:words}).then(function(r){
+    var j=r.json;
+    logEv("brain",{n:(r.status===200&&j.n)|0,st:r.status});
+    if(r.status===200) found("you looked through your person's notes for \""+words+"\" and "+(j.n?"found:\n"+String(j.text||"").slice(0,1500):"found nothing about it."));
+    else if(r.status===403) found("you tried to look in your person's notes, but they are not open to you on this phone; say so plainly.");
+    else found("you tried to look in your person's notes, but the box did not answer; say so plainly.");
+  },function(){ logEv("brain",{st:0}); found("you tried to look in your person's notes, but the box did not answer; say so plainly."); });
+  return true;
+}
+function gbJot(t,kind,extra){
+  var txt=typeof t==="string"?t.replace(/\s+/g," ").trim().slice(0,2000):"";
+  if(!txt||/^omit\b/i.test(txt)||!gbBrainOn()) return;
+  if(kind!=="event"){ logEv("jot_skip",{why:"kind"}); return; }
+  if(extra&&extra.recallFollow){ logEv("jot_skip",{why:"follow"}); return; }
+  gbToolPill("jot"); _gbToolHeld.jot=1;
+  function done(ok,st){ delete _gbToolHeld.jot; gbToolPillEnd("jot"); logEv("jot",{ok:ok?1:0,st:st});
+    if(!ok) _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+"you tried to write \""+txt.slice(0,80)+"\" into your person's notes, but it did not save; tell them so."; }
+  gbBrainPost("/note",{text:txt}).then(function(r){ done(r.status===200&&r.json.ok===true,r.status); },function(){ done(false,0); });
+  return true;
+}
 """
 
 RECALL_PATCHES: list[tuple[str, str, str, int]] = [
@@ -1772,7 +1820,10 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         "!o.visual_memory&&!(_gbFollow&&_gbFollow.tags[0]===\"recall\"))"
         " o.say=gbClockLine(o.say); if(gbCalcAsk(o.calc,kind,extra)&&!_streamSaid&&"
         "!o.visual_memory&&_gbFollow&&_gbFollow.tags[0]===\"calc\") o.say=gbToolLine(\"calc\",o.say);"
-        " if(o.timer) gbTimerSet(o.timer,kind,extra); if((o.sleep===true",
+        " if(o.timer) gbTimerSet(o.timer,kind,extra);"
+        " if(gbBrainAsk(o.brain,kind,extra)&&!_streamSaid&&!o.visual_memory&&"
+        "!(_gbFollow&&_gbFollow.tags.length)) o.say=gbToolLine(\"brain\",o.say);"
+        " gbJot(o.jot,kind,extra); if((o.sleep===true",
         1,
     ),
     # Outside the try: a throw above must not leave a skipped call's chip up.
@@ -1798,7 +1849,25 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         "    '\"timer\":\"OMIT unless your person asks you to remind them of something or set a"
         " timer: an object {\\\"minutes\\\":20,\\\"about\\\":\\\"flip the laundry\\\"}, and"
         " say confirms it plainly; to cancel one {\\\"cancel\\\":true,\\\"about\\\":\\\"laundry\\\"}."
-        " the page tells you when it goes off\",' +\n",
+        " the page tells you when it goes off\",' +\n"
+        "    gbBrainFields() +\n",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "/* ---- the clean, gate-free system prompt.",
+        "function gbBrainFields(){ try{ if(typeof window===\"undefined\"||window.__gbBoxBrain!==true)"
+        " return \"\"; }catch(e){ return \"\"; }\n"
+        "  return '\"brain\":\"OMIT almost always. when your person asks about their own life that"
+        " is not in your memory (something they wrote down, a plan, a person, a list, a date), a"
+        " few search words to look through their notes. write it as the FIRST key of your reply"
+        " (after visual_memory if you use one), before say; that say only says you are looking in"
+        " their notes, never an answer; you answer next thought. try recall first for things"
+        " they told you\",' +\n"
+        "    '\"jot\":\"OMIT unless your person asks you to write something down or make a"
+        " note in their notes: the note, in their words, complete enough to make sense later;"
+        " say confirms it\",'; }\n"
+        "/* ---- the clean, gate-free system prompt.",
         1,
     ),
     ("v3/next.html", "_gbLive+=gbTiredLine();", "_gbLive+=gbTiredLine()+gbTimersLine();", 1),

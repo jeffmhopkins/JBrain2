@@ -976,3 +976,49 @@ async def test_a_first_phone_that_pulled_before_the_owners_pick_never_overwrites
     assert await repo.phone_patch_prefs(SYSTEM_OWNER, sprout, PHONE_A, again) == 3
     got = await repo.phone_prefs(SYSTEM_OWNER, sprout, PHONE_A)
     assert got[1] == {"gb_eye": "user", "gb_vol": "0.7"}
+
+
+async def test_brain_access_binds_to_the_holding_phone_and_only_it(
+    maker: async_sessionmaker,
+) -> None:
+    """Migration 0267 (owner, 2026-11-12): the persona with brain access opens only on the
+    owner's own phone. Turning it on binds it to the phone holding the persona then; a call from
+    any other phone, or after the persona moved, is refused; the owner turns it off."""
+    c = _client(maker)
+    pid = _make(c)["id"]
+    repo = SqlPersonaRepo(maker)
+    await SqlGrowbotRepo(maker).put_robot(OWNER, "gb-fish", "Fish")
+    r = c.patch(f"/api/growbot/personas/{pid}", json={"brain": True})
+    assert r.status_code == 409 and "Open it on your phone first" in r.json()["detail"]
+    assert await repo.open_on_phone(SYSTEM_OWNER, pid, PHONE_A, "Pixel", "gb-fish")
+    r = c.patch(f"/api/growbot/personas/{pid}", json={"brain": True})
+    assert r.status_code == 200 and r.json()["persona"]["brain_phone"] == PHONE_A
+    assert await repo.brain_ok(SYSTEM_OWNER, pid, PHONE_A)
+    assert not await repo.brain_ok(SYSTEM_OWNER, pid, PHONE_B)
+    who = {"persona": pid, "phone": PHONE_A}
+    assert c.post("/internal/growbot/soul/state", json=who).json()["brain"] is True
+    assert c.post("/internal/growbot/soul/pull", json=who).json()["brain"] is True
+    # Moved to another phone: neither may use the notes until it is back on the chosen one.
+    assert await repo.open_on_phone(SYSTEM_OWNER, pid, PHONE_B, "Other", "gb-fish")
+    assert not await repo.brain_ok(SYSTEM_OWNER, pid, PHONE_B)
+    assert not await repo.brain_ok(SYSTEM_OWNER, pid, PHONE_A)
+    assert (
+        c.post("/internal/growbot/soul/state", json={"persona": pid, "phone": PHONE_B}).json()[
+            "brain"
+        ]
+        is False
+    )
+    assert await repo.open_on_phone(SYSTEM_OWNER, pid, PHONE_A, "Pixel", "gb-fish")
+    assert await repo.brain_ok(SYSTEM_OWNER, pid, PHONE_A)
+    r = c.patch(f"/api/growbot/personas/{pid}", json={"brain": False})
+    assert r.status_code == 200 and r.json()["persona"]["brain_phone"] is None
+    assert not await repo.brain_ok(SYSTEM_OWNER, pid, PHONE_A)
+    assert await repo.set_brain(SYSTEM_OWNER, "not-a-uuid", True) is False
+    missing = "00000000-0000-4000-8000-000000000000"
+    assert await repo.set_brain(SYSTEM_OWNER, missing, True) is False
+    assert await repo.set_brain(SYSTEM_OWNER, missing, False) is False
+    assert c.patch(f"/api/growbot/personas/{missing}", json={"brain": True}).status_code == 404
+    assert not await repo.brain_ok(SYSTEM_OWNER, "not-a-uuid", PHONE_A)
+    # Only the owner reads or writes the column: a non-owner sees no persona at all.
+    for ctx in NON_OWNERS:
+        assert not await repo.brain_ok(ctx, pid, PHONE_A)

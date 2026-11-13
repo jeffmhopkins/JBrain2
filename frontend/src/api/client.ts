@@ -4077,6 +4077,9 @@ export interface GrowbotPersona {
   voice: string;
   /** Whether its quiet moments invite it to explore with its body; on unless turned off. */
   explore: boolean;
+  /** The phone it may use your JBrain notes on (search them, file new ones), or null: off.
+   *  Only that phone, holding it, ever gets them; the box checks on every call. */
+  brain_phone?: string | null;
   /** Its creature's settings kept on the box (the phone's localStorage keys), or null until
    *  its phone first sent them. `gb_eye` is the camera: "environment" is the back one. */
   prefs: Record<string, string> | null;
@@ -8366,6 +8369,15 @@ export const api = {
     const response = await request(
       `/api/growbot/personas/${encodeURIComponent(id)}`,
       jsonInit("PATCH", { explore }),
+    );
+    return (await response.json()) as GrowbotWritten;
+  },
+
+  /** On binds your notes to the phone holding it now (409 when it is not open anywhere). */
+  async setGrowbotPersonaBrain(id: string, brain: boolean): Promise<GrowbotWritten> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { brain }),
     );
     return (await response.json()) as GrowbotWritten;
   },

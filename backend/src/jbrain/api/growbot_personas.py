@@ -121,6 +121,8 @@ class PersonaOut(BaseModel):
     prefs: dict[str, str] | None
     # Whether its quiet moments invite it to explore with its body (on) or keep company.
     explore: bool
+    # The phone it may use the owner's notes on (brain access), or None: off.
+    brain_phone: str | None = None
 
 
 class MemoryOut(BaseModel):
@@ -196,6 +198,7 @@ def _persona_out(p: Persona) -> PersonaOut:
         voice=p.voice,
         prefs=p.prefs,
         explore=p.explore,
+        brain_phone=p.brain_phone_id,
     )
 
 
@@ -341,6 +344,8 @@ class RenameIn(BaseModel):
     face: Face | None = None
     voice: str | None = Field(default=None, pattern=VOICE_RE)
     explore: bool | None = None
+    # Brain access: on binds it to the phone holding the persona now, off clears it.
+    brain: bool | None = None
 
 
 class RegionIn(BaseModel):
@@ -400,9 +405,16 @@ async def rename_persona(request: Request, owner: OwnerDep, pid: Pid, body: Rena
     """A new name (a soul write, so its phone reloads on it), a new face, voice or explore
     setting (not soul writes: the phone's poll carries them and the creature changes where it
     stands), or any mix of them."""
-    if body.name is None and body.face is None and body.voice is None and body.explore is None:
+    if (
+        body.name is None
+        and body.face is None
+        and body.voice is None
+        and body.explore is None
+        and body.brain is None
+    ):
         raise HTTPException(
-            status_code=422, detail="Give it a name, a face, a voice or an explore setting."
+            status_code=422,
+            detail="Give it a name, a face, a voice, an explore or a brain setting.",
         )
     # Checked before anything is saved, so a bad name writes nothing at all.
     name = _name(body.name) if body.name is not None else None
@@ -414,6 +426,16 @@ async def rename_persona(request: Request, owner: OwnerDep, pid: Pid, body: Rena
         raise HTTPException(status_code=404, detail="no such persona")
     if body.explore is not None and not await repo.set_explore(ctx, pid, body.explore):
         raise HTTPException(status_code=404, detail="no such persona")
+    if body.brain is not None:
+        # On binds it to the phone holding the persona now: the owner turns it on with the
+        # persona open on his own phone, and no other phone ever gets it.
+        got = await repo.set_brain(ctx, pid, body.brain)
+        if got == "closed":
+            raise HTTPException(
+                status_code=409, detail="Open it on your phone first, then turn this on."
+            )
+        if not got:
+            raise HTTPException(status_code=404, detail="no such persona")
     p = await _get(request, ctx, pid)
     if name is None:
         return WrittenOut(persona=await _detail(request, ctx, p), checkpoint=None)
@@ -701,6 +723,8 @@ class PulledOut(BaseModel):
     face: str
     voice: str
     explore: bool
+    # Whether this phone may use the owner's notes (the box checks again on every call).
+    brain: bool = False
 
 
 class PushedOut(BaseModel):
@@ -738,6 +762,7 @@ async def pull_soul(request: Request, body: PhoneIn) -> PulledOut:
         face=got.face,
         voice=got.voice,
         explore=got.explore,
+        brain=got.brain,
     )
 
 
@@ -754,6 +779,8 @@ class StateOut(BaseModel):
     prefs: int
     # Whether its quiet moments invite it to explore: its next quiet moment reads it.
     explore: bool
+    # Whether this phone may use the owner's notes now: its next turn offers the tools or not.
+    brain: bool = False
 
 
 @internal_router.post("/soul/state")
@@ -773,6 +800,7 @@ async def soul_state(request: Request, body: PhoneIn) -> StateOut:
         voice=got.voice,
         prefs=got.prefs,
         explore=got.explore,
+        brain=got.brain,
     )
 
 

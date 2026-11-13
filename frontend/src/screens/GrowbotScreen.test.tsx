@@ -1272,6 +1272,34 @@ describe("GrowbotScreen a persona's page", () => {
     expect(company.checked).toBe(true);
   });
 
+  it("turns on its use of your notes for the phone holding it, and only that phone", async () => {
+    const s = serve(
+      UP,
+      pageRoutes((path, init) => {
+        if (path === `/api/growbot/personas/${SPROUT}` && init?.method === "PATCH") {
+          return json({ persona: detail({ brain_phone: P6A }), checkpoint: null });
+        }
+        return null;
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    const notes = (await screen.findByRole("checkbox", {
+      name: /Search and add to your notes/,
+    })) as HTMLInputElement;
+    expect(notes.checked).toBe(false);
+    expect(screen.getByText("Turns on for the phone it's open on now: Pixel 6a.")).toBeTruthy();
+
+    fireEvent.click(notes);
+    expect(
+      await screen.findByText("Sprout can use your notes on Pixel 6a, and nowhere else."),
+    ).toBeTruthy();
+    expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({ brain: true });
+    expect(notes.checked).toBe(true);
+    expect(screen.getByText("Only on Pixel 6a, while it holds Sprout.")).toBeTruthy();
+  });
+
   it("renames, duplicates and exports from Manage", async () => {
     const urls = { create: vi.fn(() => "blob:soul"), revoke: vi.fn() };
     vi.stubGlobal(

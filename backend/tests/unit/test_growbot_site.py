@@ -2075,6 +2075,117 @@ def test_math_and_timers_are_wired_into_the_turn_and_the_strip() -> None:
     assert 'timer: { icon: "⏲️", label: "timer"' in strip
 
 
+_BRAIN_SETUP = (
+    "var sent=[],answer={status:200,json:{n:1,text:'- (2026-11-03) filter is 16x25'}};"
+    "var window={__gbBoxBrain:true,__gbBoxSoul:{persona:'p1'},gbStatus:{tool:function(k){"
+    "return {k:k};},end:function(){}}};"
+    "function fetch(u,o){ sent.push([u,JSON.parse(o.body)]); if(answer==='down')"
+    " return Promise.reject(new Error('x')); return Promise.resolve({status:answer.status,"
+    "json:function(){ return Promise.resolve(answer.json); }}); }"
+    "var flush=function(){ return new Promise(function(r){ setImmediate(r); }); };"
+)
+
+
+def test_a_notes_search_goes_to_the_box_and_is_answered_in_a_follow_up() -> None:
+    """Owner, 2026-11-13: the creature searches his notes. The box is the gate; the page asks
+    only when the box said this phone may, and the find is answered like a memory search."""
+    got = _recall_page(
+        _BRAIN_SETUP + "(async function(){ var r={};"
+        "r.asked=gbBrainAsk('furnace filter','event',{});r.held=!!_gbToolHeld.brain;"
+        "r.gap=gbBrainAsk('x','event',{});await flush();"
+        "r.sent=sent;timers.pop()();r.thinks=thinks;r.logs=logs;r.held2=!!_gbToolHeld.brain;"
+        'r.s=gbRecallStreaming(\'{"brain":"furnace","say":"I\');'
+        "console.log(JSON.stringify(r)); })();"
+    )
+    assert got["asked"] is True and got["held"] is True and got["held2"] is False
+    assert got.get("gap") is None and got["s"] is True
+    assert got["sent"] == [["/api/box/brain/search", {"q": "furnace filter", "persona": "p1"}]]
+    [(ev, kind, extra, carried)] = got["thinks"]
+    assert ev.startswith('you looked through your person\'s own notes for "furnace filter"')
+    assert carried.endswith("found:\n- (2026-11-03) filter is 16x25")
+    assert ["brain", {"n": 1, "st": 200}] in got["logs"]
+
+
+@pytest.mark.parametrize(
+    ("answer", "says"),
+    [
+        ("{status:403,json:{error:'off'}}", "not open to you on this phone"),
+        ("{status:503,json:{}}", "the box did not answer"),
+        ("'down'", "the box did not answer"),
+        ("{status:200,json:{n:0,text:''}}", "found nothing about it."),
+    ],
+)
+def test_a_notes_search_the_box_refuses_or_cannot_answer_is_owned_up_to(
+    answer: str, says: str
+) -> None:
+    got = _recall_page(
+        _BRAIN_SETUP + f"answer={answer};(async function(){{"
+        "gbBrainAsk('furnace','event',{});await flush();timers.pop()();"
+        "console.log(JSON.stringify({c:thinks[0][3]})); })();"
+    )
+    assert says in got["c"]
+
+
+@pytest.mark.parametrize(
+    ("setup", "kind", "extra"),
+    [
+        ("window.__gbBoxBrain=false;", "event", {}),
+        ("window.__gbBoxSoul={g2:true};", "event", {}),
+        ("", "tick", {}),
+        ("", "event", {"recallFollow": True}),
+    ],
+)
+def test_no_notes_call_leaves_a_phone_the_box_did_not_clear(
+    setup: str, kind: str, extra: dict[str, Any]
+) -> None:
+    got = _recall_page(
+        _BRAIN_SETUP + setup + f"var a=gbBrainAsk('furnace',{json.dumps(kind)},"
+        f"{json.dumps(extra)}),b=gbJot('a note',{json.dumps(kind)},{json.dumps(extra)});"
+        "console.log(JSON.stringify({a:a||null,b:b||null,sent:sent}));"
+    )
+    assert got == {"a": None, "b": None, "sent": []}
+
+
+def test_a_note_is_filed_and_one_the_box_would_not_file_is_owned_up_to() -> None:
+    got = _recall_page(
+        _BRAIN_SETUP + "answer={status:200,json:{ok:true}};(async function(){ var r={};"
+        "r.ok=gbJot('Furnace filter is 16x25.','event',{});await flush();r.c1=_gbRecallCarry;"
+        "answer={status:403,json:{error:'off'}};gbJot('Call the plumber.','event',{});"
+        "await flush();r.c2=_gbRecallCarry;r.sent=sent;r.logs=logs;r.held=!!_gbToolHeld.jot;"
+        "r.omit=gbJot('OMIT unless','event',{});console.log(JSON.stringify(r)); })();"
+    )
+    assert got["ok"] is True and got["c1"] == "" and got["held"] is False
+    assert got.get("omit") is None
+    assert got["sent"][0] == [
+        "/api/box/brain/note",
+        {"text": "Furnace filter is 16x25.", "persona": "p1"},
+    ]
+    assert "Call the plumber." in got["c2"] and "did not save" in got["c2"]
+    assert got["logs"] == [["jot", {"ok": 1, "st": 200}], ["jot", {"ok": 0, "st": 403}]]
+
+
+def test_the_notes_tools_are_offered_only_where_the_box_said_so() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        "if(gbBrainAsk(o.brain,kind,extra)&&!_streamSaid&&!o.visual_memory&&"
+        '!(_gbFollow&&_gbFollow.tags.length)) o.say=gbToolLine("brain",o.say);'
+        " gbJot(o.jot,kind,extra);"
+    ) in page
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert "gbBrainFields() +" in prompts
+    on = _prompts_in_node(
+        "const a=ctx.gbBrainFields();ctx.window={};const b=ctx.gbBrainFields();"
+        "ctx.window={__gbBoxBrain:true};console.log(JSON.stringify([a,b,ctx.gbBrainFields()]));"
+    )
+    assert isinstance(on, list) and on[:2] == ["", ""]
+    assert on[2].startswith('"brain":"OMIT almost always.') and '"jot":"OMIT unless' in on[2]
+    box = (_GROWBOT / "patches" / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.__gbBoxBrain = state.json.brain;" in box
+    strip = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
+    assert 'brain: { icon: "🧠", label: "notes search"' in strip
+    assert 'jot: { icon: "✍️", label: "note"' in strip
+
+
 _SLEEP_HARNESS = r"""
 var lastDreamT=0, callsSinceDream=0, _gbSess=[], _live={log:[],scratch:{}}, logs=[], facts=[];
 function soulLog(s,t){ s.log.push(String(t).slice(0,140)); }

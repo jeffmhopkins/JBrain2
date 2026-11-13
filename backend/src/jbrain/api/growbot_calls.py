@@ -152,7 +152,7 @@ async def debug_list_calls(
     request: Request,
     _p: DebugDep,
     minutes: Annotated[int, Query(ge=1, le=10_080)] = 60,
-    kind: Literal["llm", "stt", "tts"] | None = None,
+    kind: Literal["llm", "stt", "tts", "brain"] | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
     full: bool = False,
 ) -> list[CallOut]:

@@ -169,6 +169,11 @@ MEMORY_PATH = "/api/box/memories"
 # A persona's settings (the creature's own localStorage keys): the api caps them at 64K
 # characters, which is up to four bytes each in the page's UTF-8 JSON.
 PREFS_PATH = "/api/box/prefs"
+# The owner's notes, for a persona the owner turned brain access on for on this phone: the api
+# is the gate (growbot_brain.py), the sidecar only names the persona and phone it signed.
+BRAIN_PATH = "/api/box/brain"
+MAX_BRAIN_BODY = 16 * 1024
+BRAIN_TIMEOUT_S = 20.0
 MAX_PREFS_BODY = 320 * 1024
 MAX_MEMORY_BODY = 2_500_000
 MEMORY_ID_RE = re.compile(r"r[0-9a-f]{1,32}")
@@ -1603,6 +1608,8 @@ class GrowBot:
             return await self.memory_route(req)
         if req.path == PREFS_PATH:
             return await self.prefs_route(req)
+        if req.path in (BRAIN_PATH + "/search", BRAIN_PATH + "/note"):
+            return await self.brain_route(req)
         if name in ("journal", "episodes") and req.method == "DELETE":
             # The app's erase flow reads a JSON answer; there is nothing here to erase.
             return json_response(200, {"ok": True})
@@ -1829,6 +1836,49 @@ class GrowBot:
                 return json_response(503, {"error": "the box is busy"}, headers)
             return json_response(200, {**got, "persona": claims.persona}, headers)
         if up.status in (400, 404, 409, 413):
+            try:
+                detail = json.loads(up.body).get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            why = detail if isinstance(detail, str) else "refused"
+            return json_response(up.status, {"error": why[:200]}, headers)
+        return json_response(503, {"error": "the box is busy"}, headers)
+
+    async def brain_route(self, req: Request) -> Response:
+        """`POST …/search {persona, q}` and `POST …/note {persona, text}` for the persona this
+        phone holds. 204 for a G2 session; the api's 400, 403 (`off`), 404 and 409 pass
+        through, anything else is a 503."""
+        headers = [("Cache-Control", "no-store")]
+        claims = self._claims(req)
+        if claims is None or not claims.persona:
+            return Response(204, headers=headers)
+        if req.method != "POST":
+            return json_response(405, {"error": "method not allowed"}, headers)
+        msg = _parse(req.body) if len(req.body) <= MAX_BRAIN_BODY else None
+        if msg is None:
+            return json_response(400, {"error": "a search or a note"}, headers)
+        if msg.get("persona") != claims.persona:
+            return json_response(409, {"error": "other"}, headers)
+        who: dict[str, Any] = {"persona": claims.persona, "phone": claims.phone}
+        if req.path.endswith("/search"):
+            path, payload = "/internal/growbot/brain/search", {
+                **who,
+                "q": str(msg.get("q", "")),
+            }
+        else:
+            path, payload = "/internal/growbot/brain/note", {
+                **who,
+                "text": str(msg.get("text", "")),
+            }
+        up = await self._call(
+            self._api_post, path, payload, BRAIN_TIMEOUT_S, pool=self._soul_pool
+        )
+        if up.status == 200:
+            got = _parse(up.body)
+            if got is None:
+                return json_response(503, {"error": "the box is busy"}, headers)
+            return json_response(200, got, headers)
+        if up.status in (400, 403, 404, 409):
             try:
                 detail = json.loads(up.body).get("detail")
             except (ValueError, AttributeError):
