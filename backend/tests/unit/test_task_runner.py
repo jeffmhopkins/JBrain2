@@ -346,3 +346,42 @@ async def test_cancelling_the_caller_still_propagates() -> None:
     with pytest.raises(asyncio.CancelledError):
         await running
     assert not runner.is_running(task.id)
+
+
+@pytest.mark.asyncio
+async def test_stop_after_the_turn_finished_reports_false_and_the_run_stays_done() -> None:
+    """The window between the turn returning and the run being recorded: the turn is still
+    tracked but can no longer be cancelled, so a Stop must not claim it stopped anything."""
+    gate, writing = asyncio.Event(), asyncio.Event()
+
+    class SlowTranscript(FakeTranscript):
+        async def record_exchange(self, ctx, **kw):  # type: ignore[no-untyped-def]
+            writing.set()
+            await gate.wait()
+            return await super().record_exchange(ctx, **kw)
+
+    runs = FakeRuns()
+    runner = _runner(runs=runs, transcript=SlowTranscript())
+    task = _task()
+    running = asyncio.create_task(runner.run(OWNER, task, trigger="schedule"))
+    await writing.wait()
+    assert runner.is_running(task.id)
+    assert runner.stop(task.id) is False
+    gate.set()
+    info = await running
+    assert info.status == "done"
+    assert runs.finished[0]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_a_caller_cancel_wins_over_a_pending_stop() -> None:
+    executor = HangingExecutor()
+    runner = _runner(executor=executor)
+    task = _task()
+    running = asyncio.create_task(runner.run(OWNER, task, trigger="schedule"))
+    await executor.started.wait()
+    assert runner.stop(task.id) is True
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert not runner.is_running(task.id)

@@ -158,6 +158,9 @@ class FakeRunner:
         self.running: set[str] = set()
         self.stopped: list[str] = []
 
+    def is_running(self, task_id: str) -> bool:
+        return task_id in self.running
+
     def stop(self, task_id: str) -> bool:
         if task_id not in self.running:
             return False
@@ -260,6 +263,18 @@ async def test_delete_and_runs() -> None:
     await tasks_api.delete_task(req, PRINCIPAL, "task-1")  # type: ignore[arg-type]
     assert repo.deleted == ["task-1"]
     assert await tasks_api.task_runs(req, PRINCIPAL, "task-1") == []  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_list_says_which_tasks_are_running_now() -> None:
+    """`running` is the live runner state that shows the card's Stop. `latest_run` can't
+    carry it: it only ever holds a FINISHED run, so a scheduled run in flight is invisible there."""
+    req = _request(FakeRepo())
+    out = await tasks_api.list_tasks(req, PRINCIPAL)  # type: ignore[arg-type]
+    assert out[0].running is False
+    req.app.state.task_runner.running.add(out[0].id)
+    out = await tasks_api.list_tasks(req, PRINCIPAL)  # type: ignore[arg-type]
+    assert out[0].running is True
 
 
 @pytest.mark.asyncio

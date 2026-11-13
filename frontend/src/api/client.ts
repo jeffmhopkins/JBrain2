@@ -3115,6 +3115,9 @@ export interface Task {
   /** The most recent run, embedded by the server so the card's "latest result" band
    * renders (and opens its session) without a per-card fetch. Null until first run. */
   latest_run: TaskRun | null;
+  /** A run of this task is in flight on the box right now (scheduled or Run now) — what
+   * shows the card's Stop. `latest_run` never says so: it only holds finished runs. */
+  running: boolean;
 }
 
 /** The create/replace payload — the spec the editor authors (server computes the rest). */

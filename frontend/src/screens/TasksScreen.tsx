@@ -1014,6 +1014,15 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     void refresh();
   }, [refresh]);
 
+  // While anything is running, re-read the list so a finished run's band lands and its Stop
+  // goes away without a manual refresh.
+  const anyRunning = tasks?.some((t) => t.running) ?? false;
+  useEffect(() => {
+    if (!anyRunning) return;
+    const id = window.setInterval(() => void refresh(), 10_000);
+    return () => window.clearInterval(id);
+  }, [anyRunning, refresh]);
+
   const loadRuns = useCallback(async (taskId: string) => {
     try {
       const runs = await api.taskRuns(taskId);
@@ -1050,8 +1059,9 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   async function runNow(task: Task): Promise<void> {
     setRunning((s) => new Set(s).add(task.id));
     try {
-      await api.runTask(task.id);
-      setToast(`Ran “${task.name || "task"}” — see recent runs.`);
+      const run = await api.runTask(task.id);
+      // A Stop pressed mid-run resolves this request too; its own toast already said so.
+      if (run.status === "done") setToast(`Ran “${task.name || "task"}” — see recent runs.`);
       await loadRuns(task.id);
       await refresh();
     } catch (err) {
@@ -1346,9 +1356,9 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
               key={task.id}
               task={task}
               open={openId === task.id}
-              // A scheduled run shows as running too (its latest run row says so), so the
-              // card offers Stop for it, not only for a "Run now" started on this screen.
-              running={running.has(task.id) || task.latest_run?.status === "running"}
+              // A scheduled run shows as running too (the server says so), so the card offers
+              // Stop for it, not only for a "Run now" started on this screen.
+              running={running.has(task.id) || task.running}
               reordering={reordering}
               unviewed={isUnviewed(task, viewed)}
               runs={openId === task.id ? (runsByTask[task.id] ?? null) : null}

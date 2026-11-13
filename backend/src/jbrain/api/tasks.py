@@ -52,6 +52,10 @@ def get_task_runner(request: Request) -> TaskRunner:
     return cast(TaskRunner, request.app.state.task_runner)
 
 
+def _running(request: Request, task_id: str) -> bool:
+    return get_task_runner(request).is_running(task_id)
+
+
 def get_task_groups(request: Request) -> TaskGroupRepo:
     return cast(TaskGroupRepo, request.app.state.task_groups)
 
@@ -298,9 +302,15 @@ class TaskOut(BaseModel):
     # The most recent run, embedded so the card's "latest result" band renders (and
     # opens its session) without a per-card fetch. None until the task has ever run.
     latest_run: "TaskRunOut | None" = None
+    # A turn of this task is in flight in this process right now — what shows the card's
+    # Stop. Live runner state, not `latest_run` (which only holds FINISHED runs), so a row a
+    # restart left `running` never offers a Stop that can only 409.
+    running: bool = False
 
     @classmethod
-    def of(cls, t: TaskInfo, latest_run: "TaskRunInfo | None" = None) -> "TaskOut":
+    def of(
+        cls, t: TaskInfo, latest_run: "TaskRunInfo | None" = None, *, running: bool = False
+    ) -> "TaskOut":
         return cls(
             id=t.id,
             group_id=t.group_id,
@@ -331,6 +341,7 @@ class TaskOut(BaseModel):
             next_run_at=t.next_run_at,
             last_run_at=t.last_run_at,
             latest_run=TaskRunOut.of(latest_run) if latest_run is not None else None,
+            running=running,
         )
 
 
@@ -370,7 +381,7 @@ async def list_tasks(request: Request, principal: OwnerDep) -> list[TaskOut]:
     ctx = ctx_for(principal)
     tasks = await get_task_repo(request).list(ctx)
     latest = await get_task_runs(request).latest_per_task(ctx, [t.id for t in tasks])
-    return [TaskOut.of(t, latest.get(t.id)) for t in tasks]
+    return [TaskOut.of(t, latest.get(t.id), running=_running(request, t.id)) for t in tasks]
 
 
 @router.get("/task-groups")
@@ -411,7 +422,7 @@ async def reorder_tasks(request: Request, principal: OwnerDep, body: ReorderBody
         ctx, group_id=body.group_id, task_ids=body.task_ids
     )
     latest = await get_task_runs(request).latest_per_task(ctx, [t.id for t in moved])
-    return [TaskOut.of(t, latest.get(t.id)) for t in moved]
+    return [TaskOut.of(t, latest.get(t.id), running=_running(request, t.id)) for t in moved]
 
 
 @router.post("/tasks", status_code=201)
@@ -483,7 +494,7 @@ async def replace_task(
     if updated is None:
         raise HTTPException(status_code=404, detail="no such task")
     latest = await get_task_runs(request).latest_per_task(ctx, [updated.id])
-    return TaskOut.of(updated, latest.get(updated.id))
+    return TaskOut.of(updated, latest.get(updated.id), running=_running(request, updated.id))
 
 
 @router.patch("/tasks/{task_id}")
@@ -495,7 +506,7 @@ async def set_enabled(
     if updated is None:
         raise HTTPException(status_code=404, detail="no such task")
     latest = await get_task_runs(request).latest_per_task(ctx, [updated.id])
-    return TaskOut.of(updated, latest.get(updated.id))
+    return TaskOut.of(updated, latest.get(updated.id), running=_running(request, updated.id))
 
 
 class CommandKeyOut(BaseModel):
@@ -538,7 +549,7 @@ async def unlock_command(request: Request, principal: OwnerDep, task_id: str) ->
     if updated is None:
         raise HTTPException(status_code=404, detail="no such task")
     latest = await get_task_runs(request).latest_per_task(ctx, [updated.id])
-    return TaskOut.of(updated, latest.get(updated.id))
+    return TaskOut.of(updated, latest.get(updated.id), running=_running(request, updated.id))
 
 
 @router.delete("/tasks/{task_id}", status_code=204)

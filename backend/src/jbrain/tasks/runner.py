@@ -261,13 +261,14 @@ class TaskRunner:
         """Cancel every in-flight run of `task_id`. The run then finishes as an `error`
         run carrying `STOPPED_ERROR`, and the scheduler moves on to the next due task.
         False when nothing of that task is running in this process."""
-        turns = self._active.get(task_id)
-        if not turns:
-            return False
-        for turn in turns:
-            self._stopping.add(turn)
-            turn.cancel()
-        return True
+        stopped = False
+        for turn in self._active.get(task_id, []):
+            # A turn that already finished (its run not yet recorded) can't be cancelled, and
+            # saying "stopped" for it would contradict the `done` run it records.
+            if turn.cancel():
+                self._stopping.add(turn)
+                stopped = True
+        return stopped
 
     async def run(self, owner_ctx: SessionContext, task: TaskInfo, *, trigger: str) -> TaskRunInfo:
         """Execute one run of `task`. `owner_ctx` must carry the owner's principal id
@@ -328,7 +329,10 @@ class TaskRunner:
             try:
                 executed = await turn
             except asyncio.CancelledError:
-                if turn not in self._stopping:
+                me = asyncio.current_task()
+                # The caller's own cancel (shutdown, a dropped Run now) wins even when a Stop
+                # landed too: swallowing it would keep the scheduler loop running past teardown.
+                if turn not in self._stopping or (me is not None and me.cancelling()):
                     raise
                 # Stopped: the turn's own steps were already logged as it went, so the run
                 # keeps what it did; only the unfinished answer is missing.
