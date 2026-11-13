@@ -2628,6 +2628,10 @@ def test_the_conversation_stays_on_screen_after_the_caption_moves_on() -> None:
     assert talk == (_GROWBOT / "patches" / "growbot-talklog.js").read_text(encoding="utf-8")
     assert re.search(r"https?://", talk) is None
     assert '<div id="gbTrail"></div><div id="youSaid"></div>' in creature
+    # LOG is a cell in the bottom row beside BRAIN, not a pill on the trail (owner, 2026-11-13).
+    assert 'cellEl.id = "gbkLogCell";' in talk and "gbtTop" not in talk
+    assert "cells.insertBefore(cellEl, brain ? brain.nextSibling : cells.firstChild);" in talk
+    assert '<button type="button" class="gbkCell" id="gbkBrain" aria-haspopup="dialog">' in creature
     for hook in (
         "if(window.gbTalk&&!(meta&&meta.soft)) gbTalk.you(t);",
         'if(window.gbTalk) gbTalk.begin(); _streamSpoke="";',
@@ -2638,6 +2642,7 @@ def test_the_conversation_stays_on_screen_after_the_caption_moves_on() -> None:
         "function _chainNext(){ if(window.gbTalk) gbTalk.next();",
         "replyLang=it.lang; if(window.gbTalk) gbTalk.start(it);",
         "function silence(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",
+        'if(g("gbLog")&&g("gbLog").classList.contains("on")){ wake(); return; }',
         "_sayCap=Date.now(); if(window.gbTalk){ gbTalk.cut(_chainQ,_voiceActive);"
         " gbTalk.solo(text); }",
         "function _ctxHush(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",

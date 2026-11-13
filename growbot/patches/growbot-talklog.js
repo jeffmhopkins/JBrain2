@@ -7,7 +7,7 @@
 
    - a fading trail of the last few lines above the caption, older ones dimmer; tapping a
      line opens it in place with the part the person never heard dimmed, behind a marker;
-   - a log drawer (the trail's "log" pill, or a swipe up on the trail) with the whole day,
+   - a log drawer (the LOG cell in the bottom row, or a swipe up on the trail) with the whole day,
      a search, and "hear the rest" on any line that was cut short; it keeps a week.
 
    What was heard comes from upstream's own sentence queue. A streamed reply is voiced one
@@ -276,7 +276,8 @@
     " color:#fff;text-shadow:2px 2px 0 #000,0 0 8px rgba(0,0,0,.8);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;transition:opacity .4s}",
     "#gbTrail .gbtL.you{align-self:flex-end;text-align:right;max-width:82%;color:#9fd;font-size:.62em}",
     "#gbTrail .gbtCut{color:#ff8a73;margin-right:6px}",
-    "#gbTrail .gbtTop{display:flex;justify-content:flex-end}",
+    "#gbkCells.gbt5{grid-template-columns:repeat(5,1fr)}",
+    "#gbkCells.gbt5 .gbkCell{font-size:10px;letter-spacing:.02em}",
     "body:not(.editing) #liveCard #gbTrail button{pointer-events:auto;font-family:'Departure Mono',ui-monospace,monospace;font-size:11px;letter-spacing:.06em;",
     " text-transform:uppercase;min-height:30px;padding:4px 10px;border-radius:0;border:1px solid rgba(120,160,200,.3);background:rgba(14,22,34,.78);color:#E8F6FF;cursor:pointer}",
     "body:not(.editing) #liveCard #gbTrail button.hot{border-color:#ff4a2e;color:#ffb3a4}",
@@ -308,7 +309,7 @@
     "#gbLog .gblNone{align-self:center;color:#6d7f94;font-size:12px;margin-top:20px;text-align:center}"
   ].join("\n");
 
-  var trailEl = null, logEl = null, listEl = null, findEl = null, titleEl = null;
+  var cellEl = null, trailEl = null, logEl = null, listEl = null, findEl = null, titleEl = null;
 
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -385,11 +386,6 @@
     var k = shownFrom(), from = Math.max(0, k - TRAIL_LINES), cutoff = now() - TRAIL_MS;
     var lines = log.slice(from, k).filter(function (e) { return e.t > cutoff || e === expanded; });
     if (expanded && log.slice(from, k).indexOf(expanded) < 0) expanded = null;
-    if (log.length) {
-      var top = el("div", "gbtTop");
-      top.appendChild(button("≡ log", false, openLog));
-      trailEl.appendChild(top);
-    }
     lines.forEach(function (e, i) {
       if (e === expanded) {
         var box = el("div", "gbtOpen" + (e.who === "you" ? " you" : ""));
@@ -450,9 +446,17 @@
     if (nearBottom || listEl.dataset.fresh) { listEl.scrollTop = listEl.scrollHeight; delete listEl.dataset.fresh; }
   }
 
+  // The drawer sits on the bottom row, so the LOG cell stays there to close it again.
+  function seat() {
+    var cells = document.getElementById("gbkCells");
+    var top = cells ? cells.getBoundingClientRect().top : 0;
+    logEl.style.bottom = top > 0 ? Math.max(0, window.innerHeight - top) + "px" : "0px";
+  }
   function openLog() {
     if (!logEl) return;
+    seat();
     logEl.classList.add("on");
+    if (cellEl) { cellEl.classList.add("on"); cellEl.setAttribute("aria-expanded", "true"); }
     listEl.dataset.fresh = "1";
     paintLog();
   }
@@ -460,6 +464,7 @@
   function closeLog() {
     if (!logEl) return;
     logEl.classList.remove("on");
+    if (cellEl) { cellEl.classList.remove("on"); cellEl.setAttribute("aria-expanded", "false"); }
     if (findEl) findEl.value = "";
   }
 
@@ -470,6 +475,37 @@
     try { if (store) store.removeItem(storeKey()); } catch (e) {}
     paint();
     paintLog();
+  }
+
+  // An 8x8 pixel list, drawn like the bar's own icons (growbot-box's px(), 3 px a dot).
+  var LIST = ["##.#####", "........", "##.#####", "........", "##.#####", "........", "##.####.", "........"];
+  function listIcon() {
+    var r = "";
+    LIST.forEach(function (row, y) {
+      for (var x = 0; x < 8; x++) {
+        if (row.charAt(x) === "#") {
+          r += '<rect x="' + x * 3 + '" y="' + y * 3 + '" width="3" height="3"/>';
+        }
+      }
+    });
+    return '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' + r + "</svg>";
+  }
+
+  // LOG lives in the bottom row beside BRAIN (owner, 2026-11-13).
+  function addCell() {
+    var cells = document.getElementById("gbkCells"), brain = document.getElementById("gbkBrain");
+    if (!cells) return;
+    cellEl = el("button", "gbkCell");
+    cellEl.type = "button";
+    cellEl.id = "gbkLogCell";
+    cellEl.setAttribute("aria-label", "conversation log");
+    cellEl.setAttribute("aria-expanded", "false");
+    cellEl.innerHTML = listIcon() + "<span>log</span>";
+    cellEl.addEventListener("click", function () {
+      if (logEl.classList.contains("on")) closeLog(); else openLog();
+    });
+    cells.insertBefore(cellEl, brain ? brain.nextSibling : cells.firstChild);
+    cells.classList.add("gbt5");
   }
 
   function swipe(node, dir, fn) {
@@ -514,6 +550,12 @@
     swipe(grab, 1, closeLog);
     swipe(head, 1, closeLog);
     document.body.appendChild(logEl);
+    addCell();
+    // Rotation changes the bar's safe-area padding under an open drawer.
+    window.addEventListener("resize", function () { if (logEl.classList.contains("on")) seat(); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && logEl.classList.contains("on")) closeLog();
+    });
 
     var say = document.getElementById("say");
     if (say && window.MutationObserver) {

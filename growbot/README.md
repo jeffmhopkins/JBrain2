@@ -460,7 +460,7 @@ Talking over the creature used to lose what it was saying: a new reply overwrote
 caption (owner, 2026-11-13). `growbot-talklog.js` keeps both sides of the conversation and
 shows them two ways. A fading trail above the caption holds the last three lines from the
 past 4 minutes, older ones dimmer, the person's on the right. Tapping a line opens it in
-place. A log drawer, opened from the trail's *log* pill or a swipe up on the trail, holds the
+place. A log drawer, opened from the LOG cell in the bottom row or a swipe up on the trail, holds the
 whole week with a search box. In both, the part of a reply the person never heard is dimmed
 behind a *✂ you cut in* marker, with *hear the rest* to have it spoken.
 
