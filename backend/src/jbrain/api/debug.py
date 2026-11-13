@@ -226,6 +226,10 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # Asking a live C6 panel something (`/panel/*`): snapshot, logs, a screenshot,
             # an injected tap, and `reboot` behind `confirm`. Listed for the same reason.
             "panel.debug",
+            # Stopping a running task (`POST /tasks/{task_id}/stop`), the Tasks card's Stop.
+            # Listed for the same reason as the rest: a morning task stuck in a loop held the
+            # whole schedule for an hour while the session could only watch it.
+            "tasks.stop",
         ],
     )
 
@@ -3231,6 +3235,19 @@ async def start_update_debug(
         raise HTTPException(status_code=409, detail="update already running")
     resp.raise_for_status()
     return cast(dict[str, object], resp.json())
+
+
+@router.post("/tasks/{task_id}/stop", status_code=204)
+async def stop_task_debug(request: Request, task_id: str, _p: DebugDep) -> None:
+    """**Stop a running task** — the Tasks card's Stop, reachable with a token, so a run the
+    owner wants ended doesn't wait on them reaching the PWA. Before it existed the only lever
+    was unloading the model under the turn. It only ends a turn: no data is written beyond
+    the run's own `error` record. Find the id with `sql` (`app.task_runs` where `status` is
+    `running`, joined to `app.tasks`). 409 when nothing of that task is running here."""
+    request.state.debug_detail = f"stop task {task_id}"
+    runner = getattr(request.app.state, "task_runner", None)
+    if runner is None or not runner.stop(task_id):
+        raise HTTPException(status_code=409, detail="that task isn't running")
 
 
 @router.get("/update/status")

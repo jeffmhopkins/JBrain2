@@ -362,6 +362,12 @@ class ToolContext:
     # archivist turn made 74 Gmail calls, a quarter of them exact repeats). A tool that
     # writes clears it, since a write can change what the same read returns.
     read_memo: dict[str, str] = field(default_factory=dict)
+    # The sizes of this turn's archivist memory saves refused for being over the cap. Each
+    # retry rewrites the whole ~20k-char document (minutes on a local model), and a model
+    # told only "too long" trims a few hundred chars a pass: the Email overview task spent
+    # every remaining minute of its hour that way and never delivered its brief. The
+    # handler escalates on the second refusal so the turn finishes instead.
+    memory_write_refusals: list[int] = field(default_factory=list)
     # Hard per-run tool-call ceilings (None = uncapped, the default for every persona but the
     # scout). The web_search / web_fetch handlers count calls against these, refuse once spent,
     # and append the remaining count to each result. Mutated in place (like `failed_fetches`) —

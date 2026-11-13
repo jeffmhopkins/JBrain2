@@ -37,11 +37,15 @@ import {
   PlusIcon,
   RefreshIcon,
   ReorderIcon,
+  StopIcon,
   TrashIcon,
   XIcon,
 } from "../components/icons";
 import { UNGROUPED_KEY, loadCollapsed, writeCollapsed } from "../tasks/collapsed";
 import { isUnviewed, loadViewed, writeViewed } from "../tasks/viewed";
+
+// What the server records as a stopped run's error (tasks/runner.py STOPPED_ERROR).
+const STOPPED_ERROR = "Stopped before it finished";
 
 function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Request failed. Is the server reachable?";
@@ -211,6 +215,8 @@ interface CardProps {
   onToggleOpen: () => void;
   onFlip: () => void;
   onRun: () => void;
+  /** Ends the in-flight run, scheduled or manual. Shown only while one is running. */
+  onStop: () => void;
   onEdit: () => void;
   onMove: () => void;
   /** Radio commands only: make a new key (the old one stops working) and clear a
@@ -233,6 +239,7 @@ function TaskCard({
   onToggleOpen,
   onFlip,
   onRun,
+  onStop,
   onEdit,
   onMove,
   onNewKey,
@@ -394,6 +401,12 @@ function TaskCard({
               {running ? <RefreshIcon size={14} /> : <PlayIcon size={14} />}
               {running ? "running…" : "Run now"}
             </button>
+            {running && (
+              <button type="button" className="task-stopbtn" onClick={onStop}>
+                <StopIcon size={14} />
+                Stop
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1004,6 +1017,15 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     void refresh();
   }, [refresh]);
 
+  // While anything is running, re-read the list so a finished run's band lands and its Stop
+  // goes away without a manual refresh.
+  const anyRunning = tasks?.some((t) => t.running) ?? false;
+  // Slower while idle, so a scheduled run that starts with the screen open still gets its Stop.
+  useEffect(() => {
+    const id = window.setInterval(() => void refresh(), anyRunning ? 10_000 : 45_000);
+    return () => window.clearInterval(id);
+  }, [anyRunning, refresh]);
+
   const loadRuns = useCallback(async (taskId: string) => {
     try {
       const runs = await api.taskRuns(taskId);
@@ -1040,8 +1062,10 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   async function runNow(task: Task): Promise<void> {
     setRunning((s) => new Set(s).add(task.id));
     try {
-      await api.runTask(task.id);
-      setToast(`Ran “${task.name || "task"}” — see recent runs.`);
+      const run = await api.runTask(task.id);
+      // A Stop pressed mid-run resolves this request too; its own toast already said so.
+      if (run.status === "done") setToast(`Ran “${task.name || "task"}” — see recent runs.`);
+      else if (run.error !== STOPPED_ERROR) setToast(run.error ?? "The run failed.");
       await loadRuns(task.id);
       await refresh();
     } catch (err) {
@@ -1053,6 +1077,17 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
         return n;
       });
     }
+  }
+
+  async function stopNow(task: Task): Promise<void> {
+    try {
+      await api.stopTask(task.id);
+      setToast(`Stopped “${task.name || "task"}”.`);
+    } catch (err) {
+      setToast(errorMessage(err));
+    }
+    await loadRuns(task.id);
+    await refresh();
   }
 
   async function showKey(task: Task): Promise<void> {
@@ -1325,13 +1360,16 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
               key={task.id}
               task={task}
               open={openId === task.id}
-              running={running.has(task.id)}
+              // A scheduled run shows as running too (the server says so), so the card offers
+              // Stop for it, not only for a "Run now" started on this screen.
+              running={running.has(task.id) || task.running}
               reordering={reordering}
               unviewed={isUnviewed(task, viewed)}
               runs={openId === task.id ? (runsByTask[task.id] ?? null) : null}
               onToggleOpen={() => toggleOpen(task.id)}
               onFlip={() => void flip(task)}
               onRun={() => void runNow(task)}
+              onStop={() => void stopNow(task)}
               onEdit={() => setDraft(draftFrom(task))}
               onMove={() => setMoveFor(task)}
               onNewKey={() => void showKey(task)}

@@ -55,6 +55,7 @@ const GROUPED: Task = {
   next_run_at: FUTURE,
   last_run_at: LATEST_T1.started_at,
   latest_run: LATEST_T1,
+  running: false,
 };
 
 const UNGROUPED_TASK: Task = {
@@ -290,6 +291,22 @@ describe("TasksScreen", () => {
     fireEvent.click(await screen.findByText("Morning brief")); // expand to reveal Run now
     fireEvent.click(await screen.findByText("Run now"));
     await waitFor(() => expect(runTask).toHaveBeenCalledWith("t1"));
+  });
+
+  it("offers Stop for a scheduled run that is still going, and stops it", async () => {
+    const stopTask = vi.spyOn(api, "stopTask").mockResolvedValue();
+    const running: Task = { ...GROUPED, running: true };
+    mount([running, UNGROUPED_TASK]);
+    fireEvent.click(await screen.findByText("Morning brief"));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(stopTask).toHaveBeenCalledWith("t1"));
+  });
+
+  it("offers no Stop when nothing is running", async () => {
+    mount();
+    fireEvent.click(await screen.findByText("Morning brief"));
+    await screen.findByText("Run now");
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
   });
 
   it("creates a task from the editor", async () => {

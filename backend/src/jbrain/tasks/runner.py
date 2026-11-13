@@ -9,6 +9,7 @@ is the real one that drives `AgentLoop.run`. Each step is fail-closed: a turn th
 raises is recorded as an `error` run, never propagated to the scheduler tick.
 """
 
+import asyncio
 import contextlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -38,6 +39,9 @@ from jbrain.tasks.repo import TaskInfo, TaskRunInfo, TaskRunRepo
 log = structlog.get_logger()
 
 _SUMMARY_LEN = 240
+# What a stopped run records as its error. `task_runs.status` has no `stopped` value, and a
+# stop is not worth a migration: the run IS unfinished, and the reason reads in the run list.
+STOPPED_ERROR = "Stopped before it finished"
 
 
 def _allows_deep_research(task: TaskInfo) -> bool:
@@ -218,6 +222,10 @@ class LoopTurnExecutor:
         )
 
 
+class _Stopped(Exception):
+    """A Stop ended the turn; caught in `TaskRunner.run`, never raised past it."""
+
+
 class TaskRunner:
     def __init__(
         self,
@@ -239,6 +247,28 @@ class TaskRunner:
         self._push = push
         self._push_tokens = list(push_tokens)
         self._notify = notify
+        # The in-flight turns, by task id, so a Stop can cancel one. In-process only: tasks
+        # run in the web process (scheduler.py), the same process every Stop request lands
+        # in. `_stopping` tells a Stop's cancellation apart from the caller's own (shutdown,
+        # a dropped "Run now" request), which must still propagate.
+        self._active: dict[str, list[asyncio.Future[ExecutedTurn]]] = {}
+        self._stopping: set[asyncio.Future[ExecutedTurn]] = set()
+
+    def is_running(self, task_id: str) -> bool:
+        return bool(self._active.get(task_id))
+
+    def stop(self, task_id: str) -> bool:
+        """Cancel every in-flight run of `task_id`. The run then finishes as an `error`
+        run carrying `STOPPED_ERROR`, and the scheduler moves on to the next due task.
+        False when nothing of that task is running in this process."""
+        stopped = False
+        for turn in self._active.get(task_id, []):
+            # A turn that already finished (its run not yet recorded) can't be cancelled, and
+            # saying "stopped" for it would contradict the `done` run it records.
+            if turn.cancel():
+                self._stopping.add(turn)
+                stopped = True
+        return stopped
 
     async def run(self, owner_ctx: SessionContext, task: TaskInfo, *, trigger: str) -> TaskRunInfo:
         """Execute one run of `task`. `owner_ctx` must carry the owner's principal id
@@ -278,20 +308,37 @@ class TaskRunner:
         steps = 0
         cost = 0
         stop_reason = "error"
+        turn: asyncio.Future[ExecutedTurn] | None = None
         try:
-            executed = await self._executor.run_turn(
-                profile=profile,
-                read_ctx=read_ctx,
-                read_scopes=read_scopes,
-                conversation=conversation,
-                timezone=task.timezone,
-                recorder=recorder,
-                agent_session_id=session.id,
-                # A `news` task is opted in as a fan root so its turn may run deep_research /
-                # deepest_research (else those refuse "only available in an interactive owner
-                # turn"); every other headless task stays fan-less.
-                root_tree=_allows_deep_research(task),
+            turn = asyncio.ensure_future(
+                self._executor.run_turn(
+                    profile=profile,
+                    read_ctx=read_ctx,
+                    read_scopes=read_scopes,
+                    conversation=conversation,
+                    timezone=task.timezone,
+                    recorder=recorder,
+                    agent_session_id=session.id,
+                    # A `news` task is opted in as a fan root so its turn may run deep_research /
+                    # deepest_research (else those refuse "only available in an interactive owner
+                    # turn"); every other headless task stays fan-less.
+                    root_tree=_allows_deep_research(task),
+                )
             )
+            self._active.setdefault(task.id, []).append(turn)
+            try:
+                executed = await turn
+            except asyncio.CancelledError:
+                me = asyncio.current_task()
+                # The caller's own cancel (shutdown, a dropped Run now) wins even when a Stop
+                # landed too: swallowing it would keep the scheduler loop running past teardown.
+                if turn not in self._stopping or (me is not None and me.cancelling()):
+                    raise
+                # Stopped: the turn's own steps were already logged as it went, so the run
+                # keeps what it did; only the unfinished answer is missing.
+                log.info("task.run_stopped", task_id=task.id, task_run_id=task_run_id)
+                error, stop_reason = STOPPED_ERROR, "stopped"
+                raise _Stopped from None
             result = executed.result
             status, summary, steps, cost = "done", result.text, result.steps, result.cost_tokens
             stop_reason = result.stop_reason
@@ -315,9 +362,19 @@ class TaskRunner:
                     tools=executed.tools,
                     reasoning=executed.reasoning,
                 )
+        except _Stopped:
+            pass
         except Exception as exc:  # noqa: BLE001 — a task failure is a recorded run, not a crash
             log.warning("task.run_failed", task_id=task.id, error=repr(exc))
             error = str(exc)
+        finally:
+            if turn is not None:
+                self._stopping.discard(turn)
+                running = self._active.get(task.id, [])
+                if turn in running:
+                    running.remove(turn)
+                if not running:
+                    self._active.pop(task.id, None)
 
         with contextlib.suppress(Exception):
             await self._runlog.finish(

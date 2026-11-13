@@ -2,6 +2,7 @@
 (session → run → transcript → run record), the persona firewall, and the fail-closed
 error path, with no DB and no LLM."""
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -11,7 +12,7 @@ from jbrain.agent.session import AgentSessionInfo
 from jbrain.db.session import SessionContext
 from jbrain.notify import NotifyBus
 from jbrain.tasks.repo import TaskInfo
-from jbrain.tasks.runner import ExecutedTurn, TaskRunner
+from jbrain.tasks.runner import STOPPED_ERROR, ExecutedTurn, TaskRunner
 
 NOW = datetime(2026, 6, 24, 12, tzinfo=UTC)
 OWNER = SessionContext(principal_id="11111111-1111-1111-1111-111111111111", principal_kind="owner")
@@ -286,3 +287,101 @@ async def test_notify_reports_a_failed_run() -> None:
     note = q.get_nowait()
     assert note.kind == "task_run"
     assert "model exploded" in note.body
+
+
+class HangingExecutor:
+    """A turn that runs until something cancels it — the Email overview's memory-save loop,
+    which held the morning's schedule for an hour."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def run_turn(self, **_):  # type: ignore[no-untyped-def]
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+@pytest.mark.asyncio
+async def test_stop_ends_a_running_turn_as_a_stopped_error_run() -> None:
+    runs, runlog, transcript, executor = (
+        FakeRuns(),
+        FakeRunlog(),
+        FakeTranscript(),
+        HangingExecutor(),
+    )
+    runner = _runner(runlog=runlog, transcript=transcript, runs=runs, executor=executor)
+    task = _task()
+    running = asyncio.create_task(runner.run(OWNER, task, trigger="schedule"))
+    await executor.started.wait()
+    assert runner.is_running(task.id)
+
+    assert runner.stop(task.id) is True
+    info = await asyncio.wait_for(running, timeout=5)
+
+    assert info.status == "error"
+    assert info.error == STOPPED_ERROR
+    assert runs.finished[0] == {"status": "error", "summary": "", "error": STOPPED_ERROR}
+    assert runlog.finished[0]["status"] == "error"
+    assert transcript.recorded == []
+    assert not runner.is_running(task.id)  # the handle is released, so a 2nd Stop is a no-op
+    assert runner.stop(task.id) is False
+
+
+@pytest.mark.asyncio
+async def test_stop_with_nothing_running_reports_false() -> None:
+    assert _runner().stop("no-such-task") is False
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_caller_still_propagates() -> None:
+    """Shutdown, or a dropped "Run now" request, cancels the RUN itself. That is not a Stop and
+    must not be swallowed into a recorded run, or the scheduler loop could never be torn down."""
+    executor = HangingExecutor()
+    runner = _runner(executor=executor)
+    task = _task()
+    running = asyncio.create_task(runner.run(OWNER, task, trigger="schedule"))
+    await executor.started.wait()
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert not runner.is_running(task.id)
+
+
+@pytest.mark.asyncio
+async def test_stop_after_the_turn_finished_reports_false_and_the_run_stays_done() -> None:
+    """The window between the turn returning and the run being recorded: the turn is still
+    tracked but can no longer be cancelled, so a Stop must not claim it stopped anything."""
+    gate, writing = asyncio.Event(), asyncio.Event()
+
+    class SlowTranscript(FakeTranscript):
+        async def record_exchange(self, ctx, **kw):  # type: ignore[no-untyped-def]
+            writing.set()
+            await gate.wait()
+            return await super().record_exchange(ctx, **kw)
+
+    runs = FakeRuns()
+    runner = _runner(runs=runs, transcript=SlowTranscript())
+    task = _task()
+    running = asyncio.create_task(runner.run(OWNER, task, trigger="schedule"))
+    await writing.wait()
+    assert runner.is_running(task.id)
+    assert runner.stop(task.id) is False
+    gate.set()
+    info = await running
+    assert info.status == "done"
+    assert runs.finished[0]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_a_caller_cancel_wins_over_a_pending_stop() -> None:
+    executor = HangingExecutor()
+    runner = _runner(executor=executor)
+    task = _task()
+    running = asyncio.create_task(runner.run(OWNER, task, trigger="schedule"))
+    await executor.started.wait()
+    assert runner.stop(task.id) is True
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert not runner.is_running(task.id)

@@ -23,6 +23,28 @@ if TYPE_CHECKING:
 # A single memory document is the archivist's scratchpad; cap it so it stays a concise
 # running summary rather than an unbounded log.
 _MAX_CHARS = 20_000
+# Where a refused save is told to land: far enough under the cap that the next session's
+# additions fit, so the very next save isn't refused again.
+_TARGET_CHARS = 16_000
+
+
+def _too_long(size: int, refusals_before: int) -> str:
+    """The refusal for an oversized save. It names a concrete cut, because "summarize and
+    save again" produced passes that each trimmed ~200 chars of a 22k document — every one
+    refused, every one minutes of generation. From the second refusal in a turn it closes
+    saving outright: an unsaved memory costs nothing, an undelivered answer is the failure."""
+    if refusals_before:
+        return (
+            f"NOT saved again ({size} chars, max {_MAX_CHARS}); your stored memory is "
+            "unchanged. Stop trying to save in this turn — give Jeff your answer now. "
+            "Shrink the memory in a later session."
+        )
+    return (
+        f"NOT saved — {size} chars, max {_MAX_CHARS}; your stored memory is unchanged. "
+        f"Cut at least {size - _TARGET_CHARS} chars (to {_TARGET_CHARS} or fewer) by dropping "
+        "finished items, old dated tallies and superseded notes; trimming a few lines will be "
+        "refused again. If you can't make that cut now, skip saving and give your answer."
+    )
 
 
 def _receipt(previous: str, content: str) -> str:
@@ -61,10 +83,9 @@ def build_archivist_memory_handlers(
     async def archivist_memory_write(arguments: dict, ctx: ToolContext) -> str:
         content = str(arguments.get("content", ""))
         if len(content) > _MAX_CHARS:
-            return (
-                f"That's too long to store ({len(content)} chars, max {_MAX_CHARS}). "
-                "Summarize it to the essentials and save again."
-            )
+            refusal = _too_long(len(content), len(ctx.memory_write_refusals))
+            ctx.memory_write_refusals.append(len(content))
+            return refusal
         if not ctx.session.principal_id:
             return "Can't save memory — this session has no owner principal."
         async with scoped_session(maker, ctx.session) as session:

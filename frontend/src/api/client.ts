@@ -3115,6 +3115,9 @@ export interface Task {
   /** The most recent run, embedded by the server so the card's "latest result" band
    * renders (and opens its session) without a per-card fetch. Null until first run. */
   latest_run: TaskRun | null;
+  /** A run of this task is in flight on the box right now (scheduled or Run now) — what
+   * shows the card's Stop. `latest_run` never says so: it only holds finished runs. */
+  running: boolean;
 }
 
 /** The create/replace payload — the spec the editor authors (server computes the rest). */
@@ -6923,6 +6926,11 @@ export const api = {
   async runTask(id: string): Promise<TaskRun> {
     const response = await request(`/api/tasks/${encodeURIComponent(id)}/run`, { method: "POST" });
     return (await response.json()) as TaskRun;
+  },
+
+  // Stop the task's in-flight run (scheduled or manual); 409 when none is running.
+  async stopTask(id: string): Promise<void> {
+    await request(`/api/tasks/${encodeURIComponent(id)}/stop`, { method: "POST" });
   },
 
   // Generate a new shared secret for a radio command and show it ONCE — this is both
