@@ -1293,27 +1293,32 @@ function gbRecallAsk(q,kind,extra){
   var found="you looked back through your memory for \""+words+"\" and "+(r.n?"found:"+r.text:"found nothing about it.");
   _gbRecallLast={t:now,found:found};
   ev="you looked back through your memory for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer your person with it, in your own voice; if it does not answer what they asked, say plainly that you do not remember.";
-  gbToolFollow("recall",found,ev);
-  return true;
+  return gbToolFollow("recall",found,ev);
 }
 /* What a tool found is answered by one follow-up thought. Two tools asked in one reply (a search
    and the clock) share that thought rather than queue a second one behind it. */
-var _gbFollow=null;
+var _gbFollow=null, _gbFollowN=0;
+/* True when this call started the follow-up (so its line is the one said while it works); a
+   call that joins one already waiting says nothing of its own. Every call counts in
+   _gbFollowN, so a reply handler can tell a follow-up of its own from one left waiting. */
 function gbToolFollow(tag,found,ev){
-  gbToolPill(tag);
-  if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); _gbFollow.pills.push(_gbToolPills[tag]); return; }
+  gbToolPill(tag); _gbFollowN++;
+  if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); _gbFollow.pills.push(_gbToolPills[tag]); return false; }
   var f=_gbFollow={found:found,ev:ev,tags:[tag],pills:[_gbToolPills[tag]]}, tries=0;
   function done(){ if(_gbFollow===f) _gbFollow=null; f.tags.forEach(function(k,i){ gbToolPillEnd(k,f.pills[i]); }); }
-  function carry(why){ _gbRecallCarry=f.found; logEv(f.tags[0]+"_carry",{why:why}); done(); }
+  /* Appended, never overwritten: a note that did not save, or another find, may be waiting. */
+  function carry(why){ if(_gbRecallCarry.indexOf(f.found)<0) _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found; if(f.tags.indexOf("brain")>=0) _gbBrainCarried=true; logEv(f.tags[0]+"_carry",{why:why}); done(); }
   function go(){
     if(pendingUser) return carry("person");
     var busy=inFlight||paused||document.hidden||Date.now()<coolUntil||(typeof vmBusy==="function"&&vmBusy())||energyState==="asleep";
     if(busy){ if(++tries<120) setTimeout(go,250); else carry("timeout"); return; }
-    _gbRecallCarry=f.found;
+    _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found;
+    if(f.tags.indexOf("brain")>=0) _gbBrainQuiet=true;
     think(f.ev,"event",{recallFollow:true});
     if(!inFlight) carry("refused"); else done();
   }
   setTimeout(go,0);
+  return true;
 }
 /* A tool's chip in the status strip (owner, 2026-11-13: "tool calls should also have a pill"),
    from the moment the streamed reply shows the call until its find is handed to the follow-up
@@ -1383,9 +1388,8 @@ function gbClockAsk(v,kind,extra){
   if(extra&&extra.recallFollow){ logEv("clock_skip",{why:"follow"});
     _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+"you looked at the clock: "+gbClockNow(now); return; }
   logEv("clock",{});
-  gbToolFollow("clock","you looked at the clock: "+gbClockNow(now),
+  return gbToolFollow("clock","you looked at the clock: "+gbClockNow(now),
     "you looked at the clock (the time is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice.");
-  return true;
 }
 /* Like the thinking-back line: the model's own only when it only says it is doing that. */
 var GB_TOOL_LINES={
@@ -1439,8 +1443,7 @@ function gbCalcAsk(v,kind,extra){
   if(kind!=="event"){ logEv("calc_skip",{why:"kind"}); return; }
   logEv("calc",{ok:r!==undefined?1:0});
   if(extra&&extra.recallFollow){ _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+found; return; }
-  gbToolFollow("calc",found,"you worked it out (the answer is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice, rounded the way a person would say it.");
-  return true;
+  return gbToolFollow("calc",found,"you worked it out (the answer is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice, rounded the way a person would say it.");
 }
 /* Timers and reminders (owner, 2026-11-13: "remind me in 20 minutes to flip the laundry"). They
    ride the soul (scratch.timers), so a reload keeps them; the page checks every 5 s and a due one
@@ -1478,6 +1481,9 @@ function gbTimersLine(){
 function gbTimerTick(){ try{
   var list=gbTimers(), now=Date.now(), due=[];
   if(!list.length||_gbFollow) return;
+  /* Only the tab that holds the creature, and only when it can speak: a stale tab or a locked
+     phone leaves the timer pending, so it is told (late, saying so) once it can be. */
+  if((typeof soulOwned==="function"&&!soulOwned())||paused||document.hidden||energyState==="asleep") return;
   for(var i=list.length-1;i>=0;i--) if(list[i].at<=now) due.unshift(list.splice(i,1)[0]);
   due.forEach(function(x){
     var late=now-x.at>GB_TIMER_LATE_MS?" (it was due "+gbTimerLeft(now-x.at)+" ago, while you were away)":"";
@@ -1485,6 +1491,7 @@ function gbTimerTick(){ try{
     gbToolFollow("timer","your timer went off: "+x.about+late,
       "your timer for \""+x.about+"\" just went off (it is under WHAT YOU JUST LOOKED UP). tell your person now, plainly, in your own voice.");
   });
+  if(due.length&&typeof saveSoul==="function") saveSoul(_live);
 }catch(e){} }
 if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
 /* The owner's notes (owner, 2026-11-13): a persona the owner turned brain access on for, on his
@@ -1493,6 +1500,11 @@ if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addE
    is answered by a follow-up thought like a memory search; a note's say already confirms it,
    and a note the box would not file is owned up to on the next thought. */
 var GB_BRAIN_PATH="/api/box/brain", GB_BRAIN_GAP_MS=10000, _gbBrainT=0;
+/* A turn that reads what the notes said (the follow-up, or the next turn the find was carried
+   into) is quiet: notes may hold text from anywhere, so that turn files no note, searches
+   nothing, and keeps nothing of it in the soul (no fact, diary line or glow), which travels
+   with the persona. Cleared when that turn's reply has been handled. */
+var _gbBrainQuiet=false, _gbBrainCarried=false;
 function gbBrainOn(){ try{ return window.__gbBoxBrain===true&&!!(window.__gbBoxSoul&&window.__gbBoxSoul.persona); }catch(e){ return false; } }
 function gbBrainPost(sub,body){
   body.persona=window.__gbBoxSoul.persona;
@@ -1502,9 +1514,10 @@ function gbBrainPost(sub,body){
 function gbBrainAsk(q,kind,extra){
   var now=Date.now(), words=gbRecallWords(q);
   if(!words||!gbBrainOn()) return;
+  if(_gbBrainQuiet){ logEv("brain_skip",{why:"quiet"}); return; }
   if(kind!=="event"){ logEv("brain_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("brain_skip",{why:"follow"}); return; }
-  if(now-_gbBrainT<GB_BRAIN_GAP_MS){ logEv("brain_skip",{why:"gap"}); return; }
+  if(now-_gbBrainT<GB_BRAIN_GAP_MS||_gbToolHeld.brain){ logEv("brain_skip",{why:"gap"}); return; }
   _gbBrainT=now; gbToolPill("brain"); _gbToolHeld.brain=1;
   var ev="you looked through your person's own notes for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer them with it, in your own voice and briefly; if it does not answer what they asked, say plainly that their notes do not say.";
   function found(text){ delete _gbToolHeld.brain; gbToolFollow("brain",text,ev); }
@@ -1520,6 +1533,7 @@ function gbBrainAsk(q,kind,extra){
 function gbJot(t,kind,extra){
   var txt=typeof t==="string"?t.replace(/\s+/g," ").trim().slice(0,2000):"";
   if(!txt||/^omit\b/i.test(txt)||!gbBrainOn()) return;
+  if(_gbBrainQuiet){ logEv("jot_skip",{why:"quiet"}); return; }
   if(kind!=="event"){ logEv("jot_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("jot_skip",{why:"follow"}); return; }
   gbToolPill("jot"); _gbToolHeld.jot=1;
@@ -1817,12 +1831,11 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "o.say=gbRecallLine(o.say); if((o.sleep===true",
         "o.say=gbRecallLine(o.say); if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&"
-        "!o.visual_memory&&!(_gbFollow&&_gbFollow.tags[0]===\"recall\"))"
-        " o.say=gbClockLine(o.say); if(gbCalcAsk(o.calc,kind,extra)&&!_streamSaid&&"
-        "!o.visual_memory&&_gbFollow&&_gbFollow.tags[0]===\"calc\") o.say=gbToolLine(\"calc\",o.say);"
+        "!o.visual_memory) o.say=gbClockLine(o.say); if(gbCalcAsk(o.calc,kind,extra)&&"
+        "!_streamSaid&&!o.visual_memory) o.say=gbToolLine(\"calc\",o.say);"
         " if(o.timer) gbTimerSet(o.timer,kind,extra);"
         " if(gbBrainAsk(o.brain,kind,extra)&&!_streamSaid&&!o.visual_memory&&"
-        "!(_gbFollow&&_gbFollow.tags.length)) o.say=gbToolLine(\"brain\",o.say);"
+        "_gbFollowN===_gbF0) o.say=gbToolLine(\"brain\",o.say);"
         " gbJot(o.jot,kind,extra); if((o.sleep===true",
         1,
     ),
@@ -1830,7 +1843,22 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         'kind==="event") gbSleepGrant(); }catch(_fe){}',
-        'kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();',
+        'kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle(); _gbBrainQuiet=false;',
+        1,
+    ),
+    # Before anything in the reply is kept: a quiet turn keeps none of it (BRAIN, below).
+    (
+        "v3/next.html",
+        "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))",
+        "    var _gbF0=_gbFollowN; if(_gbBrainQuiet){ o.fact=o.log=o.glow=o.brain=o.jot=undefined; }\n"
+        "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();',
+        '_gbRecallCarry=""; if(_gbBrainCarried){ _gbBrainQuiet=true; _gbBrainCarried=false; } }'
+        " else if(_hreqAtIssue) _gbLive+=gbRecallKept();",
         1,
     ),
     (

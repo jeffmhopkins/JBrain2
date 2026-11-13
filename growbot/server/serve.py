@@ -1878,7 +1878,7 @@ class GrowBot:
             if got is None:
                 return json_response(503, {"error": "the box is busy"}, headers)
             return json_response(200, got, headers)
-        if up.status in (400, 403, 404, 409):
+        if up.status in (400, 403, 404, 409, 429):
             try:
                 detail = json.loads(up.body).get("detail")
             except (ValueError, AttributeError):

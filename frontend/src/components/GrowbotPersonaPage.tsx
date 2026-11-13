@@ -584,7 +584,7 @@ export function GrowbotPersonaPage({
     if (braining !== null) return;
     setBraining(brain);
     try {
-      const w = await api.setGrowbotPersonaBrain(p.id, brain);
+      const w = await api.setGrowbotPersonaBrain(p.id, brain, p.phone);
       took(w);
       say(
         brain

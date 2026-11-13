@@ -14,6 +14,7 @@ A search answers with a few short lines, never whole notes: the creature reads t
 
 from __future__ import annotations
 
+import collections
 import time
 import uuid
 from typing import cast
@@ -40,6 +41,9 @@ NOTE_MAX = 2000
 HITS = 4
 # What one hit may say aloud: a sentence or two, so the follow-up turn stays short.
 HIT_CHARS = 220
+# Notes a persona may file: a creature stuck in a loop (or talked into one) files a few, never a
+# flood, and each one costs an ingest. Kept in memory: a restart forgets, which is fine.
+NOTE_WINDOWS = ((600.0, 6), (86_400.0, 60))
 
 
 class BrainIn(BaseModel):
@@ -115,6 +119,22 @@ def _log(
     )
 
 
+def _note_allowed(request: Request, persona: str) -> bool:
+    filed: dict[str, collections.deque[float]] | None = getattr(
+        request.app.state, "growbot_brain_notes", None
+    )
+    if filed is None:
+        filed = request.app.state.growbot_brain_notes = {}
+    now = time.monotonic()
+    seen = filed.setdefault(persona, collections.deque())
+    while seen and now - seen[0] > NOTE_WINDOWS[-1][0]:
+        seen.popleft()
+    if any(sum(1 for t in seen if now - t <= span) >= most for span, most in NOTE_WINDOWS):
+        return False
+    seen.append(now)
+    return True
+
+
 @internal_router.post("/search")
 async def brain_search(request: Request, body: SearchIn) -> FoundOut:
     """The owner's notes (and wiki) for a few search words, as a few short dated lines."""
@@ -144,6 +164,9 @@ async def brain_note(request: Request, body: NoteIn) -> FiledOut:
     said = body.text.strip()[:NOTE_MAX]
     if not said:
         raise HTTPException(status_code=400, detail="a note")
+    if not _note_allowed(request, body.persona):
+        _log(request, body, "note", said, False, "", t0, "too many notes")
+        raise HTTPException(status_code=429, detail="too many notes")
     notes = request.app.state.notes_repo
     try:
         note, created = await notes.create_note(

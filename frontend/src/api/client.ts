@@ -8374,10 +8374,14 @@ export const api = {
   },
 
   /** On binds your notes to the phone holding it now (409 when it is not open anywhere). */
-  async setGrowbotPersonaBrain(id: string, brain: boolean): Promise<GrowbotWritten> {
+  async setGrowbotPersonaBrain(
+    id: string,
+    brain: boolean,
+    phone: string | null,
+  ): Promise<GrowbotWritten> {
     const response = await request(
       `/api/growbot/personas/${encodeURIComponent(id)}`,
-      jsonInit("PATCH", { brain }),
+      jsonInit("PATCH", brain ? { brain, phone } : { brain }),
     );
     return (await response.json()) as GrowbotWritten;
   },

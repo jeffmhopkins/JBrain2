@@ -346,6 +346,8 @@ class RenameIn(BaseModel):
     explore: bool | None = None
     # Brain access: on binds it to the phone holding the persona now, off clears it.
     brain: bool | None = None
+    # With brain on: the phone the owner saw it open on, so it binds that one or none.
+    phone: str | None = Field(default=None, max_length=64)
 
 
 class RegionIn(BaseModel):
@@ -429,10 +431,11 @@ async def rename_persona(request: Request, owner: OwnerDep, pid: Pid, body: Rena
     if body.brain is not None:
         # On binds it to the phone holding the persona now: the owner turns it on with the
         # persona open on his own phone, and no other phone ever gets it.
-        got = await repo.set_brain(ctx, pid, body.brain)
+        got = await repo.set_brain(ctx, pid, body.brain, body.phone)
         if got == "closed":
             raise HTTPException(
-                status_code=409, detail="Open it on your phone first, then turn this on."
+                status_code=409,
+                detail="It isn't open on that phone now. Open it on your phone, then turn it on.",
             )
         if not got:
             raise HTTPException(status_code=404, detail="no such persona")

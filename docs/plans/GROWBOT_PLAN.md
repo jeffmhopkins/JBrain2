@@ -454,7 +454,8 @@ never eval), answered like the clock; a sum it cannot do is said plainly. A `tim
 (`{minutes, about}`, or `{cancel, about}`) sets a reminder that rides the soul
 (`scratch.timers`, at most 8, at most a day), so a reload keeps it; each turn lists what is
 pending, the page checks every 5 s, and a due one is told in a follow-up thought, late and
-saying so when the phone was locked or closed past it.
+saying so when the phone was locked or closed past it. Only the tab that holds the creature
+ticks, and only while it is awake and on screen, so a stale tab never tells one unheard.
 
 **Brain tools (owner, 2026-11-12, 2026-11-13).** A persona can search the owner's JBrain notes
 (`brain`, a few search words, answered in a follow-up thought from a few short dated lines) and
@@ -464,7 +465,12 @@ phone holding the persona at that moment (migration 0267, `brain_phone_id`), and
 (`api/growbot_brain.py`) refuses every call unless that phone holds the persona right now. Past
 that gate the call runs as the owner across every domain (owner, 2026-11-13: "searching notes
 should not be domain restricted with owner key"). The page offers the two fields only while the
-box's poll says this phone may; each call is in the call log as kind `brain`.
+box's poll says this phone may; each call is in the call log as kind `brain`. Opening the
+persona on any other phone ends the access until the owner turns it on again, and turning it on
+names the phone the owner saw (a persona that moved meanwhile is refused). The turn that answers
+a search cannot keep a fact, a diary line or a glow, nor search or file again, so words found in
+a note cannot steer the creature's memory or file more notes; a persona may file at most 6 notes
+in ten minutes and 60 a day.
 
 **Its name.** Upstream's seed says "I am Sprout" and the creature's own name (`goals.selfName`) is set only when its person confirms one, so a persona named Dave woke up as Sprout. A box creature born fresh (a new, reset or seeded persona) now starts out with its persona's name; one already awake keeps its own, which the owner edits under Soul as "Calls itself" (`NAME_PATCHES`, owner 2026-11-12).
 

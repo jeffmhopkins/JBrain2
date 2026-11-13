@@ -1722,7 +1722,7 @@ def test_what_it_just_found_stays_in_front_of_it_for_a_re_ask() -> None:
     assert "== WHAT YOU LOOKED UP A MOMENT AGO ==" in got["kept"]
     assert "lunch: a taco" in got["kept"] and "answer from it" in got["kept"]
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert '_gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();' in page
+    assert "} } else if(_hreqAtIssue) _gbLive+=gbRecallKept();" in page
 
 
 def test_a_search_comes_before_its_say_and_the_say_only_thinks_back() -> None:
@@ -1959,8 +1959,8 @@ def test_the_line_said_while_it_checks_never_guesses_the_time() -> None:
 def test_the_clock_is_wired_into_the_turn_and_the_strip() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
-        "if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&!o.visual_memory&&"
-        '!(_gbFollow&&_gbFollow.tags[0]==="recall")) o.say=gbClockLine(o.say);'
+        "if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&!o.visual_memory)"
+        " o.say=gbClockLine(o.say);"
     ) in page
     assert "gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();" in page
     assert page.index("gbToolPillsSettle();") < page.index("var said=(o.say&&o.say.trim())")
@@ -2058,11 +2058,53 @@ def test_a_timer_missed_while_away_is_told_late_and_says_so() -> None:
     assert got["c"] == "your timer went off: oven (it was due 30 min ago, while you were away)"
 
 
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "function soulOwned(){ return false; }",
+        "document.hidden=true;",
+        "paused=true;",
+        "energyState='asleep';",
+    ],
+)
+def test_a_due_timer_waits_while_this_tab_cannot_tell_it(setup: str) -> None:
+    """Review, 2026-11-13: a stale tab or a locked phone ticked the timer away unheard."""
+    got = _recall_page(
+        "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};"
+        f"gbTimerSet({{minutes:1,about:'oven'}},'event',{{}});{setup}T+=5*60000;gbTimerTick();"
+        "console.log(JSON.stringify({left:_live.scratch.timers.length,n:timers.length}));"
+    )
+    assert got == {"left": 1, "n": 0}
+
+
+def test_a_told_timer_is_saved_off_the_soul() -> None:
+    got = _recall_page(
+        "var saved=0;function saveSoul(s){ saved+=s===_live?1:0; }"
+        "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};"
+        "gbTimerSet({minutes:1,about:'oven'},'event',{});T+=2*60000;gbTimerTick();"
+        "console.log(JSON.stringify({saved:saved}));"
+    )
+    assert got == {"saved": 1}
+
+
+def test_a_follow_up_keeps_a_carry_already_waiting_and_only_the_starter_swaps_its_line() -> None:
+    """Review, 2026-11-13: a note that did not save was overwritten by the follow-up's find, and a
+    tool asked while an older follow-up waited swapped its line for one it never said."""
+    got = _recall_page(
+        "_gbRecallCarry='a note did not save';var r={};r.a=gbClockAsk(true,'event',{});"
+        "r.b=gbCalcAsk('2+2','event',{});timers.shift()();r.c=thinks[0][3];"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["a"] is True and got["b"] is False
+    assert got["c"].startswith("a note did not save\nyou looked at the clock: ")
+    assert got["c"].endswith("you worked out 2+2 = 4")
+
+
 def test_math_and_timers_are_wired_into_the_turn_and_the_strip() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
-        "if(gbCalcAsk(o.calc,kind,extra)&&!_streamSaid&&!o.visual_memory&&_gbFollow&&"
-        '_gbFollow.tags[0]==="calc") o.say=gbToolLine("calc",o.say);'
+        "if(gbCalcAsk(o.calc,kind,extra)&&!_streamSaid&&!o.visual_memory)"
+        ' o.say=gbToolLine("calc",o.say);'
         " if(o.timer) gbTimerSet(o.timer,kind,extra);"
     ) in page
     assert "_gbLive+=gbTiredLine()+gbTimersLine();" in page
@@ -2104,6 +2146,15 @@ def test_a_notes_search_goes_to_the_box_and_is_answered_in_a_follow_up() -> None
     assert ev.startswith('you looked through your person\'s own notes for "furnace filter"')
     assert carried.endswith("found:\n- (2026-11-03) filter is 16x25")
     assert ["brain", {"n": 1, "st": 200}] in got["logs"]
+
+
+def test_a_second_notes_search_waits_for_the_first_to_come_back() -> None:
+    got = _recall_page(
+        _BRAIN_SETUP + "_gbBrainT=-1e15;_gbToolHeld.brain=true;"
+        "var a=gbBrainAsk('furnace','event',{});"
+        "console.log(JSON.stringify({a:a||null,sent:sent,logs:logs}));"
+    )
+    assert got == {"a": None, "sent": [], "logs": [["brain_skip", {"why": "gap"}]]}
 
 
 @pytest.mark.parametrize(
@@ -2168,7 +2219,7 @@ def test_the_notes_tools_are_offered_only_where_the_box_said_so() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
         "if(gbBrainAsk(o.brain,kind,extra)&&!_streamSaid&&!o.visual_memory&&"
-        '!(_gbFollow&&_gbFollow.tags.length)) o.say=gbToolLine("brain",o.say);'
+        '_gbFollowN===_gbF0) o.say=gbToolLine("brain",o.say);'
         " gbJot(o.jot,kind,extra);"
     ) in page
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")

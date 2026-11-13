@@ -3164,7 +3164,13 @@ def test_the_brain_routes_refuse_what_is_not_theirs_and_pass_the_gate(run: _Runn
     for named in ("", "1" + _PERSONA[1:], None):
         other = {"persona": named, "q": "x"}
         assert _soul_call(run, "POST", "/api/box/brain/search", other) == (409, {"error": "other"})
-    for status, detail in ((403, "off"), (400, "a search"), (404, "gone"), (409, "moved")):
+    for status, detail in (
+        (403, "off"),
+        (400, "a search"),
+        (404, "gone"),
+        (409, "moved"),
+        (429, "too many notes"),
+    ):
         _Fake.soul = {"/internal/growbot/brain/search": (status, {"detail": detail})}
         assert _soul_call(run, "POST", "/api/box/brain/search", body) == (status, {"error": detail})
     _Fake.soul = {"/internal/growbot/brain/search": (403, ["no"])}  # type: ignore[dict-item]

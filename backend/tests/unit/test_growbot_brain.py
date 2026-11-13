@@ -242,3 +242,15 @@ def test_an_empty_note_and_one_the_box_cannot_file(world: SimpleNamespace) -> No
     world.notes.unknown = True
     r = world.client.post("/internal/growbot/brain/note", json={**WHO, "text": "x"})
     assert r.status_code == 503
+
+
+def test_a_creature_filing_note_after_note_is_stopped(world: SimpleNamespace) -> None:
+    """Security review, 2026-11-13: a looping or prompt-injected creature could flood the notes
+    and the ingest behind them. Six in ten minutes per persona, then a refusal it can own up to."""
+    codes = [
+        world.client.post("/internal/growbot/brain/note", json={**WHO, "text": f"n{i}"}).status_code
+        for i in range(7)
+    ]
+    assert codes == [200] * 6 + [429]
+    assert len(world.notes.made) == 6
+    assert world.log.rows[-1].kind == "brain"

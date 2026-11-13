@@ -1295,7 +1295,7 @@ describe("GrowbotScreen a persona's page", () => {
     expect(
       await screen.findByText("Sprout can use your notes on Pixel 6a, and nowhere else."),
     ).toBeTruthy();
-    expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({ brain: true });
+    expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({ brain: true, phone: P6A });
     expect(notes.checked).toBe(true);
     expect(screen.getByText("Only on Pixel 6a, while it holds Sprout.")).toBeTruthy();
   });

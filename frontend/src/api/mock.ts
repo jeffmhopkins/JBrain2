@@ -760,8 +760,11 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
     const brain = body().brain;
     if (brain !== undefined) {
       if (typeof brain !== "boolean") return json({ detail: "not a setting" }, 422);
-      if (brain && !p.phone)
-        return json({ detail: "Open it on your phone first, then turn this on." }, 409);
+      if (brain && (!p.phone || body().phone !== p.phone))
+        return json(
+          { detail: "It isn't open on that phone now. Open it on your phone, then turn it on." },
+          409,
+        );
       p.brain_phone = brain ? p.phone : null;
       return json({ persona: mockGbDetail(p), checkpoint: null });
     }

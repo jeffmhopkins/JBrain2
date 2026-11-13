@@ -159,7 +159,7 @@ class PersonaRepo(Protocol):
     async def set_voice(self, ctx: SessionContext, pid: str, voice: str) -> bool: ...
     async def set_explore(self, ctx: SessionContext, pid: str, explore: bool) -> bool: ...
     async def set_brain(
-        self, ctx: SessionContext, pid: str, on: bool
+        self, ctx: SessionContext, pid: str, on: bool, expect: str | None = None
     ) -> bool | Literal["closed"]: ...
     async def brain_ok(self, ctx: SessionContext, pid: str, phone_id: str) -> bool: ...
     async def write_soul(
@@ -445,9 +445,12 @@ class SqlPersonaRepo:
             )
             return done.first() is not None
 
-    async def set_brain(self, ctx: SessionContext, pid: str, on: bool) -> bool | Literal["closed"]:
-        """On binds brain access to the phone holding the persona now ("closed" when none does);
-        off clears it. False: no such persona."""
+    async def set_brain(
+        self, ctx: SessionContext, pid: str, on: bool, expect: str | None = None
+    ) -> bool | Literal["closed"]:
+        """On binds brain access to the phone holding the persona now, and only if that is
+        `expect`, the phone the owner saw it on ("closed" otherwise: open nowhere, or opened
+        elsewhere since his page loaded); off clears it. False: no such persona."""
         if (key := _uuid(pid)) is None:
             return False
         async with scoped_session(self._maker, ctx) as session:
@@ -456,10 +459,10 @@ class SqlPersonaRepo:
                     "UPDATE app.growbot_personas SET brain_phone_id = "
                     + ("phone_id" if on else "NULL")
                     + ", updated_at = now() WHERE id = :p"
-                    + (" AND phone_id IS NOT NULL" if on else "")
+                    + (" AND phone_id = :ex" if on else "")
                     + " RETURNING 1"
                 ),
-                {"p": key},
+                {"p": key, "ex": expect} if on else {"p": key},
             )
             if done.first() is not None:
                 return True
@@ -891,8 +894,11 @@ class SqlPersonaRepo:
         )
         await session.execute(
             text(
+                # Opened on any phone but the one brain access is on for ends it (migration
+                # 0267): the owner's notes never follow a persona to another device.
                 "UPDATE app.growbot_personas SET phone_id = :ph, last_phone_id = :ph,"
-                " opened_at = now() WHERE id = :p"
+                " opened_at = now(), brain_phone_id = CASE WHEN brain_phone_id = :ph"
+                " THEN brain_phone_id END WHERE id = :p"
             ),
             {"ph": phone_id, "p": pid},
         )
