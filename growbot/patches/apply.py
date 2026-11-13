@@ -969,7 +969,7 @@ function _gbFlush(id,force){ var g=_gbUtts[id]; if(!g||(!g.fin&&!force)) return;
   for(var i=0;i<g.n&&!force;i++) if(!g.done[i]) return;
   delete _gbUtts[id];
   var txt=g.text.filter(function(t){ return t; }).join(" ").replace(/\s+/g," ").trim();
-  if(!txt) return;
+  if(!txt){ try{ toast("…didn't catch that: the speech model heard no words"); }catch(e){} return; }
   try{ logEv("stt_join",{n:g.n,ms:Date.now()-g.t0,force:force?1:0}); }catch(e){}
   try{ _convLangSaw(g.lang,txt,g.meta); }catch(e){}
   showYouSaid(txt); sendTxtFrom(txt,g.meta); }
@@ -2015,6 +2015,23 @@ WAKE_GATE_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += WAKE_GATE_PATCHES
+
+# A streamed utterance's last piece is often only the breath after the last word, and the speech
+# model hears nothing in it. That piece used to show "didn't catch that" while the words before
+# it reached the creature whole (owner, 2026-11-13: "showing an error message that it couldn't
+# understand it"). An empty piece is now silent; the utterance says so only when every piece
+# came back empty (_gbFlush above).
+PIECE_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        '_heardDrop("empty",meta); toast("…didn\'t catch that: the speech model heard no words");'
+        " return; }",
+        '_heardDrop("empty",meta); if(!(meta&&meta.gbPiece)) toast("…didn\'t catch that: the'
+        ' speech model heard no words"); return; }',
+        1,
+    ),
+]
+PATCHES += PIECE_PATCHES
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (

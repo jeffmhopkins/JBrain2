@@ -864,7 +864,7 @@ var _vadEndT=0, _imitationCtl=null; var document={getElementById:function(){ ret
 function Blob(parts){ this.len=parts[0].len; }
 function transcribe(b,t,ms){ stt.push({p:_gbPieceNext,len:b.len}); _gbPieceNext=null; }
 function showYouSaid(t){ shown.push(t); } function sendTxtFrom(t,m){ sent.push(t); }
-function logEv(){} function _convLangSaw(){}
+function logEv(){} function _convLangSaw(){} var toasts=[]; function toast(t){ toasts.push(t); }
 function _gbPcmUttStop0(s,t){ old.push(s); }
 function utt(){ _pcmUtt={buf:new Float32Array(13000),n:0,pre:0,t0:now,nf:0}; _pcmLive=true; }
 function feed(ms,voice){ for(var i=0;i<ms;i+=100){ var d=new Float32Array(100), u=_pcmUtt;
@@ -882,7 +882,8 @@ def _run_stream(page: str, scenario: str) -> dict[str, Any]:
         _stream_js(page)
         + _STREAM_HARNESS
         + scenario
-        + "\nconsole.log(JSON.stringify({sent:sent,shown:shown,stt:stt.length,old:old}));"
+        + "\nconsole.log(JSON.stringify({sent:sent,shown:shown,stt:stt.length,old:old,"
+        + "toasts:toasts}));"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
     return json.loads(out.stdout)
@@ -934,6 +935,25 @@ def test_a_lost_or_silent_piece_never_holds_the_turn() -> None:
     """
     got = _run_stream(page, cancelled)
     assert got["sent"] == []
+
+
+def test_a_silent_last_piece_is_not_a_failure() -> None:
+    """Owner, 2026-11-13: the breath after the last word comes back empty, and that piece
+    showed "didn't catch that" though the words before it reached the creature whole."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    breath = """
+    utt(); feed(5000,true); feed(600,false); feed(800,true); pcmUttStop(true,300); run();
+    answer(0,"you were unable to actually"); answer(1,"");
+    """
+    got = _run_stream(page, breath)
+    assert got["sent"] == ["you were unable to actually"] and got["toasts"] == []
+    silent = """
+    utt(); feed(5000,true); feed(600,false); feed(800,true); pcmUttStop(true,300); run();
+    answer(0,""); answer(1,"");
+    """
+    got = _run_stream(page, silent)
+    assert got["sent"] == [] and len(got["toasts"]) == 1 and "heard no words" in got["toasts"][0]
+    assert '_heardDrop("empty",meta); if(!(meta&&meta.gbPiece)) toast("…didn\'t catch that:' in page
 
 
 def test_a_streamed_utterance_outlives_the_old_twelve_second_cap() -> None:

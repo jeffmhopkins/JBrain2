@@ -2272,7 +2272,7 @@ function heardText(txt,meta,detectedLang){ try{ if(txt&&String(txt).trim()) _lis
      junk test is by SUBTRACTION: strip whitespace and punctuation, and if nothing at all is left it
      was "..." or a bare "." — anything from any script survives. (0710 field: "." burned thinks and
      clobbered the queued real sentence, so the guard itself must stay.) */
-  if(!txt||!String(txt).replace(/[\s!-\/:-@\[-`{-~¡-¿؀-؟‐-›　-〿・！-／：-＠［-｀｛-･]+/g,"")){ _heardDrop("empty",meta); toast("…didn't catch that: the speech model heard no words"); return; }
+  if(!txt||!String(txt).replace(/[\s!-\/:-@\[-`{-~¡-¿؀-؟‐-›　-〿・！-／：-＠［-｀｛-･]+/g,"")){ _heardDrop("empty",meta); if(!(meta&&meta.gbPiece)) toast("…didn't catch that: the speech model heard no words"); return; }
   var nh=normSay(txt);                                                                              // ANTI-ECHO: if it closely matches what IT just said, it's hearing itself — drop it
   if(nh&&lastSaid&&Date.now()-lastSaidT<9000&&(nh===lastSaid||(nh.length>8&&(lastSaid.indexOf(nh)>=0||nh.indexOf(lastSaid)>=0)))){ _heardDrop("echo",meta); toast("…(that was my own voice)"); return; }
   if(meta&&meta.gbPiece){ _gbPiece(meta.gbPiece,txt,meta,detectedLang); return; }
@@ -5548,7 +5548,7 @@ function _gbFlush(id,force){ var g=_gbUtts[id]; if(!g||(!g.fin&&!force)) return;
   for(var i=0;i<g.n&&!force;i++) if(!g.done[i]) return;
   delete _gbUtts[id];
   var txt=g.text.filter(function(t){ return t; }).join(" ").replace(/\s+/g," ").trim();
-  if(!txt) return;
+  if(!txt){ try{ toast("…didn't catch that: the speech model heard no words"); }catch(e){} return; }
   try{ logEv("stt_join",{n:g.n,ms:Date.now()-g.t0,force:force?1:0}); }catch(e){}
   try{ _convLangSaw(g.lang,txt,g.meta); }catch(e){}
   showYouSaid(txt); sendTxtFrom(txt,g.meta); }
