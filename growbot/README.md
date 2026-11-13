@@ -102,6 +102,11 @@ the tunnel Caddy's peer is the connector, so the sidecar takes the client from C
 `Cf-Connecting-IP` when, and only when, Caddy's `X-Real-IP` is `cloudflared` (as the api's
 `client_ip.py` does): otherwise every away client would share one backoff bucket.
 
+Cloudflare's Browser Cache TTL rewrites the sidecar's `no-cache` on a `.js` to `max-age=14400`,
+so away, a phone reused the old script for hours after an update had landed (owner,
+2026-11-13). `apply.py` therefore writes each of our own scripts' tags with a hash of the file
+(`/growbot-talklog.js?v=…`): a changed file is a new URL that no cache on the way has seen.
+
 | Env | Default | Meaning |
 | --- | --- | --- |
 | `GROWBOT_PORT` | `8810` | Listen port (plain HTTP, behind Caddy). |

@@ -49,6 +49,26 @@ _CODE = [
 ]
 
 
+_VERSION = re.compile(r"\?v=[0-9a-f]{12}(?=\")")
+
+
+def _script_tags(markup: str) -> list[str]:
+    """The page's script tags without our cache-busting `?v=`, which the next test checks."""
+    return [_VERSION.sub("", t) for t in re.findall(r"<script[^>]*>", markup)]
+
+
+@pytest.mark.parametrize("page", _PAGES, ids=lambda p: p.relative_to(_SITE).as_posix())
+def test_our_scripts_are_fetched_by_their_content_hash(page: Path) -> None:
+    """An update is a new URL for every one of our scripts that changed, so no cache on the
+    way to a phone can keep serving the old one (owner, 2026-11-13: the old talk log stayed
+    on the phone after an update that landed)."""
+    markup = page.read_text(encoding="utf-8")
+    for src in re.findall(r'<script src="/(growbot-[a-z]+\.js)([^"]*)"', markup):
+        name, query = src
+        digest = hashlib.sha256((_SITE / name).read_bytes()).hexdigest()[:12]
+        assert query == f"?v={digest}", name
+
+
 def test_site_has_pages_and_the_creature() -> None:
     assert (_SITE / "v3" / "next.html").is_file()
     assert _PAGES
@@ -56,9 +76,8 @@ def test_site_has_pages_and_the_creature() -> None:
 
 @pytest.mark.parametrize("page", _PAGES, ids=lambda p: p.relative_to(_SITE).as_posix())
 def test_every_page_loads_the_box_voice_first(page: Path) -> None:
-    first = re.search(r"<script[^>]*>", page.read_text(encoding="utf-8"))
-    assert first is not None
-    assert first.group(0) == '<script src="/growbot-box.js">'
+    tags = _script_tags(page.read_text(encoding="utf-8"))
+    assert tags and tags[0] == '<script src="/growbot-box.js">'
 
 
 def test_the_box_voice_replaces_speech_synthesis_and_posts_to_the_box() -> None:
@@ -70,7 +89,7 @@ def test_the_box_voice_replaces_speech_synthesis_and_posts_to_the_box() -> None:
 
 def test_the_creature_loads_the_face_right_after_the_box_voice() -> None:
     creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    tags = re.findall(r"<script[^>]*>", creature)
+    tags = _script_tags(creature)
     assert tags[:2] == ['<script src="/growbot-box.js">', '<script src="/growbot-face.js">']
     assert (_SITE / "growbot-face.js").read_bytes() == (
         _GROWBOT / "patches" / "growbot-face.js"
@@ -81,7 +100,7 @@ def test_the_creature_shows_what_it_is_doing_top_left() -> None:
     """The status strip loads right after the face, before any page script, so its wrappers
     see every model call, photo, voice clip and leg frame the page makes."""
     creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    tags = re.findall(r"<script[^>]*>", creature)
+    tags = _script_tags(creature)
     assert tags[:3] == [
         '<script src="/growbot-box.js">',
         '<script src="/growbot-face.js">',
@@ -289,7 +308,7 @@ def test_the_eyes_load_after_the_status_strip_and_take_the_trackers_boxes() -> N
     """The leg tracker hands every box it keeps to the eyes, from the worker and from the
     main-thread fallback, so its detector drives the pupils whenever it is running."""
     creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    tags = re.findall(r"<script[^>]*>", creature)
+    tags = _script_tags(creature)
     assert tags[3] == '<script src="/growbot-eyes.js">'
     eyes = (_SITE / "growbot-eyes.js").read_text(encoding="utf-8")
     assert eyes == (_GROWBOT / "patches" / "growbot-eyes.js").read_text(encoding="utf-8")
@@ -384,7 +403,7 @@ def test_a_persona_wears_its_own_face_lantern_by_default() -> None:
     assert shim.index("window.__gbBoxFace = state.json.face;") < shim.index(
         "if (state.status === 204) {"
     )
-    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    page = _VERSION.sub("", (_SITE / "v3" / "next.html").read_text(encoding="utf-8"))
     assert page.index('<script src="/growbot-box.js">') < page.index(
         '<script src="/growbot-face.js">'
     )
@@ -2622,7 +2641,7 @@ def test_the_conversation_stays_on_screen_after_the_caption_moves_on() -> None:
     """The talk log loads after the eyes, before any page script, and the page reports to it
     from the places that decide what was said and heard."""
     creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    tags = re.findall(r"<script[^>]*>", creature)
+    tags = _script_tags(creature)
     assert tags[4] == '<script src="/growbot-talklog.js">'
     talk = (_SITE / "growbot-talklog.js").read_text(encoding="utf-8")
     assert talk == (_GROWBOT / "patches" / "growbot-talklog.js").read_text(encoding="utf-8")

@@ -2512,6 +2512,34 @@ def _unsupported_handlers(markup: str) -> list[str]:
     return found
 
 
+OWN_SCRIPTS = (
+    "growbot-box.js",
+    "growbot-face.js",
+    "growbot-status.js",
+    "growbot-eyes.js",
+    "growbot-talklog.js",
+)
+
+
+def _version_own_scripts(site: Path) -> None:
+    """Tag each of our script tags with its file's hash, so an update is a new URL.
+
+    The files are sent no-cache, yet a phone kept running the old talk log after an update
+    that landed (owner, 2026-11-13): some cache on the way (the app's WebView, or the tunnel
+    when away) held it. A new URL per new file cannot be served stale.
+    """
+    tags = {
+        name: hashlib.sha256((site / name).read_bytes()).hexdigest()[:12] for name in OWN_SCRIPTS
+    }
+    for page in sorted(site.rglob("*.html")):
+        markup = page.read_text(encoding="utf-8")
+        tagged = markup
+        for name, digest in tags.items():
+            tagged = tagged.replace(f'src="/{name}"', f'src="/{name}?v={digest}"')
+        if tagged != markup:
+            page.write_text(tagged, encoding="utf-8")
+
+
 def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     app = upstream / "app"
     site = stage / "site"
@@ -2536,6 +2564,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     for name in PWA_FILES:
         dest = site / ("icons/" + name if name.endswith(".png") else name)
         shutil.copyfile(HERE / "pwa" / name, dest)
+    _version_own_scripts(site)
     for entry in pin["vendor"]:
         dest = site / entry["path"]
         dest.parent.mkdir(parents=True, exist_ok=True)
