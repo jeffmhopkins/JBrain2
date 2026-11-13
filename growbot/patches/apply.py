@@ -1789,6 +1789,122 @@ PATCHES += [
     ),
 ]
 
+# The picture is read while the person is still talking (owner, 2026-11-13). A spoken turn's
+# prefill (the history, this turn's state and its camera frames, ~2,400 tokens) used to start
+# only once the transcript landed. Now, once the person has been talking for 0.6 s, the page
+# sends the box that turn minus their words, ending in a placeholder message and asking for one
+# token, so the engine reads it while they speak; the turn then sends the same messages byte for
+# byte with their words as its last message, and the engine resumes from where the warm-up
+# stopped. Measured on the box with logged turns: 7.8 s of prefill fell to 1.9 s. The engine
+# keeps a reusable checkpoint only at the start of a request's last message, which is why the
+# words ride in a message of their own and the warm-up ends in "." rather than stopping short.
+# A warm-up is used once, by the next spoken turn, and only when nothing it was built from has
+# moved (the history, the system text, the eye) within 12 s; anything a turn adds that the
+# warm-up could not know (a recall, an imitation guide) rides with the words. Anything else
+# runs exactly as before.
+_GB_WARM_JS = r"""var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, GB_WARM_MAX_MS=12000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
+function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
+function gbHist(now){ var tr=gbTalkTraces(_live.scratch.traces), msgs=[], i;
+  for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
+  return msgs; }
+function gbWarmKey(){ var t=(_live&&_live.scratch&&_live.scratch.traces)||[], l=t[t.length-1]; return t.length+":"+(l&&l.t||0)+":"+(camOn?1:0)+":"+camFacing; }
+function gbSoulView(){ var v=(MODE==="phone")?Object.assign({},_live,{body:null}):_live;
+  if(MODE!=="phone"&&_wheels&&v.body&&!((v.body.walk&&v.body.walk.present===false)||/wheel/i.test(String(v.body.id||"")+" "+String((v.body.geometry&&v.body.geometry.drive)||""))))
+    v=Object.assign({},v,{body:Object.assign({},v.body,{walk:Object.assign({},v.body.walk||{},{present:false})})});
+  return v; }
+function gbWarmUp(){ var now=Date.now();
+  if(_gbWarmBusy||now-_gbWarmT<GB_WARM_GAP_MS||typeof window.gbBoxLive!=="function") return;
+  if(inFlight||!orCfg||!_live||now<coolUntil||paused||document.hidden||dreaming||energyState==="asleep"||_gbRecallCarry) return;
+  if(!soulOwned()||(typeof vmBusy==="function"&&vmBusy())||llmCfg()) return;
+  _gbWarmT=now;
+  try{
+    var nf=(frameDiff>3||_rideOn||now<selfMoveUntil)?3:1, cut=now-10000, frames=camOn?eyeBuf.filter(function(f){ return f.t>=cut; }).slice(-nf):[], parts=[];
+    if(camOn&&!frames.length) return;
+    var eyeWord=(camFacing==="environment")?"your rear eye, the back of your head":"your forward eye, the screen side";
+    frames.forEach(function(f){ var ago=Math.max(0,Math.round((now-f.t)/1000));
+      parts.push({type:"text",text:"[camera ("+eyeWord+") — "+(ago<=1?"now]":ago+"s ago]")});
+      parts.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+f.j}}); });
+    var vmc=(typeof vmTurnContext==="function"&&typeof vmStreamSpeech==="function"&&typeof vmReplyGuard==="function")?{user:"·",asked:false}:null;
+    var sys=buildSystem(gbSoulView(),{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText();
+    var vm=(typeof vmPrompt==="function"?vmPrompt(vmc):""), live=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+selfStats()+vm, tired=gbTiredLine(), memlog=(typeof MEMLOG_ASK==="string")?MEMLOG_ASK:"";
+    live+=tired+memlog;
+    sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||"");
+    var pre={role:"user",content:parts.length?parts:""};
+    if(!window.gbBoxLive([pre],live)) return;
+    var hist=gbHist(now), body=_mkBody(brainOverride(orCfg.active||orCfg.fast,false),1,[{role:"system",content:sys}].concat(hist,[pre,{role:"user",content:"."}]));
+    var hdr={"content-type":"application/json","x-gb-warm":"1"}; if(pbDevTok) hdr["x-pb-device"]=pbDevTok;
+    var ctl=window.AbortController?new AbortController():null, fuse=setTimeout(function(){ try{ if(ctl) ctl.abort(); }catch(e){} },GB_WARM_FUSE_MS);
+    _gbWarm={t:now,key:gbWarmKey(),sys:sys,hist:hist,pre:pre,vm:vm,tired:tired,memlog:memlog,nf:frames.length}; _gbWarmBusy=true;
+    try{ logEv("warm",{nf:frames.length}); }catch(e){}
+    fetch("/api/llm?target=openrouter",{method:"POST",headers:hdr,body:JSON.stringify(body),signal:ctl?ctl.signal:undefined})
+      .then(function(r){ return r.text(); }).catch(function(){})
+      .then(function(){ clearTimeout(fuse); _gbWarmBusy=false; });
+  }catch(e){ _gbWarm=null; _gbWarmBusy=false; }
+}
+function gbWarmFresh(){ return !!(_gbWarm&&Date.now()-_gbWarm.t<GB_WARM_MAX_MS); }
+function gbWarmTake(kind,extra,nFrames,blindNote,sys){
+  if(kind!=="event"||!(extra&&extra.humanReq)) return null;
+  var w=_gbWarm; _gbWarm=null;
+  if(!w||Date.now()-w.t>GB_WARM_MAX_MS||w.key!==gbWarmKey()||w.sys!==sys||blindNote||w.nf<nFrames||(w.nf>0)!==(nFrames>0)){ if(w){ try{ logEv("warm_skip",{age:Date.now()-w.t}); }catch(e){} } return null; }
+  return w; }
+function gbWarmMsgs(w,live,vm,liveN,userMsg){
+  var late=live.slice(liveN).replace(w.tired,"").replace(w.memlog,""); late=((vm!==w.vm)?vm:"")+late; late=late.replace(/^\s+/,"");
+  return w.hist.concat([w.pre,{role:"user",content:(late?late+"\n\n== THIS MOMENT ==\n":"")+userMsg}]); }
+"""
+WARM_PATCHES: list[tuple[str, str, str, int]] = [
+    ("v3/next.html", "function think(event,kind,extra){", _GB_WARM_JS + "function think(event,kind,extra){", 1),
+    # An autonomous thought sent while the person talks would overwrite the engine's warm-up.
+    # Only while they talk: a television can start warm-ups too, and must not silence it.
+    (
+        "v3/next.html",
+        '  var now=Date.now();\n  if(energyState==="asleep"){ if(kind!=="event"',
+        '  if(kind!=="event"&&vadOn&&gbWarmFresh()) return;\n'
+        '  var now=Date.now();\n  if(energyState==="asleep"){ if(kind!=="event"',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '  function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||'
+        'a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return'
+        ' JSON.stringify(r)+(note?"\\n"+a:"")+(t.d?"\\n(did: "+t.d+")":""); }\n',
+        "",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  for(i=0;i<tr.length;i++){ msgs.push({role:\"user\",content:(tr[i].t?(\"[\"+Math.max(0,"
+        "Math.round((now-tr[i].t)/1000))+\"s ago] \"):\"\")+traceMoment(tr[i].u)});"
+        " msgs.push({role:\"assistant\",content:gbTraceReply(tr[i])}); }",
+        "  msgs=gbHist(now);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\\n\\n"+selfStats()+'
+        '(typeof vmPrompt==="function"?vmPrompt(_vmTurn):"");',
+        '_gbVm=(typeof vmPrompt==="function"?vmPrompt(_vmTurn):""), _gbLive=(buildSystem.live||"")+'
+        '(moveGuideText.live||"")+"\\n\\n"+selfStats()+_gbVm, _gbLiveN=_gbLive.length;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        ' if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;',
+        " var _gw=gbWarmTake(kind,extra,frames.length,parts.length-1!==frames.length*2,sys);"
+        " if(_gw){ msgs=gbWarmMsgs(_gw,_gbLive,_gbVm,_gbLiveN,userMsg);"
+        ' try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }\n'
+        '  else if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  if(now-vadVoiceT > (_pcmUtt&&_pcmUtt.gbId?",
+        "  if(voice&&now-vadStartT>=GB_WARM_VOICE_MS) gbWarmUp();\n"
+        "  if(now-vadVoiceT > (_pcmUtt&&_pcmUtt.gbId?",
+        1,
+    ),
+]
+PATCHES += WARM_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

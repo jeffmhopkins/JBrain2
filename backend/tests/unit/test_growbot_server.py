@@ -98,6 +98,7 @@ class _Fake(BaseHTTPRequestHandler):
                 "body": body,
                 "persona": self.headers.get("X-Growbot-Persona", ""),
                 "robot": self.headers.get("X-Growbot-Robot", ""),
+                "warm": self.headers.get("X-Growbot-Warm", ""),
             }
         )
 
@@ -1078,6 +1079,15 @@ def test_llm_names_who_the_turn_is_for(run: _Running) -> None:
     run.request("POST", "/api/llm?target=openrouter", _chat("x"), {"Cookie": cookie}).read()
     call = [s for s in _Fake.seen if s["path"].endswith("/chat/completions")][-1]
     assert (call["persona"], call["robot"]) == (_PERSONA, "")
+
+
+def test_llm_passes_on_a_warm_up_and_nothing_else(run: _Running) -> None:
+    run.request("POST", "/api/llm?target=openrouter", _chat("x"), {"X-Gb-Warm": "1"}).read()
+    call = [s for s in _Fake.seen if s["path"].endswith("/chat/completions")][-1]
+    assert call["warm"] == "1"
+    run.request("POST", "/api/llm?target=openrouter", _chat("x"), {"X-Gb-Warm": "yes"}).read()
+    call = [s for s in _Fake.seen if s["path"].endswith("/chat/completions")][-1]
+    assert call["warm"] == ""
 
 
 def test_stt_and_tts_each_log_a_row(run: _Running) -> None:

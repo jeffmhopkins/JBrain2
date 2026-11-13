@@ -605,3 +605,23 @@ def test_a_turn_with_no_system_message_never_reads_as_a_changed_one() -> None:
     first.timings["system_hash"] = 0
     calls = [LoggedCall(1, datetime.now(UTC), first), LoggedCall(2, datetime.now(UTC), _llm(0, 5))]
     assert growbot_calls.cold_reasons(calls)["unknown"] == 1
+
+
+def test_a_warm_up_is_marked_and_kept_out_of_the_creatures_numbers(tmp_path: Path) -> None:
+    log = _Log()
+    app, auth = _app(tmp_path, log)
+    with TestClient(app) as client:
+        r = client.post(_COMPLETIONS, json=_chat(), headers={**auth, "X-Growbot-Warm": "1"})
+        assert r.status_code == 200
+        (rec,) = _wait(log)
+    assert rec.request["warmup"] is True
+    assert growbot_calls.summarize([LoggedCall(1, datetime.now(UTC), rec)]).keys() == {"llm_warmup"}
+
+
+def test_only_the_exact_warm_flag_marks_a_turn(tmp_path: Path) -> None:
+    log = _Log()
+    app, auth = _app(tmp_path, log)
+    with TestClient(app) as client:
+        client.post(_COMPLETIONS, json=_chat(), headers={**auth, "X-Growbot-Warm": "true"})
+        (rec,) = _wait(log)
+    assert "warmup" not in rec.request

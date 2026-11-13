@@ -5784,6 +5784,7 @@ function vadTick(){ var now=Date.now();
     return; }
   if(voice) vadVoiceT=now;
   if(suppressed){ if(!paused && !document.hidden && !recording && vadVoiceT-vadStartT>350) vadStop(); else vadCancel(); return; }   // its OWN voice landing mid-utterance must not EAT the person's words (0710 field: goal-switch died while listening) — a real utterance (≥350ms voiced) transcribes; pause/hidden/manual-talk still drop
+  if(voice&&now-vadStartT>=GB_WARM_VOICE_MS) gbWarmUp();
   if(now-vadVoiceT > (_pcmUtt&&_pcmUtt.gbId?Math.max(_vadHold,GB_LONG_HOLD_MS):_vadHold)) vadStop();                                             // silence >= the ADAPTIVE hold = end of utterance (0730: fixed 900 cut people off; 0810: fixed 1500 still chopped the long-pause thinkers, see _vadHold above)
   else if(now-vadStartT > (_pcmLive&&_pcmUtt?GB_UTT_MAX_MS:12000)){ vadStop(); _vadEndT=0; } }                          // hard cap on one utterance. _vadEndT cleared on purpose (K3 0810 #3): a capped monologue restarts within ms, and without this three long monologues walk the adaptive hold to 3600 though the person never paused once — only real SILENCE endpoints may teach it
 function vadStart(){ if(!micStream){ try{ if(listenMode) logEv("drop",{w:"nomic"}); }catch(e){} return; }
@@ -8432,10 +8433,59 @@ function _runGait(spec,attempt){
     try{ _moveEnd(attempt,"failed","gait did not load"); }catch(_me){} stopMotion(); setErr("gait load failed ("+e.message+") — staying with free moves"); $("brainTxt").textContent="awake"; }); }   // 0929: move_end says it failed (see the spin's catch)
 
 /* ---- THE FAST LOOP (slow table — LLM reasons over full memory, drives legs) ---- */
+var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, GB_WARM_MAX_MS=12000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
+function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
+function gbHist(now){ var tr=gbTalkTraces(_live.scratch.traces), msgs=[], i;
+  for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
+  return msgs; }
+function gbWarmKey(){ var t=(_live&&_live.scratch&&_live.scratch.traces)||[], l=t[t.length-1]; return t.length+":"+(l&&l.t||0)+":"+(camOn?1:0)+":"+camFacing; }
+function gbSoulView(){ var v=(MODE==="phone")?Object.assign({},_live,{body:null}):_live;
+  if(MODE!=="phone"&&_wheels&&v.body&&!((v.body.walk&&v.body.walk.present===false)||/wheel/i.test(String(v.body.id||"")+" "+String((v.body.geometry&&v.body.geometry.drive)||""))))
+    v=Object.assign({},v,{body:Object.assign({},v.body,{walk:Object.assign({},v.body.walk||{},{present:false})})});
+  return v; }
+function gbWarmUp(){ var now=Date.now();
+  if(_gbWarmBusy||now-_gbWarmT<GB_WARM_GAP_MS||typeof window.gbBoxLive!=="function") return;
+  if(inFlight||!orCfg||!_live||now<coolUntil||paused||document.hidden||dreaming||energyState==="asleep"||_gbRecallCarry) return;
+  if(!soulOwned()||(typeof vmBusy==="function"&&vmBusy())||llmCfg()) return;
+  _gbWarmT=now;
+  try{
+    var nf=(frameDiff>3||_rideOn||now<selfMoveUntil)?3:1, cut=now-10000, frames=camOn?eyeBuf.filter(function(f){ return f.t>=cut; }).slice(-nf):[], parts=[];
+    if(camOn&&!frames.length) return;
+    var eyeWord=(camFacing==="environment")?"your rear eye, the back of your head":"your forward eye, the screen side";
+    frames.forEach(function(f){ var ago=Math.max(0,Math.round((now-f.t)/1000));
+      parts.push({type:"text",text:"[camera ("+eyeWord+") — "+(ago<=1?"now]":ago+"s ago]")});
+      parts.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+f.j}}); });
+    var vmc=(typeof vmTurnContext==="function"&&typeof vmStreamSpeech==="function"&&typeof vmReplyGuard==="function")?{user:"·",asked:false}:null;
+    var sys=buildSystem(gbSoulView(),{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText();
+    var vm=(typeof vmPrompt==="function"?vmPrompt(vmc):""), live=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+selfStats()+vm, tired=gbTiredLine(), memlog=(typeof MEMLOG_ASK==="string")?MEMLOG_ASK:"";
+    live+=tired+memlog;
+    sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||"");
+    var pre={role:"user",content:parts.length?parts:""};
+    if(!window.gbBoxLive([pre],live)) return;
+    var hist=gbHist(now), body=_mkBody(brainOverride(orCfg.active||orCfg.fast,false),1,[{role:"system",content:sys}].concat(hist,[pre,{role:"user",content:"."}]));
+    var hdr={"content-type":"application/json","x-gb-warm":"1"}; if(pbDevTok) hdr["x-pb-device"]=pbDevTok;
+    var ctl=window.AbortController?new AbortController():null, fuse=setTimeout(function(){ try{ if(ctl) ctl.abort(); }catch(e){} },GB_WARM_FUSE_MS);
+    _gbWarm={t:now,key:gbWarmKey(),sys:sys,hist:hist,pre:pre,vm:vm,tired:tired,memlog:memlog,nf:frames.length}; _gbWarmBusy=true;
+    try{ logEv("warm",{nf:frames.length}); }catch(e){}
+    fetch("/api/llm?target=openrouter",{method:"POST",headers:hdr,body:JSON.stringify(body),signal:ctl?ctl.signal:undefined})
+      .then(function(r){ return r.text(); }).catch(function(){})
+      .then(function(){ clearTimeout(fuse); _gbWarmBusy=false; });
+  }catch(e){ _gbWarm=null; _gbWarmBusy=false; }
+}
+function gbWarmFresh(){ return !!(_gbWarm&&Date.now()-_gbWarm.t<GB_WARM_MAX_MS); }
+function gbWarmTake(kind,extra,nFrames,blindNote,sys){
+  if(kind!=="event"||!(extra&&extra.humanReq)) return null;
+  var w=_gbWarm; _gbWarm=null;
+  if(!w||Date.now()-w.t>GB_WARM_MAX_MS||w.key!==gbWarmKey()||w.sys!==sys||blindNote||w.nf<nFrames||(w.nf>0)!==(nFrames>0)){ if(w){ try{ logEv("warm_skip",{age:Date.now()-w.t}); }catch(e){} } return null; }
+  return w; }
+function gbWarmMsgs(w,live,vm,liveN,userMsg){
+  var late=live.slice(liveN).replace(w.tired,"").replace(w.memlog,""); late=((vm!==w.vm)?vm:"")+late; late=late.replace(/^\s+/,"");
+  return w.hist.concat([w.pre,{role:"user",content:(late?late+"\n\n== THIS MOMENT ==\n":"")+userMsg}]); }
 function think(event,kind,extra){
   if(typeof vmBusy==="function"&&vmBusy()) return;
   if(!soulOwned()) return;   // MEMORY OWNERSHIP: a tab that does not own the soul neither thinks nor dreams (its saves would refuse)    // extra: reserved for cadence ports (watch ticks, beats) — unused today
   if(inFlight||!orCfg||!_live||Date.now()<coolUntil||paused||document.hidden) return;       // 429 cool-off + pause + backgrounded (frozen)
+  if(kind!=="event"&&vadOn&&gbWarmFresh()) return;
   var now=Date.now();
   if(energyState==="asleep"){ if(kind!=="event"||now-lastProbeT<30000) return; lastProbeT=now; }   // [P7] asleep = no autonomous thoughts; only a REAL user turn (≥30s apart) may probe for returned credits
   if(kind!=="event"&&now-lastCallT<11000) return;                     // idle musing ~every 11s+ (was 2.6s) — rate-limit friendly
@@ -8461,9 +8511,8 @@ function think(event,kind,extra){
      that has already been trimmed passes through unchanged.
      What is genuinely lost: the creature can no longer look back at what it sensed three turns ago
      (was it darker then). The conversation itself — what was said and what it did — is untouched. */
-  function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
   var tr=gbTalkTraces(_live.scratch.traces), msgs=[],i;
-  for(i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }   // age-stamp replayed turns — it had NO sense of elapsed time (Brit 0702)
+  msgs=gbHist(now);   // age-stamp replayed turns — it had NO sense of elapsed time (Brit 0702)
   var _mstrip=""; try{ _mstrip=motionStripNow(); }catch(e){} var userMsg="senses: "+gist()+"\nsensor readout (your real numbers): "+sensSnapshot()+(_mstrip?"\n"+_mstrip:"")+"\nmoment: "+event;   // 1005: the strip rides only when something moved; replayed turns drop it with the senses (traceMoment)
   var _expressionAtIssue=typeof _expressionInputGen!=="undefined"?_expressionInputGen:0;
   var _imitationAtIssue=typeof _imitationBench!=="undefined"&&_imitationBench&&extra&&typeof extra.imitationId==="string"?extra.imitationId:"";
@@ -8492,9 +8541,10 @@ function think(event,kind,extra){
     soulView=Object.assign({},soulView,{body:Object.assign({},soulView.body,{walk:Object.assign({},soulView.body.walk||{},{present:false})})});   // 0815 review: ?wheels=1 on a legged-default body (the ESP32 kit door, no soul body block) — the app drives wheels, so the PROMPT must tell the wheels truth too; stamping walk.present=false on the VIEW (never the stored soul) makes buildOutputSchema pick the roll contract
   var _replyLang=_replyLanguage()||vtLang(); if(typeof vmTurnBegin==="function")vmTurnBegin(_vmTurn,_replyLang);
   var _recall=null; try{ if(_hreqAtIssue&&typeof diaryRecall==="function"&&extra&&typeof extra.visualUser==="string"&&extra.visualUser.trim()) _recall=diaryRecall(_live.log,extra.visualUser,now,[(_live.goals&&_live.goals.selfName)||"",typeof ownerTok==="function"?ownerTok():""]); }catch(e){ _recall=null; }   /* 1005 WHOLE-DIARY RECALL (prompts.js diaryRecall): a person's words can pull up to 3 OLDER diary lines into this prompt, only when they cue a memory or share 2+ rare words with a line. Human turns only; the creature's and owner's own names never count as a match (review: the creature's name was the top false trigger). */
-  var sys=buildSystem(soulView,{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText(), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+selfStats()+(typeof vmPrompt==="function"?vmPrompt(_vmTurn):"");    // + short-term self-knowledge (introspection); speech-style rule appended HERE because buildSystem/constitution live in /v3/prompts.js (Brit 0726, item 5)
+  var sys=buildSystem(soulView,{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText(), _gbVm=(typeof vmPrompt==="function"?vmPrompt(_vmTurn):""), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+selfStats()+_gbVm, _gbLiveN=_gbLive.length;    // + short-term self-knowledge (introspection); speech-style rule appended HERE because buildSystem/constitution live in /v3/prompts.js (Brit 0726, item 5)
   if(_imitationAtIssue&&_imitationCtl)_gbLive+=_imitationCtl.guide(_imitationAtIssue);
-  _gbLive+=gbTiredLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; } if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
+  _gbLive+=gbTiredLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; } if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); var _gw=gbWarmTake(kind,extra,frames.length,parts.length-1!==frames.length*2,sys); if(_gw){ msgs=gbWarmMsgs(_gw,_gbLive,_gbVm,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
+  else if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
   var slug=brainOverride((kind==="tick")?orCfg.fast:(orCfg.active||orCfg.fast),false);   // [credit screen] honor the chosen brain: free mode or an explicit dial pick
   var _decisionTokens=typeof vmHeadroomTokens==="function"?vmHeadroomTokens(_vmTurn,kind,slug):512;
   if(slug!==_slugSeen){ _slugSeen=slug; try{ logEv("model_used",{slug:slug,pick:brainChoice()||""}); }catch(e){} }   /* 0813 THE OUTCOME FIELD. The boot `model` event records the CONFIG default and, since today, the user's INTENT (`pick`) — but neither is the model the request is actually billed against, and the gap between intent and outcome is precisely where the free-brain leak lived: pick said "free", the bill said kimi. Four times this week a field reported what we MEANT rather than what HAPPENED (nf before vs, model before this, the dial theory, the fd rate). Logged only when the resolved slug CHANGES, so it is one entry per session in the normal case and it names the moment any silent substitution occurs. Without this we cannot verify the leak is actually fixed — only that we intended to fix it. */

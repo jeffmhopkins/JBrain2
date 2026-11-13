@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** In progress · **Last verified:** 2026-11-12 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
+> **Status:** In progress · **Last verified:** 2026-11-13 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -379,6 +379,20 @@ default (`growbot_personas.explore`), not upstream's `?quiet` URL switch, becaus
 only a display. Upstream's matching "quiet settle", which thins the beats the longer nobody
 acts, is left out: it saves cloud credits, and a local beat costs none (`QUIET_TEXT_PATCHES`).
 The words ride the turn's own message, never the cached prefix.
+
+**Reading the turn while the person talks (owner, 2026-11-13).** Once someone has been talking
+0.6 s, the page sends the box the coming turn minus their words (the history, the live block
+and the camera frames), ending in a placeholder message and asking for one token, and repeats it
+at most every 5 s while they go on; the spoken turn then sends those same messages byte for byte
+with the words as a message of their own, so the engine resumes after the frames instead of
+re-reading them. The engine keeps a resumable checkpoint only at the start of a request's last
+message, which is why the words are split off. Measured with replays of logged turns: prefill
+7.8 s → 1.9 s, and the split layout's replies matched the old one's. A warm-up is used once, by
+the next spoken turn, and only if the history, system text and eye are unchanged and it is under
+12 s old; what it could not know (a recall, an imitation guide) rides with the words, and a turn
+that wants more frames than it holds ("look at this") is built as before. Warm-ups log as
+`llm_warmup` in the call summary and do not stamp the creature awake (a television can start
+one); an autonomous thought waits while an utterance is open (`WARM_PATCHES`).
 
 **Talk style (owner, 2026-11-12).** Upstream's creature is written for small children: ~18-word
 lines, its last 4 exchanges and 5 diary lines in view, and an adult could not hold a conversation

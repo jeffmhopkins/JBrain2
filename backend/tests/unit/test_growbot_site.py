@@ -1849,3 +1849,155 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
     assert want in json.loads(out.stdout)
+
+
+_WARM_HARNESS = r"""
+var window={}, document={hidden:false}, logs=[], sent=[], aborted=0;
+var _live={scratch:{traces:[{t:Date.now()-30000,u:"moment: hi",a:"hello"}]}};
+var camOn=true, camFacing="user", MODE="robot", _wheels=false, inFlight=false, orCfg={fast:"m"};
+var coolUntil=0, paused=false, dreaming=false, energyState="awake", _gbRecallCarry="";
+var frameDiff=0, _rideOn=false, selfMoveUntil=0, pbDevTok="", _convLang="en";
+var eyeBuf=[{t:Date.now()-2000,j:"AAA"},{t:Date.now()-1000,j:"BBB"}];
+var MEMLOG_ASK="\n\nMEMLOG", _stats=1, _tired="";
+function soulOwned(){ return true; } function llmCfg(){ return null; }
+function gbTalkTraces(t){ return t; } function traceMoment(u){ return u; }
+function buildSystem(){ buildSystem.live="\n\nLIVE"; return "SYS"; }
+function moveGuideText(){ moveGuideText.live=""; return ""; }
+function selfStats(){ selfStats.fixed=""; return "stats "+_stats; }
+function vmPrompt(c){ vmPrompt.fixed=""; return c?"\n\nVM":""; }
+function gbTiredLine(){ return _tired; }
+function vmTurnContext(){} function vmStreamSpeech(){} function vmReplyGuard(){}
+function brainOverride(s){ return s; }
+function _mkBody(slug,n,oai){ return {model:slug,max_tokens:n,messages:oai}; }
+function logEv(k,d){ logs.push([k,d]); }
+window.gbBoxLive=function(msgs,live){ var l=msgs[msgs.length-1],
+  h="HEAD"+live+"\n== THIS MOMENT ==\n";
+  l.content=typeof l.content==="string"?h+l.content:[{type:"text",text:h}].concat(l.content);
+  return true; };
+function AbortController(){ this.signal={}; this.abort=function(){ aborted++; }; }
+window.AbortController=AbortController;
+function fetch(url,o){ sent.push({url:url,headers:o.headers,body:JSON.parse(o.body)});
+  var done={then:function(g){ g(); }}, caught={catch:function(){ return done; }};
+  return {then:function(f){ f({text:function(){ return ""; }}); return caught; }}; }
+"""
+
+
+def _warm_page(script: str) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("var _gbWarm=null") : page.index("function think(event,kind,extra){")]
+    out = subprocess.run(
+        [node, "-e", f"{_WARM_HARNESS}\n{code}\n{script}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout)
+    assert isinstance(got, dict)
+    return got
+
+
+def test_the_warm_up_is_the_turn_minus_the_words() -> None:
+    """Owner, 2026-11-13: the box reads the turn while the person talks. The warm-up must be
+    the spoken turn's own messages up to its last one, byte for byte, or the engine has
+    nothing to resume from; it asks for one token and says it is a warm-up."""
+    got = _warm_page(
+        "gbWarmUp(); var w=_gbWarm, req=sent[0];"
+        "var t=gbWarmTake('event',{humanReq:{}},1,false,w.sys+'');"
+        "var m=gbWarmMsgs(t,'\\n\\nLIVE'+'stats 2'+'\\n\\nVM'+'\\n\\nMEMLOG','\\n\\nVM',"
+        "('\\n\\nLIVE'+'stats 2'+'\\n\\nVM').length,'senses: x\\nmoment: they just said hi');"
+        "console.log(JSON.stringify({req:req,m:m,logs:logs,left:_gbWarm}));"
+    )
+    req = got["req"]
+    assert req["url"] == "/api/llm?target=openrouter"
+    assert req["headers"]["x-gb-warm"] == "1"
+    body = req["body"]
+    assert body["max_tokens"] == 1
+    warm = body["messages"]
+    assert warm[0]["role"] == "system" and warm[0]["content"].startswith("SYS\n\nSPEECH STYLE")
+    assert warm[-1] == {"role": "user", "content": "."}
+    turn = got["m"]
+    assert warm[1:-1] == turn[:-1]
+    assert turn[-1] == {"role": "user", "content": "senses: x\nmoment: they just said hi"}
+    pre = warm[-2]["content"]
+    assert pre[0]["text"].startswith("HEAD\n\nLIVE\n\nstats 1\n\nVM\n\nMEMLOG")
+    assert [p["type"] for p in pre[1:]] == ["text", "image_url"]
+    assert pre[2]["image_url"]["url"].endswith("BBB")
+    assert got["logs"] == [["warm", {"nf": 1}]] and got["left"] is None
+
+
+def test_what_the_warm_up_could_not_know_rides_with_the_words() -> None:
+    got = _warm_page(
+        "gbWarmUp(); var t=gbWarmTake('event',{humanReq:{}},1,false,_gbWarm.sys);"
+        "var base='\\n\\nLIVEstats 2\\n\\nVM2';"
+        "var live=base+'\\n\\nIMITATE'+'\\n\\nMEMLOG'+'\\n\\nRECALL';"
+        "var m=gbWarmMsgs(t,live,'\\n\\nVM2',base.length,'moment: hi');"
+        "console.log(JSON.stringify({last:m[m.length-1].content}));"
+    )
+    assert got["last"] == "VM2\n\nIMITATE\n\nRECALL\n\n== THIS MOMENT ==\nmoment: hi"
+
+
+def test_a_warm_up_is_used_once_and_only_when_nothing_moved() -> None:
+    got = _warm_page(
+        "var r={}; function again(){ _gbWarmT=0; _gbWarmBusy=false; gbWarmUp();"
+        " return _gbWarm.sys; }"
+        "var s=again(); r.tick=!!gbWarmTake('tick',null,1,false,s); r.kept=!!_gbWarm;"
+        "r.used=!!gbWarmTake('event',{humanReq:{}},1,false,s);"
+        "r.twice=!!gbWarmTake('event',{humanReq:{}},1,false,s);"
+        "s=again(); r.sys=!!gbWarmTake('event',{humanReq:{}},1,false,s+'x');"
+        "s=again(); r.three=!!gbWarmTake('event',{humanReq:{}},3,false,s);"
+        "s=again(); r.blind=!!gbWarmTake('event',{humanReq:{}},0,true,s);"
+        "s=again(); _live.scratch.traces.push({t:Date.now(),u:'x',a:'y'});"
+        "r.moved=!!gbWarmTake('event',{humanReq:{}},1,false,s);"
+        "s=again(); _gbWarm.t-=GB_WARM_MAX_MS+1;"
+        "r.old=!!gbWarmTake('event',{humanReq:{}},1,false,s);"
+        "s=again(); camFacing='environment'; r.eye=!!gbWarmTake('event',{humanReq:{}},1,false,s);"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got == {
+        "tick": False,
+        "kept": True,
+        "used": True,
+        "twice": False,
+        "sys": False,
+        "three": False,
+        "blind": False,
+        "moved": False,
+        "old": False,
+        "eye": False,
+    }
+
+
+def test_the_warm_up_waits_its_turn_and_stays_out_of_the_way() -> None:
+    """One at a time, at most every few seconds, never over a thought in flight, a dream, a
+    hidden page or a recall the next turn has to carry, and never with the eye open but blind."""
+    got = _warm_page(
+        "var r={}; gbWarmUp(); r.first=sent.length; gbWarmUp(); r.gap=sent.length;"
+        "function n(set){ _gbWarmT=0; _gbWarmBusy=false; set(); gbWarmUp(); return sent.length; }"
+        "r.fresh=gbWarmFresh();"
+        "r.flight=n(function(){ inFlight=true; }); inFlight=false;"
+        "r.dream=n(function(){ dreaming=true; }); dreaming=false;"
+        "r.hidden=n(function(){ document.hidden=true; }); document.hidden=false;"
+        "r.carry=n(function(){ _gbRecallCarry='x'; }); _gbRecallCarry='';"
+        "r.blind=n(function(){ eyeBuf=[]; });"
+        "r.off=n(function(){ camOn=false; });"
+        "r.offNf=sent[sent.length-1].body.messages.slice(-2)[0].content.indexOf('HEAD')===0;"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["first"] == 1 and got["gap"] == 1 and got["fresh"] is True
+    assert got["flight"] == got["dream"] == got["hidden"] == got["carry"] == got["blind"] == 1
+    assert got["off"] == 2 and got["offNf"] is True
+
+
+def test_the_page_warms_while_the_person_talks_and_the_turn_takes_it() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    vad = page[page.index("function vadTick(){") : page.index("function vadStart(){")]
+    assert "if(voice&&now-vadStartT>=GB_WARM_VOICE_MS) gbWarmUp();" in vad
+    think = page[page.index("function think(event,kind,extra){") :]
+    take = think.index("var _gw=gbWarmTake(kind,extra,frames.length,")
+    assert take < think.index("else if(typeof window.gbBoxLive!==")
+    hold = think.index('if(kind!=="event"&&vadOn&&gbWarmFresh()) return;')
+    assert hold < think.index("inFlight=true")
+    assert think.count("function gbTraceReply") == 0 and "msgs=gbHist(now);" in think

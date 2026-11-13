@@ -179,6 +179,8 @@ def _group(rec: CallRecord) -> str:
         return rec.kind
     if rec.request.get("replay"):
         return "llm_replay"
+    if rec.request.get("warmup"):
+        return "llm_warmup"
     if is_cold(rec):
         return "llm_cold"
     return "llm_image" if rec.images else "llm_text"
@@ -208,7 +210,8 @@ def cold_reasons(calls: list[LoggedCall]) -> dict[str, int]:
 def summarize(calls: list[LoggedCall]) -> dict[str, Any]:
     """Each group's count, failures, total and per-stage spread; model turns split by whether
     they carried a picture, since a frame's prefill is the suspect, with cold turns (the
-    whole prompt re-read) and debug replays apart so neither skews the warm numbers."""
+    whole prompt re-read), warm-ups (a turn read ahead while the person talks) and debug
+    replays apart so none of them skews the creature's own numbers."""
     groups: dict[str, list[CallRecord]] = {}
     for call in calls:
         rec = call.record

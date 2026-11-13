@@ -407,6 +407,21 @@ def test_a_turn_marks_the_creature_awake_at_most_once_a_minute(tmp_path: Path) -
     assert store.values["growbot_awake_marks"] == 1
 
 
+def test_a_warm_up_does_not_hold_the_worker(tmp_path: Path) -> None:
+    """A room noise can start a warm-up, so only a turn the creature answers marks it awake."""
+    from tests.unit.fakes import FakeSettingsStore
+
+    store = FakeSettingsStore()
+    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_cold(cached=7000)))
+    app.state.settings_store = store
+    warm = {**auth, "X-Growbot-Warm": "1"}
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=_turn(), headers=warm).status_code == 200
+        assert "growbot_awake_marks" not in store.values
+        assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
+    assert store.values["growbot_awake_marks"] == 1
+
+
 def test_a_long_awake_stretch_gives_the_worker_a_break(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
