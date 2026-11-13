@@ -363,7 +363,7 @@ function _soulLanguage(value) {
 }
 function normalizeSoul(s) {
   var f = freshSoul();
-  if (!s.goals || typeof s.goals !== "object") s.goals = f.goals;
+  if (!s.goals || typeof s.goals !== "object") { s.goals = f.goals; try { if (window.__gbBoxSoul && window.__gbBoxSoul.persona && s.meta && typeof s.meta.name === "string") s.goals.selfName = s.meta.name; } catch (e) {} }
   if (!s.goals.ladder) s.goals.ladder = { for: "", rungs: [] };
   if (!Array.isArray(s.goals.funLog)) s.goals.funLog = [];                  // MUST exist or dreamCommit's funLog.concat throws → the "dream button does nothing" silent-abort (partial/loaded souls)
   if (typeof s.goals.longing !== "number") s.goals.longing = f.goals.longing;   // missing longing → dreamCommit writes NaN; seed it

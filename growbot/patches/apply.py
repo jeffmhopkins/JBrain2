@@ -1259,7 +1259,15 @@ function gbRecall(soul,sess,query,now){
 
 """
 
-_GB_RECALL_PAGE_JS = r"""var _gbSess=[], _gbRecallT=0, _gbRecallCarry="", GB_SESS_MAX=400, GB_RECALL_GAP_MS=15000;
+_GB_RECALL_PAGE_JS = r"""var _gbSess=[], _gbRecallT=0, _gbRecallCarry="", GB_SESS_MAX=400, GB_RECALL_GAP_MS=15000,
+  _gbRecallLast=null, GB_RECALL_KEEP_MS=90000;
+/* What it just found stays in front of it for a minute and a half: the answer is often cut off by
+   its person talking over it, and their asking again must not meet "I do not remember" (field
+   test, 2026-11-12: the find said 25 minutes, the line was yielded, the re-ask got a no). */
+function gbRecallKept(){
+  if(!_gbRecallLast||Date.now()-_gbRecallLast.t>GB_RECALL_KEEP_MS) return "";
+  return "\n\n== WHAT YOU LOOKED UP A MOMENT AGO ==\n"+_gbRecallLast.found+"\nif they ask about this again, answer from it: they may not have heard you the first time.";
+}
 function gbSessAdd(u,a){ try{
   var s=String(u||""), m=/they just said to you: "([\s\S]*)" — answer THEM/.exec(s), said=String(a||""), got;
   if(m) got="they said: "+m[1].slice(0,240)+(said&&said.charAt(0)!=="("?" | you said: "+said.slice(0,200):"");
@@ -1281,6 +1289,7 @@ function gbRecallAsk(q,kind,extra){
   try{ r=gbRecall(_live,_gbSess,words,now); }catch(e){ r={n:0,text:""}; }
   logEv("recall",{n:r.n});
   var found="you looked back through your memory for \""+words+"\" and "+(r.n?"found:"+r.text:"found nothing about it.");
+  _gbRecallLast={t:now,found:found};
   ev="you looked back through your memory for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer your person with it, in your own voice; if it does not answer what they asked, say plainly that you do not remember.";
   function carry(why){ _gbRecallCarry=found; logEv("recall_carry",{why:why}); }
   function go(){
@@ -1311,7 +1320,8 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
         " a chalupa and a taco)\",' +\n"
         "    '\"recall\":\"OMIT almost always. when they ask about something from before that"
         " you cannot see above, a few search words (taco bell order) to look through your fact"
-        " book, diary and this conversation; make say a short natural line that you are"
+        " book, diary and this conversation. you have not looked yet, so say never answers"
+        " and never says you do not know: make say only a short natural line that you are"
         " thinking back, and you answer with what you find next thought\",' +",
         1,
     ),
@@ -1340,7 +1350,8 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         'if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK;',
         'if(_gbRecallCarry){ _gbLive+="\\n\\n== WHAT YOU JUST LOOKED UP ==\\n"+_gbRecallCarry;'
-        ' _gbRecallCarry=""; } if(_hreqAtIssue&&typeof MEMLOG_ASK==="string")'
+        ' _gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();'
+        ' if(_hreqAtIssue&&typeof MEMLOG_ASK==="string")'
         " _gbLive+=MEMLOG_ASK;",
         1,
     ),
@@ -1370,6 +1381,23 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += RECALL_PATCHES
+
+# A persona's name (owner, 2026-11-12: Dave greeted him with "I'm Sprout"). Upstream's seed says
+# "I am Sprout" and its own name (goals.selfName) is set only when its person confirms one, so a
+# persona named in JBrain woke up as Sprout. A box creature born fresh (no goals yet: a new, reset
+# or seeded persona) now starts out with its persona's name; one already awake keeps its own,
+# which the owner edits under Soul as "Calls itself".
+NAME_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/soul.js",
+        'if (!s.goals || typeof s.goals !== "object") s.goals = f.goals;',
+        'if (!s.goals || typeof s.goals !== "object") { s.goals = f.goals;'
+        " try { if (window.__gbBoxSoul && window.__gbBoxSoul.persona && s.meta"
+        ' && typeof s.meta.name === "string") s.goals.selfName = s.meta.name; } catch (e) {} }',
+        1,
+    ),
+]
+PATCHES += NAME_PATCHES
 
 # Sleep (owner, 2026-11-12: "dream in between sessions or if a session goes long ... the
 # creature can say it's tired and wants to sleep. And then if I give it permission to sleep or I
@@ -1784,7 +1812,14 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall2"',
+        1,
+    ),
+    # And the soul code that names a fresh persona (NAME_PATCHES).
+    (
+        "v3/next.html",
+        '<script src="/v3/soul.js?v=0624c"',
+        '<script src="/v3/soul.js?v=0624c-name"',
         1,
     ),
 ]
