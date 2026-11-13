@@ -1913,7 +1913,7 @@ function _speechBusy(){ return _voiceActive||Date.now()<speakingUntil||_chainBus
 function _voiceDrain(gen){ if(gen!==_voiceGen)return; _drainSay(); }
 function speakNow(text,emo,replyLang){ if(window._wakeGateUp) return;   // WAKE SCREEN IS SILENT (Brit 0726: creature audible behind the gate) — dream-wake, reflexes, energy lines all route through the mouth, so the mouth itself honors the gate; the wake tap clears the flag and speech flows
   var guard=arguments[3];if(guard){try{if(!guard())return;}catch(e){return;}}
-  if(!text) return; var t=speakable(speakSafe(text)); if(!t) return; _sayCap=Date.now(); if(window.gbTalk) gbTalk.solo(text);   // 0902 F-17: buffered lane — the caption was written in this same tick by the caller (:3799-style sites)
+  if(!text) return; var t=speakable(speakSafe(text)); if(!t) return; _sayCap=Date.now(); if(window.gbTalk){ gbTalk.cut(_chainQ,false); gbTalk.solo(text); }   // 0902 F-17: buffered lane — the caption was written in this same tick by the caller (:3799-style sites)
   _voiceGen++; _voiceActive=true; _voiceGuard=guard||null; _sayQ=null; var vg=_voiceGen, ended=false; _voiceNote("requested");
   function done(){if(vg!==_voiceGen||ended)return;ended=true;_voiceActive=false;_voiceGuard=null;_voiceNote("ended");var n=Date.now(),cb=(typeof _chainBusy!=="undefined"&&_chainBusy);speakingUntil=Math.max(n+400,(typeof _songUntil==="number")?_songUntil:0,(typeof _fishWaTail==="number")?_fishWaTail:0,cb?speakingUntil:0);if(cb&&typeof _chainSU==="number"&&speakingUntil>_chainSU)_chainSU=speakingUntil;setTimeout(function(){_voiceDrain(vg);},speakingUntil-n+50);}   /* 0928: the same release as the streaming lane's chain end (see _chainNext), so never before a song that is still playing.
      cb (0928 review of the tester mic-gap fix): a streamed line that started under this solo line with the SAME _voiceGen (a
@@ -3960,7 +3960,7 @@ function _ctxLog(e,d){ var rt=(e==="ctx_stall"&&!!d&&d.n===1);
 function _ctxRobot(){ try{ if(vtEngine==="fish"&&typeof fishConfigured==="function"&&fishConfigured()) return false;   // the same order speakNow picks in
   if(vtEngine==="device"&&window.speechSynthesis) return false;
   return !!(robotReady&&typeof meSpeak!=="undefined"&&meSpeak.stop&&meSpeak.canPlay&&meSpeak.canPlay()); }catch(e){ return false; } }
-function _ctxHush(){ try{if(typeof _imitationCtl!=="undefined"&&_imitationCtl)_imitationCtl.cancel("hush");}catch(e){} if(typeof _expressionSoundStop==="function")_expressionSoundStop(); _voiceGen++; _voiceActive=false; _voiceGuard=null; _voiceNote("cancelled"); _sayQ=null; _chainQ=[]; _chainBusy=false;   // queues first, as in silence(): meSpeak.stop() fires the killed line's callback synchronously
+function _ctxHush(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); try{if(typeof _imitationCtl!=="undefined"&&_imitationCtl)_imitationCtl.cancel("hush");}catch(e){} if(typeof _expressionSoundStop==="function")_expressionSoundStop(); _voiceGen++; _voiceActive=false; _voiceGuard=null; _voiceNote("cancelled"); _sayQ=null; _chainQ=[]; _chainBusy=false;   // queues first, as in silence(): meSpeak.stop() fires the killed line's callback synchronously
   try{ meSpeak.stop(); }catch(e){}
   /* 0925 (round 3, session nx-mu5ra): the line below frees the ear, so the song is damped with it, byte for byte as
      silence() does (K3 0727 F4): a song left playing after the ear is freed is captured by that ear. A frozen actx
@@ -10062,7 +10062,7 @@ function bootOwned(){
     if(window.__wakeSenses&&!captureBlocked()){ var _ws=window.__wakeSenses; window.__wakeSenses=null;   // 0917 R2b: !pauseFrozen() DEFERS this handoff rather than spending it — the senses v2 measured as open are reopened on the first tap after the resume, not dropped   // v2→v3 handoff: reopen the senses birth already approved, on this first trusted tap (perms persist same-origin → no re-prompt)
       try{ if(_ws.cam && !camOn) ensureCam(); }catch(e){}
       try{ if(_ws.ear && !micStream) askMic(function(st){ micStream=micStream||st; ensureEar(); },function(){}); }catch(e){} }
-    var x=e.target; if(x.closest&&x.closest("input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge")) return;  // controls/edit/trace/brain-tab/storage line = not a touch; tapping the CREATURE is (audit: brain-panel touches were petting)
+    var x=e.target; if(x.closest&&x.closest("input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge,#gbTrail,#gbLog")) return;  // controls/edit/trace/brain-tab/storage line = not a touch; tapping the CREATURE is (audit: brain-panel touches were petting)
     if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false){ gbPttDown(e); return; }
     try{ var _tr=$("typeRow"); if(_tr&&_tr.classList.contains("open")) typeRowSet(false,false); }catch(_e){}   // [0726 item 1] tapping elsewhere folds the type row (transient; the closest() guard above already spared taps on the row itself + the ⌨ button)
     var r=cv.getBoundingClientRect(), nx=Math.max(0,Math.min(1,(e.clientX-r.left)/(r.width||1))), ny=Math.max(0,Math.min(1,(e.clientY-r.top)/(r.height||1)));   // the touch point in the creature's screen space

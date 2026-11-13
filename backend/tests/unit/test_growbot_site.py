@@ -2532,7 +2532,11 @@ def test_the_rail_carries_the_speaker_and_the_mic_mode() -> None:
     # the senses (so a camera carried over from v2 still reopens) and ahead of every petting path.
     pet = page[page.index('document.addEventListener("pointerdown",function(e){ voiceUnlock();') :]
     ptt = pet.index('if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false)')
-    assert pet.index("if(window.__wakeSenses") < pet.index('#brainPanel,#sgNudge")) return;') < ptt
+    assert (
+        pet.index("if(window.__wakeSenses")
+        < pet.index('#brainPanel,#sgNudge,#gbTrail,#gbLog")) return;')
+        < ptt
+    )
     assert ptt < pet.index("spawnSparks(") < pet.index('fireReflex("tap")')
     # paint() writes the chip once per paint, and a press never lands on a child it replaces.
     assert " else { setH(mc,hasTxt?snd():" in page and "#gbkMic *{pointer-events:none}" in page
@@ -2587,7 +2591,8 @@ def _talklog_in_node(script: str, stored: str = "") -> Any:
         + (f"mem['gb_talk_log:dave']={json.dumps(stored)};" if stored else "")
         + "var window={localStorage:{getItem:function(k){return k in mem?mem[k]:null},"
         "setItem:function(k,v){mem[k]=v},removeItem:function(k){delete mem[k]}}},"
-        "location={search:''},document={readyState:'loading',addEventListener:function(){}};"
+        "location={search:''},SAY={textContent:''},document={readyState:'loading',"
+        "addEventListener:function(){},getElementById:function(id){return id==='say'?SAY:null}};"
     )
     out = subprocess.run(
         [node, "-e", f"{shim}\n{talk}\nvar T=window.gbTalk;\n{script}"],
@@ -2633,7 +2638,9 @@ def test_the_conversation_stays_on_screen_after_the_caption_moves_on() -> None:
         "function _chainNext(){ if(window.gbTalk) gbTalk.next();",
         "replyLang=it.lang; if(window.gbTalk) gbTalk.start(it);",
         "function silence(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",
-        "_sayCap=Date.now(); if(window.gbTalk) gbTalk.solo(text);",
+        "_sayCap=Date.now(); if(window.gbTalk){ gbTalk.cut(_chainQ,false); gbTalk.solo(text); }",
+        "function _ctxHush(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",
+        '#modebar,#brainPanel,#sgNudge,#gbTrail,#gbLog")) return;',
         '#gbk,#gbkBrainP,#gbkBack,#gbTrail,#gbLog";',
     ):
         assert creature.count(hook) == 1, hook
@@ -2710,3 +2717,47 @@ def test_the_log_is_kept_per_persona_and_old_lines_age_out() -> None:
     lines = _talklog_in_node("console.log(JSON.stringify(T.lines()));", stored)
     assert [line["text"] for line in lines] == ["still here"]
     assert _runs(lines[0]) == [(True, "still"), (False, " here")]
+
+
+def test_a_whole_line_cut_is_marked_though_the_observer_has_not_seen_its_caption() -> None:
+    """speakNow's caller writes #say in the same tick; the observer runs after, so the solo
+    hook reads the caption itself."""
+    lines = _talklog_in_node(
+        "T.caption('An older line.'); SAY.textContent='The dream slipped away.';"
+        "T.solo('The dream slipped away.'); T.cut([], true);"
+        "console.log(JSON.stringify(T.lines()));"
+    )
+    assert [line["text"] for line in lines] == ["An older line.", "The dream slipped away."]
+    assert _runs(lines[0]) == [(True, "An older line.")]
+    assert _runs(lines[1]) == [(False, "The dream slipped away.")]
+
+
+def test_the_settled_caption_with_a_dash_turned_comma_is_the_same_line() -> None:
+    lines = _talklog_in_node(
+        "T.begin(); var Q=[]; [8,20].forEach(function(e){ var it={}; T.upto=e; T.queued(it);"
+        " Q.push(it); }); T.caption('Oh — hi. Long story.'); T.next(); T.start(Q.shift());"
+        " T.next(); T.start(Q.shift()); T.cut(Q, false); T.caption('Oh, hi. Long story.');"
+        "console.log(JSON.stringify(T.lines()));"
+    )
+    assert [line["text"] for line in lines] == ["Oh, hi. Long story."]
+    assert _runs(lines[0]) == [(True, "Oh, hi."), (False, " Long story.")]
+
+
+def test_a_muted_creature_dims_nothing() -> None:
+    lines = _talklog_in_node(
+        "window.MUTED=true; T.begin(); T.held(); T.caption('Quiet words.');"
+        "console.log(JSON.stringify(T.lines()));"
+    )
+    assert _runs(lines[0]) == [(True, "Quiet words.")]
+
+
+def test_a_tab_keeps_writing_to_the_persona_it_loaded_and_a_reload_unhears_the_queue() -> None:
+    out = _talklog_in_node(
+        "mem.gb_box_soul=JSON.stringify({persona:'other'}); T.begin(); var it={}; T.upto=5;"
+        " T.queued(it); T.caption('Hello there.');"
+        "setTimeout(function(){ console.log(JSON.stringify({keys:Object.keys(mem).sort(),"
+        " saved:JSON.parse(mem['gb_talk_log:dave'])})); }, 1000);"
+    )
+    assert out["keys"] == ["gb_box_soul", "gb_talk_log:dave"]
+    assert out["saved"][0]["cut"] is True
+    assert out["saved"][0]["chunks"] == [{"s": 0, "e": 5, "st": "x"}]
