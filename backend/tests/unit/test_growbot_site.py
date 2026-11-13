@@ -864,7 +864,7 @@ var _vadEndT=0, _imitationCtl=null; var document={getElementById:function(){ ret
 function Blob(parts){ this.len=parts[0].len; }
 function transcribe(b,t,ms){ stt.push({p:_gbPieceNext,len:b.len}); _gbPieceNext=null; }
 function showYouSaid(t){ shown.push(t); } function sendTxtFrom(t,m){ sent.push(t); }
-function logEv(){} function _convLangSaw(){}
+function logEv(){} function _convLangSaw(){} var toasts=[]; function toast(t){ toasts.push(t); }
 function _gbPcmUttStop0(s,t){ old.push(s); }
 function utt(){ _pcmUtt={buf:new Float32Array(13000),n:0,pre:0,t0:now,nf:0}; _pcmLive=true; }
 function feed(ms,voice){ for(var i=0;i<ms;i+=100){ var d=new Float32Array(100), u=_pcmUtt;
@@ -882,7 +882,8 @@ def _run_stream(page: str, scenario: str) -> dict[str, Any]:
         _stream_js(page)
         + _STREAM_HARNESS
         + scenario
-        + "\nconsole.log(JSON.stringify({sent:sent,shown:shown,stt:stt.length,old:old}));"
+        + "\nconsole.log(JSON.stringify({sent:sent,shown:shown,stt:stt.length,old:old,"
+        + "toasts:toasts}));"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
     return json.loads(out.stdout)
@@ -934,6 +935,47 @@ def test_a_lost_or_silent_piece_never_holds_the_turn() -> None:
     """
     got = _run_stream(page, cancelled)
     assert got["sent"] == []
+
+
+def test_a_silent_last_piece_is_not_a_failure() -> None:
+    """Owner, 2026-11-13: the breath after the last word comes back empty (or as Whisper's
+    "thank you"), and that piece showed "didn't catch that" though the words before it reached
+    the creature whole. A piece's drop is silent; the utterance says so once, only when every
+    piece came back with nothing, and never for pieces the model was not asked about."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    drop = page[page.index("function _heardDrop(why,meta){") :]
+    drop = drop[: drop.index("\n")]
+    helper = drop + "\nfunction dropped(i,why){ _heardDrop(why,{gbPiece:stt[i].p}); }\n"
+
+    def run(scenario: str) -> dict[str, Any]:
+        return _run_stream(page, helper + scenario)
+
+    two = "utt(); feed(5000,true); feed(600,false); feed(800,true); pcmUttStop(true,300); run();"
+    got = run(two + 'answer(0,"you were unable to actually"); dropped(1,"list");')
+    assert got["sent"] == ["you were unable to actually"] and got["toasts"] == []
+    got = run(two + 'dropped(0,"empty"); dropped(1,"empty"); now+=200000; run();')
+    assert got["sent"] == [] and got["toasts"] == [
+        "…didn't catch that: the speech model heard no words"
+    ]
+    got = run(two + 'dropped(0,"list"); dropped(1,"empty");')
+    assert got["toasts"] == [
+        "…didn't catch that: the speech model heard only noise or a stock phrase"
+    ]
+    # Pieces skipped without asking the model (asleep, the speech gate), its own voice, or a
+    # give-up while a piece is still out: no claim that the model heard nothing.
+    got = run(two + 'answer(0,""); answer(1,""); now+=200000; run();')
+    assert got["toasts"] == []
+    got = run(two + 'dropped(0,"echo"); dropped(1,"echo");')
+    assert got["toasts"] == []
+    got = run(two + 'dropped(1,"empty"); now+=30000; run(); answer(0,"late words");')
+    assert got["toasts"] == [] and got["sent"] == ["late words"]
+    got = run(
+        "utt(); feed(5000,true); feed(600,false); feed(1000,true); pcmUttStop(false,0); run();"
+        'dropped(0,"empty"); now+=200000; run();'
+    )
+    assert got["toasts"] == [] and got["sent"] == []
+    head = page[page.index("function heardText(txt,meta,detectedLang){") :][:120]
+    assert "var toast=(meta&&meta.gbPiece)?function(){}:window.toast;" in head
 
 
 def test_a_streamed_utterance_outlives_the_old_twelve_second_cap() -> None:
