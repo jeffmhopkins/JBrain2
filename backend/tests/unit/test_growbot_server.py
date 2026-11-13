@@ -2102,7 +2102,7 @@ def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
 ) -> None:
     monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
     # An <img> or fetch from any page: refused before the api, never counted.
-    # A frame is a navigation too, but only the top level is the PWA's link: a same-site page
+    # A frame is a navigation too, but only the PWA itself may frame the link: a same-site page
     # framing /open must neither spend the owner's tries nor plant a session.
     for dest, mode in [("image", "no-cors"), ("empty", "cors"), ("iframe", "navigate")] * 2:
         resp = run.request(
@@ -2147,6 +2147,66 @@ def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
     resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", headers=worker, cookie=False)
     assert resp.status == 200 and resp.getheader("Set-Cookie")
     resp.read()
+
+
+@pytest.mark.parametrize(
+    ("host", "away", "pwa"),
+    [
+        ("jbrain.local:8444", "", "https://jbrain.local"),
+        ("growbot.example.com", "1", "https://example.com"),
+        ("192.168.1.5:8444", "", "https://192.168.1.5"),
+    ],
+)
+def test_the_pwa_alone_may_frame_the_creature(
+    run: _Running, host: str, away: str, pwa: str
+) -> None:
+    site = {"Host": host, **({"X-Growbot-Away": away} if away else {})}
+    frame = {**site, "Sec-Fetch-Dest": "iframe", "Sec-Fetch-Mode": "navigate"}
+    resp = run.request(
+        "GET",
+        "/open?ticket=good-ticket&id=gb-abc123",
+        headers={**frame, "Sec-Fetch-Site": "same-site", "Referer": f"{pwa}/"},
+        cookie=False,
+    )
+    assert resp.status == 200 and resp.getheader("Set-Cookie")
+    csp = resp.getheader("Content-Security-Policy") or ""
+    assert f"frame-ancestors 'self' {pwa};" in csp
+    resp.read()
+    # Another page on the same site (a jcode preview), or one that hides where it is, may not.
+    for referer in ["https://abc-preview.example.com/", "https://evil.example/", ""]:
+        resp = run.request(
+            "GET",
+            "/open?ticket=good-ticket&id=gb-abc123",
+            headers={**frame, "Sec-Fetch-Site": "same-site", "Referer": referer},
+            cookie=False,
+        )
+        assert resp.status == 403
+        resp.read()
+    resp = run.request(
+        "GET",
+        "/open?ticket=good-ticket&id=gb-abc123",
+        headers={**frame, "Sec-Fetch-Site": "cross-site", "Referer": f"{pwa}/"},
+        cookie=False,
+    )
+    assert resp.status == 403
+    resp.read()
+
+
+@pytest.mark.parametrize(
+    ("host", "away"),
+    [
+        ("jbrain.local:8445", ""),
+        ("jbrain.local:8444", "1"),
+        ("example.com", "1"),
+        ("growbot.", "1"),
+        ("growbot.exa mple.com", "1"),
+        ("", ""),
+    ],
+)
+def test_a_name_that_is_not_the_creatures_frames_nowhere(
+    gb: types.ModuleType, host: str, away: str
+) -> None:
+    assert gb.pwa_origin(host, bool(away)) == ""
 
 
 def test_a_cookieless_socket_from_a_browser_is_refused(run: _Running) -> None:

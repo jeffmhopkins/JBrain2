@@ -18,6 +18,7 @@ import {
 import { GrowbotAddSheet } from "../components/GrowbotAddSheet";
 import { GrowbotBodyControls } from "../components/GrowbotBodyControls";
 import { GrowbotBrainLogSheet } from "../components/GrowbotBrainLogSheet";
+import { GrowbotFrame } from "../components/GrowbotFrame";
 import { GrowbotFail, GrowbotLog, GrowbotPhases } from "../components/GrowbotJob";
 import { GrowbotMovePanel, stopCreature } from "../components/GrowbotMovePanel";
 import { GrowbotPersonaPage } from "../components/GrowbotPersonaPage";
@@ -43,6 +44,7 @@ import {
   certNoted,
   day,
   forgetLaunchHere,
+  framesHere,
   handover,
   keyMadeAt,
   learnThisPhone,
@@ -59,8 +61,8 @@ import "./growbot.css";
 
 const STATUS_POLL_MS = 15_000;
 const JOB_POLL_MS = 1_000;
-// A launch opens the creature in another tab; one look a little later catches the hand-over
-// on a screen that never went to the background (a desk browser, split screen).
+// A launch opens the creature over this screen (or in another tab); one look a little later
+// catches the hand-over on a screen that never went to the background.
 const AFTER_LAUNCH_MS = 8_000;
 
 type Tab = "personas" | "body" | "phones";
@@ -108,6 +110,14 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
   const [page, setPage] = useState<string | null>(null);
   const [rekeyError, setRekeyError] = useState("");
   const [rekeyLogOpen, setRekeyLogOpen] = useState(false);
+  // The creature opened in place; `url` is null while its link is minted. `k` tells a closed
+  // frame's late link from the open one's.
+  const [frame, setFrame] = useState<{
+    what: GrowbotTicketFor & { persona: string };
+    name: string;
+    url: string | null;
+    k: number;
+  } | null>(null);
   const { isArmed, arm } = useArm();
   const foreground = useForeground();
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -263,6 +273,39 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     return loadJob();
   }
 
+  /** Mint a one-time link and open the creature over this screen. The frame shows at once and
+   *  takes the link when it comes; from an address the creature can't be framed under, it
+   *  falls back to a link to tap, which opens a tab. */
+  function openFrame(what: GrowbotTicketFor & { persona: string }, name: string) {
+    const k = ++seq.current;
+    setFrame({ what, name, url: null, k });
+    const current = (f: typeof frame): f is NonNullable<typeof frame> => !!f && f.k === k;
+    api
+      .growbotTicket(what)
+      .then(({ url }) => {
+        if (!mounted.current) return;
+        if (framesHere(url)) {
+          setFrame((f) => (current(f) ? { ...f, url } : f));
+        } else {
+          setFrame((f) => (current(f) ? null : f));
+          forgetLaunchHere(what.persona);
+          say("GrowBot can't open inside the app from this address — tap here to open it.", {
+            href: url,
+            onTap: () => noteLaunchHere(what.persona),
+          });
+        }
+        setTimeout(() => {
+          if (mounted.current) void loadStatus();
+        }, AFTER_LAUNCH_MS);
+      })
+      .catch((e) => {
+        if (!mounted.current) return;
+        forgetLaunchHere(what.persona);
+        setFrame((f) => (current(f) ? null : f));
+        say(`GrowBot didn't open — ${message(e)}`);
+      });
+  }
+
   /** Mint a one-time link and open it in a new tab. The tab is opened FIRST, inside the tap,
    *  because a window opened after an await is a popup the phone blocks. */
   function openTicket(what: GrowbotTicketFor & { persona: string }, done: string) {
@@ -319,23 +362,17 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
 
   function go(p: GrowbotPersona, code: string | null) {
     noteLaunchHere(p.id);
-    const here = !!p.phone && p.phone === thisPhone;
-    let done: string;
-    if (code) {
-      const b = robotName(code, pl);
-      const off = robots.find((r) => r.code === code && !r.connected)
-        ? ` ${b} is off right now — its legs move once it's switched on and reaches the box.`
-        : "";
-      done =
-        here && p.wearing === code
-          ? `${p.name} is already wearing ${b} on this phone. Opened it again.`
-          : `Opened ${p.name} wearing ${b} in a new tab.${off}`;
-    } else {
-      done = here
-        ? `Opened ${p.name} again in a new tab.`
-        : `Opened ${p.name} on this phone, alone — no body.`;
-    }
-    openTicket(code ? { persona: p.id, code } : { persona: p.id }, done);
+    openFrame(code ? { persona: p.id, code } : { persona: p.id }, p.name);
+  }
+
+  /** The frame's way out to a browser tab: a fresh link, since the frame spent its own. Inside
+   *  the tap, so the tab isn't blocked. */
+  function frameToTab() {
+    if (!frame) return;
+    const { what, name } = frame;
+    setFrame(null);
+    noteLaunchHere(what.persona);
+    openTicket(what, `Opened ${name} in a new tab.`);
   }
 
   /** Who wears robot `code`, picked from the body's side. */
@@ -374,7 +411,12 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     try {
       const out = await api.revokeGrowbotRobot(r.code);
       setStatus((s) =>
-        s ? { ...s, robots: s.robots.map((x) => (x.code === out.code ? out : x)) } : s,
+        s
+          ? {
+              ...s,
+              robots: s.robots.map((x) => (x.code === out.code ? out : x)),
+            }
+          : s,
       );
       robotsRef.current = robotsRef.current.map((x) => (x.code === out.code ? out : x));
       say(
@@ -1008,6 +1050,16 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             </button>
           </div>
         </Sheet>
+      )}
+
+      {frame && (
+        <GrowbotFrame
+          key={frame.k}
+          name={frame.name}
+          url={frame.url}
+          onClose={() => setFrame(null)}
+          onBrowser={frameToTab}
+        />
       )}
 
       {toast && (

@@ -30,7 +30,10 @@ export function ago(iso: string, now = Date.now()): string {
 }
 
 export function day(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return new Date(iso).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+  });
 }
 
 /** A robot's state in words beside its dot; colour is never the only signal. */
@@ -83,7 +86,10 @@ export function tileLine(
   }
   const on = s.robots.filter((r) => r.connected && !r.revoked_at);
   if (on.length === 0) return { level: null, word: "no robot connected" };
-  return { level: "ok", word: `${on.map((r) => r.name || r.code).join(", ")} connected` };
+  return {
+    level: "ok",
+    word: `${on.map((r) => r.name || r.code).join(", ")} connected`,
+  };
 }
 
 export const PHASES: { id: keyof GrowbotFlashJob["phases"]; label: string }[] = [
@@ -186,7 +192,10 @@ export function bodyState(
   if (!serviceUp) return { level: "bad", text: "can't connect — growbot is down" };
   const seen = r.last_seen_at ? ago(r.last_seen_at, now) : null;
   if (r.connected) return { level: "ok", text: seen ? `on · seen ${seen}` : "on" };
-  return { level: "warn", text: seen ? `off · last seen ${seen}` : "off · never seen" };
+  return {
+    level: "warn",
+    text: seen ? `off · last seen ${seen}` : "off · never seen",
+  };
 }
 
 /** What the screen needs to name a place: which phone is this one (learned, see
@@ -234,7 +243,10 @@ export function where(
   if (!p.phone) {
     if (!p.last_phone) return { level: "", text: "not open yet" };
     const when = p.opened_at ? ` ${ago(p.opened_at, now)}` : "";
-    return { level: "", text: `not open · last ${onPhone(p.last_phone, pl)}${when}` };
+    return {
+      level: "",
+      text: `not open · last ${onPhone(p.last_phone, pl)}${when}`,
+    };
   }
   if (p.wearing) {
     return {
@@ -482,9 +494,17 @@ export function clip(s: string, n: number): string {
  *  the picker shows them. */
 export const FACES: { id: GrowbotFace; name: string; what: string }[] = [
   { id: "lantern", name: "Lantern", what: "Two glowing eyes, no body." },
-  { id: "ostrich", name: "Ostrich", what: "The panels' ostrich: crest, eyes and a ringed neck." },
+  {
+    id: "ostrich",
+    name: "Ostrich",
+    what: "The panels' ostrich: crest, eyes and a ringed neck.",
+  },
   { id: "robot", name: "Robot", what: "Square robot eyes." },
-  { id: "ember", name: "Ember", what: "One red lens that glows with its voice." },
+  {
+    id: "ember",
+    name: "Ember",
+    what: "One red lens that glows with its voice.",
+  },
   { id: "pixel", name: "Pixel", what: "The original pixel eyes." },
 ];
 
@@ -507,8 +527,16 @@ export const QUIET_MOODS: { explore: boolean; name: string; what: string }[] = [
 export type Eye = "front" | "back";
 
 export const EYES: { id: Eye; name: string; what: string }[] = [
-  { id: "front", name: "Front", what: "The screen side, looking at you. Face tracking needs it." },
-  { id: "back", name: "Back", what: "Out the back of the phone, at the world." },
+  {
+    id: "front",
+    name: "Front",
+    what: "The screen side, looking at you. Face tracking needs it.",
+  },
+  {
+    id: "back",
+    name: "Back",
+    what: "Out the back of the phone, at the world.",
+  },
 ];
 
 export function eyeOf(prefs: Record<string, string> | null | undefined): Eye {
@@ -520,7 +548,11 @@ export type GrowbotTalk = "kid" | "grownup";
 /** How a persona's creature talks (its `gb_talk` setting, growbot/patches/apply.py
  *  TALK_PATCHES). Kid is upstream's creature, written for small children. */
 export const TALKS: { id: GrowbotTalk; name: string; what: string }[] = [
-  { id: "kid", name: "Kid", what: "Short lines; remembers the last few exchanges." },
+  {
+    id: "kid",
+    name: "Kid",
+    what: "Short lines; remembers the last few exchanges.",
+  },
   {
     id: "grownup",
     name: "Grown-up",
@@ -575,7 +607,10 @@ export function words(v: unknown): string {
 
 /** HH:MM, the time a row under its day's heading shows. */
 export function clock(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 /** The heading a dated row sits under: Today, Yesterday, or its day (local time). */
@@ -652,4 +687,20 @@ export function splitNames(names: string): string[] {
     .map((n) => n.trim())
     .filter((n) => n.length >= 2)
     .slice(0, 20);
+}
+
+/** Whether the creature at `url` can open inside the app here. Its session cookie is
+ *  SameSite=Strict, and a frame keeps it only when the app and the creature are the same site:
+ *  `:8444` on the app's own LAN name, or `growbot.<name>` under the app's public name. From any
+ *  other address (the owner site's private name) the frame would open signed out. */
+export function framesHere(url: string, here: string = window.location.hostname): boolean {
+  let host: string;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return false;
+    host = u.hostname;
+  } catch {
+    return false;
+  }
+  return !!here && (host === here || host.endsWith(`.${here}`));
 }

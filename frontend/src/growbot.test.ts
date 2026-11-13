@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { byDay, dayHeading } from "./growbot";
+import { byDay, dayHeading, framesHere } from "./growbot";
 
 // Local-time instants, so the day boundaries hold in any time zone the tests run in.
 const NOW = new Date(2026, 10, 12, 9, 30);
@@ -33,5 +33,18 @@ describe("byDay", () => {
       ["10 Nov", 1],
     ]);
     expect(byDay([], NOW)).toEqual([]);
+  });
+});
+
+describe("framesHere", () => {
+  it("frames the creature only under the app's own site", () => {
+    expect(framesHere("https://jbrain.local:8444/open?ticket=t", "jbrain.local")).toBe(true);
+    expect(framesHere("https://growbot.example.com/open", "example.com")).toBe(true);
+    // The owner site's private name is another site: a frame would open signed out.
+    expect(framesHere("https://growbot.example.com/open", "owner.jbrain.home.arpa")).toBe(false);
+    expect(framesHere("https://notexample.com/open", "example.com")).toBe(false);
+    expect(framesHere("http://jbrain.local:8444/open", "jbrain.local")).toBe(false);
+    expect(framesHere("not a url", "jbrain.local")).toBe(false);
+    expect(framesHere("https://jbrain.local:8444/open", "")).toBe(false);
   });
 });

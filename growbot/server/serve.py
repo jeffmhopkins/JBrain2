@@ -192,6 +192,7 @@ UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 # The api's growbot_phones id: what secrets.token_urlsafe(24) makes, within the table's CHECK.
 PHONE_RE = re.compile(r"[A-Za-z0-9_-]{16,43}")
 HASH_RE = re.compile(r"sha(256|384|512)-[A-Za-z0-9+/]+={0,2}")
+PWA_HOST_RE = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)*")
 KOKORO_VOICE_RE = re.compile(r"kokoro-[a-z0-9_]{1,40}")
 LANG_RE = re.compile(r"[a-z]{2,3}")
 # A camera frame is inline; any other image URL would have the model's engine fetch it.
@@ -373,6 +374,25 @@ def build_csp(site: Path) -> str:
             "object-src 'none'",
         )
     )
+
+
+# Caddy's LAN site for the creature (deploy/proxy-lan-conf.sh); the PWA is the same name on 443.
+LAN_PORT = "8444"
+
+
+def pwa_origin(host: str, away: bool) -> str:
+    """The PWA's origin for a request to this site, or "": the one page allowed to frame the
+    creature (the GrowBot screen opens it in place). It is the creature's own name with the
+    creature's part taken off, `growbot.` away (proxy-preview-conf.sh) and `:8444` at home,
+    so a request that names neither frames nowhere. Never a wildcard: a jcode preview is
+    another name on the same base and must not overlay the creature."""
+    host = host.strip().lower()
+    if away:
+        base = host.removeprefix("growbot.") if host.startswith("growbot.") else ""
+    else:
+        name, _, port = host.rpartition(":")
+        base = name if port == LAN_PORT else ""
+    return f"https://{base}" if PWA_HOST_RE.fullmatch(base) else ""
 
 
 PERMISSIONS_POLICY = (
@@ -1244,9 +1264,16 @@ class GrowBot:
 
     # -- dispatch ---------------------------------------------------------------
 
-    def _base_headers(self) -> list[tuple[str, str]]:
+    def _pwa_origin(self, req: Request | None) -> str:
+        if req is None:
+            return ""
+        return pwa_origin(req.header("host"), bool(req.header("x-growbot-away")))
+
+    def _base_headers(self, req: Request | None = None) -> list[tuple[str, str]]:
+        pwa = self._pwa_origin(req)
+        csp = self.csp.replace("frame-ancestors 'self'", f"frame-ancestors 'self' {pwa}")
         return [
-            ("Content-Security-Policy", self.csp),
+            ("Content-Security-Policy", csp if pwa else self.csp),
             ("X-Content-Type-Options", "nosniff"),
             ("Referrer-Policy", "no-referrer"),
             ("Permissions-Policy", PERMISSIONS_POLICY),
@@ -1385,6 +1412,13 @@ class GrowBot:
         origin = req.header("origin")
         return not origin or origin == f"https://{req.header('host')}"
 
+    def _framed_by_pwa(self, req: Request) -> bool:
+        pwa = self._pwa_origin(req)
+        if not pwa or req.header("sec-fetch-site") not in ("same-site", "same-origin"):
+            return False
+        ref = urllib.parse.urlsplit(req.header("referer"))
+        return f"{ref.scheme}://{ref.netloc}" == pwa
+
     def _session_cookie(self, got: Claims) -> str:
         value = self.sessions.mint(robot=got.robot, persona=got.persona, phone=got.phone)
         return (
@@ -1475,11 +1509,14 @@ class GrowBot:
         # own bucket, so a page the owner visits cannot lock out the PWA's own link.
         # The installed app's service worker passes a navigation on with dest `empty` but
         # mode `navigate`, which no page's fetch, <img> or frame can claim: without this the
-        # second open, the first one the worker controls, was refused. A frame is a
-        # navigation too, but never the PWA's link, so its dest still refuses it.
+        # second open, the first one the worker controls, was refused. A frame is the PWA's
+        # link only when the PWA itself is the framer (its GrowBot screen opens the creature
+        # in place): the Referer must be the PWA's origin, which another same-site page (a
+        # jcode preview) cannot claim, and frame-ancestors shuts every other framer anyway.
         dest = req.header("sec-fetch-dest")
         worker = dest == "empty" and req.header("sec-fetch-mode") == "navigate"
-        if dest and dest != "document" and not worker:
+        framed = dest == "iframe" and self._framed_by_pwa(req)
+        if dest and dest != "document" and not worker and not framed:
             return Response(403, b"open from the PWA", headers=[("Cache-Control", "no-store")])
         if req.header("sec-fetch-site") == "cross-site":
             # The session cookie is SameSite=Strict, so a cross-site navigation (the PWA reached
@@ -2436,7 +2473,7 @@ class GrowBot:
         chunked = resp.stream is not None and resp.length is None
         if chunked and (req is None or req.version == "HTTP/1.0"):
             keep = False
-        headers = [*self._base_headers(), *resp.headers]
+        headers = [*self._base_headers(req), *resp.headers]
         if not any(k.lower() == "cache-control" for k, _ in headers):
             headers.append(("Cache-Control", "no-store"))
         if resp.status not in (204, 304):
