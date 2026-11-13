@@ -11555,7 +11555,7 @@ function wake(e){ var t=e&&e.type, pd=t==="pointerdown";
       the mic on held the bar up for good on Android; and closing Brain by a tap puts focus back on its cell). */
    var ae=document.activeElement; if(ae&&g("gbk").contains(ae)&&(ae===g("gbkTxt")||ae!==ptrF)){ wake(); return; }
    if(document.body.classList.contains("editing")){ wake(); return; }
-   if(g("gbkBrainP")&&g("gbkBrainP").style.display==="flex"){ wake(); return; }
+   if(g("gbkBrainP")&&g("gbkBrainP").style.display==="flex"){ wake(); return; } if(g("gbLog")&&g("gbLog").classList.contains("on")){ wake(); return; }
    },9000); }
 /* order matters: wake is registered BEFORE the once-setter, so the very first pointerdown
    never arms the 9s clock. On a returning creature that first tap is the host's wake gate,

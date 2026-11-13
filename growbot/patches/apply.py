@@ -2385,6 +2385,14 @@ TALKLOG_PATCHES: list[tuple[str, str, str, int]] = [
         '#gbTrail,#gbLog")) return;',
         1,
     ),
+    # The open log drawer sits on the bar and LOG closes it, so it holds the bar up like Brain.
+    (
+        "v3/next.html",
+        'if(g("gbkBrainP")&&g("gbkBrainP").style.display==="flex"){ wake(); return; }',
+        'if(g("gbkBrainP")&&g("gbkBrainP").style.display==="flex"){ wake(); return; }'
+        ' if(g("gbLog")&&g("gbLog").classList.contains("on")){ wake(); return; }',
+        1,
+    ),
 ]
 PATCHES += TALKLOG_PATCHES
 

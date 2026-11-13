@@ -2642,6 +2642,7 @@ def test_the_conversation_stays_on_screen_after_the_caption_moves_on() -> None:
         "function _chainNext(){ if(window.gbTalk) gbTalk.next();",
         "replyLang=it.lang; if(window.gbTalk) gbTalk.start(it);",
         "function silence(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",
+        'if(g("gbLog")&&g("gbLog").classList.contains("on")){ wake(); return; }',
         "_sayCap=Date.now(); if(window.gbTalk){ gbTalk.cut(_chainQ,_voiceActive);"
         " gbTalk.solo(text); }",
         "function _ctxHush(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",

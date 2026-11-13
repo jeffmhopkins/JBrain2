@@ -447,13 +447,16 @@
   }
 
   // The drawer sits on the bottom row, so the LOG cell stays there to close it again.
-  function openLog() {
-    if (!logEl) return;
+  function seat() {
     var cells = document.getElementById("gbkCells");
     var top = cells ? cells.getBoundingClientRect().top : 0;
     logEl.style.bottom = top > 0 ? Math.max(0, window.innerHeight - top) + "px" : "0px";
+  }
+  function openLog() {
+    if (!logEl) return;
+    seat();
     logEl.classList.add("on");
-    if (cellEl) cellEl.classList.add("on");
+    if (cellEl) { cellEl.classList.add("on"); cellEl.setAttribute("aria-expanded", "true"); }
     listEl.dataset.fresh = "1";
     paintLog();
   }
@@ -461,7 +464,7 @@
   function closeLog() {
     if (!logEl) return;
     logEl.classList.remove("on");
-    if (cellEl) cellEl.classList.remove("on");
+    if (cellEl) { cellEl.classList.remove("on"); cellEl.setAttribute("aria-expanded", "false"); }
     if (findEl) findEl.value = "";
   }
 
@@ -496,6 +499,7 @@
     cellEl.type = "button";
     cellEl.id = "gbkLogCell";
     cellEl.setAttribute("aria-label", "conversation log");
+    cellEl.setAttribute("aria-expanded", "false");
     cellEl.innerHTML = listIcon() + "<span>log</span>";
     cellEl.addEventListener("click", function () {
       if (logEl.classList.contains("on")) closeLog(); else openLog();
@@ -547,6 +551,11 @@
     swipe(head, 1, closeLog);
     document.body.appendChild(logEl);
     addCell();
+    // Rotation changes the bar's safe-area padding under an open drawer.
+    window.addEventListener("resize", function () { if (logEl.classList.contains("on")) seat(); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && logEl.classList.contains("on")) closeLog();
+    });
 
     var say = document.getElementById("say");
     if (say && window.MutationObserver) {
