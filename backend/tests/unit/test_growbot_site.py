@@ -156,12 +156,12 @@ def test_the_pixel_eyes_give_way_only_while_the_new_face_is_on() -> None:
     assert "broken = true;" in face
 
 
-def _face_in_node(script: str) -> str:
+def _face_in_node(script: str, face_id: str = "") -> str:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
     face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
-    shim = "var window={addEventListener:function(){}},location={search:''};"
+    shim = f"var window={{addEventListener:function(){{}}}},location={{search:'?face={face_id}'}};"
     out = subprocess.run(
         [node, "-e", f"{shim}\n{face}\n{script}"], capture_output=True, text=True, check=True
     )
@@ -1849,3 +1849,45 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
     assert want in json.loads(out.stdout)
+
+
+def test_the_ember_sits_in_the_middle_of_the_screen() -> None:
+    """The lens read as high at the band's own height (owner, 2026-11-12): its centre is the
+    screen's vertical middle, on a tall phone and a short one."""
+    script = (
+        "var at=null;function ctx(){ var o={canvas:{width:1,height:1}};"
+        "var m={a:1,b:0,c:0,d:1,e:0,f:0};"
+        "return new Proxy(o,{get:function(t,k){ if(k in t) return t[k];"
+        " if(k==='getTransform') return function(){ return m; };"
+        " if(k==='translate') return function(x,y){ m={a:m.a,b:0,c:0,d:m.d,e:m.e+x*m.a,"
+        "f:m.f+y*m.d}; if(at===null&&x>100) at=m.f; };"
+        " if(k==='scale') return function(x,y){ m={a:m.a*x,b:0,c:0,d:m.d*y,e:m.e,f:m.f}; };"
+        " if(k==='save'||k==='restore') return function(){};"
+        " if(/^create/.test(k)) return function(){ return {addColorStop:function(){}}; };"
+        " return function(){}; }, set:function(){ return true; }}); }"
+        "var out=[];[[390,844],[375,667]].forEach(function(s){ at=null;"
+        "window.gbFace.draw(ctx(),s[0],s[1],{t:1000,emotion:'calm',eye:1,smile:0,energy:0.4,"
+        "blink:false,paused:false,dreaming:false,think:false,orbit:0,looking:false,gx:0,gy:0,"
+        "touchT:0,shake:0,talking:false,glow:'#fff'}); out.push([at,s[1]/2]); });"
+        "console.log(JSON.stringify(out));"
+    )
+    for got, mid in json.loads(_face_in_node(script, "ember")):
+        assert got == pytest.approx(mid, abs=4)
+
+
+def test_dave_makes_no_droid_beeps() -> None:
+    """Upstream's blip plays as if muted while the ember is on, keeping its buzz; any other face
+    keeps its beeps, and a muted creature stays muted."""
+    script = (
+        "var heard=[];window.MUTED=false;"
+        "window.blip=function(k){ heard.push([k,window.MUTED]); };"
+        "window.gbFace.draw({getTransform:function(){ return {a:1}; },"
+        "save:function(){},restore:function(){},translate:function(){},scale:function(){},"
+        "setTransform:function(){}},10,10,{t:1,emotion:'calm',eye:1,energy:0.4});"
+        "window.blip('chirp');window.MUTED=true;window.blip('trill');"
+        "console.log(JSON.stringify([heard,window.MUTED]));"
+    )
+    heard, muted = json.loads(_face_in_node(script, "ember"))
+    assert heard == [["chirp", True], ["trill", True]] and muted is True
+    heard, _ = json.loads(_face_in_node(script, "lantern"))
+    assert heard == [["chirp", False], ["trill", True]]
