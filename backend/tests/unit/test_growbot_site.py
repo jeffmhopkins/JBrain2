@@ -1851,12 +1851,12 @@ def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "due=callsSinceDream>=12" not in page
     assert (
-        "due=gbSleepAllowed() || _gbDreamOnOpen || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);"
+        "due=gbSleepAllowed() || gbOpenDreamDue() || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);"
     ) in page
     assert 'Date.now()-_humanT<30000&&!gbSleepAllowed()?"human":""' in page
     assert "  if(due) dream(gbSleepAllowed()); }" in page
     assert (
-        "if((gbSleepAllowed()||_gbDreamOnOpen)&&!_speechBusy()&&!pendingUser){ maybeDream();"
+        "if((gbSleepAllowed()||gbOpenDreamDue())&&!_speechBusy()&&!pendingUser){ maybeDream();"
         in page
     )
     assert "IDLE_DREAM_MS=300000" in page and "IDLE_DREAM_MS=120000" not in page
@@ -2194,8 +2194,31 @@ def test_nothing_reaches_the_model_before_the_wake_tap() -> None:
         assert page[page.index(head) + len(head) :].startswith("  if(window._wakeGateUp) return;")
     warm = page[page.index("function gbWarmUp(){") : page.index("function gbWarmFresh(){")]
     assert "if(window._wakeGateUp||_gbWarmOff" in warm
-    assert '$("wgWake").addEventListener("click",function(){' in page
-    assert "window._wakeGateUp=false;" in page
+    assert 'function _askWaitWhy(q){\n  if(window._wakeGateUp) return "gate";' in page
+    assert "window._wakeGateUp=false; _gbWokeT=Date.now();" in page
+    assert "due=gbSleepAllowed() || gbOpenDreamDue()" in page
+    assert "if((gbSleepAllowed()||gbOpenDreamDue())&&" in page
+    gated = page[page.index("function dream(force){") :]
+    gated = gated[: gated.index("_gbDreamOnOpen=false")]
+    assert gated.index("if(window._wakeGateUp) return;") < gated.index("_dreamT0=Date.now();")
+
+
+def test_the_dream_a_visit_owes_waits_past_the_hello() -> None:
+    """It waits for the wake tap and 30 s more, so the creature does not greet and sleep."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("var _gbWokeT=0") : page.index("var _gbWarm=null")]
+    script = (
+        "var window={_wakeGateUp:true}, _gbDreamOnOpen=true, r={};"
+        f"{code}"
+        "r.gate=gbOpenDreamDue(); window._wakeGateUp=false; _gbWokeT=Date.now();"
+        "r.hello=gbOpenDreamDue(); _gbWokeT-=GB_WOKE_HOLD_MS; r.later=gbOpenDreamDue();"
+        "_gbDreamOnOpen=false; r.none=gbOpenDreamDue(); console.log(JSON.stringify(r));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout) == {"gate": False, "hello": False, "later": True, "none": False}
 
 
 def test_the_ember_sits_in_the_middle_of_the_screen() -> None:

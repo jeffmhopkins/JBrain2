@@ -400,7 +400,8 @@ refused off a slot pool, where one could load a model, which turns them off for 
 autonomous thought waits only while the utterance that started the warm-up is open, and after
 three utterances in a row that never became a turn the page stops warming until someone speaks
 (`WARM_PATCHES`). Nothing reaches the model while the sleep screen is up: the dream a new visit
-owes used to run there, before the wake tap, and now waits for it (`WAKE_GATE_PATCHES`).
+owes used to run there, before the wake tap, and now waits for it and 30 s more, so the creature
+does not greet and fall asleep (`WAKE_GATE_PATCHES`).
 
 **Talk style (owner, 2026-11-12).** Upstream's creature is written for small children: ~18-word
 lines, its last 4 exchanges and 5 diary lines in view, and an adult could not hold a conversation

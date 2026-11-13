@@ -1839,7 +1839,9 @@ PATCHES += [
 # picture-memory line. A warm-up's newest frame must still be under 10 s old, the page's rule
 # for any frame, and the turn sees and remembers those same frames. What the warm-up could not
 # know (a recall, an imitation guide) rides with the words. Anything else runs as before.
-_GB_WARM_JS = r"""var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=12000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
+_GB_WARM_JS = r"""var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
+function gbOpenDreamDue(){ return _gbDreamOnOpen&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
+var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=12000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 function gbHist(now){ var tr=gbTalkTraces(_live.scratch.traces), msgs=[], i;
   for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
@@ -1970,8 +1972,33 @@ PATCHES += WARM_PATCHES
 
 # Nothing reaches the model while the sleep screen is up (owner, 2026-11-13: "the local llm
 # shouldn't process anything until I say wake up"). The dream a new visit owes (SLEEP_PATCHES)
-# ran on that screen, before the wake tap; now it, and any thought, waits for the tap.
+# ran on that screen, before the wake tap; now it, and any thought, waits for the tap, and the
+# owed dream waits a further 30 s after it, so the creature does not say hello and fall asleep.
 WAKE_GATE_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'window._wakeGateUp=false; _wg.style.display="none";',
+        'window._wakeGateUp=false; _gbWokeT=Date.now(); _wg.style.display="none";',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "due=gbSleepAllowed() || _gbDreamOnOpen",
+        "due=gbSleepAllowed() || gbOpenDreamDue()",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "if((gbSleepAllowed()||_gbDreamOnOpen)&&",
+        "if((gbSleepAllowed()||gbOpenDreamDue())&&",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'function _askWaitWhy(q){\n  if(paused) return "paused";',
+        'function _askWaitWhy(q){\n  if(window._wakeGateUp) return "gate";\n  if(paused) return "paused";',
+        1,
+    ),
     (
         "v3/next.html",
         'function think(event,kind,extra){\n  if(typeof vmBusy==="function"&&vmBusy()) return;',

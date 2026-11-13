@@ -8433,6 +8433,8 @@ function _runGait(spec,attempt){
     try{ _moveEnd(attempt,"failed","gait did not load"); }catch(_me){} stopMotion(); setErr("gait load failed ("+e.message+") — staying with free moves"); $("brainTxt").textContent="awake"; }); }   // 0929: move_end says it failed (see the spin's catch)
 
 /* ---- THE FAST LOOP (slow table — LLM reasons over full memory, drives legs) ---- */
+var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
+function gbOpenDreamDue(){ return _gbDreamOnOpen&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
 var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=12000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 function gbHist(now){ var tr=gbTalkTraces(_live.scratch.traces), msgs=[], i;
@@ -9101,7 +9103,7 @@ function maybeDream(){ try{ gbSleepEnds(); }catch(e){} var _dw0=(typeof vmBusy==
      next reply after the lull dreams, and the cadence machine's idle dream is untouched. try: a harness slice of this
      function without these neighbours falls through to the gates above, as before. */
   var _dw=_dw0; if(!_dw) try{ _dw=inFlight?"flight":vadOn?"vad":_pcmLive?"pcm":window._sttBusy?"stt":Date.now()<vadHoldUntil?"hold":Date.now()-_humanT<30000&&!gbSleepAllowed()?"human":""; }catch(e){}
-  var idle=Date.now()-lastActT, due=gbSleepAllowed() || _gbDreamOnOpen || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);
+  var idle=Date.now()-lastActT, due=gbSleepAllowed() || gbOpenDreamDue() || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);
   /* 0925 S4 (review): THE DEFERRAL WROTE NO ROW, so a latch stuck true (vadOn, _sttBusy) held every auto dream back and
      the journal looked healthy (silent-absence law). Now a DUE dream that this gate holds back writes ONE dream_defer
      {why,csd} per deferral episode; why is the first guard that held, in the gate's own order (flight, vad, pcm, stt,
@@ -9484,6 +9486,7 @@ function _autoRetryErr(req,e){ try{
    asks it before it empties the queue, so queued words are never delivered into one of these moments.
    replyretrytest checks it against the real guards of think() in every combination. */
 function _askWaitWhy(q){
+  if(window._wakeGateUp) return "gate";
   if(paused) return "paused";
   if(inFlight) return "busy";
   if(q&&pendingUser) return "queued";
@@ -9910,7 +9913,7 @@ function bootOwned(){
     if(_ret){ window._wakeGateUp=true; var _wg=$("wakeGate"); _wg.style.display="flex"; try{ window.GBA&&GBA.mark("gate"); }catch(e){}   // 0811 no-tap telemetry: 44% of returning-owner reloads never tap — gate/present/wake_tap split "human bounced at the gate" from "iOS resurrected a tab nobody is holding"
       var _eOut=false; try{ _eOut=(localStorage.pb_energy_out==="1"); }catch(e){}
       try{ var _nm=(_live.meta&&_live.meta.name)||(_live.goals&&_live.goals.owner?"":""); $("wgName").textContent=_eOut?"out of brain credits. a top-up wakes him, shaking will not":((_live.goals&&_live.goals.owner)?("asleep, dreaming of "+_live.goals.owner):"your creature is sleeping"); }catch(e){}   // 0810: a WALLED creature's gate tells the truth — the old "asleep, dreaming of Billy" invited shaking and reboots (field: 12 reboots, 5-day wait)
-      $("wgWake").addEventListener("click",function(){ try{ window.GBA&&GBA.mark("wake_tap"); }catch(e){} window._wakeGateUp=false; _wg.style.display="none"; voiceUnlock(); audioRevive(); ensureIMU(); reqWakeLock(); tryWake(); _wishBack(); try{ if(pauseFrozen()&&sessionStorage.getItem("gb_paused")) sessionStorage.setItem("gb_paused",String(Date.now())); }catch(e){} if(_eOut){ try{ creditScreen(true); }catch(e){} } });   // 0925 (field session nx-mt7or): _wishBack turns the ear and eye back on when they were on before a reload in this tab (see _wishSave)   // 0925 (field fixes r2 verify, R2-1): a person tapping Wake on a page that kept the pause has seen it and left it on, so the 6 h starts again from this tap (the boot restore alone never re-stamps)
+      $("wgWake").addEventListener("click",function(){ try{ window.GBA&&GBA.mark("wake_tap"); }catch(e){} window._wakeGateUp=false; _gbWokeT=Date.now(); _wg.style.display="none"; voiceUnlock(); audioRevive(); ensureIMU(); reqWakeLock(); tryWake(); _wishBack(); try{ if(pauseFrozen()&&sessionStorage.getItem("gb_paused")) sessionStorage.setItem("gb_paused",String(Date.now())); }catch(e){} if(_eOut){ try{ creditScreen(true); }catch(e){} } });   // 0925 (field session nx-mt7or): _wishBack turns the ear and eye back on when they were on before a reload in this tab (see _wishSave)   // 0925 (field fixes r2 verify, R2-1): a person tapping Wake on a page that kept the pause has seen it and left it on, so the 6 h starts again from this tap (the boot restore alone never re-stamps)
       (function _wgAdoptFill(tries){   // fills #wgAdopt once the device token exists (it mints async after boot); gives up silently — an empty spot beats a wrong offer
         if(!pbDevTok){ if(tries>0) setTimeout(function(){ _wgAdoptFill(tries-1); },1500); return; }
         fetch("/api/device",{headers:{"x-pb-device":pbDevTok},cache:"no-store"}).then(function(r){ return r.json(); }).then(function(j){
@@ -10056,7 +10059,7 @@ function bootOwned(){
       if(timerDue && inFlight) wakeConsume(); return; }                                    // same rule for the seek lane: the beat that actually went out IS the one turn
     /* Quiet is awake company, not automatic sleep. Explicit activity waits still own timing;
        a due wake/active goal blocked by its floors must not fall into a competing ambient turn. */
-    if((gbSleepAllowed()||_gbDreamOnOpen)&&!_speechBusy()&&!pendingUser){ maybeDream(); if(inFlight||dreaming) return; }
+    if((gbSleepAllowed()||gbOpenDreamDue())&&!_speechBusy()&&!pendingUser){ maybeDream(); if(inFlight||dreaming) return; }
     if(actQuiet) return;
     if(actOn || seekGoal) return;
     if(idle>=REST_AFTER_MS){                                                              // quiet-time threshold ONLY; never silence the mouth or droop the eyes
