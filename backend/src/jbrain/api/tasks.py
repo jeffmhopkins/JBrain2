@@ -53,7 +53,8 @@ def get_task_runner(request: Request) -> TaskRunner:
 
 
 def _running(request: Request, task_id: str) -> bool:
-    return get_task_runner(request).is_running(task_id)
+    runner = getattr(request.app.state, "task_runner", None)
+    return runner is not None and runner.is_running(task_id)
 
 
 def get_task_groups(request: Request) -> TaskGroupRepo:

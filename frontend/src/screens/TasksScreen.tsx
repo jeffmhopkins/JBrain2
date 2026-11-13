@@ -44,6 +44,9 @@ import {
 import { UNGROUPED_KEY, loadCollapsed, writeCollapsed } from "../tasks/collapsed";
 import { isUnviewed, loadViewed, writeViewed } from "../tasks/viewed";
 
+// What the server records as a stopped run's error (tasks/runner.py STOPPED_ERROR).
+const STOPPED_ERROR = "Stopped before it finished";
+
 function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Request failed. Is the server reachable?";
 }
@@ -1017,9 +1020,9 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   // While anything is running, re-read the list so a finished run's band lands and its Stop
   // goes away without a manual refresh.
   const anyRunning = tasks?.some((t) => t.running) ?? false;
+  // Slower while idle, so a scheduled run that starts with the screen open still gets its Stop.
   useEffect(() => {
-    if (!anyRunning) return;
-    const id = window.setInterval(() => void refresh(), 10_000);
+    const id = window.setInterval(() => void refresh(), anyRunning ? 10_000 : 45_000);
     return () => window.clearInterval(id);
   }, [anyRunning, refresh]);
 
@@ -1062,6 +1065,7 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
       const run = await api.runTask(task.id);
       // A Stop pressed mid-run resolves this request too; its own toast already said so.
       if (run.status === "done") setToast(`Ran “${task.name || "task"}” — see recent runs.`);
+      else if (run.error !== STOPPED_ERROR) setToast(run.error ?? "The run failed.");
       await loadRuns(task.id);
       await refresh();
     } catch (err) {
