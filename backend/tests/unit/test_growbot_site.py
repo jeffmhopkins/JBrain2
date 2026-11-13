@@ -723,7 +723,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall2"' in page
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -1684,8 +1684,40 @@ def test_what_it_just_found_stays_in_front_of_it_for_a_re_ask() -> None:
     assert "lunch: a taco" in got["kept"] and "answer from it" in got["kept"]
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert '_gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();' in page
+
+
+def test_a_search_comes_before_its_say_and_the_say_only_thinks_back() -> None:
+    """Field, 2026-11-13: with recall after say in the reply, the streamed voice had already said
+    "I found Lydian and Allura" or "not the place itself" before the page knew a search was
+    coming. Recall now leads the reply, a streamed say waits once it has, and the line said while
+    it looks is the model's only when it is a thinking-back line."""
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
-    assert "you have not looked yet, so say never answers and never says you do not know" in prompts
+    assert prompts.index('\'"recall":"OMIT almost always.') < prompts.index('\'"say":"\' + (gbTalk')
+    assert "it comes first: you have not looked yet, so your say is then only" in prompts
+    assert prompts.index('"fact":"OMIT unless') < prompts.index('"sleep":"OMIT unless')
+    got = _recall_page(
+        "var L=GB_RECALL_LINES, r={};"
+        "r.keep=gbRecallLine('Hmm, let me think back.');"
+        "r.answer=L.indexOf(gbRecallLine('Yes Jeff. I can search. I found Lydian and Allura.'));"
+        "r.dunno=L.indexOf(gbRecallLine('I remember your speed, but not the place itself.'));"
+        "r.empty=L.indexOf(gbRecallLine(''));"
+        'r.s=[gbRecallStreaming(\'{"recall":"work job","say":"I\'),'
+        'gbRecallStreaming(\'{"recall":"OMIT","say":"I\'),'
+        'gbRecallStreaming(\'{"recall":"\'),gbRecallStreaming(\'{"say":"I found\')];'
+        "r.asked=gbRecallAsk('taco','event',{});r.skipped=gbRecallAsk('taco','event',{});"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["keep"] == "Hmm, let me think back."
+    assert got["answer"] >= 0 and got["dunno"] >= 0 and got["empty"] >= 0
+    assert got["s"] == [True, False, False, False]
+    assert got["asked"] is True and got.get("skipped") is None
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "gbRecallAsk(o.recall,kind,extra)) o.say=gbRecallLine(o.say);" in page
+    assert page.index("o.say=gbRecallLine(o.say);") < page.index("var said=(o.say&&o.say.trim())")
+    assert (
+        "  if(gbRecallStreaming(full)) return;\n  var s=extractSayPartial(full); if(!s) return;"
+        in page
+    )
 
 
 @pytest.mark.parametrize(
@@ -1750,7 +1782,7 @@ def test_recall_is_wired_into_the_turn() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "else _live.scratch.traces.push(_tr);\n      gbSessAdd(_tr.u,_tr.a);" in page
     assert 'gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length});' in page
-    assert "gbRecallAsk(o.recall,kind,extra);" in page
+    assert "gbRecallAsk(o.recall,kind,extra)) o.say=gbRecallLine(o.say);" in page
     assert '_gbLive+="\\n\\n== WHAT YOU JUST LOOKED UP ==\\n"+_gbRecallCarry;' in page
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert '\'"fact":"OMIT unless your person just told you' in prompts

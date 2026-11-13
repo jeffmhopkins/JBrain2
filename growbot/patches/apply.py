@@ -1303,6 +1303,23 @@ function gbRecallAsk(q,kind,extra){
     if(!inFlight) carry("refused");
   }
   setTimeout(go,0);
+  return true;
+}
+/* The line said while it looks: the model's own when it only says it is thinking back, else one of
+   these. It has not looked yet, so an answer or "I don't know" there is a guess the find then
+   contradicts (field, 2026-11-13: "I found Lydian and Allura" before the find named all four). */
+var GB_RECALL_LINES=["Hmm, let me think back.","Let me look back.","One moment, I'm thinking back.","Let me remember."];
+function gbRecallLine(say){
+  var s=String(say||"").replace(/\s+/g," ").trim();
+  if(s&&s.length<=60&&/\b(think|thinking|remember|recall|look back|looking back|let me)\b/i.test(s)
+    &&!/\b(not|no|never|but|don'?t|can'?t|cannot|forgot|found|is|are|was|were|it'?s)\b/i.test(s)) return s;
+  return GB_RECALL_LINES[Math.floor(Math.random()*GB_RECALL_LINES.length)];
+}
+/* With recall first in the reply, a search is known before say streams: say is not voiced as it
+   arrives, and the reply handler speaks the thinking-back line in its place. */
+function gbRecallStreaming(full){
+  var m=/"recall"\s*:\s*"([^"]*)/.exec(String(full||""));
+  return !!(m&&m[1].trim()&&!/^omit\b/i.test(m[1].trim()));
 }
 """
 
@@ -1319,12 +1336,21 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
         "    '\"log\":\"one diary-worthy line, OMIT for routine moments\",' +\n"
         "    '\"fact\":\"OMIT unless your person just told you something worth keeping about"
         " their life, people, plans or likes: one plain line for your fact book (lunch today:"
-        " a chalupa and a taco)\",' +\n"
+        " a chalupa and a taco)\",' +",
+        1,
+    ),
+    # recall comes before say, so the streamed voice learns of a search before it speaks the line
+    # (field, 2026-11-13: "I found Lydian and Allura" and "not the place itself" were spoken
+    # while the say was streaming, the recall key arriving after them).
+    (
+        "v3/prompts.js",
+        "    '\"say\":\"' + (gbTalkGrown()",
         "    '\"recall\":\"OMIT almost always. when they ask about something from before that"
         " you cannot see above, a few search words (taco bell order) to look through your fact"
-        " book, diary and this conversation. you have not looked yet, so say never answers"
-        " and never says you do not know: make say only a short natural line that you are"
-        " thinking back, and you answer with what you find next thought\",' +",
+        " book, diary and this conversation. it comes first: you have not looked yet, so your say"
+        " is then only a short line that you are thinking back, never an answer and never that"
+        " you do not know; you answer with what you find next thought\",' +\n"
+        "    '\"say\":\"' + (gbTalkGrown()",
         1,
     ),
     (
@@ -1343,8 +1369,8 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "    var _dl=0; if(o.log&&String(o.log)",
         "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))"
-        " logEv(\"fact\",{n:_live.facts.length}); if(typeof o.recall===\"string\")"
-        " gbRecallAsk(o.recall,kind,extra); }catch(_fe){}\n"
+        " logEv(\"fact\",{n:_live.facts.length}); if(typeof o.recall===\"string\"&&"
+        "gbRecallAsk(o.recall,kind,extra)) o.say=gbRecallLine(o.say); }catch(_fe){}\n"
         "    var _dl=0; if(o.log&&String(o.log)",
         1,
     ),
@@ -1383,6 +1409,15 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += RECALL_PATCHES
+PATCHES += [
+    (
+        "v3/next.html",
+        "  var s=extractSayPartial(full); if(!s) return; var v=s.value;",
+        "  if(gbRecallStreaming(full)) return;\n"
+        "  var s=extractSayPartial(full); if(!s) return; var v=s.value;",
+        1,
+    ),
+]
 
 # A persona's name (owner, 2026-11-12: Dave greeted him with "I'm Sprout"). Upstream's seed says
 # "I am Sprout" and its own name (goals.selfName) is set only when its person confirms one, so a
@@ -1556,15 +1591,15 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        "gbRecallAsk(o.recall,kind,extra); }catch(_fe){}",
-        "gbRecallAsk(o.recall,kind,extra); if((o.sleep===true||o.sleep===\"true\")&&"
+        "o.say=gbRecallLine(o.say); }catch(_fe){}",
+        "o.say=gbRecallLine(o.say); if((o.sleep===true||o.sleep===\"true\")&&"
         "kind===\"event\") gbSleepGrant(); }catch(_fe){}",
         1,
     ),
     (
         "v3/prompts.js",
-        " thinking back, and you answer with what you find next thought\",' +",
-        " thinking back, and you answer with what you find next thought\",' +\n"
+        " a chalupa and a taco)\",' +",
+        " a chalupa and a taco)\",' +\n"
         "    '\"sleep\":\"OMIT unless your person just said you may sleep or told you to go to"
         " sleep: then true, with a goodnight in say\",' +",
         1,
@@ -1814,7 +1849,7 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall2"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3"',
         1,
     ),
     # And the soul code that names a fresh persona (NAME_PATCHES).

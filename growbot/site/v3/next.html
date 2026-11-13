@@ -182,7 +182,7 @@
 </div>
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall2" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -5022,6 +5022,7 @@ function speakStream(text,emo,replyLang){ if(window._wakeGateUp||MUTED){_voiceNo
   if(!text) return; var t=speakable(speakSafe(text)); if(!t) return;
   _voiceNote("queued"); _chainQ.push({t:t,emo:emo,lang:typeof replyLang==="string"?replyLang:(_replyLanguage()||vtLang()),cap:Date.now()}); if(!_chainBusy) _chainNext(); }   // 0902 F-17: the caption for this sentence is written by onSayStream in this same tick — stamp it on the queue item
 function onSayStream(full,replyLang){ if(paused||(typeof _imitationSpeechTurn!=="undefined"&&_imitationSpeechTurn)||(typeof _recoverySpeechTurn!=="undefined"&&_recoverySpeechTurn)||(typeof _expressionBench!=="undefined"&&_expressionBench)) return; // Bench expressions settle admission before any reply words; ordinary streaming is unchanged.
+  if(gbRecallStreaming(full)) return;
   var s=extractSayPartial(full); if(!s) return; var v=s.value;
   var upto = s.closed ? v.length : lastSentenceEnd(v);                                  // while open, only voice COMPLETE sentences; on close, flush the remainder
   if(upto<=_streamSpoke.length) return;
@@ -8709,7 +8710,7 @@ function think(event,kind,extra){
     if(!(o.scratchpad&&o.scratchpad.mood)){                                                            // no mood written this turn → emotion gently colors the weather (never stale)
       var _mm=_live.scratch.mood||(_live.scratch.mood={v:0,e:0.4}), _tgt=EMO2MOOD[emotion];
       if(_tgt){ _mm.v+=(_tgt.v-_mm.v)*0.15; _mm.e+=(_tgt.e-_mm.e)*0.15; } }                            // persisted by the turn's own saveSoul — no extra save
-    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string") gbRecallAsk(o.recall,kind,extra); if((o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant(); }catch(_fe){}
+    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string"&&gbRecallAsk(o.recall,kind,extra)) o.say=gbRecallLine(o.say); if((o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant(); }catch(_fe){}
     var _dl=0; if(o.log&&String(o.log).replace(/^\s+/,"").indexOf("📷")!==0){ soulLog(_live,o.log); _dl=_live.log[_live.log.length-1]!==_lgAt?1:0; }   // 1005 review: "📷 ..." is the ENGINE's picture-memory line (visual-memory.js vmDiaryResult); a model copying that format would be a save claim nobody confirmed
     if(typeof o.glow==="string"&&o.glow.trim()){ var _gls=(_live.scratch.glows=_live.scratch.glows||[]), _glsHad=_gls.length; _gls.push({t:Date.now(),g:String(o.glow).replace(/\s+/g," ").trim().slice(0,120)}); _live.scratch.glows=soulRoll(_live,"glows",_gls,_glsHad); _epGlow=true; }   // [P5] felt-reward: mark a delightful/identity-shaping moment; the dream weighs these most (v2:1672). whitespace collapsed (K3 0804 r2#2): glows render line-per-entry in the dream prompt — same line-anchor spoof class as traces/rules
     if(kind==="event"&&typeof o.owner==="string"&&o.owner.trim()){ var _nm=o.owner.trim().replace(/[\n\r{}"'<>|]+/g," ").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,32);
@@ -8953,6 +8954,23 @@ function gbRecallAsk(q,kind,extra){
     if(!inFlight) carry("refused");
   }
   setTimeout(go,0);
+  return true;
+}
+/* The line said while it looks: the model's own when it only says it is thinking back, else one of
+   these. It has not looked yet, so an answer or "I don't know" there is a guess the find then
+   contradicts (field, 2026-11-13: "I found Lydian and Allura" before the find named all four). */
+var GB_RECALL_LINES=["Hmm, let me think back.","Let me look back.","One moment, I'm thinking back.","Let me remember."];
+function gbRecallLine(say){
+  var s=String(say||"").replace(/\s+/g," ").trim();
+  if(s&&s.length<=60&&/\b(think|thinking|remember|recall|look back|looking back|let me)\b/i.test(s)
+    &&!/\b(not|no|never|but|don'?t|can'?t|cannot|forgot|found|is|are|was|were|it'?s)\b/i.test(s)) return s;
+  return GB_RECALL_LINES[Math.floor(Math.random()*GB_RECALL_LINES.length)];
+}
+/* With recall first in the reply, a search is known before say streams: say is not voiced as it
+   arrives, and the reply handler speaks the thinking-back line in its place. */
+function gbRecallStreaming(full){
+  var m=/"recall"\s*:\s*"([^"]*)/.exec(String(full||""));
+  return !!(m&&m[1].trim()&&!/^omit\b/i.test(m[1].trim()));
 }
 function traceMoment(u){
   var s=String(u||"").replace(/\s+/g," ");
