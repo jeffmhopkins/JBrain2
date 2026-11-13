@@ -2529,9 +2529,10 @@ def test_the_dream_a_visit_owes_waits_past_the_hello() -> None:
     assert json.loads(out.stdout) == {"gate": False, "hello": False, "later": True, "none": False}
 
 
-def test_the_ember_sits_in_the_middle_of_the_screen() -> None:
-    """The lens read as high at the band's own height (owner, 2026-11-12): its centre is the
-    screen's vertical middle, on a tall phone and a short one."""
+def test_the_ember_sits_between_the_pills_and_the_trail() -> None:
+    """The lens read as high at the band's own height (owner, 2026-11-12) and dead centre
+    crowded the talk trail (owner, 2026-11-13): its centre is 40% down the screen, on a tall
+    phone and a short one."""
     script = (
         "var at=null;function ctx(){ var o={canvas:{width:1,height:1}};"
         "var m={a:1,b:0,c:0,d:1,e:0,f:0};"
@@ -2546,7 +2547,7 @@ def test_the_ember_sits_in_the_middle_of_the_screen() -> None:
         "var out=[];[[390,844],[375,667]].forEach(function(s){ at=null;"
         "window.gbFace.draw(ctx(),s[0],s[1],{t:1000,emotion:'calm',eye:1,smile:0,energy:0.4,"
         "blink:false,paused:false,dreaming:false,think:false,orbit:0,looking:false,gx:0,gy:0,"
-        "touchT:0,shake:0,talking:false,glow:'#fff'}); out.push([at,s[1]/2]); });"
+        "touchT:0,shake:0,talking:false,glow:'#fff'}); out.push([at,s[1]*0.4]); });"
         "console.log(JSON.stringify(out));"
     )
     for got, mid in json.loads(_face_in_node(script, "ember")):
