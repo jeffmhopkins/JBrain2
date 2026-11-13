@@ -557,6 +557,19 @@ async def run_task(request: Request, principal: OwnerDep, task_id: str) -> TaskR
     return TaskRunOut.of(info)
 
 
+@router.post("/tasks/{task_id}/stop", status_code=204)
+async def stop_task(request: Request, principal: OwnerDep, task_id: str) -> None:
+    """Stop the task's in-flight run (the card's Stop). The run ends as an `error` run
+    saying it was stopped, and a scheduled batch moves on to its next due task. 409 when
+    nothing of that task is running — including a row left `running` by a restart, which
+    has no live turn to cancel."""
+    task = await get_task_repo(request).get(ctx_for(principal), task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="no such task")
+    if not get_task_runner(request).stop(task_id):
+        raise HTTPException(status_code=409, detail="that task isn't running")
+
+
 @router.get("/tasks/{task_id}/runs")
 async def task_runs(request: Request, principal: OwnerDep, task_id: str) -> list[TaskRunOut]:
     runs = await get_task_runs(request).list_for_task(ctx_for(principal), task_id)

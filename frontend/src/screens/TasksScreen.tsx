@@ -37,6 +37,7 @@ import {
   PlusIcon,
   RefreshIcon,
   ReorderIcon,
+  StopIcon,
   TrashIcon,
   XIcon,
 } from "../components/icons";
@@ -211,6 +212,8 @@ interface CardProps {
   onToggleOpen: () => void;
   onFlip: () => void;
   onRun: () => void;
+  /** Ends the in-flight run, scheduled or manual. Shown only while one is running. */
+  onStop: () => void;
   onEdit: () => void;
   onMove: () => void;
   /** Radio commands only: make a new key (the old one stops working) and clear a
@@ -233,6 +236,7 @@ function TaskCard({
   onToggleOpen,
   onFlip,
   onRun,
+  onStop,
   onEdit,
   onMove,
   onNewKey,
@@ -394,6 +398,12 @@ function TaskCard({
               {running ? <RefreshIcon size={14} /> : <PlayIcon size={14} />}
               {running ? "running…" : "Run now"}
             </button>
+            {running && (
+              <button type="button" className="task-stopbtn" onClick={onStop}>
+                <StopIcon size={14} />
+                Stop
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1055,6 +1065,17 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     }
   }
 
+  async function stopNow(task: Task): Promise<void> {
+    try {
+      await api.stopTask(task.id);
+      setToast(`Stopped “${task.name || "task"}”.`);
+    } catch (err) {
+      setToast(errorMessage(err));
+    }
+    await loadRuns(task.id);
+    await refresh();
+  }
+
   async function showKey(task: Task): Promise<void> {
     try {
       setKeyReveal(await api.rotateCommandKey(task.id));
@@ -1325,13 +1346,16 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
               key={task.id}
               task={task}
               open={openId === task.id}
-              running={running.has(task.id)}
+              // A scheduled run shows as running too (its latest run row says so), so the
+              // card offers Stop for it, not only for a "Run now" started on this screen.
+              running={running.has(task.id) || task.latest_run?.status === "running"}
               reordering={reordering}
               unviewed={isUnviewed(task, viewed)}
               runs={openId === task.id ? (runsByTask[task.id] ?? null) : null}
               onToggleOpen={() => toggleOpen(task.id)}
               onFlip={() => void flip(task)}
               onRun={() => void runNow(task)}
+              onStop={() => void stopNow(task)}
               onEdit={() => setDraft(draftFrom(task))}
               onMove={() => setMoveFor(task)}
               onNewKey={() => void showKey(task)}

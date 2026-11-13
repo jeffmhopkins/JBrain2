@@ -25,9 +25,32 @@ async def test_write_without_principal_is_refused() -> None:
     assert "no owner principal" in out
 
 
-async def test_write_rejects_oversized_content() -> None:
-    out = await _HANDLERS["archivist_memory_write"]({"content": "x" * 20_001}, _OWNERLESS)
-    assert "too long" in out
+async def test_write_rejects_oversized_content_with_a_concrete_cut() -> None:
+    ctx = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
+    out = await _HANDLERS["archivist_memory_write"]({"content": "x" * 22_000}, ctx)
+    assert "NOT saved" in out
+    assert "Cut at least 6000 chars" in out
+    assert ctx.memory_write_refusals == [22_000]
+
+
+async def test_second_oversized_write_in_a_turn_closes_saving() -> None:
+    """The Email overview task spent ~50 minutes a morning rewriting its memory a few hundred
+    chars shorter per pass, every pass refused, until the run's budget cut it off with no
+    brief delivered. The second refusal in a turn must tell it to stop and answer."""
+    ctx = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
+    await _HANDLERS["archivist_memory_write"]({"content": "x" * 22_000}, ctx)
+    out = await _HANDLERS["archivist_memory_write"]({"content": "x" * 21_800}, ctx)
+    assert "Stop trying to save in this turn" in out
+    assert "give Jeff your answer now" in out
+    assert ctx.memory_write_refusals == [22_000, 21_800]
+
+
+async def test_refusals_are_counted_per_turn() -> None:
+    first_turn = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
+    await _HANDLERS["archivist_memory_write"]({"content": "x" * 22_000}, first_turn)
+    next_turn = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
+    out = await _HANDLERS["archivist_memory_write"]({"content": "x" * 22_000}, next_turn)
+    assert "Cut at least" in out
 
 
 async def _noop(arguments: dict, ctx: ToolContext) -> str:

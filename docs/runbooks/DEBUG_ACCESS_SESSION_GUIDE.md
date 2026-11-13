@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-10-04 — `disk-clean [--apply] [actions]` added (frees build cache, unused non-stack images, the allowlisted orphan volume; dry run by default) and `disk` now reports `host_dirs`. Prior: `disk [--refresh]` added (host disk usage breakdown, `GET /api/debug/disk`).
+> **Status:** Living · **Last verified:** 2026-11-13 — `task-stop <task_id>` added (stops a running task, `POST /api/debug/tasks/{task_id}/stop`). Prior: `disk-clean [--apply] [actions]` added (frees build cache, unused non-stack images, the allowlisted orphan volume; dry run by default) and `disk` now reports `host_dirs`. Prior: `disk [--refresh]` added (host disk usage breakdown, `GET /api/debug/disk`).
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -255,6 +255,10 @@ scripts/debug-connect.sh llm-set agent.turn gpt-oss-120b high
 # Warm / evict a local model on the gateway.
 scripts/debug-connect.sh load gpt-oss-120b
 scripts/debug-connect.sh unload gpt-oss-120b
+
+# Stop a running task (the Tasks card's Stop) — find it with sql first.
+scripts/debug-connect.sh sql "select t.id, t.name, r.started_at from app.task_runs r join app.tasks t on t.id = r.task_id where r.status = 'running'"
+scripts/debug-connect.sh task-stop <task_id>
 
 # Escape hatch for anything not wrapped:
 scripts/debug-connect.sh raw GET /api/debug/whoami

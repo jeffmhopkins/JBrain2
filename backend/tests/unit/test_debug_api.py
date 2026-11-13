@@ -319,6 +319,33 @@ def _state(client: TestClient) -> Any:
 # --- gating -----------------------------------------------------------------
 
 
+class _StopRunner:
+    def __init__(self, running: set[str]) -> None:
+        self.running = running
+        self.stopped: list[str] = []
+
+    def stop(self, task_id: str) -> bool:
+        if task_id not in self.running:
+            return False
+        self.stopped.append(task_id)
+        return True
+
+
+def test_task_stop_needs_a_token_and_stops_a_running_task(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    client, key = debug_client
+    runner = _StopRunner({"task-1"})
+    _state(client).task_runner = runner
+    assert client.post("/api/debug/tasks/task-1/stop").status_code == 401
+    assert client.post("/api/debug/tasks/task-1/stop", headers=_auth(key)).status_code == 204
+    assert runner.stopped == ["task-1"]
+    runner.running.clear()
+    # Nothing of that task running → 409, not a silent 204 the session would read as done.
+    assert client.post("/api/debug/tasks/task-1/stop", headers=_auth(key)).status_code == 409
+    assert "tasks.stop" in client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
+
+
 def test_surface_absent_when_flag_disabled() -> None:
     app = create_app(_settings(debug_access_enabled=False))
     with TestClient(app) as client:

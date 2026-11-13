@@ -292,6 +292,25 @@ describe("TasksScreen", () => {
     await waitFor(() => expect(runTask).toHaveBeenCalledWith("t1"));
   });
 
+  it("offers Stop for a scheduled run that is still going, and stops it", async () => {
+    const stopTask = vi.spyOn(api, "stopTask").mockResolvedValue();
+    const running: Task = {
+      ...GROUPED,
+      latest_run: { ...LATEST_T1, status: "running", summary: "", ended_at: null },
+    };
+    mount([running, UNGROUPED_TASK]);
+    fireEvent.click(await screen.findByText("Morning brief"));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(stopTask).toHaveBeenCalledWith("t1"));
+  });
+
+  it("offers no Stop when nothing is running", async () => {
+    mount();
+    fireEvent.click(await screen.findByText("Morning brief"));
+    await screen.findByText("Run now");
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+  });
+
   it("creates a task from the editor", async () => {
     const createTask = vi.spyOn(api, "createTask").mockResolvedValue(GROUPED);
     mount();

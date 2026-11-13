@@ -6925,6 +6925,11 @@ export const api = {
     return (await response.json()) as TaskRun;
   },
 
+  // Stop the task's in-flight run (scheduled or manual); 409 when none is running.
+  async stopTask(id: string): Promise<void> {
+    await request(`/api/tasks/${encodeURIComponent(id)}/stop`, { method: "POST" });
+  },
+
   // Generate a new shared secret for a radio command and show it ONCE — this is both
   // "set up the sender" and "revoke the old one" (docs/plans/APRS_CONTROL_PLAN.md P4).
   async rotateCommandKey(id: string): Promise<CommandKey> {
