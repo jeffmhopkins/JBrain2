@@ -441,6 +441,7 @@
     var t = now();
     var top = topBelowNav();
     if (root.style.top !== top) root.style.top = top;
+    if (timersEl && timersEl.style.top !== top) timersEl.style.top = top;
     order(t);
     var anyOpen = false;
     var kept = [];

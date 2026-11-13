@@ -1482,7 +1482,8 @@ function gbTimerWallMs(sec,now){
   var d=(sec-gbClockWall(now))%86400; if(d<=0) d+=86400;
   var t=now+d*1000, off=(sec-gbClockWall(t))%86400;
   if(off>43200) off-=86400; else if(off<-43200) off+=86400;
-  return t+off*1000;
+  /* A time the clocks skip (2:30 on the night they spring forward) is kept late, never early. */
+  return off&&gbClockWall(t+off*1000)!==sec%86400?t:t+off*1000;
 }
 function gbClockShort(t){
   try{ return new Date(t).toLocaleTimeString("en-US",{timeZone:gbClockZone(),hour:"numeric",minute:"2-digit"}); }

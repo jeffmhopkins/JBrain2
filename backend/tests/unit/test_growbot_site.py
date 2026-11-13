@@ -2096,6 +2096,16 @@ def test_a_clock_time_across_the_change_of_clocks_keeps_its_wall_time() -> None:
     assert got == {"m": 660}
 
 
+def test_a_clock_time_the_clocks_skip_rings_late_not_early() -> None:
+    """Review, 2026-11-13: 2:30 AM does not exist the night clocks spring forward (8 March 2026)."""
+    got = _recall_page(
+        "var T=Date.UTC(2026,2,8,5,0,0);Date.now=function(){return T;};_live={scratch:{}};"
+        "gbTimerSet({at:'2:30 AM',about:'skip'},'event',{});"
+        "console.log(JSON.stringify({m:(_live.scratch.timers[0].at-T)/60000}));"
+    )
+    assert got == {"m": 150}  # 3:30 by the clock, the hour the jump skipped added
+
+
 def test_a_new_timer_moves_only_the_one_it_names() -> None:
     got = _recall_page(
         "var T=Date.UTC(2026,10,13,21,34,0);Date.now=function(){return T;};_live={scratch:{}};"
