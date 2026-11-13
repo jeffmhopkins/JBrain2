@@ -2016,6 +2016,182 @@ WAKE_GATE_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += WAKE_GATE_PATCHES
 
+# The speaker and the mic, as two cells on the creature's bottom rail (owner, 2026-11-13: "two
+# mute buttons, one for the audio from the creature, the other for the microphone"). Speaker is
+# upstream's sound mute, named for what it silences. The mic cell steps through three modes,
+# kept per device in localStorage gb_mic_mode: open (upstream: it hears whenever the ear is
+# on), push (only while a finger holds the mic button or the screen) and muted (the ear stays
+# on, so the mic is not given up, but nothing it hears opens an utterance, starts a warm-up,
+# fires a reflex or interrupts the creature). Muting is not turning the ear off: that is still
+# a tap on the mic button, and the slashed red chip. A held clip is upstream's own manual clip
+# (talkStart/talkStop), so push to talk sends exactly what the old hold did.
+_GB_MIC_JS = r"""function gbMicSet(m){ if(m!=="push"&&m!=="muted") m="open"; if(m===GB_MIC) return;
+  GB_MIC=m; try{ localStorage.gb_mic_mode=m; }catch(e){}
+  _gbPtt=false; _gbPttStop=false;
+  if(m!=="open"&&vadOn) vadCancel();
+  if(m==="muted"&&recording) talkAbort();
+  try{ logEv("mic_mode",{m:m}); }catch(e){}
+  toast(m==="open"?"open mic. just talk":m==="push"?"push to talk. hold the screen or the mic button while you speak":"mic muted. I can't hear you, but you can type"); }
+var _gbPtt=false, _gbPttStop=false, _gbPttUntil=0;
+function gbPttDown(){ if(GB_MIC!=="push"||_gbPtt||window._wakeGateUp) return; _gbPtt=true; _gbPttStop=false; if(!recording) talkStart(); }
+function gbPttUp(){ if(!_gbPtt) return; _gbPtt=false;
+  if(recording){ talkStop(); return; }
+  _gbPttStop=true; _gbPttUntil=Date.now()+13000; setTimeout(gbPttSettle,40); }
+function gbPttSettle(){ if(!_gbPttStop||_gbPtt) return;
+  if(recording){ _gbPttStop=false; talkStop(); return; }
+  if(Date.now()<_gbPttUntil) setTimeout(gbPttSettle,40); else _gbPttStop=false; }
+document.addEventListener("pointerup",gbPttUp);
+document.addEventListener("pointercancel",gbPttUp);
+document.addEventListener("contextmenu",function(e){ if(GB_MIC==="push"&&!(e.target&&e.target.closest&&e.target.closest("input,textarea"))) e.preventDefault(); });
+"""
+_GB_MIC_ICONS = r"""function gbSpk(on){ return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"></path>'+(on?'<path d="M16.5 8.5a5 5 0 0 1 0 7"></path><path d="M19 6a8.5 8.5 0 0 1 0 12"></path>':'<path d="M17 9l5 6"></path><path d="M22 9l-5 6"></path>')+'</svg>'; }
+function gbMicIcon(m){ var mic='<rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"></path><path d="M12 18v3"></path>';
+ var b=m==="push"?'<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12"></path><path d="M11 11.5V4a1.5 1.5 0 0 1 3 0v7.5"></path><path d="M14 11.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5a6 6 0 0 1-5-2.7L3.6 14a1.5 1.5 0 0 1 2.5-1.6L8 15"></path>':mic+(m==="muted"?'<line x1="3" y1="3" x2="21" y2="21" stroke-width="2.4"></line>':'');
+ return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+b+'</svg>'; }
+var GB_MIC_MODES=["open","push","muted"], GB_MIC_LABEL={open:"open mic",push:"push talk",muted:"mic muted"};
+"""
+MIC_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'var MUTED=(function(){ try{ return localStorage.gb_mute==="1"; }catch(e){ return false; } })();',
+        'var MUTED=(function(){ try{ return localStorage.gb_mute==="1"; }catch(e){ return false; } })();\n'
+        'var GB_MIC=(function(){ try{ var v=localStorage.gb_mic_mode; return v==="push"||v==="muted"?v:"open"; }'
+        'catch(e){ return "open"; } })();',
+        1,
+    ),
+    ("v3/next.html", "function vadCancel(){ vadOn=false;", _GB_MIC_JS + "function vadCancel(){ vadOn=false;", 1),
+    # Outside open mode the ear still measures the room, so its floor is right the moment the
+    # mode comes back, but nothing it hears goes further. A held clip is the one way in.
+    (
+        "v3/next.html",
+        "  if(vadOn||recording){ if(micRms>_clipMax) _clipMax=micRms;",
+        '  if(GB_MIC!=="open"&&!recording){ noiseFloor+=(micRms-noiseFloor)*(micRms<noiseFloor?0.2:0.005);'
+        " hum.pitch=-1; if(vadOn) vadCancel(); setTimeout(earTick,120); return; }\n"
+        "  if(vadOn||recording){ if(micRms>_clipMax) _clipMax=micRms;",
+        1,
+    ),
+    # In push mode a press anywhere on the creature is a press of the talk button, not a pet.
+    (
+        "v3/next.html",
+        "tapping the CREATURE is (audit: brain-panel touches were petting)\n",
+        "tapping the CREATURE is (audit: brain-panel touches were petting)\n"
+        '    if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false){ gbPttDown(); return; }\n',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'toast("tap, speak, then tap again to send")',
+        'toast(GB_MIC==="push"?"hold while you speak, then let go":"tap, speak, then tap again to send")',
+        1,
+    ),
+    # The rail: four cells, the speaker and the mic's mode beside brain and pause.
+    (
+        "v3/next.html",
+        "#gbkCells{display:grid;grid-template-columns:repeat(3,1fr);",
+        "#gbkCells{display:grid;grid-template-columns:repeat(4,1fr);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "body:not(.editing) #brainTabBtn{display:none!important}\n</style>",
+        "body:not(.editing) #brainTabBtn{display:none!important}\n"
+        ".gbkPips{display:flex;gap:3px;margin-top:-3px}.gbkPips i{display:block;width:9px;height:3px;"
+        "background:rgba(232,246,255,.25)}.gbkPips i.on{background:currentColor}\n"
+        "#gbkMic.gbkPtt{width:auto;padding:0 12px;gap:8px;display:flex;align-items:center;"
+        "font:400 11px 'Departure Mono',ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;"
+        "background:#16243A;color:#8FB8FF;border:1px solid #8FB8FF}\n"
+        "#gbkMic.gbkPtt.hold{background:#FFB24D;color:#2E1A00;border-color:#FFB24D}\n"
+        "#gbkMic.gbkMuted{color:#FFB24D}\n"
+        "body.gbkPushMode{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}\n"
+        "body.gbkPushMode #face{touch-action:none}\n"
+        "</style>",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '<button type="button" class="gbkCell gbkWarn" id="gbkSound"></button>',
+        '<button type="button" class="gbkCell gbkWarn" id="gbkSound"></button>\n'
+        '    <button type="button" class="gbkCell" id="gbkMicMode"></button>',
+        1,
+    ),
+    ("v3/next.html", "function g(id){return document.getElementById(id);}", _GB_MIC_ICONS + "function g(id){return document.getElementById(id);}", 1),
+    (
+        "v3/next.html",
+        ' if(hasTxt){ if(mc.hasAttribute("aria-pressed")) mc.removeAttribute("aria-pressed"); }'
+        ' else setA(mc,"aria-pressed",(earOn||R)?"true":"false");',
+        ' if(hasTxt){ if(mc.hasAttribute("aria-pressed")) mc.removeAttribute("aria-pressed"); }'
+        ' else setA(mc,"aria-pressed",(earOn||R)?"true":"false");\n'
+        ' var MM=window.GB_MIC||"open", MQ=MM!=="open"&&!hasTxt&&E!=="blocked"&&E!=="pending";\n'
+        ' if(MQ&&MM==="push"){ setH(mc,mic()+"<span>"+(R?"talking":"hold")+"</span>"); setC(mc,"gbkChip gbkPtt"+(R?" hold":""));'
+        ' setA(mc,"aria-label",R?"recording. let go to send":"push to talk. hold here or on the screen while you speak"); }\n'
+        ' else if(MQ&&MM==="muted"&&!earOff){ setH(mc,gbMicIcon("muted")); setC(mc,"gbkChip gbkMuted");'
+        ' setA(mc,"aria-label","microphone muted. nothing is heard. tap to turn the mic off"); }\n'
+        ' if(document.body.classList.contains("gbkPushMode")!==(MM==="push")) document.body.classList.toggle("gbkPushMode",MM==="push");',
+        1,
+    ),
+    (
+        "v3/next.html",
+        ' var mt=g("gbkMeter"); setC(mt,((earOn||R)&&!P)?',
+        ' var mt=g("gbkMeter"); setC(mt,((earOn||R)&&!P&&(R||MM==="open"))?',
+        1,
+    ),
+    (
+        "v3/next.html",
+        ' var tx=g("gbkTxt"), ph=P?"napping":(R?"holding. speak.":(E==="pending"?',
+        ' var tx=g("gbkTxt"), ph=P?"napping":(R?"holding. speak.":(MQ&&MM==="muted"?"mic muted. type to it":'
+        '(MQ&&MM==="push"?"hold to talk, or type":(E==="pending"?',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '(earOn?"listening. talk or type":"type to it"))));',
+        '(earOn?"listening. talk or type":"type to it"))))));',
+        1,
+    ),
+    (
+        "v3/next.html",
+        ' var sb=g("gbkSound"); setH(sb,px(M?"mute":"sound",3)+\'<span>\'+(M?"unmute":"mute")+\'</span>\');',
+        ' var sb=g("gbkSound"); setH(sb,gbSpk(!M)+\'<span>\'+(M?"speaker off":"speaker")+\'</span>\');'
+        ' setA(sb,"aria-label",M?"speaker off. tap to hear him again":"speaker on. tap to silence him");\n'
+        ' var mm=g("gbkMicMode"); if(mm){ var mi=GB_MIC_MODES.indexOf(MM);'
+        ' setH(mm,gbMicIcon(MM)+"<span>"+GB_MIC_LABEL[MM]+"</span><span class=\\"gbkPips\\">"+GB_MIC_MODES.map(function(x,i){ return "<i"+(i===mi?" class=\\"on\\"":"")+"></i>"; }).join("")+"</span>");'
+        ' setC(mm,"gbkCell"+(MM==="open"?" on":(MM==="muted"?" gbkWarn on":"")));'
+        ' setA(mm,"aria-label","microphone mode: "+GB_MIC_LABEL[MM]+". tap for "+GB_MIC_LABEL[GB_MIC_MODES[(mi+1)%3]]); }',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function mustShow(E){ return !!(window.MUTED||window.paused||",
+        'function mustShow(E){ return !!(window.MUTED||window.GB_MIC==="muted"||window.paused||',
+        1,
+    ),
+    # The mic button in push mode is the talk button: pressing it starts the clip at once.
+    (
+        "v3/next.html",
+        ' if(g("gbkTxt").value.replace(/^\\s+|\\s+$/g,"")) return;\n clearTimeout(holdT); held=false; swallow=false;',
+        ' if(g("gbkTxt").value.replace(/^\\s+|\\s+$/g,"")) return;\n'
+        ' if(window.GB_MIC==="muted") return;\n'
+        ' if(window.GB_MIC==="push"){ clearTimeout(holdT); held=false; if(window.gbPttDown) window.gbPttDown(); paint(); return; }\n'
+        ' clearTimeout(holdT); held=false; swallow=false;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        ' kick("listenBtn"); setTimeout(paint,80); });',
+        ' if(window.GB_MIC==="push") return;\n kick("listenBtn"); setTimeout(paint,80); });',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'g("gbkSound").addEventListener("click",function(){ kick("muteBtn"); setTimeout(paint,80); });',
+        'g("gbkSound").addEventListener("click",function(){ kick("muteBtn"); setTimeout(paint,80); });\n'
+        'g("gbkMicMode").addEventListener("click",function(){ var i=GB_MIC_MODES.indexOf(window.GB_MIC||"open");'
+        ' if(typeof window.gbMicSet==="function") window.gbMicSet(GB_MIC_MODES[(i+1)%3]); setTimeout(paint,80); });',
+        1,
+    ),
+]
+PATCHES += MIC_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

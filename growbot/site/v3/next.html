@@ -221,6 +221,7 @@ var K=window.GrowBotUnifiedAgent||null;                      // the verb/Mimic k
    the face, motion and thinking all carry on, so a muted creature is still fully alive to watch.
    Remembered across reloads, because someone who muted at bedtime means it. */
 var MUTED=(function(){ try{ return localStorage.gb_mute==="1"; }catch(e){ return false; } })();
+var GB_MIC=(function(){ try{ var v=localStorage.gb_mic_mode; return v==="push"||v==="muted"?v:"open"; }catch(e){ return "open"; } })();
 /* 0928 VOLUME (Brit's Android bench, card android-call-volume;
    bench 0928 journal-1105 mic_cfg 18:03:32Z (11:03:32 local) echoCancellation:1): with the mic live, Android
    Chrome runs the page as a call, so the phone's volume buttons move CALL volume (a phone icon) and never turn GrowBot
@@ -2064,7 +2065,7 @@ function talkStart(){ if(recording) return; if(typeof vmResultHumanActivity==="f
     rec.ondataavailable=function(ev){ if(ev.data&&ev.data.size) chunks.push(ev.data); };
     rec.onstop=function(){ if(rec!==recorder) return; var type=rec.mimeType||"audio/webm"; var blob=new Blob(chunks,{type:type});
       var _muted=false; try{ _muted=micStream&&micStream.getTracks().some(function(t){ return t.muted; }); }catch(e){}
-      if(Date.now()-t0<400){ try{ logEv("talk_short",{ms:Date.now()-t0}); }catch(e){} toast("tap, speak, then tap again to send"); }              // mash-guard: a <400ms clip Whisper hallucinates words onto
+      if(Date.now()-t0<400){ try{ logEv("talk_short",{ms:Date.now()-t0}); }catch(e){} toast(GB_MIC==="push"?"hold while you speak, then let go":"tap, speak, then tap again to send"); }              // mash-guard: a <400ms clip Whisper hallucinates words onto
       else if(blob.size>800){ try{ logEv("talk_sent",{kb:Math.round(blob.size/1024),ms:Date.now()-t0,mut:_muted?1:0}); }catch(e){} _sttLane="talk"; transcribe(blob,type,Date.now()-t0); }
       else{ try{ logEv("talk_empty",{b:blob.size,ms:Date.now()-t0,mut:_muted?1:0}); }catch(e){}   // 0808: this path was INVISIBLE in the journals, which is why the field report could not be confirmed or denied from data
         if(_muted){ try{ micStream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){} micStream=null; try{ if(_an)_an.disconnect(); }catch(e){} _an=null; try{ pcmTapDown(); }catch(e){} try{ audioSessFix(); }catch(e){}   /* 0827: a dead ear must not strand the duplex claim — that is the state that swallows her voice */   // dead ear: tear it down NOW so the very next tap re-acquires a fresh one
@@ -5159,6 +5160,7 @@ function ensureEar(){ if(_an||!micStream) return; try{ actx=actx||new (window.Au
   }catch(e){ _pcmNode=null; _pcmRing=null; } }                                           // tap failed → vadStart falls back to the MediaRecorder path untouched
   earTick(); }catch(e){} }
 function earTick(){ if(!_an) return; try{ _an.getByteTimeDomainData(_anBuf); var n=_anBuf.length,s=0,i; for(i=0;i<n;i++){ var v=(_anBuf[i]-128)/128; s+=v*v; } micRms=Math.sqrt(s/n);
+  if(GB_MIC!=="open"&&!recording){ noiseFloor+=(micRms-noiseFloor)*(micRms<noiseFloor?0.2:0.005); hum.pitch=-1; if(vadOn) vadCancel(); setTimeout(earTick,120); return; }
   if(vadOn||recording){ if(micRms>_clipMax) _clipMax=micRms;   // 0815: loudest moment of the clip being captured, for the stt event's mx field
     _clipSum+=micRms; _clipN++; if(micRms>noiseFloor+0.02) _clipHot++; }   // 0819: mean + above-floor duty, the pair that CAN tell "quiet clip" from "clip with one bang" (mx cannot — measured)
   noiseFloor+=(micRms-noiseFloor)*(micRms<noiseFloor?0.2:0.005);                    // adaptive floor (fans don't fake sound)
@@ -5801,6 +5803,24 @@ function vadStart(){ if(!micStream){ try{ if(listenMode) logEv("drop",{w:"nomic"
 function vadStop(){ vadOn=false; vadHoldUntil=Date.now()+5000; if(typeof vmResultHumanActivity==="function")vmResultHumanActivity("new_hold");   // _vadEndT is NOT stamped here (K3 round-2): walk clatter opens and drops utterances every stride, and stamping every endpoint let a single walk ratchet the hold to 4000 with zero human speech. Only utterances that actually reach transcribe() stamp it (the send sites below) — a dropped clip or a hum is not a cut-off sentence.
   if(_pcmLive){ try{ pcmUttStop(true,Date.now()-vadVoiceT-300); }catch(e){} return; }   // PCM lane: assemble + energy-gate + send; tail = the silence the VAD waited through, trimmed to ~300ms
   try{ if(vadRec) vadRec.stop(); }catch(e){} }   // stop → onstop transcribes (not cancelled); hold auto-beats while Whisper runs (5s cap — can't stick)
+function gbMicSet(m){ if(m!=="push"&&m!=="muted") m="open"; if(m===GB_MIC) return;
+  GB_MIC=m; try{ localStorage.gb_mic_mode=m; }catch(e){}
+  _gbPtt=false; _gbPttStop=false;
+  if(m!=="open"&&vadOn) vadCancel();
+  if(m==="muted"&&recording) talkAbort();
+  try{ logEv("mic_mode",{m:m}); }catch(e){}
+  toast(m==="open"?"open mic. just talk":m==="push"?"push to talk. hold the screen or the mic button while you speak":"mic muted. I can't hear you, but you can type"); }
+var _gbPtt=false, _gbPttStop=false, _gbPttUntil=0;
+function gbPttDown(){ if(GB_MIC!=="push"||_gbPtt||window._wakeGateUp) return; _gbPtt=true; _gbPttStop=false; if(!recording) talkStart(); }
+function gbPttUp(){ if(!_gbPtt) return; _gbPtt=false;
+  if(recording){ talkStop(); return; }
+  _gbPttStop=true; _gbPttUntil=Date.now()+13000; setTimeout(gbPttSettle,40); }
+function gbPttSettle(){ if(!_gbPttStop||_gbPtt) return;
+  if(recording){ _gbPttStop=false; talkStop(); return; }
+  if(Date.now()<_gbPttUntil) setTimeout(gbPttSettle,40); else _gbPttStop=false; }
+document.addEventListener("pointerup",gbPttUp);
+document.addEventListener("pointercancel",gbPttUp);
+document.addEventListener("contextmenu",function(e){ if(GB_MIC==="push"&&!(e.target&&e.target.closest&&e.target.closest("input,textarea"))) e.preventDefault(); });
 function vadCancel(){ vadOn=false;
   if(_pcmLive){ try{ pcmUttStop(false,0); }catch(e){} return; }                          // PCM lane: drop the clip, ring keeps rolling
   try{ if(vadRec){ vadRec._cancel=true; vadRec.stop(); } }catch(e){} }   // mark cancelled → that recorder's onstop drops the clip
@@ -10002,6 +10022,7 @@ function bootOwned(){
       try{ if(_ws.cam && !camOn) ensureCam(); }catch(e){}
       try{ if(_ws.ear && !micStream) askMic(function(st){ micStream=micStream||st; ensureEar(); },function(){}); }catch(e){} }
     var x=e.target; if(x.closest&&x.closest("input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge")) return;  // controls/edit/trace/brain-tab/storage line = not a touch; tapping the CREATURE is (audit: brain-panel touches were petting)
+    if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false){ gbPttDown(); return; }
     try{ var _tr=$("typeRow"); if(_tr&&_tr.classList.contains("open")) typeRowSet(false,false); }catch(_e){}   // [0726 item 1] tapping elsewhere folds the type row (transient; the closest() guard above already spared taps on the row itself + the ⌨ button)
     var r=cv.getBoundingClientRect(), nx=Math.max(0,Math.min(1,(e.clientX-r.left)/(r.width||1))), ny=Math.max(0,Math.min(1,(e.clientY-r.top)/(r.height||1)));   // the touch point in the creature's screen space
     spawnSparks(nx,ny,34,null,2.6);                           // instant visual feedback AT the finger — sparks bloom where you touch, not centered (v2 parity)
@@ -10490,7 +10511,7 @@ body.gbkMotion:not(.editing) #liveCard{padding-bottom:calc(212px + env(safe-area
    type" was being cut to "typ-" once the level meter took its width (Brit 0904). */
 #gbkTxt::placeholder{color:#7F93AB;font-size:13.5px;letter-spacing:0}
 #gbkTxt::-webkit-input-placeholder{color:#7F93AB;font-size:13.5px;letter-spacing:0}
-#gbkCells{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(120,160,200,.22);
+#gbkCells{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:rgba(120,160,200,.22);
   border-top:1px solid rgba(120,160,200,.22)}
 .gbkCell{background:#0E1622;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
   font-size:11px;letter-spacing:.06em;text-transform:uppercase;min-height:60px;cursor:pointer;
@@ -10622,6 +10643,12 @@ body.editing #gbFbBtn{display:none!important}
 #gbFbSt{color:#7F93AB!important}
 /* the host's floating brain tab button (top-right, some modes) is replaced by the rail's brain cell */
 body:not(.editing) #brainTabBtn{display:none!important}
+.gbkPips{display:flex;gap:3px;margin-top:-3px}.gbkPips i{display:block;width:9px;height:3px;background:rgba(232,246,255,.25)}.gbkPips i.on{background:currentColor}
+#gbkMic.gbkPtt{width:auto;padding:0 12px;gap:8px;display:flex;align-items:center;font:400 11px 'Departure Mono',ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;background:#16243A;color:#8FB8FF;border:1px solid #8FB8FF}
+#gbkMic.gbkPtt.hold{background:#FFB24D;color:#2E1A00;border-color:#FFB24D}
+#gbkMic.gbkMuted{color:#FFB24D}
+body.gbkPushMode{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+body.gbkPushMode #face{touch-action:none}
 </style>
 <div id="gbk">
   <!-- 0929 review P2-B: lives HERE, not in #ctrlRow, which play mode hides (it measured 0x0 there) -->
@@ -10636,6 +10663,7 @@ body:not(.editing) #brainTabBtn{display:none!important}
     <button type="button" class="gbkCell" id="gbkBrain" aria-haspopup="dialog"></button>
     <button type="button" class="gbkCell gbkDanger" id="gbkPause"></button>
     <button type="button" class="gbkCell gbkWarn" id="gbkSound"></button>
+    <button type="button" class="gbkCell" id="gbkMicMode"></button>
   </div>
 </div>
 <div id="gbkBack" role="navigation" aria-label="back to brain"><button type="button" id="gbkBackBtn"></button><span id="gbkBackTitle"></span></div>
@@ -10677,6 +10705,11 @@ function zeye(open){
 function micOff(){return mic().replace('</svg>','<line class="gbkSlash" x1="3" y1="3" x2="21" y2="21" stroke="#FF5F7A" stroke-width="2.4"></line></svg>');}
 function mic(){return '<svg class="gbkMicSvg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"></path><path d="M12 18v3"></path></svg>';}
 function snd(){return '<svg class="gbkMicSvg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13"></path><path d="M13 6l6 6-6 6"></path></svg>';}
+function gbSpk(on){ return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"></path>'+(on?'<path d="M16.5 8.5a5 5 0 0 1 0 7"></path><path d="M19 6a8.5 8.5 0 0 1 0 12"></path>':'<path d="M17 9l5 6"></path><path d="M22 9l-5 6"></path>')+'</svg>'; }
+function gbMicIcon(m){ var mic='<rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"></path><path d="M12 18v3"></path>';
+ var b=m==="push"?'<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12"></path><path d="M11 11.5V4a1.5 1.5 0 0 1 3 0v7.5"></path><path d="M14 11.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5a6 6 0 0 1-5-2.7L3.6 14a1.5 1.5 0 0 1 2.5-1.6L8 15"></path>':mic+(m==="muted"?'<line x1="3" y1="3" x2="21" y2="21" stroke-width="2.4"></line>':'');
+ return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+b+'</svg>'; }
+var GB_MIC_MODES=["open","push","muted"], GB_MIC_LABEL={open:"open mic",push:"push talk",muted:"mic muted"};
 function g(id){return document.getElementById(id);}
 function kick(id){var b=g(id); if(b) b.click();}
 /* write-on-change: paint() runs every 400ms, and rewriting innerHTML under a finger is a
@@ -10716,7 +10749,11 @@ function paint(){
  setC(mc,"gbkChip"+(hasTxt?" on":(R?" hold":(H?" on gbkHot":(E==="pending"?" gbkPending":(E==="speaking"?" on gbkQuiet":(earOn?" on":(E==="blocked"?" gbkOff gbkBlocked":" gbkOff"))))))));
  setA(mc,"aria-label",hasTxt?"send":(R?"recording. release to send":(E==="pending"?"microphone starting. allow it if your phone asks":(E==="blocked"?"microphone blocked. allow it in your phone's settings, then reload":(E==="speaking"?"microphone on, quiet while it speaks":(earOn?"microphone on. tap to turn off, hold to say one thing":"microphone off. tap to enable, hold to say one thing"))))));
  if(hasTxt){ if(mc.hasAttribute("aria-pressed")) mc.removeAttribute("aria-pressed"); } else setA(mc,"aria-pressed",(earOn||R)?"true":"false");
- var mt=g("gbkMeter"); setC(mt,((earOn||R)&&!P)?("on"+(R?" hold":(H?" gbkHot":""))):"");
+ var MM=window.GB_MIC||"open", MQ=MM!=="open"&&!hasTxt&&E!=="blocked"&&E!=="pending";
+ if(MQ&&MM==="push"){ setH(mc,mic()+"<span>"+(R?"talking":"hold")+"</span>"); setC(mc,"gbkChip gbkPtt"+(R?" hold":"")); setA(mc,"aria-label",R?"recording. let go to send":"push to talk. hold here or on the screen while you speak"); }
+ else if(MQ&&MM==="muted"&&!earOff){ setH(mc,gbMicIcon("muted")); setC(mc,"gbkChip gbkMuted"); setA(mc,"aria-label","microphone muted. nothing is heard. tap to turn the mic off"); }
+ if(document.body.classList.contains("gbkPushMode")!==(MM==="push")) document.body.classList.toggle("gbkPushMode",MM==="push");
+ var mt=g("gbkMeter"); setC(mt,((earOn||R)&&!P&&(R||MM==="open"))?("on"+(R?" hold":(H?" gbkHot":""))):"");
  /* 0925 (Brit): "it's good to see the hearing indicator when you talk". While a clip is being captured
     (R the held one, H a hands-free one) and for HEAR_TAIL after, #gbkBar carries .gbkHear, which keeps the
     meter and the mic chip on screen over a faded bar (see the CSS at #gbk.faded). It changes nothing unfaded. */
@@ -10725,7 +10762,7 @@ function paint(){
  /* 0925 review F2: the idle clock only looks when it fires, so a state the bar must show that lands AFTER
     the fade (the ear goes deaf, an ask starts, a mute) was never seen. This tick sees it and brings the bar back. */
  if(faded&&mustShow(E)) wake();
- var tx=g("gbkTxt"), ph=P?"napping":(R?"holding. speak.":(E==="pending"?"starting the mic…":(E==="blocked"?"mic blocked. type, or allow it in settings":(earOn?"listening. talk or type":"type to it"))));
+ var tx=g("gbkTxt"), ph=P?"napping":(R?"holding. speak.":(MQ&&MM==="muted"?"mic muted. type to it":(MQ&&MM==="push"?"hold to talk, or type":(E==="pending"?"starting the mic…":(E==="blocked"?"mic blocked. type, or allow it in settings":(earOn?"listening. talk or type":"type to it"))))));
  if(tx.placeholder!==ph) tx.placeholder=ph;
  setA(tx,"aria-label",ph);
  if(tx.disabled!==P) tx.disabled=P;
@@ -10734,7 +10771,8 @@ function paint(){
  /* the rail labels the ACTION (brain / pause-wake / mute-unmute); the fill and the icon carry
     the state. A paused creature shows a play triangle because the caption says to tap one. */
  var pb=g("gbkPause"); setH(pb,px(P?"play":"pause",3)+'<span>'+(P?"wake":"pause")+'</span>'); setC(pb,"gbkCell gbkDanger"+(P?" on":""));
- var sb=g("gbkSound"); setH(sb,px(M?"mute":"sound",3)+'<span>'+(M?"unmute":"mute")+'</span>'); setC(sb,"gbkCell gbkWarn"+(M?" on":""));
+ var sb=g("gbkSound"); setH(sb,gbSpk(!M)+'<span>'+(M?"speaker off":"speaker")+'</span>'); setA(sb,"aria-label",M?"speaker off. tap to hear him again":"speaker on. tap to silence him");
+ var mm=g("gbkMicMode"); if(mm){ var mi=GB_MIC_MODES.indexOf(MM); setH(mm,gbMicIcon(MM)+"<span>"+GB_MIC_LABEL[MM]+"</span><span class=\"gbkPips\">"+GB_MIC_MODES.map(function(x,i){ return "<i"+(i===mi?" class=\"on\"":"")+"></i>"; }).join("")+"</span>"); setC(mm,"gbkCell"+(MM==="open"?" on":(MM==="muted"?" gbkWarn on":""))); setA(mm,"aria-label","microphone mode: "+GB_MIC_LABEL[MM]+". tap for "+GB_MIC_LABEL[GB_MIC_MODES[(mi+1)%3]]); } setC(sb,"gbkCell gbkWarn"+(M?" on":""));
  setA(sb,"aria-pressed",M?"true":"false");
  if(document.body.classList.contains("gbkPaused")!==P) document.body.classList.toggle("gbkPaused",P);
  var sy=g("say");
@@ -11392,6 +11430,7 @@ document.addEventListener("keydown",function(e){ if(e.key!=="Escape") return;
   if(!(e.target.closest&&e.target.closest("button,input"))) e.stopPropagation(); }); });
 g("gbkPause").addEventListener("click",function(){ kick("pauseBtn"); setTimeout(paint,80); });
 g("gbkSound").addEventListener("click",function(){ kick("muteBtn"); setTimeout(paint,80); });
+g("gbkMicMode").addEventListener("click",function(){ var i=GB_MIC_MODES.indexOf(window.GB_MIC||"open"); if(typeof window.gbMicSet==="function") window.gbMicSet(GB_MIC_MODES[(i+1)%3]); setTimeout(paint,80); });
 /* FULLSCREEN, DIRECT (Brit 0904, Android: "the button is there but doesn't do anything").
    Measured: clicking through to the host's hidden #fsBtn left document.fullscreenElement false.
    The Fullscreen API needs the user gesture, and proxying a real tap into a synthetic .click()
@@ -11413,6 +11452,8 @@ function gbkNote(msg){ var n=g("gbkNote");
 g("gbkMic").addEventListener("pointerdown",function(e){
  if(e.isPrimary===false) return;
  if(g("gbkTxt").value.replace(/^\s+|\s+$/g,"")) return;
+ if(window.GB_MIC==="muted") return;
+ if(window.GB_MIC==="push"){ clearTimeout(holdT); held=false; if(window.gbPttDown) window.gbPttDown(); paint(); return; }
  clearTimeout(holdT); held=false; swallow=false;
  holdT=setTimeout(function(){ held=true;
    /* a clip from an earlier release that has just landed is ours now: adopt it, do not toggle it off */
@@ -11433,6 +11474,7 @@ g("gbkMic").addEventListener("click",function(){
  if(swallow){ swallow=false; return; }
  var v=g("gbkTxt").value.replace(/^\s+|\s+$/g,"");
  if(v){ var t=g("txt"); if(t){ t.value=v; kick("send"); } g("gbkTxt").value=""; paint(); return; }
+ if(window.GB_MIC==="push") return;
  kick("listenBtn"); setTimeout(paint,80); });
 g("gbkTxt").addEventListener("keydown",function(e){ if(e.key==="Enter"){
  var v=g("gbkTxt").value.replace(/^\s+|\s+$/g,"");
@@ -11443,7 +11485,7 @@ function setFade(f){ faded=f; g("gbk").className=f?"faded":""; }
    over one, and paint() brings a faded bar back the moment one arrives. 0925 review F4: a refusal from a
    standing start (the ear was off, so listenMode never went on) holds while it is fresh, so the red chip
    is not faded away seconds after the "no". */
-function mustShow(E){ return !!(window.MUTED||window.paused||E==="pending"||(window.listenMode&&E==="stale")||
+function mustShow(E){ return !!(window.MUTED||window.GB_MIC==="muted"||window.paused||E==="pending"||(window.listenMode&&E==="stale")||
  (E==="blocked"&&(window.listenMode||Date.now()-blkT<BLK_FRESH))); }
 /* 0925 review F1 (measured in Chrome with a real touch tap): Chrome and WebKit hit-test a tap TWICE,
    the pointerdown when the finger lands and the mousedown/click at the release. The pointerdown lands on

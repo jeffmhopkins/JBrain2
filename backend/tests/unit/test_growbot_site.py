@@ -2261,3 +2261,113 @@ def test_dave_makes_no_droid_beeps() -> None:
     assert heard == [["chirp", True], ["trill", True]] and muted is True
     heard, _ = json.loads(_face_in_node(script, "lantern"))
     assert heard == [["chirp", False], ["trill", True]]
+
+
+# The mic's three modes (owner, 2026-11-13). The harness stubs everything earTick and the mode
+# code reach outside themselves, and records what was called.
+_MIC_HARNESS = r"""
+var calls=[], store={}, timers=[], listeners={};
+var localStorage={}, window={_wakeGateUp:false}, document={hidden:false,
+  addEventListener:function(k,f){ listeners[k]=f; }};
+function setTimeout(f,ms){ timers.push(f); return timers.length; }
+function run(){ var t=timers; timers=[]; t.forEach(function(f){ if(f!==earTick) f(); }); }
+function logEv(k,o){ calls.push(["log",k,o.m]); }
+function toast(s){ calls.push(["toast"]); }
+var GB_MIC="open", vadOn=false, recording=false, listenMode=true, speakingUntil=0, _motion=false;
+var _an={getByteTimeDomainData:function(b){ for(var i=0;i<b.length;i++) b[i]=i%2?250:6; }};
+var _anBuf=new Uint8Array(64), micRms=0, noiseFloor=0.01, _qFloor=0.01, _clipMax=0, _clipSum=0;
+var _clipN=0, _clipHot=0, _ambDuty=0, _ambDuty2=0, _ambOn=false, hum={pitch:-1};
+var actx={sampleRate:48000};
+function detectPitch(){ return 220; }
+function fireReflex(k){ calls.push(["reflex",k]); }
+function vadTick(){ calls.push(["vad"]); }
+function bargeTick(){ calls.push(["barge"]); }
+function vadCancel(){ vadOn=false; calls.push(["cancel"]); }
+function talkStart(){ calls.push(["start"]); }
+function talkStop(){ recording=false; calls.push(["stop"]); }
+function talkAbort(){ recording=false; calls.push(["abort"]); }
+"""
+
+
+def _mic_page(script: str) -> Any:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    ear = page[page.index("function earTick(){") : page.index("/* ---- PCM RING CAPTURE")]
+    modes = page[page.index("function gbMicSet(m){") : page.index("function vadCancel(){")]
+    out = subprocess.run(
+        [node, "-e", f"{_MIC_HARNESS}\n{ear}\n{modes}\n{script}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(out.stdout)
+
+
+@pytest.mark.parametrize("mode", ["push", "muted"])
+def test_a_quiet_mic_hears_nothing_but_keeps_the_ear(mode: str) -> None:
+    """Muted and push to talk keep the mic, but a loud room opens no utterance (so no warm-up
+    either), fires no reflex and does not make the creature yield; an utterance already open
+    is dropped, not sent. Open mic is upstream unchanged."""
+    got = _mic_page(
+        f"GB_MIC='{mode}'; vadOn=true; earTick(); var quiet=calls; calls=[];"
+        "GB_MIC='open'; earTick();"
+        "console.log(JSON.stringify({quiet:quiet,open:calls,pitch:hum.pitch,floor:noiseFloor}));"
+    )
+    assert got["quiet"] == [["cancel"]]
+    assert ["vad"] in got["open"] and ["barge"] in got["open"] and ["reflex", "loud"] in got["open"]
+    assert got["floor"] > 0.01
+
+
+def test_a_held_clip_is_heard_in_push_to_talk() -> None:
+    got = _mic_page(
+        "GB_MIC='push'; recording=true; listenMode=false; earTick();"
+        "console.log(JSON.stringify({calls:calls,clip:_clipN}));"
+    )
+    assert got["clip"] == 1 and ["barge"] in got["calls"]
+
+
+def test_the_mode_is_kept_per_device_and_muting_drops_what_was_being_heard() -> None:
+    got = _mic_page(
+        "vadOn=true; gbMicSet('push'); var a=[calls,localStorage.gb_mic_mode]; calls=[];"
+        "recording=true; gbMicSet('muted'); var b=[calls,localStorage.gb_mic_mode,recording];"
+        "calls=[]; gbMicSet('muted'); gbMicSet('nonsense');"
+        "console.log(JSON.stringify({a:a,b:b,c:calls,mode:GB_MIC}));"
+    )
+    assert got["a"] == [[["cancel"], ["log", "mic_mode", "push"], ["toast"]], "push"]
+    assert got["b"] == [[["abort"], ["log", "mic_mode", "muted"], ["toast"]], "muted", False]
+    assert got["c"] == [["log", "mic_mode", "open"], ["toast"]] and got["mode"] == "open"
+
+
+def test_push_to_talk_records_while_held_and_sends_on_release() -> None:
+    """A release before the mic has landed (the first press of a visit, or behind the phone's
+    permission sheet) still stops the clip the moment it starts, instead of recording the room."""
+    got = _mic_page(
+        "GB_MIC='push'; gbPttDown(); recording=true; gbPttDown(); listeners.pointerup();"
+        "var held=calls; calls=[];"
+        "gbPttDown(); listeners.pointercancel(); run(); var early=calls.slice(); recording=true;"
+        "run(); var landed=calls; calls=[];"
+        "GB_MIC='open'; gbPttDown(); listeners.pointerup(); var open=calls; calls=[];"
+        "GB_MIC='push'; window._wakeGateUp=true; gbPttDown();"
+        "console.log(JSON.stringify({held:held,early:early,landed:landed,open:open,gate:calls}));"
+    )
+    assert got["held"] == [["start"], ["stop"]]
+    assert got["early"] == [["start"]] and got["landed"] == [["start"], ["stop"]]
+    assert got["open"] == [] and got["gate"] == []
+
+
+def test_the_rail_carries_the_speaker_and_the_mic_mode() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '<button type="button" class="gbkCell" id="gbkMicMode"></button>' in page
+    assert "#gbkCells{display:grid;grid-template-columns:repeat(4,1fr);" in page
+    assert 'GB_MIC_LABEL={open:"open mic",push:"push talk",muted:"mic muted"}' in page
+    assert '(M?"speaker off":"speaker")' in page
+    # Only open mic and muted shade the mode cell (owner, 2026-11-13: push to talk is unshaded).
+    assert 'setC(mm,"gbkCell"+(MM==="open"?" on":(MM==="muted"?" gbkWarn on":"")));' in page
+    # A press on the creature in push mode is the talk button, ahead of every petting path.
+    pet = page[page.index('#brainPanel,#sgNudge")) return;') :]
+    ptt = pet.index('if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false)')
+    assert ptt < pet.index("spawnSparks(") < pet.index('fireReflex("tap")')
+    status = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
+    assert 'window.listenMode && (window.GB_MIC || "open") === "open"' in status
