@@ -1798,10 +1798,12 @@ PATCHES += [
 # stopped. Measured on the box with logged turns: 7.8 s of prefill fell to 1.9 s. The engine
 # keeps a reusable checkpoint only at the start of a request's last message, which is why the
 # words ride in a message of their own and the warm-up ends in "." rather than stopping short.
-# A warm-up is used once, by the next spoken turn, and only when nothing it was built from has
-# moved (the history, the system text, the eye) within 12 s; anything a turn adds that the
-# warm-up could not know (a recall, an imitation guide) rides with the words. Anything else
-# runs exactly as before.
+# A warm-up is used once, by the next spoken turn, under 12 s old, and only when nothing it
+# was built from has moved: the history, the system text, the eye, the state block (the
+# scratchpad, goal and language lines; its self-stats compared without their numbers) and the
+# picture-memory line. A warm-up's newest frame must still be under 10 s old, the page's rule
+# for any frame, and the turn sees and remembers those same frames. What the warm-up could not
+# know (a recall, an imitation guide) rides with the words. Anything else runs as before.
 _GB_WARM_JS = r"""var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, GB_WARM_MAX_MS=12000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 function gbHist(now){ var tr=gbTalkTraces(_live.scratch.traces), msgs=[], i;
@@ -1826,7 +1828,7 @@ function gbWarmUp(){ var now=Date.now();
       parts.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+f.j}}); });
     var vmc=(typeof vmTurnContext==="function"&&typeof vmStreamSpeech==="function"&&typeof vmReplyGuard==="function")?{user:"·",asked:false}:null;
     var sys=buildSystem(gbSoulView(),{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText();
-    var vm=(typeof vmPrompt==="function"?vmPrompt(vmc):""), live=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+selfStats()+vm, tired=gbTiredLine(), memlog=(typeof MEMLOG_ASK==="string")?MEMLOG_ASK:"";
+    var vm=(typeof vmPrompt==="function"?vmPrompt(vmc):""), ss=selfStats(), bl=buildSystem.live||"", mg=moveGuideText.live||"", live=bl+mg+"\n\n"+ss+vm, tired=gbTiredLine(), memlog=(typeof MEMLOG_ASK==="string")?MEMLOG_ASK:"";
     live+=tired+memlog;
     sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||"");
     var pre={role:"user",content:parts.length?parts:""};
@@ -1834,21 +1836,31 @@ function gbWarmUp(){ var now=Date.now();
     var hist=gbHist(now), body=_mkBody(brainOverride(orCfg.active||orCfg.fast,false),1,[{role:"system",content:sys}].concat(hist,[pre,{role:"user",content:"."}]));
     var hdr={"content-type":"application/json","x-gb-warm":"1"}; if(pbDevTok) hdr["x-pb-device"]=pbDevTok;
     var ctl=window.AbortController?new AbortController():null, fuse=setTimeout(function(){ try{ if(ctl) ctl.abort(); }catch(e){} },GB_WARM_FUSE_MS);
-    _gbWarm={t:now,key:gbWarmKey(),sys:sys,hist:hist,pre:pre,vm:vm,tired:tired,memlog:memlog,nf:frames.length}; _gbWarmBusy=true;
+    var w=_gbWarm={t:now,key:gbWarmKey(),sys:sys,hist:hist,pre:pre,frames:frames,nf:frames.length,ft:frames.length?frames[frames.length-1].t:0,bl:bl,mg:mg,ss:gbShape(ss),vm:vm,tired:tired,memlog:memlog}; _gbWarmBusy=true;
     try{ logEv("warm",{nf:frames.length}); }catch(e){}
+    function drop(why){ if(_gbWarm===w){ _gbWarm=null; try{ logEv("warm_fail",{w:why}); }catch(e){} } }
     fetch("/api/llm?target=openrouter",{method:"POST",headers:hdr,body:JSON.stringify(body),signal:ctl?ctl.signal:undefined})
-      .then(function(r){ return r.text(); }).catch(function(){})
+      .then(function(r){ if(!r.ok) drop("http "+r.status); return r.text(); }).catch(function(){ drop("net"); })
       .then(function(){ clearTimeout(fuse); _gbWarmBusy=false; });
   }catch(e){ _gbWarm=null; _gbWarmBusy=false; }
 }
 function gbWarmFresh(){ return !!(_gbWarm&&Date.now()-_gbWarm.t<GB_WARM_MAX_MS); }
-function gbWarmTake(kind,extra,nFrames,blindNote,sys){
+function gbShape(s){ return String(s||"").replace(/\d+(?:\.\d+)?/g,"#"); }
+function gbWarmSkip(w,why){ try{ logEv("warm_skip",{w:why,age:Date.now()-w.t}); }catch(e){} return null; }
+function gbWarmTake(kind,extra,frames){
   if(kind!=="event"||!(extra&&extra.humanReq)) return null;
-  var w=_gbWarm; _gbWarm=null;
-  if(!w||Date.now()-w.t>GB_WARM_MAX_MS||w.key!==gbWarmKey()||w.sys!==sys||blindNote||w.nf<nFrames||(w.nf>0)!==(nFrames>0)){ if(w){ try{ logEv("warm_skip",{age:Date.now()-w.t}); }catch(e){} } return null; }
+  var w=_gbWarm, now=Date.now(); _gbWarm=null;
+  if(!w) return null;
+  if(now-w.t>GB_WARM_MAX_MS) return gbWarmSkip(w,"old");
+  if(w.key!==gbWarmKey()) return gbWarmSkip(w,"moved");
+  if(w.nf<frames.length||(w.nf>0)!==(frames.length>0)) return gbWarmSkip(w,"frames");
+  if(w.nf&&now-w.ft>10000) return gbWarmSkip(w,"stale");
   return w; }
-function gbWarmMsgs(w,live,vm,liveN,userMsg){
-  var late=live.slice(liveN).replace(w.tired,"").replace(w.memlog,""); late=((vm!==w.vm)?vm:"")+late; late=late.replace(/^\s+/,"");
+function gbWarmFits(w,c){
+  var why=c.sys!==w.sys?"sys":c.bl!==w.bl?"state":c.mg!==w.mg?"goal":gbShape(c.ss)!==w.ss?"stats":c.vm!==w.vm?"vm":c.blind?"blind":"";
+  if(why){ gbWarmSkip(w,why); return false; } return true; }
+function gbWarmMsgs(w,live,liveN,userMsg){
+  var late=live.slice(liveN).replace(w.tired,"").replace(w.memlog,"").replace(/^\s+/,"");
   return w.hist.concat([w.pre,{role:"user",content:(late?late+"\n\n== THIS MOMENT ==\n":"")+userMsg}]); }
 """
 WARM_PATCHES: list[tuple[str, str, str, int]] = [
@@ -1882,17 +1894,27 @@ WARM_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         '_gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\\n\\n"+selfStats()+'
         '(typeof vmPrompt==="function"?vmPrompt(_vmTurn):"");',
-        '_gbVm=(typeof vmPrompt==="function"?vmPrompt(_vmTurn):""), _gbLive=(buildSystem.live||"")+'
-        '(moveGuideText.live||"")+"\\n\\n"+selfStats()+_gbVm, _gbLiveN=_gbLive.length;',
+        '_gbVm=(typeof vmPrompt==="function"?vmPrompt(_vmTurn):""), _gbSS=selfStats(),'
+        ' _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\\n\\n"+_gbSS+_gbVm,'
+        ' _gbLiveN=_gbLive.length;',
         1,
     ),
     (
         "v3/next.html",
         ' if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;',
-        " var _gw=gbWarmTake(kind,extra,frames.length,parts.length-1!==frames.length*2,sys);"
-        " if(_gw){ msgs=gbWarmMsgs(_gw,_gbLive,_gbVm,_gbLiveN,userMsg);"
+        " if(_gw&&gbWarmFits(_gw,{sys:sys,bl:buildSystem.live||\"\",mg:moveGuideText.live||\"\","
+        "ss:_gbSS,vm:_gbVm,blind:parts.length-1!==frames.length*2})){"
+        " msgs=gbWarmMsgs(_gw,_gbLive,_gbLiveN,userMsg);"
         ' try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }\n'
         '  else if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;',
+        1,
+    ),
+    # The turn sees the frames the warm-up sent, so what it remembers is what the model saw.
+    (
+        "v3/next.html",
+        "  var _lumAt=(luma>=0?Math.round(luma):-1),",
+        "  var _gw=gbWarmTake(kind,extra,frames); if(_gw) frames=_gw.frames;\n"
+        "  var _lumAt=(luma>=0?Math.round(luma):-1),",
         1,
     ),
     (

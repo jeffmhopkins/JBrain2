@@ -413,6 +413,9 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
     # noise can start one too, so only a real turn holds the worker's background jobs.
     warmup = not replay and request.headers.get("x-growbot-warm") == "1"
     if warmup:
+        # Where a turn could load a model (no slot pool), a noise must not swap one in.
+        if not pooled:
+            return _openai_error(409, "a warm-up needs a pooled engine", "warmup_unpooled")
         rec.request["warmup"] = True
     system = system_text(payload["messages"])
     rec.timings["system_chars"], rec.timings["system_hash"] = system_fingerprint(

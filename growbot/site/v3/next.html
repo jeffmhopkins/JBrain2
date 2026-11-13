@@ -8457,7 +8457,7 @@ function gbWarmUp(){ var now=Date.now();
       parts.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+f.j}}); });
     var vmc=(typeof vmTurnContext==="function"&&typeof vmStreamSpeech==="function"&&typeof vmReplyGuard==="function")?{user:"·",asked:false}:null;
     var sys=buildSystem(gbSoulView(),{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText();
-    var vm=(typeof vmPrompt==="function"?vmPrompt(vmc):""), live=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+selfStats()+vm, tired=gbTiredLine(), memlog=(typeof MEMLOG_ASK==="string")?MEMLOG_ASK:"";
+    var vm=(typeof vmPrompt==="function"?vmPrompt(vmc):""), ss=selfStats(), bl=buildSystem.live||"", mg=moveGuideText.live||"", live=bl+mg+"\n\n"+ss+vm, tired=gbTiredLine(), memlog=(typeof MEMLOG_ASK==="string")?MEMLOG_ASK:"";
     live+=tired+memlog;
     sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||"");
     var pre={role:"user",content:parts.length?parts:""};
@@ -8465,21 +8465,31 @@ function gbWarmUp(){ var now=Date.now();
     var hist=gbHist(now), body=_mkBody(brainOverride(orCfg.active||orCfg.fast,false),1,[{role:"system",content:sys}].concat(hist,[pre,{role:"user",content:"."}]));
     var hdr={"content-type":"application/json","x-gb-warm":"1"}; if(pbDevTok) hdr["x-pb-device"]=pbDevTok;
     var ctl=window.AbortController?new AbortController():null, fuse=setTimeout(function(){ try{ if(ctl) ctl.abort(); }catch(e){} },GB_WARM_FUSE_MS);
-    _gbWarm={t:now,key:gbWarmKey(),sys:sys,hist:hist,pre:pre,vm:vm,tired:tired,memlog:memlog,nf:frames.length}; _gbWarmBusy=true;
+    var w=_gbWarm={t:now,key:gbWarmKey(),sys:sys,hist:hist,pre:pre,frames:frames,nf:frames.length,ft:frames.length?frames[frames.length-1].t:0,bl:bl,mg:mg,ss:gbShape(ss),vm:vm,tired:tired,memlog:memlog}; _gbWarmBusy=true;
     try{ logEv("warm",{nf:frames.length}); }catch(e){}
+    function drop(why){ if(_gbWarm===w){ _gbWarm=null; try{ logEv("warm_fail",{w:why}); }catch(e){} } }
     fetch("/api/llm?target=openrouter",{method:"POST",headers:hdr,body:JSON.stringify(body),signal:ctl?ctl.signal:undefined})
-      .then(function(r){ return r.text(); }).catch(function(){})
+      .then(function(r){ if(!r.ok) drop("http "+r.status); return r.text(); }).catch(function(){ drop("net"); })
       .then(function(){ clearTimeout(fuse); _gbWarmBusy=false; });
   }catch(e){ _gbWarm=null; _gbWarmBusy=false; }
 }
 function gbWarmFresh(){ return !!(_gbWarm&&Date.now()-_gbWarm.t<GB_WARM_MAX_MS); }
-function gbWarmTake(kind,extra,nFrames,blindNote,sys){
+function gbShape(s){ return String(s||"").replace(/\d+(?:\.\d+)?/g,"#"); }
+function gbWarmSkip(w,why){ try{ logEv("warm_skip",{w:why,age:Date.now()-w.t}); }catch(e){} return null; }
+function gbWarmTake(kind,extra,frames){
   if(kind!=="event"||!(extra&&extra.humanReq)) return null;
-  var w=_gbWarm; _gbWarm=null;
-  if(!w||Date.now()-w.t>GB_WARM_MAX_MS||w.key!==gbWarmKey()||w.sys!==sys||blindNote||w.nf<nFrames||(w.nf>0)!==(nFrames>0)){ if(w){ try{ logEv("warm_skip",{age:Date.now()-w.t}); }catch(e){} } return null; }
+  var w=_gbWarm, now=Date.now(); _gbWarm=null;
+  if(!w) return null;
+  if(now-w.t>GB_WARM_MAX_MS) return gbWarmSkip(w,"old");
+  if(w.key!==gbWarmKey()) return gbWarmSkip(w,"moved");
+  if(w.nf<frames.length||(w.nf>0)!==(frames.length>0)) return gbWarmSkip(w,"frames");
+  if(w.nf&&now-w.ft>10000) return gbWarmSkip(w,"stale");
   return w; }
-function gbWarmMsgs(w,live,vm,liveN,userMsg){
-  var late=live.slice(liveN).replace(w.tired,"").replace(w.memlog,""); late=((vm!==w.vm)?vm:"")+late; late=late.replace(/^\s+/,"");
+function gbWarmFits(w,c){
+  var why=c.sys!==w.sys?"sys":c.bl!==w.bl?"state":c.mg!==w.mg?"goal":gbShape(c.ss)!==w.ss?"stats":c.vm!==w.vm?"vm":c.blind?"blind":"";
+  if(why){ gbWarmSkip(w,why); return false; } return true; }
+function gbWarmMsgs(w,live,liveN,userMsg){
+  var late=live.slice(liveN).replace(w.tired,"").replace(w.memlog,"").replace(/^\s+/,"");
   return w.hist.concat([w.pre,{role:"user",content:(late?late+"\n\n== THIS MOMENT ==\n":"")+userMsg}]); }
 function think(event,kind,extra){
   if(typeof vmBusy==="function"&&vmBusy()) return;
@@ -8525,6 +8535,7 @@ function think(event,kind,extra){
   var _nf=(kind==="tick")?((extra&&extra.watch)?1:((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0)):((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||(extra&&extra.beat&&seekGoal)||(extra&&typeof extra.visualUser==="string"&&_GB_LOOK_WORDS.test(extra.visualUser)))?3:1);   // FATLAB 0710 (5 tiers × 5 real k2.6 calls): ANY image ≈ +3.4s (5.6s→2.2s text-only; 1 vs 3 frames = SAME; slim prompts = noise) → idle ticks think BLIND (the senses line already carries bright/dark), the WATCH tick keeps 1 fresh eye (its whole job is looking), events/seek-beats keep full 3-frame sight (change detection is the game). [box: a spoken turn keeps 1 unless something moves, a seek beat runs or the words ask to look] 0811 CARRY-AWARE (tester field: carried on a room tour, the creature repeated "closet door, lamp, blanket pile" five times — idle beats were BLIND while the whole world moved): an idle tick keeps ONE eye when the scene is visibly changing (frameDiff>3, the facePresent bar), the phone is being carried (_rideOn), or its own body is moving. A still table stays blind and cheap exactly as measured; motion pays +3.4s for sight, which is the right trade mid-tour.
   var frames=(camOn&&_nf)?eyeBuf.filter(function(f){ return f.t>=_fCut; }).slice(-_nf):[];  // eyes OPEN + fresh (≤10s) only — never stale frames (audit)
   if(camOn&&_nf&&!frames.length){ var e0=captureEye(); if(e0&&!(_eyeSameN>0&&eyeBuf.length&&e0===eyeBuf[eyeBuf.length-1].j)) frames=[{t:Date.now(),j:e0}]; }   // fallback: one fresh frame if the ring is empty (never for a blind tick). 0811 P2b: a fallback capture byte-identical to the last ring frame is the frozen element again — do not launder it in with a fresh timestamp, or the cannot-see line below can never fire. The _eyeSameN>0 requirement (K3 F3) means we only refuse when eyeTick has ACTUALLY WITNESSED consecutive identical frames while visible: coming back from a backgrounded tab the ring has merely aged, the element is mid-resume, and refusing there would announce blindness with a perfectly good camera — the same lie as the bug, pointing the other way
+  var _gw=gbWarmTake(kind,extra,frames); if(_gw) frames=_gw.frames;
   var _lumAt=(luma>=0?Math.round(luma):-1), _fdAt=Math.round(frameDiff*100)/100;   /* 0812 K3: SAMPLE THE LIGHT WHEN THE FRAMES WERE TAKEN, not when the reply lands. These were read from the globals at log time, up to a model round trip later (60s on a slow turn) — so a mid-flight teardown (👁 tap, or track.onended → stopCam, which sets luma=-1) logged nf:3 alongside lum:-1: "camera off" on the very turn that captured and sent three frames. Two fields on the same event contradicting each other is exactly the instrument-lies failure this telemetry was added to end. */
   if((camOn||Date.now()<_eyeHealUntil)&&_nf&&!frames.length) parts.push({type:"text",text:"[camera — you cannot see right now. do not describe what you saw before as if it were still there.]"});   // 0811 P2: sight EXPECTED but unavailable (element never delivered frames, or the track died) — the model used to get NO camera marker at all and carried its last description forward as if still true (the field repro). Same class as the presence-vs-bond self-confabulation fix. Deliberately NOT on cost-saving blind idle ticks (_nf===0): the creature would announce blindness constantly and the character would suffer. _eyeHealUntil (K3 F2) keeps the marker firing through a heal's re-acquire window, where camOn is briefly false and the old gate went silent at exactly the moment the user picks the phone up and asks "can you see me?"
   var _eyeAt=(camFacing==="environment")?"b":"f";   // 0816: sampled WHERE THE FRAMES ARE BUILT, not at log time (the lum/fd law) — a mid-flight flip must not mislabel this turn
@@ -8541,9 +8552,9 @@ function think(event,kind,extra){
     soulView=Object.assign({},soulView,{body:Object.assign({},soulView.body,{walk:Object.assign({},soulView.body.walk||{},{present:false})})});   // 0815 review: ?wheels=1 on a legged-default body (the ESP32 kit door, no soul body block) — the app drives wheels, so the PROMPT must tell the wheels truth too; stamping walk.present=false on the VIEW (never the stored soul) makes buildOutputSchema pick the roll contract
   var _replyLang=_replyLanguage()||vtLang(); if(typeof vmTurnBegin==="function")vmTurnBegin(_vmTurn,_replyLang);
   var _recall=null; try{ if(_hreqAtIssue&&typeof diaryRecall==="function"&&extra&&typeof extra.visualUser==="string"&&extra.visualUser.trim()) _recall=diaryRecall(_live.log,extra.visualUser,now,[(_live.goals&&_live.goals.selfName)||"",typeof ownerTok==="function"?ownerTok():""]); }catch(e){ _recall=null; }   /* 1005 WHOLE-DIARY RECALL (prompts.js diaryRecall): a person's words can pull up to 3 OLDER diary lines into this prompt, only when they cue a memory or share 2+ rare words with a line. Human turns only; the creature's and owner's own names never count as a match (review: the creature's name was the top false trigger). */
-  var sys=buildSystem(soulView,{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText(), _gbVm=(typeof vmPrompt==="function"?vmPrompt(_vmTurn):""), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+selfStats()+_gbVm, _gbLiveN=_gbLive.length;    // + short-term self-knowledge (introspection); speech-style rule appended HERE because buildSystem/constitution live in /v3/prompts.js (Brit 0726, item 5)
+  var sys=buildSystem(soulView,{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText(), _gbVm=(typeof vmPrompt==="function"?vmPrompt(_vmTurn):""), _gbSS=selfStats(), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+_gbSS+_gbVm, _gbLiveN=_gbLive.length;    // + short-term self-knowledge (introspection); speech-style rule appended HERE because buildSystem/constitution live in /v3/prompts.js (Brit 0726, item 5)
   if(_imitationAtIssue&&_imitationCtl)_gbLive+=_imitationCtl.guide(_imitationAtIssue);
-  _gbLive+=gbTiredLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; } if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); var _gw=gbWarmTake(kind,extra,frames.length,parts.length-1!==frames.length*2,sys); if(_gw){ msgs=gbWarmMsgs(_gw,_gbLive,_gbVm,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
+  _gbLive+=gbTiredLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; } if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(_gw&&gbWarmFits(_gw,{sys:sys,bl:buildSystem.live||"",mg:moveGuideText.live||"",ss:_gbSS,vm:_gbVm,blind:parts.length-1!==frames.length*2})){ msgs=gbWarmMsgs(_gw,_gbLive,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
   else if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
   var slug=brainOverride((kind==="tick")?orCfg.fast:(orCfg.active||orCfg.fast),false);   // [credit screen] honor the chosen brain: free mode or an explicit dial pick
   var _decisionTokens=typeof vmHeadroomTokens==="function"?vmHeadroomTokens(_vmTurn,kind,slug):512;

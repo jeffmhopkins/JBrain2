@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jbrain.growbot import prefix
-from jbrain.llm import prefill
+from jbrain.llm import local_catalog, prefill
 from jbrain.llm.slot_roles import GROWBOT_ROLE
 from tests.unit.test_growbot_llm import _COMPLETIONS, _app, _chat, _Gateway
 
@@ -407,9 +407,14 @@ def test_a_turn_marks_the_creature_awake_at_most_once_a_minute(tmp_path: Path) -
     assert store.values["growbot_awake_marks"] == 1
 
 
-def test_a_warm_up_does_not_hold_the_worker(tmp_path: Path) -> None:
+def test_a_warm_up_does_not_hold_the_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A room noise can start a warm-up, so only a turn the creature answers marks it awake."""
     from tests.unit.fakes import FakeSettingsStore
+
+    pool = next(m.kv_pool for m in local_catalog.CATALOG if m.kv_pool is not None)
+    monkeypatch.setattr(local_catalog, "pool_of", lambda _model: pool)
 
     store = FakeSettingsStore()
     app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_cold(cached=7000)))
