@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { byDay, dayHeading } from "./growbot";
+import { byDay, dayHeading, framesHere } from "./growbot";
 
 // Local-time instants, so the day boundaries hold in any time zone the tests run in.
 const NOW = new Date(2026, 10, 12, 9, 30);
@@ -33,5 +33,34 @@ describe("byDay", () => {
       ["10 Nov", 1],
     ]);
     expect(byDay([], NOW)).toEqual([]);
+  });
+});
+
+describe("framesHere", () => {
+  const at = (hostname: string, port = "") => ({ hostname, port });
+  const phone = "Mozilla/5.0 (Linux; Android 14) Chrome/130";
+  it("frames the creature only where the creature lets the app frame it", () => {
+    expect(framesHere("https://jbrain.local:8444/open?t=1", at("jbrain.local"), phone)).toBe(true);
+    expect(framesHere("https://growbot.example.com/open", at("example.com"), phone)).toBe(true);
+    // The owner site's private name, and a subdomain PWA under the preview apex: elsewhere.
+    expect(
+      framesHere("https://growbot.example.com/open", at("owner.jbrain.home.arpa"), phone),
+    ).toBe(false);
+    expect(framesHere("https://growbot.example.com/open", at("jbrain.example.com"), phone)).toBe(
+      false,
+    );
+    expect(framesHere("https://jbrain.local/open", at("jbrain.local"), phone)).toBe(false);
+    expect(framesHere("https://jbrain.local:8444/open", at("jbrain.local", "8443"), phone)).toBe(
+      false,
+    );
+    expect(framesHere("https://notexample.com/open", at("example.com"), phone)).toBe(false);
+    expect(framesHere("http://jbrain.local:8444/open", at("jbrain.local"), phone)).toBe(false);
+    expect(framesHere("not a url", at("jbrain.local"), phone)).toBe(false);
+    expect(framesHere("https://jbrain.local:8444/open", at(""), phone)).toBe(false);
+  });
+
+  it("never frames in the owner app, whose WebView grants a frame no camera", () => {
+    const owner = `${phone} JBrainOwner/1.4`;
+    expect(framesHere("https://jbrain.local:8444/open", at("jbrain.local"), owner)).toBe(false);
   });
 });

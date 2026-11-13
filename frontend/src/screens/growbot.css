@@ -1557,3 +1557,43 @@ a.gb-btn {
   font-size: var(--fs-micro);
   color: var(--text-2);
 }
+
+/* The creature opened in place (GrowbotFrame): over everything on the GrowBot screen, the
+   toast included, since the creature is the whole page while it is open. */
+.gb-frame {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.gb-frame-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+}
+.gb-frame-out {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: var(--fs-secondary);
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+}
+.gb-frame-view {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #000;
+}
+.gb-frame-wait {
+  margin: auto;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}

@@ -1,3 +1,5 @@
+// The app on its LAN name on 443, where the creature (`:8444`) opens in place.
+// @vitest-environment-options { "url": "https://localhost/" }
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -10,6 +12,7 @@ import type {
   GrowbotRobot,
   GrowbotStatus,
 } from "../api/client";
+import { closeTopModalLayer } from "../backLayers";
 import { CERT_NOTED_KEY, LAUNCHED_KEY, THIS_PHONE_KEY } from "../growbot";
 import { GrowbotScreen } from "./GrowbotScreen";
 
@@ -186,11 +189,24 @@ function serve(
 
 const UP: GrowbotStatus = { service: "up", connected: 1, robots: [robot()] };
 
+// The creature's LAN site is the app's own name on :8444 (jsdom's app is on localhost), so
+// it opens in place.
+const HERE_URL = "https://localhost:8444/open?ticket=t";
+
 function ticketRoute(path: string): Response | null {
+  return path === "/api/growbot/ticket" ? json({ ticket: "t", url: HERE_URL }) : null;
+}
+
+// A creature under another site than the app's (the owner site's private name): a frame
+// would open signed out, so it is a link to tap.
+function elsewhereRoute(path: string): Response | null {
   return path === "/api/growbot/ticket"
     ? json({ ticket: "t", url: "https://jbrain.local:8444/open?ticket=t" })
     : null;
 }
+
+const creature = () => screen.findByTitle(/^GrowBot — /);
+const launchedHere = () => localStorage.getItem(LAUNCHED_KEY);
 
 function fakeTab() {
   const tab = { closed: false, opener: {} as unknown, location: { href: "" }, close: vi.fn() };
@@ -362,8 +378,8 @@ describe("GrowbotScreen launching", () => {
     );
   });
 
-  it("explains the certificate the first time, then opens the tab inside the tap", async () => {
-    const { tab, open } = fakeTab();
+  it("explains the certificate the first time, then opens the creature inside the app", async () => {
+    const open = vi.spyOn(window, "open");
     const s = serve(UP, ticketRoute);
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("button", { name: "Open Quorra's buddy" }));
@@ -372,46 +388,52 @@ describe("GrowbotScreen launching", () => {
     const note = screen.getByRole("dialog", { name: "First time on this phone" });
     expect(within(note).getByRole("link", { name: "Download the box's certificate" })).toBeTruthy();
     expect(within(note).getByText(/Nearby devices/)).toBeTruthy();
-    expect(open).not.toHaveBeenCalled();
     fireEvent.click(within(note).getByRole("button", { name: "Open Quorra's buddy wearing Fish" }));
-    // Opened synchronously in the tap, before the ticket request, or the phone blocks it.
-    expect(open).toHaveBeenCalledWith("", "_blank");
-    await waitFor(() => expect(tab.location.href).toBe("https://jbrain.local:8444/open?ticket=t"));
-    expect(tab.opener).toBeNull();
+    // The view is up at once, before its link is minted.
+    const view = screen.getByRole("region", { name: "GrowBot — Quorra's buddy" });
+    expect(within(view).getByText("Opening Quorra's buddy…")).toBeInTheDocument();
+    const frame = await creature();
+    expect(frame).toHaveAttribute("src", HERE_URL);
+    expect(frame.getAttribute("allow")).toContain("camera");
+    expect(frame.getAttribute("allow")).toContain("microphone");
+    expect(frame.getAttribute("allow")).toContain("screen-wake-lock");
+    expect(frame).toHaveAttribute("referrerpolicy", "origin");
+    // The vendored page must not be able to navigate the app.
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-top-navigation");
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-popups-to-escape-sandbox");
+    expect(open).not.toHaveBeenCalled();
     expect(tickets(s)[0]?.body).toEqual({ persona: BUDDY, code: "gb-e3b6d8" });
     expect(localStorage.getItem(CERT_NOTED_KEY)).toBe("1");
-    expect(
-      await screen.findByText("Opened Quorra's buddy wearing Fish in a new tab."),
-    ).toBeTruthy();
+    expect(launchedHere()).toContain(BUDDY);
 
-    // Once per phone: the next open goes straight out, alone this time.
+    fireEvent.click(screen.getByRole("button", { name: "Close GrowBot" }));
+    expect(screen.queryByTitle(/^GrowBot — /)).toBeNull();
+
+    // Once per phone: the next open goes straight in, alone this time.
     fireEvent.click(screen.getByRole("button", { name: "Open Captain Bolt" }));
     fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
     expect(screen.queryByRole("dialog", { name: "First time on this phone" })).toBeNull();
     await waitFor(() => expect(tickets(s)[1]?.body).toEqual({ persona: BOLT }));
+    expect(await creature()).toHaveAttribute("title", "GrowBot — Captain Bolt");
   });
 
   it("opens away from home without the certificate sheet", async () => {
     // The away name has a public certificate: only the LAN site needs the box's own.
-    const { tab } = fakeTab();
     const s = serve({ ...UP, away: true }, (path) =>
       path === "/api/growbot/ticket"
-        ? json({ ticket: "t", url: "https://growbot.example.com/open?ticket=t" })
+        ? json({ ticket: "t", url: "https://growbot.localhost/open?ticket=t" })
         : null,
     );
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("button", { name: "Open Captain Bolt" }));
     fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
     expect(screen.queryByRole("dialog", { name: "First time on this phone" })).toBeNull();
-    await waitFor(() =>
-      expect(tab.location.href).toBe("https://growbot.example.com/open?ticket=t"),
-    );
+    expect(await creature()).toHaveAttribute("src", "https://growbot.localhost/open?ticket=t");
     expect(tickets(s)[0]?.body).toEqual({ persona: BOLT });
   });
 
-  it("closes the blank tab when the link can't be made, and says why", async () => {
+  it("closes the view when the link can't be made, and says why", async () => {
     localStorage.setItem(CERT_NOTED_KEY, "1");
-    const { tab } = fakeTab();
     serve(UP, (path) =>
       path === "/api/growbot/ticket"
         ? json({ detail: "GrowBot needs the box's LAN site (JBRAIN_LAN_ADDR)" }, 409)
@@ -421,24 +443,78 @@ describe("GrowbotScreen launching", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
     fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
     expect(await screen.findByText(/GrowBot didn't open — GrowBot needs/)).toBeInTheDocument();
-    expect(tab.close).toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: /^GrowBot — / })).toBeNull();
+    expect(launchedHere()).toBeNull();
   });
 
-  it("gives a link to tap when the phone blocks the new tab", async () => {
+  it("gives a link to tap when the creature can't open inside the app from here", async () => {
     localStorage.setItem(CERT_NOTED_KEY, "1");
-    vi.spyOn(window, "open").mockReturnValue(null);
+    serve(UP, elsewhereRoute);
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
+    const link = await screen.findByRole("link", { name: /tap here to open it/ });
+    expect(link).toHaveAttribute("href", "https://jbrain.local:8444/open?ticket=t");
+    expect(screen.queryByRole("region", { name: /^GrowBot — / })).toBeNull();
+  });
+
+  it("closes the view on the platform Back", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
     serve(UP, ticketRoute);
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
     fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
-    const link = await screen.findByRole("link", { name: /tap here to open GrowBot/ });
-    expect(link).toHaveAttribute("href", "https://jbrain.local:8444/open?ticket=t");
+    await creature();
+    act(() => {
+      expect(closeTopModalLayer()).toBe(true);
+    });
+    expect(screen.queryByTitle(/^GrowBot — /)).toBeNull();
+  });
+
+  it("says nothing for a link that comes back after its view was closed", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    let fail: (r: Response) => void = () => {};
+    serve(UP, (path) =>
+      path === "/api/growbot/ticket"
+        ? new Promise<Response>((res) => {
+            fail = res;
+          })
+        : null,
+    );
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Close GrowBot" }));
+    await act(async () => {
+      fail(json({ detail: "nope" }, 409));
+    });
+    expect(screen.queryByText(/GrowBot didn't open/)).toBeNull();
+    // The launch it noted stays: only an answer for the open view may take it back.
+    expect(launchedHere()).toContain(SPROUT);
+  });
+
+  it("leaves for a browser tab from the view, on a fresh link", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    const { tab, open } = fakeTab();
+    const s = serve(UP, ticketRoute);
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
+    await creature();
+    fireEvent.click(screen.getByRole("button", { name: "Open in a browser tab" }));
+    // Opened synchronously in the tap, before the ticket request, or the phone blocks it.
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    expect(screen.queryByTitle(/^GrowBot — /)).toBeNull();
+    await waitFor(() => expect(tab.location.href).toBe(HERE_URL));
+    expect(tab.opener).toBeNull();
+    expect(tickets(s)).toHaveLength(2);
+    expect(tickets(s)[1]?.body).toEqual({ persona: SPROUT });
+    expect(await screen.findByText("Opened Sprout in a new tab.")).toBeInTheDocument();
   });
 
   it("learns which phone this is from the launch that lands here", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.setItem(CERT_NOTED_KEY, "1");
-    fakeTab();
     const s = serve(UP, ticketRoute, null, overview({ phones: overview().phones.slice(1) }));
     render(<GrowbotScreen />);
     // Not known yet: Captain Bolt's phone is just its label.
@@ -1874,14 +1950,13 @@ describe("GrowbotScreen after review", () => {
     expect(launched()).toBeNull();
   });
 
-  it("forgets a blocked launch until its link is tapped here", async () => {
+  it("forgets a launch it couldn't open in place until its link is tapped here", async () => {
     localStorage.setItem(CERT_NOTED_KEY, "1");
-    vi.spyOn(window, "open").mockReturnValue(null);
-    serve(UP, ticketRoute);
+    serve(UP, elsewhereRoute);
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
     fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
-    const link = await screen.findByRole("link", { name: /tap here to open GrowBot/ });
+    const link = await screen.findByRole("link", { name: /tap here to open it/ });
     expect(launched()).toBeNull();
     link.addEventListener("click", (e) => e.preventDefault());
     fireEvent.click(link);

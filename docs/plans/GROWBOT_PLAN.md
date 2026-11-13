@@ -109,7 +109,8 @@ needs no new mDNS alias, which would otherwise only be installed by a host updat
   'wasm-unsafe-eval' <hashes> 'unsafe-hashes'; style-src 'self' 'unsafe-inline'; img-src 'self'
   data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob:;
   font-src 'self' data:; form-action 'self'; object-src 'none'; base-uri 'self';
-  frame-ancestors 'self'`. Rather than rewriting upstream's inline code, `apply.py` hashes every
+  frame-ancestors 'self'` (plus the PWA's own origin since 2026-11-13, so the GrowBot screen can
+  open the creature in place; growbot/README.md has the rule). Rather than rewriting upstream's inline code, `apply.py` hashes every
   inline script and inline handler into `site/csp.json`, so `script-src` never needs
   `'unsafe-inline'`, and the build refuses a handler shape it cannot hash.
   `'wasm-unsafe-eval'` is for ONNX Runtime and MediaPipe; `blob:` in `connect-src` is for the

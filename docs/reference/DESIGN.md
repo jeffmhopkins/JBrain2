@@ -3280,6 +3280,14 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   already wears Fish here, since every tab of the rider's phone may drive it; disabled with the
   reason only when the key is revoked) and **On another phone…** (*Two codes to scan, alone or
   wearing Fish.*).
+- **The creature opens in place** (owner, 2026-11-13). *On this phone* shows the creature as a
+  full-screen view over the GrowBot screen, not a browser tab: a top bar with a back chevron and
+  the persona's name (Back, or the platform Back gesture, closes it and ends that session here)
+  and a worded *Browser* exit on the right that opens the same persona in a tab on a fresh link
+  (the way out of a blank frame, e.g. an untrusted `:8444` certificate). It shows *Opening
+  <name>…* while the link is minted. From an address the creature does not let frame it (the
+  owner site, the owner app's WebView, a subdomain PWA), the launch falls back to a *tap here to
+  open it* toast. Camera and microphone grants then belong to the app's own name, not `:8444`.
 - **Body.** The robot's card: its name, its state in words beside the dot (on · seen 20 s ago /
   off · last seen 3 h ago / key revoked — can't connect), who wears it (*Sprout is wearing it,
   on Pixel 6a.* or *Nobody is wearing Fish — it stands still until a persona connects.*), the

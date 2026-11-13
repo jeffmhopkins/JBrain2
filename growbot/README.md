@@ -90,7 +90,7 @@ traffic (chat, voice, camera frames), as it does the PWA's. One thing the LAN or
 the jcode previews (`<slug>-preview.<host>`, the owner's own sandboxed dev apps) are same-site
 with it, so a hostile preview the phone opened could toss a `Domain=<host>` `gb_session` that
 signs the phone out there, or spend `/open`'s backoff. Neither reaches a session, the relay or a
-response (exact-Origin checks, `frame-ancestors 'self'`, no CORS); a `__Host-` cookie name would
+response (exact-Origin checks, `frame-ancestors` naming the PWA alone, no CORS); a `__Host-` cookie name would
 close the first, at the cost of signing every phone out once.
 
 The api picks the link: a ticket minted from the PWA on the LAN site opens on `:8444`, one
@@ -187,7 +187,9 @@ page, so getting it back is one scan.
 - **No egress.** Every response carries a CSP of `'self'` for every fetch directive (`blob:` and
   `data:` where the app needs them, `'wasm-unsafe-eval'` for ONNX Runtime and MediaPipe, and
   the inline-script hashes from `site/csp.json`, never `'unsafe-inline'` for scripts), with
-  `frame-ancestors 'self'`, `base-uri 'self'`, `form-action 'self'` and `object-src 'none'`,
+  `frame-ancestors 'self'` plus the PWA's own origin (`GROWBOT_PWA_HOST`, the box's `JBRAIN_DOMAIN`, away; the
+  site's name less `:8444` at home; never a wildcard, so a jcode preview cannot frame it: the GrowBot screen
+  opens the creature in place, in a sandboxed frame with no top navigation), `base-uri 'self'`, `form-action 'self'` and `object-src 'none'`,
   plus `nosniff`, `no-referrer` and a Permissions-Policy granting camera, microphone and the
   motion sensors to this origin. The server calls only the three URLs above, with environment
   proxies and redirects disabled. A chat message keeps only `text` parts and inline
@@ -215,7 +217,8 @@ page, so getting it back is one scan.
   counts, and so do cross-site `/open` navigations, so a page the owner visits cannot lock out
   the PWA's own link; an `/open` that is not a top-level navigation (`Sec-Fetch-Dest` other than
   `document`, except `empty` with `Sec-Fetch-Mode: navigate`, the installed app's service worker
-  passing the link on; a frame is refused) is 403 and never counted, and a cookieless socket that sends an `Origin` (a
+  passing the link on; a frame is refused unless it is same-site and its `Referer` is the PWA's
+  origin, the GrowBot screen opening it in place) is 403 and never counted, and a cookieless socket that sends an `Origin` (a
   browser, never the chip) is 403. The counts are only per client while Docker hands Caddy the
   real source address; behind a userland proxy every client shares one count. Socket slots are taken at the
   admission check, so a burst cannot overshoot them. Outbound calls run on pools apart from

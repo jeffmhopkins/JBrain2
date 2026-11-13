@@ -332,6 +332,7 @@ def run(gb: types.ModuleType, site: Path, fake: str, tmp_path: Path) -> Iterator
         stt_url=fake + "/v1",
         token_file=token,
         trusted_proxy="127.0.0.2",
+        pwa_host="example.com",
     )
     running = _Running(gb.GrowBot(config))
     yield running
@@ -2111,7 +2112,7 @@ def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
 ) -> None:
     monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
     # An <img> or fetch from any page: refused before the api, never counted.
-    # A frame is a navigation too, but only the top level is the PWA's link: a same-site page
+    # A frame is a navigation too, but only the PWA itself may frame the link: a same-site page
     # framing /open must neither spend the owner's tries nor plant a session.
     for dest, mode in [("image", "no-cors"), ("empty", "cors"), ("iframe", "navigate")] * 2:
         resp = run.request(
@@ -2156,6 +2157,102 @@ def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
     resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", headers=worker, cookie=False)
     assert resp.status == 200 and resp.getheader("Set-Cookie")
     resp.read()
+
+
+@pytest.mark.parametrize(
+    ("host", "away", "pwa"),
+    [
+        ("jbrain.local:8444", "", "https://jbrain.local"),
+        ("growbot.example.com", "1", "https://example.com"),
+        ("192.168.1.5:8444", "", "https://192.168.1.5"),
+    ],
+)
+def test_the_pwa_alone_may_frame_the_creature(
+    run: _Running, host: str, away: str, pwa: str
+) -> None:
+    site = {"Host": host, **({"X-Growbot-Away": away} if away else {})}
+    frame = {**site, "Sec-Fetch-Dest": "iframe", "Sec-Fetch-Mode": "navigate"}
+    resp = run.request(
+        "GET",
+        "/open?ticket=good-ticket&id=gb-abc123",
+        headers={**frame, "Sec-Fetch-Site": "same-site", "Referer": f"{pwa}/"},
+        cookie=False,
+    )
+    assert resp.status == 200 and resp.getheader("Set-Cookie")
+    csp = resp.getheader("Content-Security-Policy") or ""
+    assert f"frame-ancestors 'self' {pwa};" in csp
+    resp.read()
+    # Another page on the same site (a jcode preview), or one that hides where it is, may not.
+    for referer in ["https://abc-preview.example.com/", "https://evil.example/", ""]:
+        resp = run.request(
+            "GET",
+            "/open?ticket=good-ticket&id=gb-abc123",
+            headers={**frame, "Sec-Fetch-Site": "same-site", "Referer": referer},
+            cookie=False,
+        )
+        assert resp.status == 403
+        resp.read()
+    resp = run.request(
+        "GET",
+        "/open?ticket=good-ticket&id=gb-abc123",
+        headers={**frame, "Sec-Fetch-Site": "cross-site", "Referer": f"{pwa}/"},
+        cookie=False,
+    )
+    assert resp.status == 403
+    resp.read()
+
+
+def test_a_refused_frame_counts_nothing_and_other_names_keep_self_alone(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
+    frame = {
+        "Host": "jbrain.local:8444",
+        "Sec-Fetch-Dest": "iframe",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-site",
+        "Referer": "https://abc-preview.jbrain.local/",
+    }
+    for _ in range(4):
+        resp = run.request("GET", "/open?ticket=bad", headers=frame, cookie=False)
+        assert resp.status == 403
+        resp.read()
+    # Not one of those spent a try: the PWA's own framed link still opens, same-origin too.
+    ok = {**frame, "Sec-Fetch-Site": "same-origin", "Referer": "https://jbrain.local/"}
+    resp = run.request("GET", "/open?ticket=good-ticket", headers=ok, cookie=False)
+    assert resp.status == 200 and resp.getheader("Set-Cookie")
+    resp.read()
+    # A name that is not the creature's frames nowhere but itself.
+    resp = run.request("GET", "/v3/next.html", headers={"Host": "elsewhere.example:9000"})
+    csp = resp.getheader("Content-Security-Policy") or ""
+    assert "frame-ancestors 'self';" in csp
+    resp.read()
+
+
+@pytest.mark.parametrize(
+    ("host", "away", "public"),
+    [
+        ("jbrain.local:8445", "", ""),
+        ("jbrain.local:8444", "1", ""),
+        ("growbot.example.com", "1", ""),
+        ("example.com", "1", "example.com"),
+        ("growbot.example.com", "1", "exa mple.com"),
+        ("", "", ""),
+    ],
+)
+def test_a_name_that_is_not_the_creatures_frames_nowhere(
+    gb: types.ModuleType, host: str, away: str, public: str
+) -> None:
+    assert gb.pwa_origin(host, bool(away), public) == ""
+
+
+def test_away_the_framer_is_the_pwas_own_name_not_the_preview_base(
+    gb: types.ModuleType,
+) -> None:
+    # A PWA on a subdomain hangs previews (and the away creature) under the apex: the apex
+    # is some other site, and only the PWA's own name may frame the creature.
+    got = gb.pwa_origin("growbot.example.com", True, "jbrain.example.com")
+    assert got == "https://jbrain.example.com"
 
 
 def test_a_cookieless_socket_from_a_browser_is_refused(run: _Running) -> None:
