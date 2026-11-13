@@ -575,7 +575,7 @@
     m.lum += (to.lum - m.lum) * 0.08; m.size += (to.size - m.size) * 0.08;
     var talk = d.talking ? d.talk : 0, hearing = d.hearing && !d.talking;
     var lum = m.lum * (0.82 + 0.45 * talk) * (hearing ? 1.06 : 1) * (0.94 + 0.06 * Math.sin(d.t / 900));
-    var cx = LW / 2 + d.gaze.x * 10 + d.sway * 30, cy = 300 + d.bob + d.gaze.y * 8;
+    var cx = LW / 2 + d.gaze.x * 10 + d.sway * 30, cy = d.mid + d.bob + d.gaze.y * 8;
     c.save();
     c.translate(cx, cy);
     c.rotate(rot);
@@ -677,10 +677,27 @@
 
   var FACES = { ostrich: ostrich, robot: robot, lantern: lantern, ember: ember };
 
+  /* Dave speaks in words and light, not droid beeps (owner, 2026-11-12): while the ember is
+     on, upstream's blip, the chirps, trills and warbles its acts make, plays as if muted, which
+     keeps the buzz that goes with each. Wrapped at the first frame, by when the page has
+     defined it; its own calls go through the global, so they meet the wrapper too. */
+  var hushed = false;
+  function hush() {
+    if (hushed || typeof window.blip !== "function") return;
+    hushed = true;
+    var blip = window.blip;
+    window.blip = function () {
+      if (face !== "ember" || window.MUTED) return blip.apply(this, arguments);
+      window.MUTED = true;
+      try { return blip.apply(this, arguments); } finally { window.MUTED = false; }
+    };
+  }
+
   /* One frame. `s` is what upstream's drawFace computed for its own eyes: t, emotion, eye
      (P.eye), smile, energy, blink, paused, dreaming, think, orbit, looking, gx/gy (the glance
      at a touch, -1..1), shake, talking, glow. W/H are CSS px; cx already carries the DPR. */
   function draw(c, W, H, s) {
+    hush();
     var sp = spec(s.emotion), k, side;
     if (!cur) cur = { l: copy(sp.l), r: copy(sp.r), tilt: sp.tilt, crest: sp.crest };
     if (s.emotion !== lastEmo) {
@@ -756,6 +773,9 @@
        the canvas: the caption, the text box and the button bar own the rest, and the neck or
        chest below the band runs on behind them. */
     var z = Math.min(W / LW, H * 0.62 / 480);
+    /* The ember sits in the middle of the whole screen, in the design's units (owner,
+       2026-11-12: it read as high at the band's own 300). */
+    d.mid = (H / 2 - (H * 0.02 - 40 * z)) / z;
     /* The ember is a lens in a dark room: the mood sky shows only as a tint behind it. */
     if (face === "ember") {
       c.save();
