@@ -438,7 +438,7 @@ thought answers with what it found. This session's conversation lives in page me
 past sessions are never searched, only what was logged, filed or dreamed from them. One search a
 turn, only on a turn that answers someone, never from the follow-up, at most one per 15 s; if the
 person speaks meanwhile or the creature cannot think, the find
-rides their turn (`RECALL_PATCHES`). While it searches, its line only says it is thinking back, never an answer or "I don't know"; and what it found stays in front of it for the next 90 s of its person's turns, since its answer is often talked over and a re-ask must not meet "I don't remember" (found on the box, 2026-11-12).
+rides their turn (`RECALL_PATCHES`). While it searches, its line only says it is thinking back, never an answer or "I don't know": a reply with a search opens with `recall` (not first in the schema: a visual memory action owns that key), the streamed voice holds a say behind one, and the page swaps any say that is not purely thinking back for a stock line (field, 2026-11-13); and what it found stays in front of it for the next 90 s of its person's turns, since its answer is often talked over and a re-ask must not meet "I don't remember" (found on the box, 2026-11-12).
 
 **Its name.** Upstream's seed says "I am Sprout" and the creature's own name (`goals.selfName`) is set only when its person confirms one, so a persona named Dave woke up as Sprout. A box creature born fresh (a new, reset or seeded persona) now starts out with its persona's name; one already awake keeps its own, which the owner edits under Soul as "Calls itself" (`NAME_PATCHES`, owner 2026-11-12).
 

@@ -1282,8 +1282,8 @@ function gbSessAdd(u,a){ try{
    asked must finish first (its trace, its speech, its visual work), and a follow-up that cannot
    run hands its find to the person's next turn instead of leaving "let me think back" unanswered. */
 function gbRecallAsk(q,kind,extra){
-  var now=Date.now(), r, ev, tries=0, words=String(q||"").replace(/["\s]+/g," ").trim().slice(0,60);
-  if(!words||/^omit\b/i.test(words)) return;
+  var now=Date.now(), r, ev, tries=0, words=gbRecallWords(q);
+  if(!words) return;
   if(kind!=="event"){ logEv("recall_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("recall_skip",{why:"follow"}); return; }
   if(now-_gbRecallT<GB_RECALL_GAP_MS){ logEv("recall_skip",{why:"gap"}); return; }
@@ -1303,6 +1303,27 @@ function gbRecallAsk(q,kind,extra){
     if(!inFlight) carry("refused");
   }
   setTimeout(go,0);
+  return true;
+}
+/* The line said while it looks: the model's own only when every word of it is thinking back, else
+   one of these. It has not looked yet, so an answer or "I don't know" there is a guess the find
+   then contradicts (field, 2026-11-13: "I found <two names>" before the find named all four). */
+var GB_RECALL_LINES=["Hmm, let me think back.","Let me look back.","One moment, I'm thinking back.","Let me remember."],
+  GB_RECALL_OK={hmm:1,hm:1,um:1,oh:1,ok:1,okay:1,let:1,me:1,one:1,moment:1,sec:1,second:1,i:1,im:1,am:1,
+    think:1,thinking:1,back:1,look:1,looking:1,remember:1,see:1,wait:1,just:1,a:1,bit:1};
+function gbRecallLine(say){
+  var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean);
+  if(s.length<=60&&w.length&&/\b(think|thinking|remember|look)\b/.test(w.join(" "))&&w.every(function(x){ return GB_RECALL_OK[x]===1; })) return s;
+  return GB_RECALL_LINES[Math.floor(Math.random()*GB_RECALL_LINES.length)];
+}
+/* A search word list, not the schema's OMIT or a filler some fields get ("none"). */
+function gbRecallWords(q){ var w=String(q||"").replace(/["\s]+/g," ").trim();
+  return !w||/^omit\b/i.test(w)||/^(none|null|nothing|no|n\/?a|unknown|-)$/i.test(w)?"":w.slice(0,60); }
+/* A reply that opens with a search holds its say while it streams; the reply handler speaks the
+   thinking-back line in its place. A search after say changes nothing that has been voiced. */
+function gbRecallStreaming(full){
+  var m=/^\s*\{\s*"recall"\s*:\s*"([^"]*)"/.exec(String(full||""));
+  return !!(m&&gbRecallWords(m[1]));
 }
 """
 
@@ -1320,11 +1341,15 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
         "    '\"fact\":\"OMIT unless your person just told you something worth keeping about"
         " their life, people, plans or likes: one plain line for your fact book (lunch today:"
         " a chalupa and a taco)\",' +\n"
+        # A search opens the reply when there is one, so the streamed voice knows of it before
+        # say (field, 2026-11-13: "I found <two names>" and "not the place itself" were spoken
+        # while say streamed, the recall key arriving after them). It is not first in the
+        # schema: a visual memory action owns the first key.
         "    '\"recall\":\"OMIT almost always. when they ask about something from before that"
         " you cannot see above, a few search words (taco bell order) to look through your fact"
-        " book, diary and this conversation. you have not looked yet, so say never answers"
-        " and never says you do not know: make say only a short natural line that you are"
-        " thinking back, and you answer with what you find next thought\",' +",
+        " book, diary and this conversation. when you use it, write it as the FIRST key of your"
+        " reply (after visual_memory if you use one), before say. you have not looked yet, so that say is only a short line that you are thinking back, never an"
+        " answer and never that you do not know; you answer with what you find next thought\",' +",
         1,
     ),
     (
@@ -1343,8 +1368,9 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "    var _dl=0; if(o.log&&String(o.log)",
         "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))"
-        " logEv(\"fact\",{n:_live.facts.length}); if(typeof o.recall===\"string\")"
-        " gbRecallAsk(o.recall,kind,extra); }catch(_fe){}\n"
+        " logEv(\"fact\",{n:_live.facts.length}); if(typeof o.recall===\"string\"&&"
+        "gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbRecallLine(o.say);"
+        " }catch(_fe){}\n"
         "    var _dl=0; if(o.log&&String(o.log)",
         1,
     ),
@@ -1383,6 +1409,15 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += RECALL_PATCHES
+PATCHES += [
+    (
+        "v3/next.html",
+        "  var s=extractSayPartial(full); if(!s) return; var v=s.value;",
+        "  if(gbRecallStreaming(full)) return;\n"
+        "  var s=extractSayPartial(full); if(!s) return; var v=s.value;",
+        1,
+    ),
+]
 
 # A persona's name (owner, 2026-11-12: Dave greeted him with "I'm Sprout"). Upstream's seed says
 # "I am Sprout" and its own name (goals.selfName) is set only when its person confirms one, so a
@@ -1556,15 +1591,15 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        "gbRecallAsk(o.recall,kind,extra); }catch(_fe){}",
-        "gbRecallAsk(o.recall,kind,extra); if((o.sleep===true||o.sleep===\"true\")&&"
+        "o.say=gbRecallLine(o.say); }catch(_fe){}",
+        "o.say=gbRecallLine(o.say); if((o.sleep===true||o.sleep===\"true\")&&"
         "kind===\"event\") gbSleepGrant(); }catch(_fe){}",
         1,
     ),
     (
         "v3/prompts.js",
-        " thinking back, and you answer with what you find next thought\",' +",
-        " thinking back, and you answer with what you find next thought\",' +\n"
+        " you answer with what you find next thought\",' +",
+        " you answer with what you find next thought\",' +\n"
         "    '\"sleep\":\"OMIT unless your person just said you may sleep or told you to go to"
         " sleep: then true, with a goodnight in say\",' +",
         1,
@@ -1814,7 +1849,7 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall2"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3"',
         1,
     ),
     # And the soul code that names a fresh persona (NAME_PATCHES).

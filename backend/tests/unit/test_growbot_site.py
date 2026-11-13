@@ -723,7 +723,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall2"' in page
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -1684,8 +1684,50 @@ def test_what_it_just_found_stays_in_front_of_it_for_a_re_ask() -> None:
     assert "lunch: a taco" in got["kept"] and "answer from it" in got["kept"]
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert '_gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();' in page
+
+
+def test_a_search_comes_before_its_say_and_the_say_only_thinks_back() -> None:
+    """Field, 2026-11-13: with recall after say in the reply, the streamed voice had already said
+    "I found Quorra and Tamsin" or "not the place itself" before the page knew a search was
+    coming. A search now opens the reply, a say streaming behind one waits, and the line said
+    while it looks is the model's only when every word of it is thinking back."""
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
-    assert "you have not looked yet, so say never answers and never says you do not know" in prompts
+    assert prompts.index('\'"say":"\' + (gbTalk') < prompts.index('\'"recall":"OMIT almost')
+    assert "FIRST key of your reply (after visual_memory if you use one), before say." in prompts
+    assert prompts.index('"recall":"OMIT almost') < prompts.index('"sleep":"OMIT unless')
+    got = _recall_page(
+        "var L=GB_RECALL_LINES, r={}, at=function(s){ return L.indexOf(gbRecallLine(s)); };"
+        "r.keep=[gbRecallLine('Hmm, let me think back.'),"
+        "gbRecallLine('One moment, I’m thinking.')];"
+        "r.swap=[at('Yes. I can search. I found Quorra and Tamsin.'),"
+        "at('I remember your speed, but not the place itself.'),at('Let me think… I don’t know'),"
+        "at('I remember Quorra and Tamsin.'),at('')];"
+        'r.s=[gbRecallStreaming(\'{"recall":"work job","say":"I\'),'
+        'gbRecallStreaming(\' { "recall" : "work job"\'),'
+        'gbRecallStreaming(\'{"recall":"OMIT","say":"I\'),'
+        'gbRecallStreaming(\'{"recall":"none","say":"I\'),'
+        'gbRecallStreaming(\'{"recall":"work\'),'
+        'gbRecallStreaming(\'{"say":"I found it","recall":"work job"}\'),'
+        'gbRecallStreaming(\'{"visual_memory":{"action":"recall"},"say":"I\')];'
+        "r.none=gbRecallAsk('none','event',{});"
+        "r.asked=gbRecallAsk('taco','event',{});r.skipped=gbRecallAsk('taco','event',{});"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["keep"] == ["Hmm, let me think back.", "One moment, I’m thinking."]
+    assert all(i >= 0 for i in got["swap"])
+    assert got["s"] == [True, True, False, False, False, False, False]
+    assert got.get("none") is None and got["asked"] is True and got.get("skipped") is None
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    wired = (
+        "gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory)"
+        " o.say=gbRecallLine(o.say);"
+    )
+    assert wired in page
+    assert page.index("o.say=gbRecallLine(o.say);") < page.index("var said=(o.say&&o.say.trim())")
+    assert (
+        "  if(gbRecallStreaming(full)) return;\n  var s=extractSayPartial(full); if(!s) return;"
+        in page
+    )
 
 
 @pytest.mark.parametrize(
@@ -1750,7 +1792,10 @@ def test_recall_is_wired_into_the_turn() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "else _live.scratch.traces.push(_tr);\n      gbSessAdd(_tr.u,_tr.a);" in page
     assert 'gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length});' in page
-    assert "gbRecallAsk(o.recall,kind,extra);" in page
+    assert (
+        "gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory)"
+        " o.say=gbRecallLine(o.say);" in page
+    )
     assert '_gbLive+="\\n\\n== WHAT YOU JUST LOOKED UP ==\\n"+_gbRecallCarry;' in page
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert '\'"fact":"OMIT unless your person just told you' in prompts
