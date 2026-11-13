@@ -1844,7 +1844,8 @@ PATCHES += [
 # person stops, which is why a frame may be up to 20 s old by then rather than the usual 10. What the warm-up could not
 # know (a recall, an imitation guide) rides with the words. Anything else runs as before.
 # While the person keeps talking, the warm-up is sent again only once the scene has moved (the
-# page's frame difference, the same test that lets an idle thought look) or the warm-up is
+# page's frame difference, the same test that lets an idle thought look, at any voiced moment
+# since the last one) or the warm-up is
 # half its life old: a still room would only send the model the same picture again.
 _GB_WARM_JS = r"""var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
 function gbOpenDreamDue(){ return _gbDreamOnOpen&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
@@ -1859,10 +1860,11 @@ function gbSoulView(){ var v=(MODE==="phone")?Object.assign({},_live,{body:null}
     v=Object.assign({},v,{body:Object.assign({},v.body,{walk:Object.assign({},v.body.walk||{},{present:false})})});
   return v; }
 function gbWarmUp(){ var now=Date.now();
+  if(_gbWarm&&frameDiff>3) _gbWarm.moved=true;
   if(window._wakeGateUp||_gbWarmOff||_gbWarmBusy||now-_gbWarmT<GB_WARM_GAP_MS||typeof window.gbBoxLive!=="function") return;
   if(_gbWarm&&_gbWarm.utt!==vadStartT){ _gbWarm=null; _gbWarmMiss++; }
   if(_gbWarmMiss>=GB_WARM_MISS) return;
-  if(_gbWarm&&!_gbWarm.bad&&frameDiff<=3&&!_rideOn&&now>=selfMoveUntil&&now-_gbWarm.t<GB_WARM_MAX_MS/2&&_gbWarm.key===gbWarmKey()) return;
+  if(_gbWarm&&!_gbWarm.bad&&!_gbWarm.moved&&frameDiff<=3&&!_rideOn&&now>=selfMoveUntil&&now-_gbWarm.t<GB_WARM_MAX_MS/2&&_gbWarm.key===gbWarmKey()) return;
   if(inFlight||!orCfg||!_live||now<coolUntil||paused||document.hidden||dreaming||energyState==="asleep"||_gbRecallCarry) return;
   if(!soulOwned()||(typeof vmBusy==="function"&&vmBusy())||llmCfg()) return;
   _gbWarmT=now;

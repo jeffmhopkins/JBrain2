@@ -2103,11 +2103,20 @@ def test_a_still_scene_is_not_sent_again_while_the_person_talks() -> None:
         "var r={}; function again(){ _gbWarmT=0; _gbWarmBusy=false; gbWarmUp();"
         " return sent.length; }"
         "gbWarmUp(); r.still=again(); frameDiff=5; r.moved=again(); frameDiff=0;"
+        "_gbWarmT=Date.now(); frameDiff=5; gbWarmUp(); frameDiff=0; r.between=again();"
+        "_rideOn=true; r.riding=again(); _rideOn=false;"
         "_gbWarm.t-=GB_WARM_MAX_MS/2; r.aged=again();"
         "_live.scratch.traces.push({t:Date.now(),u:'x',a:'y'}); r.talked=again();"
         "console.log(JSON.stringify(r));"
     )
-    assert got == {"still": 1, "moved": 2, "aged": 3, "talked": 4}
+    assert got == {
+        "still": 1,
+        "moved": 2,
+        "between": 3,
+        "riding": 4,
+        "aged": 5,
+        "talked": 6,
+    }
 
 
 def test_the_flash_marks_only_a_picture_the_model_has_not_seen() -> None:
