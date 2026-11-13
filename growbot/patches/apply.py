@@ -1353,6 +1353,8 @@ function gbRecallStreaming(full){
   var s=String(full||""), m=/^\s*\{\s*"recall"\s*:\s*"([^"]*)"/.exec(s);
   if(m&&gbRecallWords(m[1])){ gbToolPill("recall"); return true; }
   if(/^\s*\{\s*"clock"\s*:\s*(true\b|"(true|yes|now)")/i.test(s)){ gbToolPill("clock"); return true; }
+  m=/^\s*\{\s*"calc"\s*:\s*"([^"]*)"/.exec(s);
+  if(m&&gbCalcWanted(m[1])){ gbToolPill("calc"); return true; }
   return false;
 }
 /* The clock (owner, 2026-11-13: "we also need a tool for time"). Its turn carries only the
@@ -1381,15 +1383,103 @@ function gbClockAsk(v,kind,extra){
     "you looked at the clock (the time is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice.");
   return true;
 }
-/* Like the thinking-back line: the model's own only when it only says it is checking. */
-var GB_CLOCK_LINES=["Let me check the time.","One moment, let me look at the clock.","Let me see what time it is."],
-  GB_CLOCK_OK={let:1,me:1,check:1,checking:1,the:1,time:1,clock:1,one:1,moment:1,sec:1,second:1,hmm:1,hm:1,ok:1,okay:1,
-    look:1,looking:1,at:1,see:1,what:1,it:1,is:1,i:1,ill:1,quick:1,a:1,just:1,wait:1};
-function gbClockLine(say){
-  var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean);
-  if(s.length<=60&&w.length&&/\b(check|checking|clock|time)\b/.test(w.join(" "))&&w.every(function(x){ return GB_CLOCK_OK[x]===1; })) return s;
-  return GB_CLOCK_LINES[Math.floor(Math.random()*GB_CLOCK_LINES.length)];
+/* Like the thinking-back line: the model's own only when it only says it is doing that. */
+var GB_TOOL_LINES={
+    clock:["Let me check the time.","One moment, let me look at the clock.","Let me see what time it is."],
+    calc:["Let me work that out.","One moment, let me figure that.","Let me do the math."]},
+  GB_TOOL_SAY_KEY={clock:/\b(check|checking|clock|time)\b/,calc:/\b(work|working|figure|figuring|math|calculate|calculating)\b/},
+  GB_TOOL_SAY_OK={let:1,me:1,check:1,checking:1,the:1,time:1,clock:1,one:1,moment:1,sec:1,second:1,hmm:1,hm:1,ok:1,okay:1,
+    look:1,looking:1,at:1,see:1,what:1,it:1,is:1,i:1,ill:1,quick:1,a:1,just:1,wait:1,work:1,working:1,that:1,this:1,
+    out:1,figure:1,figuring:1,do:1,doing:1,math:1,calculate:1,calculating:1,on:1},
+  GB_CLOCK_LINES=GB_TOOL_LINES.clock;
+function gbToolLine(kind,say){
+  var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean), L=GB_TOOL_LINES[kind];
+  if(s.length<=60&&w.length&&GB_TOOL_SAY_KEY[kind].test(w.join(" "))&&w.every(function(x){ return GB_TOOL_SAY_OK[x]===1; })) return s;
+  return L[Math.floor(Math.random()*L.length)];
 }
+function gbClockLine(say){ return gbToolLine("clock",say); }
+/* Arithmetic and unit conversions (owner, 2026-11-13). A small model's sums are often wrong and
+   it says them aloud, so it writes the math as an expression and the page works it out: a
+   parser for numbers, + - * / ^, parentheses, pi, e and a few functions, never eval. */
+var GB_CALC_FNS={sqrt:Math.sqrt,abs:Math.abs,round:Math.round,floor:Math.floor,ceil:Math.ceil,ln:Math.log,log:Math.log10||function(x){ return Math.log(x)/Math.LN10; }};
+function gbCalcWanted(v){ var w=typeof v==="string"?v.trim():"";
+  return !!w&&!/^omit\b/i.test(w)&&!/^(none|null|nothing|no|n\/?a|-)$/i.test(w); }
+function gbCalc(src){
+  var t=String(src||"").toLowerCase().replace(/[×x](?=\s*[\d(.])/g,"*").replace(/÷/g,"/").replace(/\*\*/g,"^").replace(/(\d),(?=\d{3}\b)/g,"$1").replace(/\s+/g,""), i=0, depth=0;
+  if(!t||t.length>160) throw new Error("calc");
+  function peek(){ return t.charAt(i); }
+  function expr(){ var v=term(), c; while((c=peek())==="+"||c==="-"){ i++; v=c==="+"?v+term():v-term(); } return v; }
+  function term(){ var v=unary(), c; while((c=peek())==="*"||c==="/"){ i++; v=c==="*"?v*unary():v/unary(); } return v; }
+  /* -2^2 is -(2^2), as a person means it; 2^-1 is a half. */
+  function unary(){ var c=peek(), v; if(c==="-"||c==="+"){ i++; if(++depth>40) throw new Error("calc"); v=unary(); depth--; return c==="-"?-v:v; } return pow(); }
+  function pow(){ var b=atom(); if(peek()==="^"){ i++; if(++depth>40) throw new Error("calc"); b=Math.pow(b,unary()); depth--; } return b; }
+  function atom(){
+    var m, v, f;
+    if(peek()==="("){ i++; if(++depth>40) throw new Error("calc"); v=expr(); depth--; if(peek()!==")") throw new Error("calc"); i++; return v; }
+    m=/^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/.exec(t.slice(i)); if(m){ i+=m[0].length; return parseFloat(m[0]); }
+    m=/^[a-z]+/.exec(t.slice(i)); if(!m) throw new Error("calc"); i+=m[0].length;
+    if(m[0]==="pi") return Math.PI; if(m[0]==="e") return Math.E;
+    f=GB_CALC_FNS[m[0]]; if(!f||peek()!=="(") throw new Error("calc");
+    return f(atom());
+  }
+  var r=expr(); if(i!==t.length||typeof r!=="number"||!isFinite(r)) throw new Error("calc");
+  return +r.toPrecision(10);
+}
+function gbCalcAsk(v,kind,extra){
+  if(!gbCalcWanted(v)) return;
+  var q=String(v).replace(/\s+/g," ").trim().slice(0,160), r, found;
+  try{ r=String(gbCalc(q)); found="you worked out "+q+" = "+r; }catch(e){ found="you tried to work out "+q+" but it is not a sum you can do; say so plainly."; }
+  if(kind!=="event"){ logEv("calc_skip",{why:"kind"}); return; }
+  logEv("calc",{ok:r!==undefined?1:0});
+  if(extra&&extra.recallFollow){ _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+found; return; }
+  gbToolFollow("calc",found,"you worked it out (the answer is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice, rounded the way a person would say it.");
+  return true;
+}
+/* Timers and reminders (owner, 2026-11-13: "remind me in 20 minutes to flip the laundry"). They
+   ride the soul (scratch.timers), so a reload keeps them; the page checks every 5 s and a due one
+   is told in a thought of its own, through the same follow-up a search uses. A phone that was
+   locked or closed past the time tells it late, and says so. */
+var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=5000, GB_TIMER_LATE_MS=120000,
+  GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,one:1,about:1,all:1};
+function gbTimers(){ var sc=_live&&_live.scratch; if(!sc) return []; return Array.isArray(sc.timers)?sc.timers:(sc.timers=[]); }
+function gbTimerAbout(v){ return String(v||"").replace(/\s+/g," ").trim().slice(0,80); }
+function gbTimerSet(v,kind,extra){
+  if(typeof v==="string"){ try{ v=JSON.parse(v); }catch(e){ return; } }
+  if(!v||typeof v!=="object") return;
+  if(kind!=="event"){ logEv("timer_skip",{why:"kind"}); return; }
+  if(extra&&extra.recallFollow){ logEv("timer_skip",{why:"follow"}); return; }
+  var list=gbTimers(), about=gbTimerAbout(v.about||v.what), m=+v.minutes, words, n;
+  if(v.cancel===true||v.cancel==="true"){
+    words=about.toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length>2&&!GB_TIMER_STOP[w]; });
+    n=list.length;
+    for(var i=list.length-1;i>=0;i--) if(!words.length||words.some(function(w){ return String(list[i].about).toLowerCase().indexOf(w)>=0; })) list.splice(i,1);
+    logEv("timer_cancel",{n:n-list.length}); gbToolPill("timer"); return true;
+  }
+  if(!(m>0)||!isFinite(m)) return;
+  m=Math.min(m,GB_TIMER_MAX_MIN);
+  list.push({at:Date.now()+Math.round(m*60000),about:about||"your timer",t:Date.now()});
+  if(list.length>GB_TIMERS_MAX) list.splice(0,list.length-GB_TIMERS_MAX);
+  logEv("timer",{m:m}); gbToolPill("timer");
+  return true;
+}
+function gbTimerLeft(ms){ var mn=Math.round(ms/60000); return mn<1?"under a minute":mn<90?mn+" min":Math.round(mn/6)/10+" h"; }
+function gbTimersLine(){
+  var list=gbTimers(), now=Date.now();
+  if(!list.length) return "";
+  return "\n\n== YOUR TIMERS (you set these for your person) ==\n"+list.map(function(x){ return "- "+x.about+": "+(x.at>now?"in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
+}
+function gbTimerTick(){ try{
+  var list=gbTimers(), now=Date.now(), due=[];
+  if(!list.length||_gbFollow) return;
+  for(var i=list.length-1;i>=0;i--) if(list[i].at<=now) due.unshift(list.splice(i,1)[0]);
+  due.forEach(function(x){
+    var late=now-x.at>GB_TIMER_LATE_MS?" (it was due "+gbTimerLeft(now-x.at)+" ago, while you were away)":"";
+    logEv("timer_due",{late:late?1:0});
+    gbToolFollow("timer","your timer went off: "+x.about+late,
+      "your timer for \""+x.about+"\" just went off (it is under WHAT YOU JUST LOOKED UP). tell your person now, plainly, in your own voice.");
+  });
+}catch(e){} }
+if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
 """
 
 RECALL_PATCHES: list[tuple[str, str, str, int]] = [
@@ -1680,7 +1770,9 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         "o.say=gbRecallLine(o.say); if((o.sleep===true",
         "o.say=gbRecallLine(o.say); if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&"
         "!o.visual_memory&&!(_gbFollow&&_gbFollow.tags[0]===\"recall\"))"
-        " o.say=gbClockLine(o.say); if((o.sleep===true",
+        " o.say=gbClockLine(o.say); if(gbCalcAsk(o.calc,kind,extra)&&!_streamSaid&&"
+        "!o.visual_memory&&_gbFollow&&_gbFollow.tags[0]===\"calc\") o.say=gbToolLine(\"calc\",o.say);"
+        " if(o.timer) gbTimerSet(o.timer,kind,extra); if((o.sleep===true",
         1,
     ),
     # Outside the try: a throw above must not leave a skipped call's chip up.
@@ -1697,9 +1789,19 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         "    '\"clock\":\"OMIT almost always. true when your person asks the time or the date, or"
         " you need the exact time: write it as the FIRST key of your reply (after visual_memory"
         " if you use one), before say. you have not looked yet, so that say is only a short line"
-        " that you are checking the clock, never a time; you tell them next thought\",' +\n",
+        " that you are checking the clock, never a time; you tell them next thought\",' +\n"
+        "    '\"calc\":\"OMIT almost always. when an answer needs arithmetic or a unit conversion,"
+        " the math as one plain expression: numbers, + - * / ^, parentheses, sqrt abs round floor"
+        " ceil ln log pi, percents as decimals ((72-32)*5/9 for 72 F in C, 0.15*80 for 15% of 80)."
+        " write it as the FIRST key of your reply (after visual_memory if you use one), before say;"
+        " that say only says you are working it out, never a number; you tell them next thought\",' +\n"
+        "    '\"timer\":\"OMIT unless your person asks you to remind them of something or set a"
+        " timer: an object {\\\"minutes\\\":20,\\\"about\\\":\\\"flip the laundry\\\"}, and"
+        " say confirms it plainly; to cancel one {\\\"cancel\\\":true,\\\"about\\\":\\\"laundry\\\"}."
+        " the page tells you when it goes off\",' +\n",
         1,
     ),
+    ("v3/next.html", "_gbLive+=gbTiredLine();", "_gbLive+=gbTiredLine()+gbTimersLine();", 1),
 ]
 PATCHES += CLOCK_PATCHES
 
@@ -1945,7 +2047,7 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools"',
         1,
     ),
     # And the soul code that names a fresh persona (NAME_PATCHES).

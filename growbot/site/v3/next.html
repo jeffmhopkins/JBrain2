@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=735dc18eeee5"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=44c9f9a23668"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=c7de4d065c32"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=735dc18eeee5"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0a6214754919"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=c7de4d065c32"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -182,7 +182,7 @@
 </div>
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -8601,7 +8601,7 @@ function think(event,kind,extra){
   var _recall=null; try{ if(_hreqAtIssue&&typeof diaryRecall==="function"&&extra&&typeof extra.visualUser==="string"&&extra.visualUser.trim()) _recall=diaryRecall(_live.log,extra.visualUser,now,[(_live.goals&&_live.goals.selfName)||"",typeof ownerTok==="function"?ownerTok():""]); }catch(e){ _recall=null; }   /* 1005 WHOLE-DIARY RECALL (prompts.js diaryRecall): a person's words can pull up to 3 OLDER diary lines into this prompt, only when they cue a memory or share 2+ rare words with a line. Human turns only; the creature's and owner's own names never count as a match (review: the creature's name was the top false trigger). */
   var sys=buildSystem(soulView,{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText(), _gbVm=(typeof vmPrompt==="function"?vmPrompt(_vmTurn):""), _gbSS=selfStats(), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+_gbSS+_gbVm, _gbLiveN=_gbLive.length;    // + short-term self-knowledge (introspection); speech-style rule appended HERE because buildSystem/constitution live in /v3/prompts.js (Brit 0726, item 5)
   if(_imitationAtIssue&&_imitationCtl)_gbLive+=_imitationCtl.guide(_imitationAtIssue);
-  _gbLive+=gbTiredLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept(); if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(_gw&&gbWarmFits(_gw,{sys:sys,bl:buildSystem.live||"",mg:moveGuideText.live||"",ss:_gbSS,vm:_gbVm,blind:parts.length-1!==frames.length*2})){ msgs=gbWarmMsgs(_gw,_gbLive,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
+  _gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept(); if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(_gw&&gbWarmFits(_gw,{sys:sys,bl:buildSystem.live||"",mg:moveGuideText.live||"",ss:_gbSS,vm:_gbVm,blind:parts.length-1!==frames.length*2})){ msgs=gbWarmMsgs(_gw,_gbLive,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
   else if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
   var slug=brainOverride((kind==="tick")?orCfg.fast:(orCfg.active||orCfg.fast),false);   // [credit screen] honor the chosen brain: free mode or an explicit dial pick
   var _decisionTokens=typeof vmHeadroomTokens==="function"?vmHeadroomTokens(_vmTurn,kind,slug):512;
@@ -8713,7 +8713,7 @@ function think(event,kind,extra){
     if(!(o.scratchpad&&o.scratchpad.mood)){                                                            // no mood written this turn → emotion gently colors the weather (never stale)
       var _mm=_live.scratch.mood||(_live.scratch.mood={v:0,e:0.4}), _tgt=EMO2MOOD[emotion];
       if(_tgt){ _mm.v+=(_tgt.v-_mm.v)*0.15; _mm.e+=(_tgt.e-_mm.e)*0.15; } }                            // persisted by the turn's own saveSoul — no extra save
-    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string"&&gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbRecallLine(o.say); if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&!o.visual_memory&&!(_gbFollow&&_gbFollow.tags[0]==="recall")) o.say=gbClockLine(o.say); if((o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();
+    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string"&&gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbRecallLine(o.say); if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&!o.visual_memory&&!(_gbFollow&&_gbFollow.tags[0]==="recall")) o.say=gbClockLine(o.say); if(gbCalcAsk(o.calc,kind,extra)&&!_streamSaid&&!o.visual_memory&&_gbFollow&&_gbFollow.tags[0]==="calc") o.say=gbToolLine("calc",o.say); if(o.timer) gbTimerSet(o.timer,kind,extra); if((o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();
     var _dl=0; if(o.log&&String(o.log).replace(/^\s+/,"").indexOf("📷")!==0){ soulLog(_live,o.log); _dl=_live.log[_live.log.length-1]!==_lgAt?1:0; }   // 1005 review: "📷 ..." is the ENGINE's picture-memory line (visual-memory.js vmDiaryResult); a model copying that format would be a save claim nobody confirmed
     if(typeof o.glow==="string"&&o.glow.trim()){ var _gls=(_live.scratch.glows=_live.scratch.glows||[]), _glsHad=_gls.length; _gls.push({t:Date.now(),g:String(o.glow).replace(/\s+/g," ").trim().slice(0,120)}); _live.scratch.glows=soulRoll(_live,"glows",_gls,_glsHad); _epGlow=true; }   // [P5] felt-reward: mark a delightful/identity-shaping moment; the dream weighs these most (v2:1672). whitespace collapsed (K3 0804 r2#2): glows render line-per-entry in the dream prompt — same line-anchor spoof class as traces/rules
     if(kind==="event"&&typeof o.owner==="string"&&o.owner.trim()){ var _nm=o.owner.trim().replace(/[\n\r{}"'<>|]+/g," ").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,32);
@@ -9007,6 +9007,8 @@ function gbRecallStreaming(full){
   var s=String(full||""), m=/^\s*\{\s*"recall"\s*:\s*"([^"]*)"/.exec(s);
   if(m&&gbRecallWords(m[1])){ gbToolPill("recall"); return true; }
   if(/^\s*\{\s*"clock"\s*:\s*(true\b|"(true|yes|now)")/i.test(s)){ gbToolPill("clock"); return true; }
+  m=/^\s*\{\s*"calc"\s*:\s*"([^"]*)"/.exec(s);
+  if(m&&gbCalcWanted(m[1])){ gbToolPill("calc"); return true; }
   return false;
 }
 /* The clock (owner, 2026-11-13: "we also need a tool for time"). Its turn carries only the
@@ -9035,15 +9037,103 @@ function gbClockAsk(v,kind,extra){
     "you looked at the clock (the time is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice.");
   return true;
 }
-/* Like the thinking-back line: the model's own only when it only says it is checking. */
-var GB_CLOCK_LINES=["Let me check the time.","One moment, let me look at the clock.","Let me see what time it is."],
-  GB_CLOCK_OK={let:1,me:1,check:1,checking:1,the:1,time:1,clock:1,one:1,moment:1,sec:1,second:1,hmm:1,hm:1,ok:1,okay:1,
-    look:1,looking:1,at:1,see:1,what:1,it:1,is:1,i:1,ill:1,quick:1,a:1,just:1,wait:1};
-function gbClockLine(say){
-  var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean);
-  if(s.length<=60&&w.length&&/\b(check|checking|clock|time)\b/.test(w.join(" "))&&w.every(function(x){ return GB_CLOCK_OK[x]===1; })) return s;
-  return GB_CLOCK_LINES[Math.floor(Math.random()*GB_CLOCK_LINES.length)];
+/* Like the thinking-back line: the model's own only when it only says it is doing that. */
+var GB_TOOL_LINES={
+    clock:["Let me check the time.","One moment, let me look at the clock.","Let me see what time it is."],
+    calc:["Let me work that out.","One moment, let me figure that.","Let me do the math."]},
+  GB_TOOL_SAY_KEY={clock:/\b(check|checking|clock|time)\b/,calc:/\b(work|working|figure|figuring|math|calculate|calculating)\b/},
+  GB_TOOL_SAY_OK={let:1,me:1,check:1,checking:1,the:1,time:1,clock:1,one:1,moment:1,sec:1,second:1,hmm:1,hm:1,ok:1,okay:1,
+    look:1,looking:1,at:1,see:1,what:1,it:1,is:1,i:1,ill:1,quick:1,a:1,just:1,wait:1,work:1,working:1,that:1,this:1,
+    out:1,figure:1,figuring:1,do:1,doing:1,math:1,calculate:1,calculating:1,on:1},
+  GB_CLOCK_LINES=GB_TOOL_LINES.clock;
+function gbToolLine(kind,say){
+  var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean), L=GB_TOOL_LINES[kind];
+  if(s.length<=60&&w.length&&GB_TOOL_SAY_KEY[kind].test(w.join(" "))&&w.every(function(x){ return GB_TOOL_SAY_OK[x]===1; })) return s;
+  return L[Math.floor(Math.random()*L.length)];
 }
+function gbClockLine(say){ return gbToolLine("clock",say); }
+/* Arithmetic and unit conversions (owner, 2026-11-13). A small model's sums are often wrong and
+   it says them aloud, so it writes the math as an expression and the page works it out: a
+   parser for numbers, + - * / ^, parentheses, pi, e and a few functions, never eval. */
+var GB_CALC_FNS={sqrt:Math.sqrt,abs:Math.abs,round:Math.round,floor:Math.floor,ceil:Math.ceil,ln:Math.log,log:Math.log10||function(x){ return Math.log(x)/Math.LN10; }};
+function gbCalcWanted(v){ var w=typeof v==="string"?v.trim():"";
+  return !!w&&!/^omit\b/i.test(w)&&!/^(none|null|nothing|no|n\/?a|-)$/i.test(w); }
+function gbCalc(src){
+  var t=String(src||"").toLowerCase().replace(/[×x](?=\s*[\d(.])/g,"*").replace(/÷/g,"/").replace(/\*\*/g,"^").replace(/(\d),(?=\d{3}\b)/g,"$1").replace(/\s+/g,""), i=0, depth=0;
+  if(!t||t.length>160) throw new Error("calc");
+  function peek(){ return t.charAt(i); }
+  function expr(){ var v=term(), c; while((c=peek())==="+"||c==="-"){ i++; v=c==="+"?v+term():v-term(); } return v; }
+  function term(){ var v=unary(), c; while((c=peek())==="*"||c==="/"){ i++; v=c==="*"?v*unary():v/unary(); } return v; }
+  /* -2^2 is -(2^2), as a person means it; 2^-1 is a half. */
+  function unary(){ var c=peek(), v; if(c==="-"||c==="+"){ i++; if(++depth>40) throw new Error("calc"); v=unary(); depth--; return c==="-"?-v:v; } return pow(); }
+  function pow(){ var b=atom(); if(peek()==="^"){ i++; if(++depth>40) throw new Error("calc"); b=Math.pow(b,unary()); depth--; } return b; }
+  function atom(){
+    var m, v, f;
+    if(peek()==="("){ i++; if(++depth>40) throw new Error("calc"); v=expr(); depth--; if(peek()!==")") throw new Error("calc"); i++; return v; }
+    m=/^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/.exec(t.slice(i)); if(m){ i+=m[0].length; return parseFloat(m[0]); }
+    m=/^[a-z]+/.exec(t.slice(i)); if(!m) throw new Error("calc"); i+=m[0].length;
+    if(m[0]==="pi") return Math.PI; if(m[0]==="e") return Math.E;
+    f=GB_CALC_FNS[m[0]]; if(!f||peek()!=="(") throw new Error("calc");
+    return f(atom());
+  }
+  var r=expr(); if(i!==t.length||typeof r!=="number"||!isFinite(r)) throw new Error("calc");
+  return +r.toPrecision(10);
+}
+function gbCalcAsk(v,kind,extra){
+  if(!gbCalcWanted(v)) return;
+  var q=String(v).replace(/\s+/g," ").trim().slice(0,160), r, found;
+  try{ r=String(gbCalc(q)); found="you worked out "+q+" = "+r; }catch(e){ found="you tried to work out "+q+" but it is not a sum you can do; say so plainly."; }
+  if(kind!=="event"){ logEv("calc_skip",{why:"kind"}); return; }
+  logEv("calc",{ok:r!==undefined?1:0});
+  if(extra&&extra.recallFollow){ _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+found; return; }
+  gbToolFollow("calc",found,"you worked it out (the answer is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice, rounded the way a person would say it.");
+  return true;
+}
+/* Timers and reminders (owner, 2026-11-13: "remind me in 20 minutes to flip the laundry"). They
+   ride the soul (scratch.timers), so a reload keeps them; the page checks every 5 s and a due one
+   is told in a thought of its own, through the same follow-up a search uses. A phone that was
+   locked or closed past the time tells it late, and says so. */
+var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=5000, GB_TIMER_LATE_MS=120000,
+  GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,one:1,about:1,all:1};
+function gbTimers(){ var sc=_live&&_live.scratch; if(!sc) return []; return Array.isArray(sc.timers)?sc.timers:(sc.timers=[]); }
+function gbTimerAbout(v){ return String(v||"").replace(/\s+/g," ").trim().slice(0,80); }
+function gbTimerSet(v,kind,extra){
+  if(typeof v==="string"){ try{ v=JSON.parse(v); }catch(e){ return; } }
+  if(!v||typeof v!=="object") return;
+  if(kind!=="event"){ logEv("timer_skip",{why:"kind"}); return; }
+  if(extra&&extra.recallFollow){ logEv("timer_skip",{why:"follow"}); return; }
+  var list=gbTimers(), about=gbTimerAbout(v.about||v.what), m=+v.minutes, words, n;
+  if(v.cancel===true||v.cancel==="true"){
+    words=about.toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length>2&&!GB_TIMER_STOP[w]; });
+    n=list.length;
+    for(var i=list.length-1;i>=0;i--) if(!words.length||words.some(function(w){ return String(list[i].about).toLowerCase().indexOf(w)>=0; })) list.splice(i,1);
+    logEv("timer_cancel",{n:n-list.length}); gbToolPill("timer"); return true;
+  }
+  if(!(m>0)||!isFinite(m)) return;
+  m=Math.min(m,GB_TIMER_MAX_MIN);
+  list.push({at:Date.now()+Math.round(m*60000),about:about||"your timer",t:Date.now()});
+  if(list.length>GB_TIMERS_MAX) list.splice(0,list.length-GB_TIMERS_MAX);
+  logEv("timer",{m:m}); gbToolPill("timer");
+  return true;
+}
+function gbTimerLeft(ms){ var mn=Math.round(ms/60000); return mn<1?"under a minute":mn<90?mn+" min":Math.round(mn/6)/10+" h"; }
+function gbTimersLine(){
+  var list=gbTimers(), now=Date.now();
+  if(!list.length) return "";
+  return "\n\n== YOUR TIMERS (you set these for your person) ==\n"+list.map(function(x){ return "- "+x.about+": "+(x.at>now?"in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
+}
+function gbTimerTick(){ try{
+  var list=gbTimers(), now=Date.now(), due=[];
+  if(!list.length||_gbFollow) return;
+  for(var i=list.length-1;i>=0;i--) if(list[i].at<=now) due.unshift(list.splice(i,1)[0]);
+  due.forEach(function(x){
+    var late=now-x.at>GB_TIMER_LATE_MS?" (it was due "+gbTimerLeft(now-x.at)+" ago, while you were away)":"";
+    logEv("timer_due",{late:late?1:0});
+    gbToolFollow("timer","your timer went off: "+x.about+late,
+      "your timer for \""+x.about+"\" just went off (it is under WHAT YOU JUST LOOKED UP). tell your person now, plainly, in your own voice.");
+  });
+}catch(e){} }
+if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
 function traceMoment(u){
   var s=String(u||"").replace(/\s+/g," ");
   if(s.indexOf("senses: ")!==0) return s;

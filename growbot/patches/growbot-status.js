@@ -38,6 +38,8 @@
     // Tool calls: the page names each one as the model asks for it (gbToolPill in apply.py).
     recall: { icon: "🔎", label: "memory search", colour: "#9ad0ff" },
     clock: { icon: "🕐", label: "time", colour: "#ffe08a" },
+    calc: { icon: "🧮", label: "math", colour: "#a6f0c6" },
+    timer: { icon: "⏲️", label: "timer", colour: "#ffb08a" },
   };
   var TOOL_MIN_MS = 1500;
 

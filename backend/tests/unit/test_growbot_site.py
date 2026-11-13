@@ -760,8 +760,8 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock"'
-        in page
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-'
+        'tools"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -1973,6 +1973,108 @@ def test_the_clock_is_wired_into_the_turn_and_the_strip() -> None:
     assert "window.gbStatus = { begin: begin, end: end, snap: snap, tool: tool };" in strip
 
 
+@pytest.mark.parametrize(
+    ("q", "want"),
+    [
+        ("(72-32)*5/9", 22.22222222),
+        ("0.15*80", 12),
+        ("2^10", 1024),
+        ("-2^2", -4),
+        ("2^-1", 0.5),
+        ("sqrt(16)+abs(-3)", 7),
+        ("1,000*3", 3000),
+        ("3 x 4", 12),
+        ("log(1000)", 3),
+        ("10/3", 3.333333333),
+        ("1/0", "ERR"),
+        ("2+", "ERR"),
+        ("alert(1)", "ERR"),
+        ("constructor", "ERR"),
+        ("(" * 60 + "1" + ")" * 60, "ERR"),
+    ],
+)
+def test_the_math_tool_works_sums_out_without_eval(q: str, want: Any) -> None:
+    """Owner, 2026-11-13: the model's sums are often wrong and spoken aloud; the page parses the
+    expression itself (no eval, so nothing but arithmetic runs)."""
+    got = _recall_page(
+        f"var r;try{{r=gbCalc({json.dumps(q)});}}catch(e){{r='ERR';}}"
+        "console.log(JSON.stringify({r}));"
+    )
+    assert got["r"] == want
+
+
+def test_the_math_tool_answers_in_a_follow_up_and_a_bad_sum_says_so() -> None:
+    got = _recall_page(
+        "var r={a:gbCalcAsk('(72-32)*5/9','event',{})};timers.shift()();inFlight=false;"
+        "r.b=gbCalcAsk('2+','event',{});timers.shift()();r.none=gbCalcAsk('OMIT','event',{});"
+        'r.thinks=thinks;r.logs=logs;r.s=gbRecallStreaming(\'{"calc":"2*3","say":"I\');'
+        "r.line=GB_TOOL_LINES.calc.indexOf(gbToolLine('calc','It is 22 degrees.'));"
+        "r.keep=gbToolLine('calc','Let me work that out.');console.log(JSON.stringify(r));"
+    )
+    assert got["a"] is True and got["b"] is True and got.get("none") is None
+    (ev, _k, _x, carried), (_ev2, _k2, _x2, carried2) = got["thinks"]
+    assert ev.startswith("you worked it out (the answer is under WHAT YOU JUST LOOKED UP)")
+    assert carried == "you worked out (72-32)*5/9 = 22.22222222"
+    assert "not a sum you can do" in carried2
+    assert got["logs"] == [["calc", {"ok": 1}], ["calc", {"ok": 0}]]
+    assert got["s"] is True and got["line"] >= 0 and got["keep"] == "Let me work that out."
+
+
+def test_a_timer_is_set_shown_cancelled_and_told_when_due() -> None:
+    """Owner, 2026-11-13: "remind me in 20 minutes to flip the laundry". Timers ride the soul,
+    the turn sees what is pending, and a due one is told in a follow-up thought."""
+    got = _recall_page(
+        "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};var r={};"
+        "r.set=gbTimerSet({minutes:20,about:'flip the laundry'},'event',{});"
+        'r.str=gbTimerSet(\'{"minutes":5,"about":"tea"}\',\'event\',{});'
+        "r.tick=gbTimerSet({minutes:1,about:'x'},'tick',{});"
+        "r.follow=gbTimerSet({minutes:1,about:'x'},'event',{recallFollow:true});"
+        "r.line=gbTimersLine();"
+        "r.cancel=gbTimerSet({cancel:true,about:'the tea timer'},'event',{});"
+        "r.left=_live.scratch.timers.length;"
+        "T+=21*60000;gbTimerTick();r.after=_live.scratch.timers.length;timers.shift()();"
+        "r.thinks=thinks;r.logs=logs;r.empty=gbTimersLine();console.log(JSON.stringify(r));"
+    )
+    assert got["set"] is True and got["str"] is True
+    assert got.get("tick") is None and got.get("follow") is None
+    assert got["line"] == (
+        "\n\n== YOUR TIMERS (you set these for your person) ==\n"
+        "- flip the laundry: in 20 min\n- tea: in 5 min"
+    )
+    assert got["cancel"] is True and got["left"] == 1 and got["after"] == 0
+    [(ev, kind, extra, carried)] = got["thinks"]
+    assert ev.startswith('your timer for "flip the laundry" just went off')
+    assert kind == "event" and extra == {"recallFollow": True}
+    assert carried == "your timer went off: flip the laundry"
+    assert ["timer_due", {"late": 0}] in got["logs"] and got["empty"] == ""
+
+
+def test_a_timer_missed_while_away_is_told_late_and_says_so() -> None:
+    got = _recall_page(
+        "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};"
+        "gbTimerSet({minutes:10,about:'oven'},'event',{});T+=40*60000;gbTimerTick();"
+        "timers.shift()();console.log(JSON.stringify({c:thinks[0][3]}));"
+    )
+    assert got["c"] == "your timer went off: oven (it was due 30 min ago, while you were away)"
+
+
+def test_math_and_timers_are_wired_into_the_turn_and_the_strip() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        "if(gbCalcAsk(o.calc,kind,extra)&&!_streamSaid&&!o.visual_memory&&_gbFollow&&"
+        '_gbFollow.tags[0]==="calc") o.say=gbToolLine("calc",o.say);'
+        " if(o.timer) gbTimerSet(o.timer,kind,extra);"
+    ) in page
+    assert "_gbLive+=gbTiredLine()+gbTimersLine();" in page
+    assert "setInterval(gbTimerTick,GB_TIMER_TICK_MS);" in page
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    order = ['\'"clock":"OMIT', '\'"calc":"OMIT', '\'"timer":"OMIT', '\'"sleep":"OMIT']
+    assert [prompts.index(k) for k in order] == sorted(prompts.index(k) for k in order)
+    strip = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
+    assert 'calc: { icon: "🧮", label: "math"' in strip
+    assert 'timer: { icon: "⏲️", label: "timer"' in strip
+
+
 _SLEEP_HARNESS = r"""
 var lastDreamT=0, callsSinceDream=0, _gbSess=[], _live={log:[],scratch:{}}, logs=[], facts=[];
 function soulLog(s,t){ s.log.push(String(t).slice(0,140)); }
@@ -2120,7 +2222,7 @@ def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
     assert '_t.indexOf("🌙 dreamed")!==0 && _t.indexOf("📖")!==0;' in page
     assert "applyDream(o,lived); gbDreamKeep(o); }" in page
     assert "brainOverride(orCfg.dream,true),1000,90000)" in page
-    assert "_gbLive+=gbTiredLine(); if(_gbRecallCarry){" in page
+    assert "_gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){" in page
     assert "_gbSess.push({t:Date.now(),txt:got}); gbVisitKeep(" in page
     assert "Date.now()-(+_gbLastV.t||0)>GB_OPEN_GAP_MS) _gbDreamOnOpen=true;" in page
     assert '(o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant();' in page
