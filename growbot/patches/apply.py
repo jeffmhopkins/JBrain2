@@ -1450,11 +1450,14 @@ function gbCalcAsk(v,kind,extra){
    is told in a thought of its own, through the same follow-up a search uses. A phone that was
    locked or closed past the time tells it late, and says so. */
 var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=5000, GB_TIMER_LATE_MS=120000,
-  GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,one:1,about:1,all:1};
+  GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,time:1,one:1,about:1,all:1};
 function gbTimers(){ var sc=_live&&_live.scratch; if(!sc) return []; return Array.isArray(sc.timers)?sc.timers:(sc.timers=[]); }
 function gbTimerAbout(v){ return String(v||"").replace(/\s+/g," ").trim().slice(0,80); }
 function gbTimerWords(about){ return about.toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length>2&&!GB_TIMER_STOP[w]; }); }
-function gbTimerHits(x,words){ return words.some(function(w){ return String(x.about).toLowerCase().indexOf(w)>=0; }); }
+/* Whole words only ("tea" is not in "steak"). A cancel takes any timer sharing a word; a set
+   moves one only when every word of the new one is in it, so "call mom" leaves "call the dentist". */
+function gbTimerHits(x,words,all){ var have=gbTimerWords(String(x.about));
+  return words[all?"every":"some"](function(w){ return have.indexOf(w)>=0; }); }
 /* Field, 2026-11-13: told "launch is at 5:45" at 4:34, it set 56 minutes, not 71. A clock time
    is resolved here, in the clock's zone, to its next coming; the model never does that sum. */
 function gbClockWall(t){
@@ -1468,8 +1471,18 @@ function gbTimerAtMs(v,now){
   var h=+m[1], mi=+(m[2]||0), ap=m[3]?m[3].charAt(0):"";
   if(mi>59||h>23||(ap&&(h<1||h>12))) return 0;
   if(ap==="p"&&h<12) h+=12; else if(ap==="a"&&h===12) h=0;
-  var d=((h*60+mi)*60-gbClockWall(now))%86400; if(d<=0) d+=86400;
-  return now+d*1000;
+  /* "5:45" with no AM or PM is whichever 5:45 comes first, as a person would mean it. */
+  var hs=!ap&&h>=1&&h<=12?[h%12,h%12+12]:[h], best=0;
+  hs.forEach(function(hh){ var t=gbTimerWallMs(hh*3600+mi*60,now); if(!best||t<best) best=t; });
+  return best;
+}
+/* The next instant the clock reads `sec` past midnight. One correction pass keeps a timer across
+   a change of clocks on the wall time asked for, not an hour off it. */
+function gbTimerWallMs(sec,now){
+  var d=(sec-gbClockWall(now))%86400; if(d<=0) d+=86400;
+  var t=now+d*1000, off=(sec-gbClockWall(t))%86400;
+  if(off>43200) off-=86400; else if(off<-43200) off+=86400;
+  return t+off*1000;
 }
 function gbClockShort(t){
   try{ return new Date(t).toLocaleTimeString("en-US",{timeZone:gbClockZone(),hour:"numeric",minute:"2-digit"}); }
@@ -1488,7 +1501,7 @@ function gbTimerSet(v,kind,extra){
   }
   if(!at){ if(!(m>0)||!isFinite(m)) return; at=now+Math.round(Math.min(m,GB_TIMER_MAX_MIN)*60000); }
   /* Set again for the same thing moves it: a corrected time must not leave the old one to ring. */
-  for(var j=list.length-1;j>=0;j--) if(words.length&&gbTimerHits(list[j],words)) list.splice(j,1);
+  for(var j=list.length-1;j>=0;j--) if(words.length&&gbTimerHits(list[j],words,true)) list.splice(j,1);
   var moved=n-list.length; m=Math.round((at-now)/60000);
   list.push({at:at,about:about||"your timer",t:now});
   if(list.length>GB_TIMERS_MAX) list.splice(0,list.length-GB_TIMERS_MAX);

@@ -2058,6 +2058,9 @@ def test_a_timer_is_set_shown_cancelled_and_told_when_due() -> None:
         ("6 pm", 86),
         ("4:00 PM", 1406),
         ("12:30 am", 476),
+        ("5:45", 71),
+        ("4:30", 716),
+        ("12:00", 446),
     ],
 )
 def test_a_timer_for_a_clock_time_is_worked_out_on_the_page(at: str, mins: int) -> None:
@@ -2081,6 +2084,28 @@ def test_a_clock_time_that_is_no_time_sets_nothing(at: str) -> None:
         "console.log(JSON.stringify({ok:ok||null,n:_live.scratch.timers.length}));"
     )
     assert got == {"ok": None, "n": 0}
+
+
+def test_a_clock_time_across_the_change_of_clocks_keeps_its_wall_time() -> None:
+    """Review, 2026-11-13: 11 PM on the night clocks fall back, "9 AM" is eleven hours away."""
+    got = _recall_page(
+        "var T=Date.UTC(2026,10,1,3,0,0);Date.now=function(){return T;};_live={scratch:{}};"
+        "gbTimerSet({at:'9 AM',about:'walk'},'event',{});"
+        "console.log(JSON.stringify({m:(_live.scratch.timers[0].at-T)/60000}));"
+    )
+    assert got == {"m": 660}
+
+
+def test_a_new_timer_moves_only_the_one_it_names() -> None:
+    got = _recall_page(
+        "var T=Date.UTC(2026,10,13,21,34,0);Date.now=function(){return T;};_live={scratch:{}};"
+        "['steak dinner','launch time','call the dentist'].forEach(function(a){"
+        "gbTimerSet({minutes:30,about:a},'event',{}); });"
+        "['tea','bed time','call mom'].forEach(function(a){"
+        "gbTimerSet({minutes:5,about:a},'event',{}); });"
+        "console.log(JSON.stringify({n:_live.scratch.timers.length}));"
+    )
+    assert got == {"n": 6}
 
 
 def test_setting_a_timer_again_moves_it_instead_of_adding_a_second() -> None:
