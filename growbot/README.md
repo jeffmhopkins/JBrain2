@@ -426,7 +426,9 @@ So the owner can see from the screen alone what the creature is doing, and above
 takes a picture (owner, 2026-11-12), `growbot-status.js` keeps a strip of chips at the top-left
 of `/v3/next.html`: photo, looking (a model call carrying a picture), thinking, hearing (an
 utterance being recorded), transcribing, voicing (Kokoro), speaking, moving (relay leg frames),
-and, with nothing under way, listening or idle. Each chip runs a clock; a finished one shrinks to
+and, with nothing under way, listening or idle. Each tool call the creature makes gets its own
+chip too, memory search or time, named the moment the streamed reply shows the call and held
+until what it found is handed to the follow-up thought (`gbStatus.tool`, called from the page). Each chip runs a clock; a finished one shrinks to
 its icon and final time and lingers 5 s. Whatever is under way always sits at the left edge,
 newest first, with finished chips after it, most recent first; on the wake gate the strip drops
 below the GrowBot logo bar instead of covering it. A photo also flashes the

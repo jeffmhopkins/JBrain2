@@ -1282,7 +1282,7 @@ function gbSessAdd(u,a){ try{
    asked must finish first (its trace, its speech, its visual work), and a follow-up that cannot
    run hands its find to the person's next turn instead of leaving "let me think back" unanswered. */
 function gbRecallAsk(q,kind,extra){
-  var now=Date.now(), r, ev, tries=0, words=gbRecallWords(q);
+  var now=Date.now(), r, ev, words=gbRecallWords(q);
   if(!words) return;
   if(kind!=="event"){ logEv("recall_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("recall_skip",{why:"follow"}); return; }
@@ -1293,18 +1293,46 @@ function gbRecallAsk(q,kind,extra){
   var found="you looked back through your memory for \""+words+"\" and "+(r.n?"found:"+r.text:"found nothing about it.");
   _gbRecallLast={t:now,found:found};
   ev="you looked back through your memory for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer your person with it, in your own voice; if it does not answer what they asked, say plainly that you do not remember.";
-  function carry(why){ _gbRecallCarry=found; logEv("recall_carry",{why:why}); }
+  gbToolFollow("recall",found,ev);
+  return true;
+}
+/* What a tool found is answered by one follow-up thought. Two tools asked in one reply (a search
+   and the clock) share that thought rather than queue a second one behind it. */
+var _gbFollow=null;
+function gbToolFollow(tag,found,ev){
+  gbToolPill(tag);
+  if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); _gbFollow.pills.push(_gbToolPills[tag]); return; }
+  var f=_gbFollow={found:found,ev:ev,tags:[tag],pills:[_gbToolPills[tag]]}, tries=0;
+  function done(){ if(_gbFollow===f) _gbFollow=null; f.tags.forEach(function(k,i){ gbToolPillEnd(k,f.pills[i]); }); }
+  function carry(why){ _gbRecallCarry=f.found; logEv(f.tags[0]+"_carry",{why:why}); done(); }
   function go(){
     if(pendingUser) return carry("person");
     var busy=inFlight||paused||document.hidden||Date.now()<coolUntil||(typeof vmBusy==="function"&&vmBusy())||energyState==="asleep";
     if(busy){ if(++tries<120) setTimeout(go,250); else carry("timeout"); return; }
-    _gbRecallCarry=found;
-    think(ev,"event",{recallFollow:true});
-    if(!inFlight) carry("refused");
+    _gbRecallCarry=f.found;
+    think(f.ev,"event",{recallFollow:true});
+    if(!inFlight) carry("refused"); else done();
   }
   setTimeout(go,0);
-  return true;
 }
+/* A tool's chip in the status strip (owner, 2026-11-13: "tool calls should also have a pill"),
+   from the moment the streamed reply shows the call until its find is handed to the follow-up
+   thought. A reply cut off mid-stream never reaches the handler, so a chip also ends on its own. */
+var _gbToolPills={}, GB_TOOL_PILL_MAX_MS=40000;
+function gbToolPill(kind){ try{
+  if(_gbToolPills[kind]||!window.gbStatus||!window.gbStatus.tool) return;
+  var e=window.gbStatus.tool(kind); if(!e) return;
+  _gbToolPills[kind]=e;
+  setTimeout(function(){ gbToolPillEnd(kind,e); },GB_TOOL_PILL_MAX_MS);
+}catch(err){} }
+/* By entry when the caller holds one: a chip that lapsed and a newer one of its kind must not be
+   ended by the older call's hand-off. */
+function gbToolPillEnd(kind,only){ try{
+  var e=_gbToolPills[kind]; if(!e||(only!==undefined&&e!==only)) return; delete _gbToolPills[kind];
+  if(e&&window.gbStatus) window.gbStatus.end(e);
+}catch(err){} }
+/* After the reply handler: a chip whose call was skipped (a gap, a tick) has nothing to wait for. */
+function gbToolPillsSettle(){ for(var k in _gbToolPills) if(!_gbFollow||_gbFollow.tags.indexOf(k)<0) gbToolPillEnd(k); }
 /* The line said while it looks: the model's own only when every word of it is thinking back, else
    one of these. It has not looked yet, so an answer or "I don't know" there is a guess the find
    then contradicts (field, 2026-11-13: "I found <two names>" before the find named all four). */
@@ -1322,8 +1350,45 @@ function gbRecallWords(q){ var w=String(q||"").replace(/["\s]+/g," ").trim();
 /* A reply that opens with a search holds its say while it streams; the reply handler speaks the
    thinking-back line in its place. A search after say changes nothing that has been voiced. */
 function gbRecallStreaming(full){
-  var m=/^\s*\{\s*"recall"\s*:\s*"([^"]*)"/.exec(String(full||""));
-  return !!(m&&gbRecallWords(m[1]));
+  var s=String(full||""), m=/^\s*\{\s*"recall"\s*:\s*"([^"]*)"/.exec(s);
+  if(m&&gbRecallWords(m[1])){ gbToolPill("recall"); return true; }
+  if(/^\s*\{\s*"clock"\s*:\s*(true\b|"(true|yes|now)")/i.test(s)){ gbToolPill("clock"); return true; }
+  return false;
+}
+/* The clock (owner, 2026-11-13: "we also need a tool for time"). Its turn carries only the
+   weekday and the part of the day, so the hour is asked for (`clock`) and read off the phone,
+   in the phone's zone; a phone that reports none, or UTC, is taken to be at home. */
+var GB_CLOCK_HOME_TZ="America/New_York";
+function gbClockWanted(v){ return v===true||/^\s*(true|yes|now)\s*$/i.test(typeof v==="string"?v:""); }
+function gbClockZone(){ var z=""; try{ z=Intl.DateTimeFormat().resolvedOptions().timeZone||""; }catch(e){}
+  return !z||/^(Etc\/)?(UTC|UCT|GMT|GMT[+-]?0|Universal|Zulu|Greenwich)$/i.test(z)?GB_CLOCK_HOME_TZ:z; }
+function gbClockNow(t){ var d=new Date(t), z=gbClockZone(), s;
+  try{ s=d.toLocaleString("en-US",{timeZone:z,weekday:"long",year:"numeric",month:"long",day:"numeric",hour:"numeric",minute:"2-digit"}); }
+  catch(e){ s=d.toString(); z=""; }
+  return "it is "+s+(z?" ("+z+")":"")+".";
+}
+function gbClockAsk(v,kind,extra){
+  var now=Date.now();
+  if(!gbClockWanted(v)) return;
+  if(kind!=="event"){ logEv("clock_skip",{why:"kind"}); return; }
+  /* No gap, unlike a search: reading the clock costs nothing, and a re-ask ("sorry, what?") must
+     not meet "let me check" and silence. A follow-up never asks again, so it cannot loop; one
+     that wants the time has it carried into the next thought instead. */
+  if(extra&&extra.recallFollow){ logEv("clock_skip",{why:"follow"});
+    _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+"you looked at the clock: "+gbClockNow(now); return; }
+  logEv("clock",{});
+  gbToolFollow("clock","you looked at the clock: "+gbClockNow(now),
+    "you looked at the clock (the time is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice.");
+  return true;
+}
+/* Like the thinking-back line: the model's own only when it only says it is checking. */
+var GB_CLOCK_LINES=["Let me check the time.","One moment, let me look at the clock.","Let me see what time it is."],
+  GB_CLOCK_OK={let:1,me:1,check:1,checking:1,the:1,time:1,clock:1,one:1,moment:1,sec:1,second:1,hmm:1,hm:1,ok:1,okay:1,
+    look:1,looking:1,at:1,see:1,what:1,it:1,is:1,i:1,ill:1,quick:1,a:1,just:1,wait:1};
+function gbClockLine(say){
+  var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean);
+  if(s.length<=60&&w.length&&/\b(check|checking|clock|time)\b/.test(w.join(" "))&&w.every(function(x){ return GB_CLOCK_OK[x]===1; })) return s;
+  return GB_CLOCK_LINES[Math.floor(Math.random()*GB_CLOCK_LINES.length)];
 }
 """
 
@@ -1607,6 +1672,37 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += SLEEP_PATCHES
 
+# The clock tool (owner, 2026-11-13), asked the way a search is (RECALL_PATCHES), and a chip for
+# each tool call. A search and the clock in one reply share the search's thinking-back line.
+CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "o.say=gbRecallLine(o.say); if((o.sleep===true",
+        "o.say=gbRecallLine(o.say); if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&"
+        "!o.visual_memory&&!(_gbFollow&&_gbFollow.tags[0]===\"recall\"))"
+        " o.say=gbClockLine(o.say); if((o.sleep===true",
+        1,
+    ),
+    # Outside the try: a throw above must not leave a skipped call's chip up.
+    (
+        "v3/next.html",
+        'kind==="event") gbSleepGrant(); }catch(_fe){}',
+        'kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();',
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        " you answer with what you find next thought\",' +\n",
+        " you answer with what you find next thought\",' +\n"
+        "    '\"clock\":\"OMIT almost always. true when your person asks the time or the date, or"
+        " you need the exact time: write it as the FIRST key of your reply (after visual_memory"
+        " if you use one), before say. you have not looked yet, so that say is only a short line"
+        " that you are checking the clock, never a time; you tell them next thought\",' +\n",
+        1,
+    ),
+]
+PATCHES += CLOCK_PATCHES
+
 # What the quiet beat says, from upstream's live page (Brit, 2026-11-11 "QUIET MOMENT TEXT",
 # after GitHub's last snapshot). The old text framed quiet as company kept with the person, so
 # a creature left alone sat still; the new one hands it the time to chase its wants with its
@@ -1849,7 +1945,7 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock"',
         1,
     ),
     # And the soul code that names a fresh persona (NAME_PATCHES).
