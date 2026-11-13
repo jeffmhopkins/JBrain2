@@ -2148,13 +2148,26 @@ def test_a_notes_search_goes_to_the_box_and_is_answered_in_a_follow_up() -> None
     assert ["brain", {"n": 1, "st": 200}] in got["logs"]
 
 
-def test_a_second_notes_search_waits_for_the_first_to_come_back() -> None:
+@pytest.mark.parametrize(("ago", "asked"), [(0, False), (31_000, True)])
+def test_a_second_notes_search_waits_for_the_first_but_not_for_one_that_hung(
+    ago: int, asked: bool
+) -> None:
     got = _recall_page(
-        _BRAIN_SETUP + "_gbBrainT=-1e15;_gbToolHeld.brain=true;"
+        _BRAIN_SETUP + f"_gbBrainT=-1e15;_gbToolHeld.brain=Date.now()-{ago};"
         "var a=gbBrainAsk('furnace','event',{});"
-        "console.log(JSON.stringify({a:a||null,sent:sent,logs:logs}));"
+        "console.log(JSON.stringify({a:!!a,n:sent.length}));"
     )
-    assert got == {"a": None, "sent": [], "logs": [["brain_skip", {"why": "gap"}]]}
+    assert got == {"a": asked, "n": int(asked)}
+
+
+def test_the_turn_that_answers_a_notes_search_keeps_nothing_and_quiet_ends_with_it() -> None:
+    """Security review, 2026-11-13: words in a note must not become a fact, a diary line or another
+    notes call; and a follow-up that fails must not leave the next ordinary turn quiet."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "if(_gbQuiet){ o.fact=o.log=o.glow=o.brain=o.jot=undefined; }" in page
+    taken = page.index("var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false;")
+    assert page.index("_gbBrainQuiet=true; _gbBrainCarried=false;") < taken
+    assert taken < page.index("var _gen=_flightGen;") < page.index("if(_gbQuiet){")
 
 
 @pytest.mark.parametrize(

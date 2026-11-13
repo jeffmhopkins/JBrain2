@@ -1504,7 +1504,7 @@ var GB_BRAIN_PATH="/api/box/brain", GB_BRAIN_GAP_MS=10000, _gbBrainT=0;
    into) is quiet: notes may hold text from anywhere, so that turn files no note, searches
    nothing, and keeps nothing of it in the soul (no fact, diary line or glow), which travels
    with the persona. Cleared when that turn's reply has been handled. */
-var _gbBrainQuiet=false, _gbBrainCarried=false;
+var _gbBrainQuiet=false, _gbBrainCarried=false, GB_BRAIN_HUNG_MS=30000;
 function gbBrainOn(){ try{ return window.__gbBoxBrain===true&&!!(window.__gbBoxSoul&&window.__gbBoxSoul.persona); }catch(e){ return false; } }
 function gbBrainPost(sub,body){
   body.persona=window.__gbBoxSoul.persona;
@@ -1514,11 +1514,11 @@ function gbBrainPost(sub,body){
 function gbBrainAsk(q,kind,extra){
   var now=Date.now(), words=gbRecallWords(q);
   if(!words||!gbBrainOn()) return;
-  if(_gbBrainQuiet){ logEv("brain_skip",{why:"quiet"}); return; }
   if(kind!=="event"){ logEv("brain_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("brain_skip",{why:"follow"}); return; }
-  if(now-_gbBrainT<GB_BRAIN_GAP_MS||_gbToolHeld.brain){ logEv("brain_skip",{why:"gap"}); return; }
-  _gbBrainT=now; gbToolPill("brain"); _gbToolHeld.brain=1;
+  /* One search out at a time, but one that never came back stops blocking after GB_BRAIN_HUNG_MS. */
+  if(now-_gbBrainT<GB_BRAIN_GAP_MS||now-(_gbToolHeld.brain||0)<GB_BRAIN_HUNG_MS){ logEv("brain_skip",{why:"gap"}); return; }
+  _gbBrainT=now; gbToolPill("brain"); _gbToolHeld.brain=now;
   var ev="you looked through your person's own notes for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer them with it, in your own voice and briefly; if it does not answer what they asked, say plainly that their notes do not say.";
   function found(text){ delete _gbToolHeld.brain; gbToolFollow("brain",text,ev); }
   gbBrainPost("/search",{q:words}).then(function(r){
@@ -1533,7 +1533,6 @@ function gbBrainAsk(q,kind,extra){
 function gbJot(t,kind,extra){
   var txt=typeof t==="string"?t.replace(/\s+/g," ").trim().slice(0,2000):"";
   if(!txt||/^omit\b/i.test(txt)||!gbBrainOn()) return;
-  if(_gbBrainQuiet){ logEv("jot_skip",{why:"quiet"}); return; }
   if(kind!=="event"){ logEv("jot_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("jot_skip",{why:"follow"}); return; }
   gbToolPill("jot"); _gbToolHeld.jot=1;
@@ -1843,14 +1842,14 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         'kind==="event") gbSleepGrant(); }catch(_fe){}',
-        'kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle(); _gbBrainQuiet=false;',
+        'kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();',
         1,
     ),
     # Before anything in the reply is kept: a quiet turn keeps none of it (BRAIN, below).
     (
         "v3/next.html",
         "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))",
-        "    var _gbF0=_gbFollowN; if(_gbBrainQuiet){ o.fact=o.log=o.glow=o.brain=o.jot=undefined; }\n"
+        "    var _gbF0=_gbFollowN; if(_gbQuiet){ o.fact=o.log=o.glow=o.brain=o.jot=undefined; }\n"
         "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))",
         1,
     ),
@@ -1858,7 +1857,10 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         '_gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();',
         '_gbRecallCarry=""; if(_gbBrainCarried){ _gbBrainQuiet=true; _gbBrainCarried=false; } }'
-        " else if(_hreqAtIssue) _gbLive+=gbRecallKept();",
+        " else if(_hreqAtIssue) _gbLive+=gbRecallKept();"
+        # Taken by this flight and cleared at once: a flight that fails or is abandoned must not
+        # leave the person's next turn quiet.
+        " var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false;",
         1,
     ),
     (

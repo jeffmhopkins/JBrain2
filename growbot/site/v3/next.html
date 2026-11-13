@@ -8601,7 +8601,7 @@ function think(event,kind,extra){
   var _recall=null; try{ if(_hreqAtIssue&&typeof diaryRecall==="function"&&extra&&typeof extra.visualUser==="string"&&extra.visualUser.trim()) _recall=diaryRecall(_live.log,extra.visualUser,now,[(_live.goals&&_live.goals.selfName)||"",typeof ownerTok==="function"?ownerTok():""]); }catch(e){ _recall=null; }   /* 1005 WHOLE-DIARY RECALL (prompts.js diaryRecall): a person's words can pull up to 3 OLDER diary lines into this prompt, only when they cue a memory or share 2+ rare words with a line. Human turns only; the creature's and owner's own names never count as a match (review: the creature's name was the top false trigger). */
   var sys=buildSystem(soulView,{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText(), _gbVm=(typeof vmPrompt==="function"?vmPrompt(_vmTurn):""), _gbSS=selfStats(), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+_gbSS+_gbVm, _gbLiveN=_gbLive.length;    // + short-term self-knowledge (introspection); speech-style rule appended HERE because buildSystem/constitution live in /v3/prompts.js (Brit 0726, item 5)
   if(_imitationAtIssue&&_imitationCtl)_gbLive+=_imitationCtl.guide(_imitationAtIssue);
-  _gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; if(_gbBrainCarried){ _gbBrainQuiet=true; _gbBrainCarried=false; } } else if(_hreqAtIssue) _gbLive+=gbRecallKept(); if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(_gw&&gbWarmFits(_gw,{sys:sys,bl:buildSystem.live||"",mg:moveGuideText.live||"",ss:_gbSS,vm:_gbVm,blind:parts.length-1!==frames.length*2})){ msgs=gbWarmMsgs(_gw,_gbLive,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
+  _gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; if(_gbBrainCarried){ _gbBrainQuiet=true; _gbBrainCarried=false; } } else if(_hreqAtIssue) _gbLive+=gbRecallKept(); var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false; if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(_gw&&gbWarmFits(_gw,{sys:sys,bl:buildSystem.live||"",mg:moveGuideText.live||"",ss:_gbSS,vm:_gbVm,blind:parts.length-1!==frames.length*2})){ msgs=gbWarmMsgs(_gw,_gbLive,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
   else if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
   var slug=brainOverride((kind==="tick")?orCfg.fast:(orCfg.active||orCfg.fast),false);   // [credit screen] honor the chosen brain: free mode or an explicit dial pick
   var _decisionTokens=typeof vmHeadroomTokens==="function"?vmHeadroomTokens(_vmTurn,kind,slug):512;
@@ -8713,8 +8713,8 @@ function think(event,kind,extra){
     if(!(o.scratchpad&&o.scratchpad.mood)){                                                            // no mood written this turn → emotion gently colors the weather (never stale)
       var _mm=_live.scratch.mood||(_live.scratch.mood={v:0,e:0.4}), _tgt=EMO2MOOD[emotion];
       if(_tgt){ _mm.v+=(_tgt.v-_mm.v)*0.15; _mm.e+=(_tgt.e-_mm.e)*0.15; } }                            // persisted by the turn's own saveSoul — no extra save
-    var _gbF0=_gbFollowN; if(_gbBrainQuiet){ o.fact=o.log=o.glow=o.brain=o.jot=undefined; }
-    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string"&&gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbRecallLine(o.say); if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbClockLine(o.say); if(gbCalcAsk(o.calc,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbToolLine("calc",o.say); if(o.timer) gbTimerSet(o.timer,kind,extra); if(gbBrainAsk(o.brain,kind,extra)&&!_streamSaid&&!o.visual_memory&&_gbFollowN===_gbF0) o.say=gbToolLine("brain",o.say); gbJot(o.jot,kind,extra); if((o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle(); _gbBrainQuiet=false;
+    var _gbF0=_gbFollowN; if(_gbQuiet){ o.fact=o.log=o.glow=o.brain=o.jot=undefined; }
+    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string"&&gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbRecallLine(o.say); if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbClockLine(o.say); if(gbCalcAsk(o.calc,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbToolLine("calc",o.say); if(o.timer) gbTimerSet(o.timer,kind,extra); if(gbBrainAsk(o.brain,kind,extra)&&!_streamSaid&&!o.visual_memory&&_gbFollowN===_gbF0) o.say=gbToolLine("brain",o.say); gbJot(o.jot,kind,extra); if((o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();
     var _dl=0; if(o.log&&String(o.log).replace(/^\s+/,"").indexOf("📷")!==0){ soulLog(_live,o.log); _dl=_live.log[_live.log.length-1]!==_lgAt?1:0; }   // 1005 review: "📷 ..." is the ENGINE's picture-memory line (visual-memory.js vmDiaryResult); a model copying that format would be a save claim nobody confirmed
     if(typeof o.glow==="string"&&o.glow.trim()){ var _gls=(_live.scratch.glows=_live.scratch.glows||[]), _glsHad=_gls.length; _gls.push({t:Date.now(),g:String(o.glow).replace(/\s+/g," ").trim().slice(0,120)}); _live.scratch.glows=soulRoll(_live,"glows",_gls,_glsHad); _epGlow=true; }   // [P5] felt-reward: mark a delightful/identity-shaping moment; the dream weighs these most (v2:1672). whitespace collapsed (K3 0804 r2#2): glows render line-per-entry in the dream prompt — same line-anchor spoof class as traces/rules
     if(kind==="event"&&typeof o.owner==="string"&&o.owner.trim()){ var _nm=o.owner.trim().replace(/[\n\r{}"'<>|]+/g," ").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,32);
@@ -9159,7 +9159,7 @@ var GB_BRAIN_PATH="/api/box/brain", GB_BRAIN_GAP_MS=10000, _gbBrainT=0;
    into) is quiet: notes may hold text from anywhere, so that turn files no note, searches
    nothing, and keeps nothing of it in the soul (no fact, diary line or glow), which travels
    with the persona. Cleared when that turn's reply has been handled. */
-var _gbBrainQuiet=false, _gbBrainCarried=false;
+var _gbBrainQuiet=false, _gbBrainCarried=false, GB_BRAIN_HUNG_MS=30000;
 function gbBrainOn(){ try{ return window.__gbBoxBrain===true&&!!(window.__gbBoxSoul&&window.__gbBoxSoul.persona); }catch(e){ return false; } }
 function gbBrainPost(sub,body){
   body.persona=window.__gbBoxSoul.persona;
@@ -9169,11 +9169,11 @@ function gbBrainPost(sub,body){
 function gbBrainAsk(q,kind,extra){
   var now=Date.now(), words=gbRecallWords(q);
   if(!words||!gbBrainOn()) return;
-  if(_gbBrainQuiet){ logEv("brain_skip",{why:"quiet"}); return; }
   if(kind!=="event"){ logEv("brain_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("brain_skip",{why:"follow"}); return; }
-  if(now-_gbBrainT<GB_BRAIN_GAP_MS||_gbToolHeld.brain){ logEv("brain_skip",{why:"gap"}); return; }
-  _gbBrainT=now; gbToolPill("brain"); _gbToolHeld.brain=1;
+  /* One search out at a time, but one that never came back stops blocking after GB_BRAIN_HUNG_MS. */
+  if(now-_gbBrainT<GB_BRAIN_GAP_MS||now-(_gbToolHeld.brain||0)<GB_BRAIN_HUNG_MS){ logEv("brain_skip",{why:"gap"}); return; }
+  _gbBrainT=now; gbToolPill("brain"); _gbToolHeld.brain=now;
   var ev="you looked through your person's own notes for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer them with it, in your own voice and briefly; if it does not answer what they asked, say plainly that their notes do not say.";
   function found(text){ delete _gbToolHeld.brain; gbToolFollow("brain",text,ev); }
   gbBrainPost("/search",{q:words}).then(function(r){
@@ -9188,7 +9188,6 @@ function gbBrainAsk(q,kind,extra){
 function gbJot(t,kind,extra){
   var txt=typeof t==="string"?t.replace(/\s+/g," ").trim().slice(0,2000):"";
   if(!txt||/^omit\b/i.test(txt)||!gbBrainOn()) return;
-  if(_gbBrainQuiet){ logEv("jot_skip",{why:"quiet"}); return; }
   if(kind!=="event"){ logEv("jot_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("jot_skip",{why:"follow"}); return; }
   gbToolPill("jot"); _gbToolHeld.jot=1;
