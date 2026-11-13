@@ -2203,7 +2203,7 @@ MIC_PATCHES: list[tuple[str, str, str, int]] = [
         ' setA(sb,"aria-label",M?"speaker off. tap to hear him again":"speaker on. tap to silence him");\n'
         ' var mm=g("gbkMicMode"); if(mm){ var mi=GB_MIC_MODES.indexOf(MM);'
         ' setH(mm,gbMicIcon(MM)+"<span>"+GB_MIC_LABEL[MM]+"</span><span class=\\"gbkPips\\">"+GB_MIC_MODES.map(function(x,i){ return "<i"+(i===mi?" class=\\"on\\"":"")+"></i>"; }).join("")+"</span>");'
-        ' setC(mm,"gbkCell"+(MM==="open"?" on":(MM==="muted"?" gbkWarn on":"")));'
+        ' setC(mm,"gbkCell"+(MM==="muted"?" gbkWarn on":""));'
         ' setA(mm,"aria-label","microphone mode: "+GB_MIC_LABEL[MM]+". tap for "+GB_MIC_LABEL[GB_MIC_MODES[(mi+1)%3]]); }',
         1,
     ),

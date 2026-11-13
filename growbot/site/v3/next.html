@@ -10789,7 +10789,7 @@ function paint(){
     the state. A paused creature shows a play triangle because the caption says to tap one. */
  var pb=g("gbkPause"); setH(pb,px(P?"play":"pause",3)+'<span>'+(P?"wake":"pause")+'</span>'); setC(pb,"gbkCell gbkDanger"+(P?" on":""));
  var sb=g("gbkSound"); setH(sb,gbSpk(!M)+'<span>'+(M?"speaker off":"speaker")+'</span>'); setA(sb,"aria-label",M?"speaker off. tap to hear him again":"speaker on. tap to silence him");
- var mm=g("gbkMicMode"); if(mm){ var mi=GB_MIC_MODES.indexOf(MM); setH(mm,gbMicIcon(MM)+"<span>"+GB_MIC_LABEL[MM]+"</span><span class=\"gbkPips\">"+GB_MIC_MODES.map(function(x,i){ return "<i"+(i===mi?" class=\"on\"":"")+"></i>"; }).join("")+"</span>"); setC(mm,"gbkCell"+(MM==="open"?" on":(MM==="muted"?" gbkWarn on":""))); setA(mm,"aria-label","microphone mode: "+GB_MIC_LABEL[MM]+". tap for "+GB_MIC_LABEL[GB_MIC_MODES[(mi+1)%3]]); } setC(sb,"gbkCell gbkWarn"+(M?" on":""));
+ var mm=g("gbkMicMode"); if(mm){ var mi=GB_MIC_MODES.indexOf(MM); setH(mm,gbMicIcon(MM)+"<span>"+GB_MIC_LABEL[MM]+"</span><span class=\"gbkPips\">"+GB_MIC_MODES.map(function(x,i){ return "<i"+(i===mi?" class=\"on\"":"")+"></i>"; }).join("")+"</span>"); setC(mm,"gbkCell"+(MM==="muted"?" gbkWarn on":"")); setA(mm,"aria-label","microphone mode: "+GB_MIC_LABEL[MM]+". tap for "+GB_MIC_LABEL[GB_MIC_MODES[(mi+1)%3]]); } setC(sb,"gbkCell gbkWarn"+(M?" on":""));
  setA(sb,"aria-pressed",M?"true":"false");
  if(document.body.classList.contains("gbkPaused")!==P) document.body.classList.toggle("gbkPaused",P);
  var sy=g("say");

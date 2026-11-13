@@ -405,7 +405,7 @@ does not greet and fall asleep (`WAKE_GATE_PATCHES`).
 
 **Speaker and mic (owner, 2026-11-13).** The creature's bottom rail has four cells: brain,
 pause, speaker (upstream's sound mute, renamed) and the mic's mode, which a tap steps through
-open mic, push to talk and mic muted, kept per phone in `localStorage gb_mic_mode`. Open mic is
+open mic, push to talk and mic muted (only muted is shaded), kept per phone in `localStorage gb_mic_mode`. Open mic is
 upstream: it hears whenever the ear is on. Push to talk hears only while a finger holds the mic
 button or anywhere on the creature, which then is not a pet; the held clip is upstream's manual
 clip, sent on release. Mic muted keeps the ear on, so the mic is not given up, but nothing it
