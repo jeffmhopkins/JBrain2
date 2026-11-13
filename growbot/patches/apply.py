@@ -1531,6 +1531,8 @@ function gbTimerTick(){ try{
   if(due.length&&typeof saveSoul==="function") saveSoul(_live);
 }catch(e){} }
 if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
+/* The status strip draws a pill for each pending timer (growbot-status.js) and reads them here. */
+try{ window.gbTimers=gbTimers; window.gbClockShort=gbClockShort; }catch(e){}
 /* The owner's notes (owner, 2026-11-13): a persona the owner turned brain access on for, on his
    own phone, searches his notes (`brain`) and files new ones (`jot`). The box is the gate and
    checks every call; the page only offers the fields when the box says this phone may. A search
@@ -1905,11 +1907,16 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         " you answer with what you find next thought\",' +\n",
         " you answer with what you find next thought\",' +\n"
         "    '\"clock\":\"OMIT almost always. true when your person asks the time or the date, or"
-        " you need the exact time: write it as the FIRST key of your reply (after visual_memory"
+        " you need the exact time. the time is never a guess or a memory: an earlier reading has"
+        " gone stale, so look again each time an answer hangs on it (YOUR TIMERS, when shown, says"
+        " the time now). write it as the FIRST key of your reply (after visual_memory"
         " if you use one), before say. you have not looked yet, so that say is only a short line"
         " that you are checking the clock, never a time; you tell them next thought\",' +\n"
-        "    '\"calc\":\"OMIT almost always. when an answer needs arithmetic or a unit conversion,"
-        " the math as one plain expression: numbers, + - * / ^, parentheses, sqrt abs round floor"
+        "    '\"calc\":\"OMIT almost always. arithmetic is a tool call, not a guess: for ANY sum"
+        " beyond single-digit mental math (a multiplication, a percentage, a unit conversion, a"
+        " total, minutes between two times of day) use this, and never say a number you worked out"
+        " in your head. times of day go in as minutes since midnight ((17*60+45)-(16*60+34) from"
+        " 4:34 PM to 5:45 PM). the math as one plain expression: numbers, + - * / ^, parentheses, sqrt abs round floor"
         " ceil ln log pi, percents as decimals ((72-32)*5/9 for 72 F in C, 0.15*80 for 15% of 80)."
         " write it as the FIRST key of your reply (after visual_memory if you use one), before say;"
         " that say only says you are working it out, never a number; you tell them next thought\",' +\n"

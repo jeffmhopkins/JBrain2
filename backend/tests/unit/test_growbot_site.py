@@ -3300,3 +3300,22 @@ def test_a_settled_caption_trimmed_or_cut_to_its_last_sentence_is_the_same_line(
         " T.caption('Line one is here, and it runs on.'); console.log(JSON.stringify(T.lines()));"
     )
     assert [line["text"] for line in lines] == ["Line one is here, and it runs on."]
+
+
+def test_each_pending_timer_is_a_pill_top_right_until_it_goes() -> None:
+    """Owner, 2026-11-13: "when creating a timer or alarm, can they show as a pill on top right?"
+    The strip reads the page's own timers each frame, so a pill lives exactly as long as its
+    timer, and the strip to its left stops short of the pills."""
+    got = _recall_page(
+        "var T=Date.UTC(2026,10,13,21,34,0);Date.now=function(){return T;};"
+        "_live={scratch:{}};gbTimerSet({at:'5:45 PM',about:'launch'},'event',{});"
+        "console.log(JSON.stringify({n:gbTimers().length,at:gbClockShort(gbTimers()[0].at)}));"
+    )
+    assert got == {"n": 1, "at": "5:45 PM"}
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "try{ window.gbTimers=gbTimers; window.gbClockShort=gbClockShort; }catch(e){}" in page
+    strip = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
+    assert "#gbTimers{position:fixed;" in strip and "right:calc(env(safe-area-inset-right" in strip
+    assert 'if (typeof window.gbTimers === "function") list = window.gbTimers().slice();' in strip
+    assert 'x.at > t ? countdown(x.at - t) : "due"' in strip
+    assert strip.index("renderTimers();\n    schedule();") > strip.index("function render()")

@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=68bb2f8a70fc"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=623b3023987b"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=c7de4d065c32"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=68bb2f8a70fc"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=d7f1149850f8"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=c7de4d065c32"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -9186,6 +9186,8 @@ function gbTimerTick(){ try{
   if(due.length&&typeof saveSoul==="function") saveSoul(_live);
 }catch(e){} }
 if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
+/* The status strip draws a pill for each pending timer (growbot-status.js) and reads them here. */
+try{ window.gbTimers=gbTimers; window.gbClockShort=gbClockShort; }catch(e){}
 /* The owner's notes (owner, 2026-11-13): a persona the owner turned brain access on for, on his
    own phone, searches his notes (`brain`) and files new ones (`jot`). The box is the gate and
    checks every call; the page only offers the fields when the box says this phone may. A search
