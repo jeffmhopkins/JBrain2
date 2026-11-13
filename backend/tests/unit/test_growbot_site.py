@@ -1988,7 +1988,7 @@ function fetch(url,o){ sent.push({url:url,headers:o.headers,body:JSON.parse(o.bo
       return {catch:function(h){ if(failed) h(new Error("x")); return done; }}; }}; }}; }
 function cur(o){ return Object.assign({sys:_gbWarm.sys,bl:"\n\nLIVE",mg:"",ss:"stats 2",
   vm:"\n\nVM",blind:false},o||{}); }
-var ask={humanReq:{}}, one=[{t:Date.now(),j:"NEW"}];
+var ask={humanReq:{}}, one=[{t:Date.now(),j:"NEW"}], _GB_LOOK_WORDS=/\blook\b/i;
 """
 
 
@@ -2058,8 +2058,14 @@ def test_a_warm_up_is_taken_once_and_only_when_nothing_moved() -> None:
         "again(); r.tick=!!gbWarmTake('tick',null,one); r.kept=!!_gbWarm;"
         "r.used=!!gbWarmTake('event',ask,one); r.twice=!!gbWarmTake('event',ask,one);"
         "again(); r.three=!!gbWarmTake('event',ask,one.concat(one,one));"
+        "again(); r.look=!!gbWarmTake('event',{humanReq:{},visualUser:'look at this'},"
+        "one.concat(one,one));"
+        "again(); r.chat=!!gbWarmTake('event',{humanReq:{},visualUser:'hello'},"
+        "one.concat(one,one));"
+        "again(); selfMoveUntil=Date.now()+5000;"
+        "r.walking=!!gbWarmTake('event',ask,one.concat(one,one)); selfMoveUntil=0;"
         "again(); r.blindTurn=!!gbWarmTake('event',ask,[]);"
-        "again(); _gbWarm.ft-=10001; r.stale=!!gbWarmTake('event',ask,one);"
+        "again(); _gbWarm.ft-=GB_WARM_MAX_MS+1; r.stale=!!gbWarmTake('event',ask,one);"
         "again(); _live.scratch.traces.push({t:Date.now(),u:'x',a:'y'});"
         "r.moved=!!gbWarmTake('event',ask,one);"
         "again(); _gbWarm.t-=GB_WARM_MAX_MS+1; r.old=!!gbWarmTake('event',ask,one);"
@@ -2075,15 +2081,63 @@ def test_a_warm_up_is_taken_once_and_only_when_nothing_moved() -> None:
         "kept": True,
         "used": True,
         "twice": False,
-        "three": False,
+        "three": True,
+        "look": False,
+        "chat": True,
+        "walking": False,
         "blindTurn": False,
         "stale": False,
         "moved": False,
         "old": False,
         "eye": False,
         "did": False,
-        "why": ["frames", "frames", "stale", "moved", "old", "moved", "moved"],
+        "why": ["frames", "frames", "frames", "stale", "moved", "old", "moved", "moved"],
     }
+
+
+def test_a_still_scene_is_not_sent_again_while_the_person_talks() -> None:
+    """Owner, 2026-11-13: "if a photo hasn't changed significantly since the last image, we
+    shouldn't send it". A warm-up is resent mid-utterance only once the scene moved, the
+    history moved, or the one it holds is half its life old."""
+    got = _warm_page(
+        "var r={}; function again(){ _gbWarmT=0; _gbWarmBusy=false; gbWarmUp();"
+        " return sent.length; }"
+        "gbWarmUp(); r.still=again(); frameDiff=5; r.moved=again(); frameDiff=0;"
+        "_gbWarmT=Date.now(); frameDiff=5; gbWarmUp(); frameDiff=0; r.between=again();"
+        "_rideOn=true; r.riding=again(); _rideOn=false;"
+        "_gbWarm.t-=GB_WARM_MAX_MS/2; r.aged=again();"
+        "_live.scratch.traces.push({t:Date.now(),u:'x',a:'y'}); r.talked=again();"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got == {
+        "still": 1,
+        "moved": 2,
+        "between": 3,
+        "riding": 4,
+        "aged": 5,
+        "talked": 6,
+    }
+
+
+def test_the_flash_marks_only_a_picture_the_model_has_not_seen() -> None:
+    """The spoken turn re-sends its warm-up's picture: that is not a new photo."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    strip = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
+    start = strip.index("  var seen = [];")
+    code = strip[start : strip.index("  // The page aborts a reply")]
+    script = (
+        code + "function body(js){ return JSON.stringify({messages:[{role:'user',content:js.map("
+        "function(j){ return {type:'image_url',"
+        "image_url:{url:'data:image/jpeg;base64,'+j}}; })}]}); }"
+        "var a='A'.repeat(301), b='B'.repeat(301);"
+        "console.log(JSON.stringify([newPicture(body([a])),newPicture(body([a])),"
+        "newPicture(body([a,b])),newPicture(body([])),"
+        'newPicture(\'{"image_url":{"url":"https://x/p.jpg"}}\')]));'
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout) == [True, False, True, False, True]
 
 
 def test_a_warm_up_whose_state_moved_is_not_sent() -> None:
@@ -2115,7 +2169,7 @@ def test_a_failed_warm_up_is_never_used() -> None:
         "var r={}; net='down'; gbWarmUp(); r.down=_gbWarm; r.busy=_gbWarmBusy;"
         "_gbWarmT=0; net='body'; gbWarmUp(); r.body=_gbWarm;"
         "_gbWarmT=0; net='ok'; gbWarmUp(); r.ok=!!_gbWarm;"
-        "_gbWarmT=0; net='bad'; gbWarmUp(); r.bad=_gbWarm; r.busy2=_gbWarmBusy;"
+        "_gbWarmT=0; frameDiff=5; net='bad'; gbWarmUp(); r.bad=_gbWarm; r.busy2=_gbWarmBusy;"
         "_gbWarmT=0; net='ok'; var n=sent.length; gbWarmUp(); r.off=sent.length===n;"
         "r.fails=logs.filter(function(l){ return l[0]==='warm_fail'; });"
         "console.log(JSON.stringify(r));"
