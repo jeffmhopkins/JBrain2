@@ -691,10 +691,11 @@ export function splitNames(names: string): string[] {
 
 /** Whether the creature at `url` can open inside the app here, by the creature's own rule
  *  (growbot/server/serve.py `pwa_origin`): it lets the app frame it only from its LAN name on
- *  443 (`:8444` is the creature) or its public name (`growbot.<name>` is the creature). The
- *  frame keeps its SameSite=Strict session only from those, and anywhere else (the owner
- *  site's private name, a subdomain PWA under the preview apex) it would open refused or signed
- *  out. Never in the owner app: its WebView grants no camera or microphone to a frame. */
+ *  443 (`:8444` is the creature) or its public name (`growbot.<name>` is the creature). From
+ *  the owner site's private name it would open refused or signed out. A subdomain PWA under
+ *  the preview apex is let in by the creature, but the app can't tell that apex from here, so
+ *  it opens a tab there (the stricter side). Never in the owner app: its WebView grants no
+ *  camera or microphone to a frame. */
 export function framesHere(
   url: string,
   here: Pick<Location, "hostname" | "port"> = window.location,

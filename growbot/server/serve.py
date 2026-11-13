@@ -1518,7 +1518,8 @@ class GrowBot:
         # second open, the first one the worker controls, was refused. A frame is the PWA's
         # link only when the PWA itself is the framer (its GrowBot screen opens the creature
         # in place): the Referer must be the PWA's origin, which another same-site page (a
-        # jcode preview) cannot claim, and frame-ancestors shuts every other framer anyway.
+        # jcode preview) cannot claim, and the fetch must be same-site, which a sandboxed page
+        # on the PWA's own origin (a JShare) is not. frame-ancestors shuts every other framer.
         dest = req.header("sec-fetch-dest")
         worker = dest == "empty" and req.header("sec-fetch-mode") == "navigate"
         framed = dest == "iframe" and self._framed_by_pwa(req)
