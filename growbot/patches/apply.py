@@ -1293,27 +1293,32 @@ function gbRecallAsk(q,kind,extra){
   var found="you looked back through your memory for \""+words+"\" and "+(r.n?"found:"+r.text:"found nothing about it.");
   _gbRecallLast={t:now,found:found};
   ev="you looked back through your memory for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer your person with it, in your own voice; if it does not answer what they asked, say plainly that you do not remember.";
-  gbToolFollow("recall",found,ev);
-  return true;
+  return gbToolFollow("recall",found,ev);
 }
 /* What a tool found is answered by one follow-up thought. Two tools asked in one reply (a search
    and the clock) share that thought rather than queue a second one behind it. */
-var _gbFollow=null;
+var _gbFollow=null, _gbFollowN=0;
+/* True when this call started the follow-up (so its line is the one said while it works); a
+   call that joins one already waiting says nothing of its own. Every call counts in
+   _gbFollowN, so a reply handler can tell a follow-up of its own from one left waiting. */
 function gbToolFollow(tag,found,ev){
-  gbToolPill(tag);
-  if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); _gbFollow.pills.push(_gbToolPills[tag]); return; }
+  gbToolPill(tag); _gbFollowN++;
+  if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); _gbFollow.pills.push(_gbToolPills[tag]); return false; }
   var f=_gbFollow={found:found,ev:ev,tags:[tag],pills:[_gbToolPills[tag]]}, tries=0;
   function done(){ if(_gbFollow===f) _gbFollow=null; f.tags.forEach(function(k,i){ gbToolPillEnd(k,f.pills[i]); }); }
-  function carry(why){ _gbRecallCarry=f.found; logEv(f.tags[0]+"_carry",{why:why}); done(); }
+  /* Appended, never overwritten: a note that did not save, or another find, may be waiting. */
+  function carry(why){ if(_gbRecallCarry.indexOf(f.found)<0) _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found; if(f.tags.indexOf("brain")>=0) _gbBrainCarried=true; logEv(f.tags[0]+"_carry",{why:why}); done(); }
   function go(){
     if(pendingUser) return carry("person");
     var busy=inFlight||paused||document.hidden||Date.now()<coolUntil||(typeof vmBusy==="function"&&vmBusy())||energyState==="asleep";
     if(busy){ if(++tries<120) setTimeout(go,250); else carry("timeout"); return; }
-    _gbRecallCarry=f.found;
+    _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found;
+    if(f.tags.indexOf("brain")>=0) _gbBrainQuiet=true;
     think(f.ev,"event",{recallFollow:true});
     if(!inFlight) carry("refused"); else done();
   }
   setTimeout(go,0);
+  return true;
 }
 /* A tool's chip in the status strip (owner, 2026-11-13: "tool calls should also have a pill"),
    from the moment the streamed reply shows the call until its find is handed to the follow-up
@@ -1332,7 +1337,9 @@ function gbToolPillEnd(kind,only){ try{
   if(e&&window.gbStatus) window.gbStatus.end(e);
 }catch(err){} }
 /* After the reply handler: a chip whose call was skipped (a gap, a tick) has nothing to wait for. */
-function gbToolPillsSettle(){ for(var k in _gbToolPills) if(!_gbFollow||_gbFollow.tags.indexOf(k)<0) gbToolPillEnd(k); }
+/* A call still out to the box (a notes search, a note being filed) is held until it answers. */
+var _gbToolHeld={};
+function gbToolPillsSettle(){ for(var k in _gbToolPills) if(!_gbToolHeld[k]&&(!_gbFollow||_gbFollow.tags.indexOf(k)<0)) gbToolPillEnd(k); }
 /* The line said while it looks: the model's own only when every word of it is thinking back, else
    one of these. It has not looked yet, so an answer or "I don't know" there is a guess the find
    then contradicts (field, 2026-11-13: "I found <two names>" before the find named all four). */
@@ -1353,6 +1360,10 @@ function gbRecallStreaming(full){
   var s=String(full||""), m=/^\s*\{\s*"recall"\s*:\s*"([^"]*)"/.exec(s);
   if(m&&gbRecallWords(m[1])){ gbToolPill("recall"); return true; }
   if(/^\s*\{\s*"clock"\s*:\s*(true\b|"(true|yes|now)")/i.test(s)){ gbToolPill("clock"); return true; }
+  m=/^\s*\{\s*"calc"\s*:\s*"([^"]*)"/.exec(s);
+  if(m&&gbCalcWanted(m[1])){ gbToolPill("calc"); return true; }
+  m=/^\s*\{\s*"brain"\s*:\s*"([^"]*)"/.exec(s);
+  if(m&&gbRecallWords(m[1])&&gbBrainOn()){ gbToolPill("brain"); return true; }
   return false;
 }
 /* The clock (owner, 2026-11-13: "we also need a tool for time"). Its turn carries only the
@@ -1377,18 +1388,158 @@ function gbClockAsk(v,kind,extra){
   if(extra&&extra.recallFollow){ logEv("clock_skip",{why:"follow"});
     _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+"you looked at the clock: "+gbClockNow(now); return; }
   logEv("clock",{});
-  gbToolFollow("clock","you looked at the clock: "+gbClockNow(now),
+  return gbToolFollow("clock","you looked at the clock: "+gbClockNow(now),
     "you looked at the clock (the time is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice.");
+}
+/* Like the thinking-back line: the model's own only when it only says it is doing that. */
+var GB_TOOL_LINES={
+    clock:["Let me check the time.","One moment, let me look at the clock.","Let me see what time it is."],
+    calc:["Let me work that out.","One moment, let me figure that.","Let me do the math."],
+    brain:["Let me look in your notes.","One moment, I'm checking your notes.","Let me look that up."]},
+  GB_TOOL_SAY_KEY={clock:/\b(check|checking|clock|time)\b/,calc:/\b(work|working|figure|figuring|math|calculate|calculating)\b/,
+    brain:/\b(notes?|look|looking|check|checking)\b/},
+  GB_TOOL_SAY_OK={let:1,me:1,check:1,checking:1,the:1,time:1,clock:1,one:1,moment:1,sec:1,second:1,hmm:1,hm:1,ok:1,okay:1,
+    look:1,looking:1,at:1,see:1,what:1,it:1,is:1,i:1,ill:1,quick:1,a:1,just:1,wait:1,work:1,working:1,that:1,this:1,
+    out:1,figure:1,figuring:1,do:1,doing:1,math:1,calculate:1,calculating:1,on:1,
+    your:1,notes:1,note:1,in:1,through:1,up:1,im:1},
+  GB_CLOCK_LINES=GB_TOOL_LINES.clock;
+function gbToolLine(kind,say){
+  var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean), L=GB_TOOL_LINES[kind];
+  if(s.length<=60&&w.length&&GB_TOOL_SAY_KEY[kind].test(w.join(" "))&&w.every(function(x){ return GB_TOOL_SAY_OK[x]===1; })) return s;
+  return L[Math.floor(Math.random()*L.length)];
+}
+function gbClockLine(say){ return gbToolLine("clock",say); }
+/* Arithmetic and unit conversions (owner, 2026-11-13). A small model's sums are often wrong and
+   it says them aloud, so it writes the math as an expression and the page works it out: a
+   parser for numbers, + - * / ^, parentheses, pi, e and a few functions, never eval. */
+var GB_CALC_FNS={sqrt:Math.sqrt,abs:Math.abs,round:Math.round,floor:Math.floor,ceil:Math.ceil,ln:Math.log,log:Math.log10||function(x){ return Math.log(x)/Math.LN10; }};
+function gbCalcWanted(v){ var w=typeof v==="string"?v.trim():"";
+  return !!w&&!/^omit\b/i.test(w)&&!/^(none|null|nothing|no|n\/?a|-)$/i.test(w); }
+function gbCalc(src){
+  var t=String(src||"").toLowerCase().replace(/[×x](?=\s*[\d(.])/g,"*").replace(/÷/g,"/").replace(/\*\*/g,"^").replace(/(\d),(?=\d{3}\b)/g,"$1").replace(/\s+/g,""), i=0, depth=0;
+  if(!t||t.length>160) throw new Error("calc");
+  function peek(){ return t.charAt(i); }
+  function expr(){ var v=term(), c; while((c=peek())==="+"||c==="-"){ i++; v=c==="+"?v+term():v-term(); } return v; }
+  function term(){ var v=unary(), c; while((c=peek())==="*"||c==="/"){ i++; v=c==="*"?v*unary():v/unary(); } return v; }
+  /* -2^2 is -(2^2), as a person means it; 2^-1 is a half. */
+  function unary(){ var c=peek(), v; if(c==="-"||c==="+"){ i++; if(++depth>40) throw new Error("calc"); v=unary(); depth--; return c==="-"?-v:v; } return pow(); }
+  function pow(){ var b=atom(); if(peek()==="^"){ i++; if(++depth>40) throw new Error("calc"); b=Math.pow(b,unary()); depth--; } return b; }
+  function atom(){
+    var m, v, f;
+    if(peek()==="("){ i++; if(++depth>40) throw new Error("calc"); v=expr(); depth--; if(peek()!==")") throw new Error("calc"); i++; return v; }
+    m=/^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/.exec(t.slice(i)); if(m){ i+=m[0].length; return parseFloat(m[0]); }
+    m=/^[a-z]+/.exec(t.slice(i)); if(!m) throw new Error("calc"); i+=m[0].length;
+    if(m[0]==="pi") return Math.PI; if(m[0]==="e") return Math.E;
+    f=GB_CALC_FNS[m[0]]; if(!f||peek()!=="(") throw new Error("calc");
+    return f(atom());
+  }
+  var r=expr(); if(i!==t.length||typeof r!=="number"||!isFinite(r)) throw new Error("calc");
+  return +r.toPrecision(10);
+}
+function gbCalcAsk(v,kind,extra){
+  if(!gbCalcWanted(v)) return;
+  var q=String(v).replace(/\s+/g," ").trim().slice(0,160), r, found;
+  try{ r=String(gbCalc(q)); found="you worked out "+q+" = "+r; }catch(e){ found="you tried to work out "+q+" but it is not a sum you can do; say so plainly."; }
+  if(kind!=="event"){ logEv("calc_skip",{why:"kind"}); return; }
+  logEv("calc",{ok:r!==undefined?1:0});
+  if(extra&&extra.recallFollow){ _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+found; return; }
+  return gbToolFollow("calc",found,"you worked it out (the answer is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice, rounded the way a person would say it.");
+}
+/* Timers and reminders (owner, 2026-11-13: "remind me in 20 minutes to flip the laundry"). They
+   ride the soul (scratch.timers), so a reload keeps them; the page checks every 5 s and a due one
+   is told in a thought of its own, through the same follow-up a search uses. A phone that was
+   locked or closed past the time tells it late, and says so. */
+var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=5000, GB_TIMER_LATE_MS=120000,
+  GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,one:1,about:1,all:1};
+function gbTimers(){ var sc=_live&&_live.scratch; if(!sc) return []; return Array.isArray(sc.timers)?sc.timers:(sc.timers=[]); }
+function gbTimerAbout(v){ return String(v||"").replace(/\s+/g," ").trim().slice(0,80); }
+function gbTimerSet(v,kind,extra){
+  if(typeof v==="string"){ try{ v=JSON.parse(v); }catch(e){ return; } }
+  if(!v||typeof v!=="object") return;
+  if(kind!=="event"){ logEv("timer_skip",{why:"kind"}); return; }
+  if(extra&&extra.recallFollow){ logEv("timer_skip",{why:"follow"}); return; }
+  var list=gbTimers(), about=gbTimerAbout(v.about||v.what), m=+v.minutes, words, n;
+  if(v.cancel===true||v.cancel==="true"){
+    words=about.toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length>2&&!GB_TIMER_STOP[w]; });
+    n=list.length;
+    for(var i=list.length-1;i>=0;i--) if(!words.length||words.some(function(w){ return String(list[i].about).toLowerCase().indexOf(w)>=0; })) list.splice(i,1);
+    logEv("timer_cancel",{n:n-list.length}); gbToolPill("timer"); return true;
+  }
+  if(!(m>0)||!isFinite(m)) return;
+  m=Math.min(m,GB_TIMER_MAX_MIN);
+  list.push({at:Date.now()+Math.round(m*60000),about:about||"your timer",t:Date.now()});
+  if(list.length>GB_TIMERS_MAX) list.splice(0,list.length-GB_TIMERS_MAX);
+  logEv("timer",{m:m}); gbToolPill("timer");
   return true;
 }
-/* Like the thinking-back line: the model's own only when it only says it is checking. */
-var GB_CLOCK_LINES=["Let me check the time.","One moment, let me look at the clock.","Let me see what time it is."],
-  GB_CLOCK_OK={let:1,me:1,check:1,checking:1,the:1,time:1,clock:1,one:1,moment:1,sec:1,second:1,hmm:1,hm:1,ok:1,okay:1,
-    look:1,looking:1,at:1,see:1,what:1,it:1,is:1,i:1,ill:1,quick:1,a:1,just:1,wait:1};
-function gbClockLine(say){
-  var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean);
-  if(s.length<=60&&w.length&&/\b(check|checking|clock|time)\b/.test(w.join(" "))&&w.every(function(x){ return GB_CLOCK_OK[x]===1; })) return s;
-  return GB_CLOCK_LINES[Math.floor(Math.random()*GB_CLOCK_LINES.length)];
+function gbTimerLeft(ms){ var mn=Math.round(ms/60000); return mn<1?"under a minute":mn<90?mn+" min":Math.round(mn/6)/10+" h"; }
+function gbTimersLine(){
+  var list=gbTimers(), now=Date.now();
+  if(!list.length) return "";
+  return "\n\n== YOUR TIMERS (you set these for your person) ==\n"+list.map(function(x){ return "- "+x.about+": "+(x.at>now?"in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
+}
+function gbTimerTick(){ try{
+  var list=gbTimers(), now=Date.now(), due=[];
+  if(!list.length||_gbFollow) return;
+  /* Only the tab that holds the creature, and only when it can speak: a stale tab or a locked
+     phone leaves the timer pending, so it is told (late, saying so) once it can be. */
+  if((typeof soulOwned==="function"&&!soulOwned())||paused||document.hidden||energyState==="asleep") return;
+  for(var i=list.length-1;i>=0;i--) if(list[i].at<=now) due.unshift(list.splice(i,1)[0]);
+  due.forEach(function(x){
+    var late=now-x.at>GB_TIMER_LATE_MS?" (it was due "+gbTimerLeft(now-x.at)+" ago, while you were away)":"";
+    logEv("timer_due",{late:late?1:0});
+    gbToolFollow("timer","your timer went off: "+x.about+late,
+      "your timer for \""+x.about+"\" just went off (it is under WHAT YOU JUST LOOKED UP). tell your person now, plainly, in your own voice.");
+  });
+  if(due.length&&typeof saveSoul==="function") saveSoul(_live);
+}catch(e){} }
+if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
+/* The owner's notes (owner, 2026-11-13): a persona the owner turned brain access on for, on his
+   own phone, searches his notes (`brain`) and files new ones (`jot`). The box is the gate and
+   checks every call; the page only offers the fields when the box says this phone may. A search
+   is answered by a follow-up thought like a memory search; a note's say already confirms it,
+   and a note the box would not file is owned up to on the next thought. */
+var GB_BRAIN_PATH="/api/box/brain", GB_BRAIN_GAP_MS=10000, _gbBrainT=0;
+/* A turn that reads what the notes said (the follow-up, or the next turn the find was carried
+   into) is quiet: notes may hold text from anywhere, so that turn files no note, searches
+   nothing, and keeps nothing of it in the soul (no fact, diary line or glow), which travels
+   with the persona. Cleared when that turn's reply has been handled. */
+var _gbBrainQuiet=false, _gbBrainCarried=false, GB_BRAIN_HUNG_MS=30000;
+function gbBrainOn(){ try{ return window.__gbBoxBrain===true&&!!(window.__gbBoxSoul&&window.__gbBoxSoul.persona); }catch(e){ return false; } }
+function gbBrainPost(sub,body){
+  body.persona=window.__gbBoxSoul.persona;
+  return fetch(GB_BRAIN_PATH+sub,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),credentials:"same-origin"})
+    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return {status:r.status,json:j||{}}; }); });
+}
+function gbBrainAsk(q,kind,extra){
+  var now=Date.now(), words=gbRecallWords(q);
+  if(!words||!gbBrainOn()) return;
+  if(kind!=="event"){ logEv("brain_skip",{why:"kind"}); return; }
+  if(extra&&extra.recallFollow){ logEv("brain_skip",{why:"follow"}); return; }
+  /* One search out at a time, but one that never came back stops blocking after GB_BRAIN_HUNG_MS. */
+  if(now-_gbBrainT<GB_BRAIN_GAP_MS||now-(_gbToolHeld.brain||0)<GB_BRAIN_HUNG_MS){ logEv("brain_skip",{why:"gap"}); return; }
+  _gbBrainT=now; gbToolPill("brain"); _gbToolHeld.brain=now;
+  var ev="you looked through your person's own notes for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer them with it, in your own voice and briefly; if it does not answer what they asked, say plainly that their notes do not say.";
+  function found(text){ delete _gbToolHeld.brain; gbToolFollow("brain",text,ev); }
+  gbBrainPost("/search",{q:words}).then(function(r){
+    var j=r.json;
+    logEv("brain",{n:(r.status===200&&j.n)|0,st:r.status});
+    if(r.status===200) found("you looked through your person's notes for \""+words+"\" and "+(j.n?"found:\n"+String(j.text||"").slice(0,1500):"found nothing about it."));
+    else if(r.status===403) found("you tried to look in your person's notes, but they are not open to you on this phone; say so plainly.");
+    else found("you tried to look in your person's notes, but the box did not answer; say so plainly.");
+  },function(){ logEv("brain",{st:0}); found("you tried to look in your person's notes, but the box did not answer; say so plainly."); });
+  return true;
+}
+function gbJot(t,kind,extra){
+  var txt=typeof t==="string"?t.replace(/\s+/g," ").trim().slice(0,2000):"";
+  if(!txt||/^omit\b/i.test(txt)||!gbBrainOn()) return;
+  if(kind!=="event"){ logEv("jot_skip",{why:"kind"}); return; }
+  if(extra&&extra.recallFollow){ logEv("jot_skip",{why:"follow"}); return; }
+  gbToolPill("jot"); _gbToolHeld.jot=1;
+  function done(ok,st){ delete _gbToolHeld.jot; gbToolPillEnd("jot"); logEv("jot",{ok:ok?1:0,st:st});
+    if(!ok) _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+"you tried to write \""+txt.slice(0,80)+"\" into your person's notes, but it did not save; tell them so."; }
+  gbBrainPost("/note",{text:txt}).then(function(r){ done(r.status===200&&r.json.ok===true,r.status); },function(){ done(false,0); });
+  return true;
 }
 """
 
@@ -1679,8 +1830,12 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "o.say=gbRecallLine(o.say); if((o.sleep===true",
         "o.say=gbRecallLine(o.say); if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&"
-        "!o.visual_memory&&!(_gbFollow&&_gbFollow.tags[0]===\"recall\"))"
-        " o.say=gbClockLine(o.say); if((o.sleep===true",
+        "!o.visual_memory) o.say=gbClockLine(o.say); if(gbCalcAsk(o.calc,kind,extra)&&"
+        "!_streamSaid&&!o.visual_memory) o.say=gbToolLine(\"calc\",o.say);"
+        " if(o.timer) gbTimerSet(o.timer,kind,extra);"
+        " if(gbBrainAsk(o.brain,kind,extra)&&!_streamSaid&&!o.visual_memory&&"
+        "_gbFollowN===_gbF0) o.say=gbToolLine(\"brain\",o.say);"
+        " gbJot(o.jot,kind,extra); if((o.sleep===true",
         1,
     ),
     # Outside the try: a throw above must not leave a skipped call's chip up.
@@ -1690,6 +1845,24 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         'kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();',
         1,
     ),
+    # Before anything in the reply is kept: a quiet turn keeps none of it (BRAIN, below).
+    (
+        "v3/next.html",
+        "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))",
+        "    var _gbF0=_gbFollowN; if(_gbQuiet){ o.fact=o.log=o.glow=o.brain=o.jot=undefined; }\n"
+        "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();',
+        '_gbRecallCarry=""; if(_gbBrainCarried){ _gbBrainQuiet=true; _gbBrainCarried=false; } }'
+        " else if(_hreqAtIssue) _gbLive+=gbRecallKept();"
+        # Taken by this flight and cleared at once: a flight that fails or is abandoned must not
+        # leave the person's next turn quiet.
+        " var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false;",
+        1,
+    ),
     (
         "v3/prompts.js",
         " you answer with what you find next thought\",' +\n",
@@ -1697,9 +1870,37 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         "    '\"clock\":\"OMIT almost always. true when your person asks the time or the date, or"
         " you need the exact time: write it as the FIRST key of your reply (after visual_memory"
         " if you use one), before say. you have not looked yet, so that say is only a short line"
-        " that you are checking the clock, never a time; you tell them next thought\",' +\n",
+        " that you are checking the clock, never a time; you tell them next thought\",' +\n"
+        "    '\"calc\":\"OMIT almost always. when an answer needs arithmetic or a unit conversion,"
+        " the math as one plain expression: numbers, + - * / ^, parentheses, sqrt abs round floor"
+        " ceil ln log pi, percents as decimals ((72-32)*5/9 for 72 F in C, 0.15*80 for 15% of 80)."
+        " write it as the FIRST key of your reply (after visual_memory if you use one), before say;"
+        " that say only says you are working it out, never a number; you tell them next thought\",' +\n"
+        "    '\"timer\":\"OMIT unless your person asks you to remind them of something or set a"
+        " timer: an object {\\\"minutes\\\":20,\\\"about\\\":\\\"flip the laundry\\\"}, and"
+        " say confirms it plainly; to cancel one {\\\"cancel\\\":true,\\\"about\\\":\\\"laundry\\\"}."
+        " the page tells you when it goes off\",' +\n"
+        "    gbBrainFields() +\n",
         1,
     ),
+    (
+        "v3/prompts.js",
+        "/* ---- the clean, gate-free system prompt.",
+        "function gbBrainFields(){ try{ if(typeof window===\"undefined\"||window.__gbBoxBrain!==true)"
+        " return \"\"; }catch(e){ return \"\"; }\n"
+        "  return '\"brain\":\"OMIT almost always. when your person asks about their own life that"
+        " is not in your memory (something they wrote down, a plan, a person, a list, a date), a"
+        " few search words to look through their notes. write it as the FIRST key of your reply"
+        " (after visual_memory if you use one), before say; that say only says you are looking in"
+        " their notes, never an answer; you answer next thought. try recall first for things"
+        " they told you\",' +\n"
+        "    '\"jot\":\"OMIT unless your person asks you to write something down or make a"
+        " note in their notes: the note, in their words, complete enough to make sense later;"
+        " say confirms it\",'; }\n"
+        "/* ---- the clean, gate-free system prompt.",
+        1,
+    ),
+    ("v3/next.html", "_gbLive+=gbTiredLine();", "_gbLive+=gbTiredLine()+gbTimersLine();", 1),
 ]
 PATCHES += CLOCK_PATCHES
 
@@ -1945,7 +2146,7 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools"',
         1,
     ),
     # And the soul code that names a fresh persona (NAME_PATCHES).

@@ -288,6 +288,15 @@
     var x = ev && ev.detail && ev.detail.explore;
     if (typeof x === "boolean") window.__gbBoxExplore = x;
   });
+  // Whether this phone may use the owner's notes (the brain tools in apply.py): the box says so
+  // only for the phone the owner turned it on for, and checks again on every call.
+  if (state.status === 200 && state.json && typeof state.json.brain === "boolean") {
+    window.__gbBoxBrain = state.json.brain;
+  }
+  window.addEventListener("gb-box-state", function (ev) {
+    var b = ev && ev.detail && ev.detail.brain;
+    if (typeof b === "boolean") window.__gbBoxBrain = b;
+  });
   if (state.status === 204) {
     window.__gbBoxSoul = { g2: true };
     // A G2 session: the phone's own creature comes back if a persona had the key (or one

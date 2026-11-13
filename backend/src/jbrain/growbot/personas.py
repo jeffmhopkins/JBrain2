@@ -66,6 +66,8 @@ class Persona:
     # The creature's settings (growbot/prefs.py); None until its phone first sent them.
     prefs: dict[str, str] | None = None
     explore: bool = True
+    # The phone the owner let it use his notes on (migration 0267), or None: brain access off.
+    brain_phone_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +118,8 @@ class Pulled:
     # Bumped by every change to its settings: the phone pulls them when it moves.
     prefs: int = 0
     explore: bool = True
+    # Whether this phone may use the owner's notes now (it is the one brain access is on for).
+    brain: bool = False
 
 
 PushResult = int | Literal["moved", "newer", "gone"]
@@ -154,6 +158,10 @@ class PersonaRepo(Protocol):
     async def set_face(self, ctx: SessionContext, pid: str, face: Face) -> bool: ...
     async def set_voice(self, ctx: SessionContext, pid: str, voice: str) -> bool: ...
     async def set_explore(self, ctx: SessionContext, pid: str, explore: bool) -> bool: ...
+    async def set_brain(
+        self, ctx: SessionContext, pid: str, on: bool, expect: str | None = None
+    ) -> bool | Literal["closed"]: ...
+    async def brain_ok(self, ctx: SessionContext, pid: str, phone_id: str) -> bool: ...
     async def write_soul(
         self,
         ctx: SessionContext,
@@ -214,6 +222,7 @@ class PersonaRepo(Protocol):
 _PERSONA = (
     "p.id::text AS id, p.name, p.version, p.made_from, p.phone_id, p.last_phone_id,"
     " p.opened_at, p.created_at, p.updated_at, p.face, p.voice, p.prefs, p.explore,"
+    " p.brain_phone_id,"
     " (SELECT count(*) FROM app.growbot_checkpoints c WHERE c.persona_id = p.id) AS checkpoints,"
     " (SELECT b.code FROM app.growbot_body b WHERE b.persona_id = p.id LIMIT 1) AS wearing,"
     " (SELECT count(*) FROM app.growbot_memories m WHERE m.persona_id = p.id) AS memories"
@@ -248,6 +257,7 @@ def _persona(r: Any, soul: bool = False) -> Persona:
         voice=r.voice,
         prefs=for_phone(r.prefs)[0],
         explore=r.explore,
+        brain_phone_id=r.brain_phone_id,
     )
 
 
@@ -434,6 +444,49 @@ class SqlPersonaRepo:
                 {"p": key, "x": explore},
             )
             return done.first() is not None
+
+    async def set_brain(
+        self, ctx: SessionContext, pid: str, on: bool, expect: str | None = None
+    ) -> bool | Literal["closed"]:
+        """On binds brain access to the phone holding the persona now, and only if that is
+        `expect`, the phone the owner saw it on ("closed" otherwise: open nowhere, or opened
+        elsewhere since his page loaded); off clears it. False: no such persona."""
+        if (key := _uuid(pid)) is None:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            done = await session.execute(
+                text(
+                    "UPDATE app.growbot_personas SET brain_phone_id = "
+                    + ("phone_id" if on else "NULL")
+                    + ", updated_at = now() WHERE id = :p"
+                    + (" AND phone_id = :ex" if on else "")
+                    + " RETURNING 1"
+                ),
+                {"p": key, "ex": expect} if on else {"p": key},
+            )
+            if done.first() is not None:
+                return True
+            if not on:
+                return False
+            held = await session.execute(
+                text("SELECT 1 FROM app.growbot_personas WHERE id = :p"), {"p": key}
+            )
+            return "closed" if held.first() is not None else False
+
+    async def brain_ok(self, ctx: SessionContext, pid: str, phone_id: str) -> bool:
+        """The gate on every brain call: the persona is held by this phone right now, and it is
+        the phone the owner turned brain access on for."""
+        if (key := _uuid(pid)) is None:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            row = await session.execute(
+                text(
+                    "SELECT 1 FROM app.growbot_personas WHERE id = :p AND phone_id = :ph"
+                    " AND brain_phone_id = :ph"
+                ),
+                {"p": key, "ph": phone_id},
+            )
+            return row.first() is not None
 
     async def _checkpoint_now(
         self, session: AsyncSession, pid: str, name: str, auto: bool, why: str, freed: set[str]
@@ -841,8 +894,11 @@ class SqlPersonaRepo:
         )
         await session.execute(
             text(
+                # Opened on any phone but the one brain access is on for ends it (migration
+                # 0267): the owner's notes never follow a persona to another device.
                 "UPDATE app.growbot_personas SET phone_id = :ph, last_phone_id = :ph,"
-                " opened_at = now() WHERE id = :p"
+                " opened_at = now(), brain_phone_id = CASE WHEN brain_phone_id = :ph"
+                " THEN brain_phone_id END WHERE id = :p"
             ),
             {"ph": phone_id, "p": pid},
         )
@@ -871,7 +927,7 @@ class SqlPersonaRepo:
                 await session.execute(
                     text(
                         f"SELECT p.version, p.memories_version, p.face, p.voice,"
-                        f" p.prefs_version, p.explore,"
+                        f" p.prefs_version, p.explore, p.brain_phone_id,"
                         f" {'p.soul' if with_soul else 'NULL'} AS soul,"
                         " (SELECT b.code FROM app.growbot_body b WHERE b.persona_id = p.id"
                         "  LIMIT 1) AS wearing"
@@ -897,6 +953,7 @@ class SqlPersonaRepo:
                 row.voice,
                 row.prefs_version,
                 row.explore,
+                row.brain_phone_id == phone_id,
             )
 
     async def push(

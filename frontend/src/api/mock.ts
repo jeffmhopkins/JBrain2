@@ -525,6 +525,7 @@ function mockGbPersona(
     face: "lantern",
     voice: "",
     explore: true,
+    brain_phone: null,
     prefs: {},
     ...over,
     soul,
@@ -756,6 +757,17 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
   const rest = m[2] ?? "";
   if (!rest && method === "GET") return json(mockGbDetail(p));
   if (!rest && method === "PATCH") {
+    const brain = body().brain;
+    if (brain !== undefined) {
+      if (typeof brain !== "boolean") return json({ detail: "not a setting" }, 422);
+      if (brain && (!p.phone || body().phone !== p.phone))
+        return json(
+          { detail: "It isn't open on that phone now. Open it on your phone, then turn it on." },
+          409,
+        );
+      p.brain_phone = brain ? p.phone : null;
+      return json({ persona: mockGbDetail(p), checkpoint: null });
+    }
     const explore = body().explore;
     if (explore !== undefined) {
       if (typeof explore !== "boolean") return json({ detail: "not a setting" }, 422);

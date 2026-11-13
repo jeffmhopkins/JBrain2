@@ -760,8 +760,8 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock"'
-        in page
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-'
+        'tools"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -1722,7 +1722,7 @@ def test_what_it_just_found_stays_in_front_of_it_for_a_re_ask() -> None:
     assert "== WHAT YOU LOOKED UP A MOMENT AGO ==" in got["kept"]
     assert "lunch: a taco" in got["kept"] and "answer from it" in got["kept"]
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert '_gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();' in page
+    assert "} } else if(_hreqAtIssue) _gbLive+=gbRecallKept();" in page
 
 
 def test_a_search_comes_before_its_say_and_the_say_only_thinks_back() -> None:
@@ -1959,8 +1959,8 @@ def test_the_line_said_while_it_checks_never_guesses_the_time() -> None:
 def test_the_clock_is_wired_into_the_turn_and_the_strip() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
-        "if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&!o.visual_memory&&"
-        '!(_gbFollow&&_gbFollow.tags[0]==="recall")) o.say=gbClockLine(o.say);'
+        "if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&!o.visual_memory)"
+        " o.say=gbClockLine(o.say);"
     ) in page
     assert "gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();" in page
     assert page.index("gbToolPillsSettle();") < page.index("var said=(o.say&&o.say.trim())")
@@ -1971,6 +1971,283 @@ def test_the_clock_is_wired_into_the_turn_and_the_strip() -> None:
     assert 'recall: { icon: "🔎", label: "memory search"' in strip
     assert 'clock: { icon: "🕐", label: "time"' in strip
     assert "window.gbStatus = { begin: begin, end: end, snap: snap, tool: tool };" in strip
+
+
+@pytest.mark.parametrize(
+    ("q", "want"),
+    [
+        ("(72-32)*5/9", 22.22222222),
+        ("0.15*80", 12),
+        ("2^10", 1024),
+        ("-2^2", -4),
+        ("2^-1", 0.5),
+        ("sqrt(16)+abs(-3)", 7),
+        ("1,000*3", 3000),
+        ("3 x 4", 12),
+        ("log(1000)", 3),
+        ("10/3", 3.333333333),
+        ("1/0", "ERR"),
+        ("2+", "ERR"),
+        ("alert(1)", "ERR"),
+        ("constructor", "ERR"),
+        ("(" * 60 + "1" + ")" * 60, "ERR"),
+    ],
+)
+def test_the_math_tool_works_sums_out_without_eval(q: str, want: Any) -> None:
+    """Owner, 2026-11-13: the model's sums are often wrong and spoken aloud; the page parses the
+    expression itself (no eval, so nothing but arithmetic runs)."""
+    got = _recall_page(
+        f"var r;try{{r=gbCalc({json.dumps(q)});}}catch(e){{r='ERR';}}"
+        "console.log(JSON.stringify({r}));"
+    )
+    assert got["r"] == want
+
+
+def test_the_math_tool_answers_in_a_follow_up_and_a_bad_sum_says_so() -> None:
+    got = _recall_page(
+        "var r={a:gbCalcAsk('(72-32)*5/9','event',{})};timers.shift()();inFlight=false;"
+        "r.b=gbCalcAsk('2+','event',{});timers.shift()();r.none=gbCalcAsk('OMIT','event',{});"
+        'r.thinks=thinks;r.logs=logs;r.s=gbRecallStreaming(\'{"calc":"2*3","say":"I\');'
+        "r.line=GB_TOOL_LINES.calc.indexOf(gbToolLine('calc','It is 22 degrees.'));"
+        "r.keep=gbToolLine('calc','Let me work that out.');console.log(JSON.stringify(r));"
+    )
+    assert got["a"] is True and got["b"] is True and got.get("none") is None
+    (ev, _k, _x, carried), (_ev2, _k2, _x2, carried2) = got["thinks"]
+    assert ev.startswith("you worked it out (the answer is under WHAT YOU JUST LOOKED UP)")
+    assert carried == "you worked out (72-32)*5/9 = 22.22222222"
+    assert "not a sum you can do" in carried2
+    assert got["logs"] == [["calc", {"ok": 1}], ["calc", {"ok": 0}]]
+    assert got["s"] is True and got["line"] >= 0 and got["keep"] == "Let me work that out."
+
+
+def test_a_timer_is_set_shown_cancelled_and_told_when_due() -> None:
+    """Owner, 2026-11-13: "remind me in 20 minutes to flip the laundry". Timers ride the soul,
+    the turn sees what is pending, and a due one is told in a follow-up thought."""
+    got = _recall_page(
+        "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};var r={};"
+        "r.set=gbTimerSet({minutes:20,about:'flip the laundry'},'event',{});"
+        'r.str=gbTimerSet(\'{"minutes":5,"about":"tea"}\',\'event\',{});'
+        "r.tick=gbTimerSet({minutes:1,about:'x'},'tick',{});"
+        "r.follow=gbTimerSet({minutes:1,about:'x'},'event',{recallFollow:true});"
+        "r.line=gbTimersLine();"
+        "r.cancel=gbTimerSet({cancel:true,about:'the tea timer'},'event',{});"
+        "r.left=_live.scratch.timers.length;"
+        "T+=21*60000;gbTimerTick();r.after=_live.scratch.timers.length;timers.shift()();"
+        "r.thinks=thinks;r.logs=logs;r.empty=gbTimersLine();console.log(JSON.stringify(r));"
+    )
+    assert got["set"] is True and got["str"] is True
+    assert got.get("tick") is None and got.get("follow") is None
+    assert got["line"] == (
+        "\n\n== YOUR TIMERS (you set these for your person) ==\n"
+        "- flip the laundry: in 20 min\n- tea: in 5 min"
+    )
+    assert got["cancel"] is True and got["left"] == 1 and got["after"] == 0
+    [(ev, kind, extra, carried)] = got["thinks"]
+    assert ev.startswith('your timer for "flip the laundry" just went off')
+    assert kind == "event" and extra == {"recallFollow": True}
+    assert carried == "your timer went off: flip the laundry"
+    assert ["timer_due", {"late": 0}] in got["logs"] and got["empty"] == ""
+
+
+def test_a_timer_missed_while_away_is_told_late_and_says_so() -> None:
+    got = _recall_page(
+        "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};"
+        "gbTimerSet({minutes:10,about:'oven'},'event',{});T+=40*60000;gbTimerTick();"
+        "timers.shift()();console.log(JSON.stringify({c:thinks[0][3]}));"
+    )
+    assert got["c"] == "your timer went off: oven (it was due 30 min ago, while you were away)"
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "function soulOwned(){ return false; }",
+        "document.hidden=true;",
+        "paused=true;",
+        "energyState='asleep';",
+    ],
+)
+def test_a_due_timer_waits_while_this_tab_cannot_tell_it(setup: str) -> None:
+    """Review, 2026-11-13: a stale tab or a locked phone ticked the timer away unheard."""
+    got = _recall_page(
+        "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};"
+        f"gbTimerSet({{minutes:1,about:'oven'}},'event',{{}});{setup}T+=5*60000;gbTimerTick();"
+        "console.log(JSON.stringify({left:_live.scratch.timers.length,n:timers.length}));"
+    )
+    assert got == {"left": 1, "n": 0}
+
+
+def test_a_told_timer_is_saved_off_the_soul() -> None:
+    got = _recall_page(
+        "var saved=0;function saveSoul(s){ saved+=s===_live?1:0; }"
+        "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};"
+        "gbTimerSet({minutes:1,about:'oven'},'event',{});T+=2*60000;gbTimerTick();"
+        "console.log(JSON.stringify({saved:saved}));"
+    )
+    assert got == {"saved": 1}
+
+
+def test_a_follow_up_keeps_a_carry_already_waiting_and_only_the_starter_swaps_its_line() -> None:
+    """Review, 2026-11-13: a note that did not save was overwritten by the follow-up's find, and a
+    tool asked while an older follow-up waited swapped its line for one it never said."""
+    got = _recall_page(
+        "_gbRecallCarry='a note did not save';var r={};r.a=gbClockAsk(true,'event',{});"
+        "r.b=gbCalcAsk('2+2','event',{});timers.shift()();r.c=thinks[0][3];"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["a"] is True and got["b"] is False
+    assert got["c"].startswith("a note did not save\nyou looked at the clock: ")
+    assert got["c"].endswith("you worked out 2+2 = 4")
+
+
+def test_math_and_timers_are_wired_into_the_turn_and_the_strip() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        "if(gbCalcAsk(o.calc,kind,extra)&&!_streamSaid&&!o.visual_memory)"
+        ' o.say=gbToolLine("calc",o.say);'
+        " if(o.timer) gbTimerSet(o.timer,kind,extra);"
+    ) in page
+    assert "_gbLive+=gbTiredLine()+gbTimersLine();" in page
+    assert "setInterval(gbTimerTick,GB_TIMER_TICK_MS);" in page
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    order = ['\'"clock":"OMIT', '\'"calc":"OMIT', '\'"timer":"OMIT', '\'"sleep":"OMIT']
+    assert [prompts.index(k) for k in order] == sorted(prompts.index(k) for k in order)
+    strip = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
+    assert 'calc: { icon: "🧮", label: "math"' in strip
+    assert 'timer: { icon: "⏲️", label: "timer"' in strip
+
+
+_BRAIN_SETUP = (
+    "var sent=[],answer={status:200,json:{n:1,text:'- (2026-11-03) filter is 16x25'}};"
+    "var window={__gbBoxBrain:true,__gbBoxSoul:{persona:'p1'},gbStatus:{tool:function(k){"
+    "return {k:k};},end:function(){}}};"
+    "function fetch(u,o){ sent.push([u,JSON.parse(o.body)]); if(answer==='down')"
+    " return Promise.reject(new Error('x')); return Promise.resolve({status:answer.status,"
+    "json:function(){ return Promise.resolve(answer.json); }}); }"
+    "var flush=function(){ return new Promise(function(r){ setImmediate(r); }); };"
+)
+
+
+def test_a_notes_search_goes_to_the_box_and_is_answered_in_a_follow_up() -> None:
+    """Owner, 2026-11-13: the creature searches his notes. The box is the gate; the page asks
+    only when the box said this phone may, and the find is answered like a memory search."""
+    got = _recall_page(
+        _BRAIN_SETUP + "(async function(){ var r={};"
+        "r.asked=gbBrainAsk('furnace filter','event',{});r.held=!!_gbToolHeld.brain;"
+        "r.gap=gbBrainAsk('x','event',{});await flush();"
+        "r.sent=sent;timers.pop()();r.thinks=thinks;r.logs=logs;r.held2=!!_gbToolHeld.brain;"
+        'r.s=gbRecallStreaming(\'{"brain":"furnace","say":"I\');'
+        "console.log(JSON.stringify(r)); })();"
+    )
+    assert got["asked"] is True and got["held"] is True and got["held2"] is False
+    assert got.get("gap") is None and got["s"] is True
+    assert got["sent"] == [["/api/box/brain/search", {"q": "furnace filter", "persona": "p1"}]]
+    [(ev, kind, extra, carried)] = got["thinks"]
+    assert ev.startswith('you looked through your person\'s own notes for "furnace filter"')
+    assert carried.endswith("found:\n- (2026-11-03) filter is 16x25")
+    assert ["brain", {"n": 1, "st": 200}] in got["logs"]
+
+
+@pytest.mark.parametrize(("ago", "asked"), [(0, False), (31_000, True)])
+def test_a_second_notes_search_waits_for_the_first_but_not_for_one_that_hung(
+    ago: int, asked: bool
+) -> None:
+    got = _recall_page(
+        _BRAIN_SETUP + f"_gbBrainT=-1e15;_gbToolHeld.brain=Date.now()-{ago};"
+        "var a=gbBrainAsk('furnace','event',{});"
+        "console.log(JSON.stringify({a:!!a,n:sent.length}));"
+    )
+    assert got == {"a": asked, "n": int(asked)}
+
+
+def test_the_turn_that_answers_a_notes_search_keeps_nothing_and_quiet_ends_with_it() -> None:
+    """Security review, 2026-11-13: words in a note must not become a fact, a diary line or another
+    notes call; and a follow-up that fails must not leave the next ordinary turn quiet."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "if(_gbQuiet){ o.fact=o.log=o.glow=o.brain=o.jot=undefined; }" in page
+    taken = page.index("var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false;")
+    assert page.index("_gbBrainQuiet=true; _gbBrainCarried=false;") < taken
+    assert taken < page.index("var _gen=_flightGen;") < page.index("if(_gbQuiet){")
+
+
+@pytest.mark.parametrize(
+    ("answer", "says"),
+    [
+        ("{status:403,json:{error:'off'}}", "not open to you on this phone"),
+        ("{status:503,json:{}}", "the box did not answer"),
+        ("'down'", "the box did not answer"),
+        ("{status:200,json:{n:0,text:''}}", "found nothing about it."),
+    ],
+)
+def test_a_notes_search_the_box_refuses_or_cannot_answer_is_owned_up_to(
+    answer: str, says: str
+) -> None:
+    got = _recall_page(
+        _BRAIN_SETUP + f"answer={answer};(async function(){{"
+        "gbBrainAsk('furnace','event',{});await flush();timers.pop()();"
+        "console.log(JSON.stringify({c:thinks[0][3]})); })();"
+    )
+    assert says in got["c"]
+
+
+@pytest.mark.parametrize(
+    ("setup", "kind", "extra"),
+    [
+        ("window.__gbBoxBrain=false;", "event", {}),
+        ("window.__gbBoxSoul={g2:true};", "event", {}),
+        ("", "tick", {}),
+        ("", "event", {"recallFollow": True}),
+    ],
+)
+def test_no_notes_call_leaves_a_phone_the_box_did_not_clear(
+    setup: str, kind: str, extra: dict[str, Any]
+) -> None:
+    got = _recall_page(
+        _BRAIN_SETUP + setup + f"var a=gbBrainAsk('furnace',{json.dumps(kind)},"
+        f"{json.dumps(extra)}),b=gbJot('a note',{json.dumps(kind)},{json.dumps(extra)});"
+        "console.log(JSON.stringify({a:a||null,b:b||null,sent:sent}));"
+    )
+    assert got == {"a": None, "b": None, "sent": []}
+
+
+def test_a_note_is_filed_and_one_the_box_would_not_file_is_owned_up_to() -> None:
+    got = _recall_page(
+        _BRAIN_SETUP + "answer={status:200,json:{ok:true}};(async function(){ var r={};"
+        "r.ok=gbJot('Furnace filter is 16x25.','event',{});await flush();r.c1=_gbRecallCarry;"
+        "answer={status:403,json:{error:'off'}};gbJot('Call the plumber.','event',{});"
+        "await flush();r.c2=_gbRecallCarry;r.sent=sent;r.logs=logs;r.held=!!_gbToolHeld.jot;"
+        "r.omit=gbJot('OMIT unless','event',{});console.log(JSON.stringify(r)); })();"
+    )
+    assert got["ok"] is True and got["c1"] == "" and got["held"] is False
+    assert got.get("omit") is None
+    assert got["sent"][0] == [
+        "/api/box/brain/note",
+        {"text": "Furnace filter is 16x25.", "persona": "p1"},
+    ]
+    assert "Call the plumber." in got["c2"] and "did not save" in got["c2"]
+    assert got["logs"] == [["jot", {"ok": 1, "st": 200}], ["jot", {"ok": 0, "st": 403}]]
+
+
+def test_the_notes_tools_are_offered_only_where_the_box_said_so() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        "if(gbBrainAsk(o.brain,kind,extra)&&!_streamSaid&&!o.visual_memory&&"
+        '_gbFollowN===_gbF0) o.say=gbToolLine("brain",o.say);'
+        " gbJot(o.jot,kind,extra);"
+    ) in page
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert "gbBrainFields() +" in prompts
+    on = _prompts_in_node(
+        "const a=ctx.gbBrainFields();ctx.window={};const b=ctx.gbBrainFields();"
+        "ctx.window={__gbBoxBrain:true};console.log(JSON.stringify([a,b,ctx.gbBrainFields()]));"
+    )
+    assert isinstance(on, list) and on[:2] == ["", ""]
+    assert on[2].startswith('"brain":"OMIT almost always.') and '"jot":"OMIT unless' in on[2]
+    box = (_GROWBOT / "patches" / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.__gbBoxBrain = state.json.brain;" in box
+    strip = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
+    assert 'brain: { icon: "🧠", label: "notes search"' in strip
+    assert 'jot: { icon: "✍️", label: "note"' in strip
 
 
 _SLEEP_HARNESS = r"""
@@ -2120,7 +2397,7 @@ def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
     assert '_t.indexOf("🌙 dreamed")!==0 && _t.indexOf("📖")!==0;' in page
     assert "applyDream(o,lived); gbDreamKeep(o); }" in page
     assert "brainOverride(orCfg.dream,true),1000,90000)" in page
-    assert "_gbLive+=gbTiredLine(); if(_gbRecallCarry){" in page
+    assert "_gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){" in page
     assert "_gbSess.push({t:Date.now(),txt:got}); gbVisitKeep(" in page
     assert "Date.now()-(+_gbLastV.t||0)>GB_OPEN_GAP_MS) _gbDreamOnOpen=true;" in page
     assert '(o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant();' in page

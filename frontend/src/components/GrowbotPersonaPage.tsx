@@ -115,6 +115,8 @@ export function GrowbotPersonaPage({
   const [voicing, setVoicing] = useState<string | null>(null);
   // The explore setting being saved, shown picked while it is.
   const [exploring, setExploring] = useState<boolean | null>(null);
+  // The brain-access setting being saved, shown picked while it is.
+  const [braining, setBraining] = useState<boolean | null>(null);
   // The box's voices, read when Manage first opens; null until they answer.
   const [voices, setVoices] = useState<string[] | null>(null);
   const [voicesError, setVoicesError] = useState(false);
@@ -576,6 +578,26 @@ export function GrowbotPersonaPage({
     }
   }
 
+  /** On binds it to the phone holding the persona now, so it is turned on from your own phone
+   *  with the persona open there; no other phone ever gets your notes. */
+  async function pickBrain(brain: boolean) {
+    if (braining !== null) return;
+    setBraining(brain);
+    try {
+      const w = await api.setGrowbotPersonaBrain(p.id, brain, p.phone);
+      took(w);
+      say(
+        brain
+          ? `${p.name} can use your notes ${onPhone(w.persona.brain_phone ?? p.phone, pl)}, and nowhere else.`
+          : `${p.name} can't use your notes any more.`,
+      );
+    } catch (e) {
+      say(`That didn't change — ${message(e)}`);
+    } finally {
+      setBraining(null);
+    }
+  }
+
   /** Saved as it is picked, like a face: no reload, no checkpoint. */
   async function pickVoice(voice: string) {
     const was = detail?.voice ?? p.voice;
@@ -808,6 +830,33 @@ export function GrowbotPersonaPage({
               </label>
             );
           })}
+        </fieldset>
+        <fieldset className="gb-choices">
+          <legend>Your notes</legend>
+          {(() => {
+            const bound = detail ? detail.brain_phone : p.brain_phone;
+            const on = braining ?? !!bound;
+            return (
+              <label className={`gb-choice${on ? " sel" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={on}
+                  disabled={braining !== null || (!bound && !p.phone)}
+                  onChange={() => void pickBrain(!on)}
+                />
+                <span className="gb-tx">
+                  Search and add to your notes
+                  <em>
+                    {bound
+                      ? `Only ${onPhone(bound, pl)}, while it holds ${p.name}.`
+                      : p.phone
+                        ? `Turns on for the phone it's open on now: ${phoneName(p.phone, pl)}.`
+                        : "Open it on your phone first."}
+                  </em>
+                </span>
+              </label>
+            );
+          })()}
         </fieldset>
         <div className="gb-acts two first">
           <button type="button" className="gb-btn" onClick={() => setRenaming(true)}>

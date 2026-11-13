@@ -3397,7 +3397,11 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     *Explores on its own* (the default: its quiet moments invite it to go after its wants with
     its body) or *Keeps you company* (the old quiet: it stays put, a small sound or remark at
     most), saved as it is tapped, not a soul write; the toast says it takes effect from its next
-    quiet moment on its phone, or next time it opens. Then *Rename* (the list's name; the
+    quiet moment on its phone, or next time it opens. Then *Your notes* (owner, 2026-11-13): one
+    checkbox, *Search and add to your notes*, that turns brain access on for the phone holding the
+    persona now (its hint names that phone; with it open nowhere the box is disabled and says to
+    open it on your phone first) and, once on, says *Only on <phone>, while it holds <name>.*
+    Then *Rename* (the list's name; the
     creature still calls itself by its own name until told otherwise), *Duplicate* (memories and visual memories, no checkpoints), *Export soul
     file* (its memories but not its visual memories, which stay on the box), *Import over it*
     (the file is checked first: too big or not a soul says so with *Nothing changed*; a

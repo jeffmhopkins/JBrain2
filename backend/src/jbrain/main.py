@@ -101,6 +101,7 @@ from jbrain.api import (
     feed,
     growbot,
     growbot_body,
+    growbot_brain,
     growbot_brainlog,
     growbot_calls,
     growbot_flash,
@@ -2143,6 +2144,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(growbot.internal_router, prefix="/internal")
     app.include_router(growbot_body.internal_router, prefix="/internal")
     app.include_router(growbot_personas.internal_router, prefix="/internal")
+    app.include_router(growbot_brain.internal_router, prefix="/internal")
     app.include_router(growbot_llm.router, prefix="/internal")
     app.include_router(growbot_calls.internal_router, prefix="/internal")
     app.include_router(growbot_brainlog.internal_router, prefix="/internal")

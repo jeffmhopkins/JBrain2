@@ -86,6 +86,10 @@ class _YesPersonaRepo:
     async def phone_patch_prefs(self, ctx: object, pid: str, phone: str, patch: object) -> int:
         return 1
 
+    async def brain_ok(self, ctx: object, pid: str, phone: str) -> bool:
+        # Past the token, the brain gate still refuses every phone the owner did not choose.
+        return False
+
 
 GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ("POST", "/internal/growbot/ticket/redeem", {"ticket": "t"}, 200),
@@ -126,6 +130,8 @@ GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
         {"persona": _PID, "phone": _PHONE, "set": {"gb_vol": "1"}},
         200,
     ),
+    ("POST", "/internal/growbot/brain/search", {"persona": _PID, "phone": _PHONE, "q": "x"}, 403),
+    ("POST", "/internal/growbot/brain/note", {"persona": _PID, "phone": _PHONE, "text": "x"}, 403),
 ]
 # Routes with a path parameter, as app.routes names them.
 _TEMPLATES = {

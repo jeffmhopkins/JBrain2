@@ -190,6 +190,15 @@ class _Fake(BaseHTTPRequestHandler):
                 default = (200, {"version": 4, "prefs": {"gb_vol": "0.5"}})
             status, reply = _Fake.soul.get(self.path, default)
             self._reply(status, json.dumps(reply).encode())
+        elif self.path.startswith("/internal/growbot/brain/"):
+            if not authed:
+                self._reply(401, b"{}")
+                return
+            default = (200, {"ok": True})
+            if self.path.endswith("/search"):
+                default = (200, {"n": 1, "text": "- (2026-11-03) the furnace filter is 16x25"})
+            status, reply = _Fake.soul.get(self.path, default)
+            self._reply(status, json.dumps(reply).encode())
         elif self.path == "/internal/growbot/robot/verify":
             ok = authed and json.loads(body) == {"code": "gb-abc123", "key": "right-key"}
             self._reply(200 if ok else 401, json.dumps({"ok": ok}).encode())
@@ -3117,6 +3126,60 @@ def test_settings_name_the_persona_they_came_from_and_pass_refusals(run: _Runnin
     assert _soul_call(run, "GET", "/api/box/prefs")[0] == 503
     _Fake.soul = {"/internal/growbot/prefs/pull": (200, ["no"])}  # type: ignore[dict-item]
     assert _soul_call(run, "GET", "/api/box/prefs")[0] == 503
+
+
+# --- the owner's notes ---------------------------------------------------------------------
+
+
+def test_the_brain_routes_reach_the_api_as_this_phone(run: _Running) -> None:
+    """The api is the gate; the sidecar names only the persona and phone it signed."""
+    body = {"persona": _PERSONA, "q": "furnace filter", "phone": "someone-elses"}
+    assert _soul_call(run, "POST", "/api/box/brain/search", body) == (
+        200,
+        {"n": 1, "text": "- (2026-11-03) the furnace filter is 16x25"},
+    )
+    sent = [s for s in _Fake.seen if s["path"] == "/internal/growbot/brain/search"][-1]
+    assert sent["auth"] == f"Bearer {_TOKEN}"
+    assert json.loads(sent["body"]) == {"persona": _PERSONA, "phone": _PHONE, "q": "furnace filter"}
+    note = {"persona": _PERSONA, "text": "Furnace filter is 16x25."}
+    assert _soul_call(run, "POST", "/api/box/brain/note", note) == (200, {"ok": True})
+    sent = [s for s in _Fake.seen if s["path"] == "/internal/growbot/brain/note"][-1]
+    assert json.loads(sent["body"]) == {
+        "persona": _PERSONA,
+        "phone": _PHONE,
+        "text": "Furnace filter is 16x25.",
+    }
+
+
+def test_the_brain_routes_refuse_what_is_not_theirs_and_pass_the_gate(run: _Running) -> None:
+    body = {"persona": _PERSONA, "q": "x"}
+    assert _soul_call(run, "POST", "/api/box/brain/search", body, cookie=run.cookie) == (
+        204,
+        None,
+    )
+    assert _soul_call(run, "GET", "/api/box/brain/search")[0] == 405
+    assert _soul_call(run, "POST", "/api/box/brain/search", ["no"])[0] == 400
+    big = {"persona": _PERSONA, "text": "x" * 20_000}
+    assert _soul_call(run, "POST", "/api/box/brain/note", big)[0] == 400
+    for named in ("", "1" + _PERSONA[1:], None):
+        other = {"persona": named, "q": "x"}
+        assert _soul_call(run, "POST", "/api/box/brain/search", other) == (409, {"error": "other"})
+    for status, detail in (
+        (403, "off"),
+        (400, "a search"),
+        (404, "gone"),
+        (409, "moved"),
+        (429, "too many notes"),
+    ):
+        _Fake.soul = {"/internal/growbot/brain/search": (status, {"detail": detail})}
+        assert _soul_call(run, "POST", "/api/box/brain/search", body) == (status, {"error": detail})
+    _Fake.soul = {"/internal/growbot/brain/search": (403, ["no"])}  # type: ignore[dict-item]
+    assert _soul_call(run, "POST", "/api/box/brain/search", body) == (403, {"error": "refused"})
+    for status in (401, 500):
+        _Fake.soul = {"/internal/growbot/brain/note": (status, {"detail": "x"})}
+        assert _soul_call(run, "POST", "/api/box/brain/note", {"persona": _PERSONA})[0] == 503
+    _Fake.soul = {"/internal/growbot/brain/search": (200, ["no"])}  # type: ignore[dict-item]
+    assert _soul_call(run, "POST", "/api/box/brain/search", body)[0] == 503
 
 
 def test_the_memory_routes_take_only_their_methods(run: _Running) -> None:

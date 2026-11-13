@@ -29,7 +29,7 @@ KEEP: Final = timedelta(days=7)
 _PRUNE_EVERY: Final = 200
 # A runaway reply (a model stuck repeating) is cut here, so one turn cannot bloat the table.
 TEXT_MAX: Final = 64 * 1024
-KINDS: Final = ("llm", "stt", "tts")
+KINDS: Final = ("llm", "stt", "tts", "brain")
 
 
 @dataclass
