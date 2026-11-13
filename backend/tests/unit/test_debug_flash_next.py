@@ -199,7 +199,10 @@ def _switch(
     while time.monotonic() < deadline:
         body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
         status = body.get("switch")
-        if status and status["id"] == resp.json()["id"] and status["stage"] in _TERMINAL:
+        # The stage turns terminal a moment before the switch lets go of its lock, so a
+        # caller that reads `switching` next must wait for both.
+        ended = status and status["id"] == resp.json()["id"] and status["stage"] in _TERMINAL
+        if ended and not body.get("switching"):
             return resp, status
         time.sleep(0.005)
     raise AssertionError("the switch never ended")

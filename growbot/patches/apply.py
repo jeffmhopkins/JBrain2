@@ -2363,7 +2363,7 @@ TALKLOG_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "if(!text) return; var t=speakable(speakSafe(text)); if(!t) return; _sayCap=Date.now();",
         "if(!text) return; var t=speakable(speakSafe(text)); if(!t) return; _sayCap=Date.now();"
-        " if(window.gbTalk) gbTalk.solo(text);",
+        " if(window.gbTalk){ gbTalk.cut(_chainQ,_voiceActive); gbTalk.solo(text); }",
         1,
     ),
     # A tap on the trail or the drawer is never a push-to-talk hold.
@@ -2371,6 +2371,18 @@ TALKLOG_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         '#gbk,#gbkBrainP,#gbkBack";',
         '#gbk,#gbkBrainP,#gbkBack,#gbTrail,#gbLog";',
+        1,
+    ),
+    # _ctxHush drops the queue without silence(): what it drops was never heard either.
+    ("v3/next.html", "function _ctxHush(){ ", "function _ctxHush(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ", 1),
+    # The page's own tap handler (petting, push-to-talk) keeps its own list of what is not a
+    # touch on the creature: the trail's lines and the drawer's text are not.
+    (
+        "v3/next.html",
+        'x.closest("input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge"))'
+        " return;",
+        'x.closest("input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge,'
+        '#gbTrail,#gbLog")) return;',
         1,
     ),
 ]

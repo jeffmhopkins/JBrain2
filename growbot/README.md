@@ -466,14 +466,17 @@ behind a *✂ you cut in* marker, with *hear the rest* to have it spoken.
 
 What was heard comes from upstream's own sentence queue (`TALKLOG_PATCHES` in `apply.py`).
 Each streamed sentence is queued with the caption offset it ends at. `_chainNext` starting it
-marks it playing, and the next `_chainNext` marks it finished. `silence()` runs on every
-interruption (barge-in, a new reply over an old one, pause), and it marks what was playing or
-still queued as cut. A sentence cut mid-play counts as unheard. So does caption text the page
+marks it playing, and the next `_chainNext` marks it finished. Every path that drops the
+queue reports first, and what was playing or still queued is marked cut: `silence()` (barge-in,
+a new reply over an old one, pause), `_ctxHush`, and `speakNow` when a whole line takes the
+voice over a stream. A settled caption that turned a dash into a comma stays the same line. A sentence cut mid-play counts as unheard. So does caption text the page
 held back while the person talked (`_yieldNow`). A muted creature is caption-only by choice,
 so nothing is dimmed. The person's lines come from the one input funnel (`sendTxtFrom`), typed
 or spoken. Body sounds are left out. The lines stay on the phone, in localStorage per persona
 (`gb_talk_log:<persona>`, 300 lines, a week), and are never sent anywhere. The drawer's
-*clear* removes them. `?talklog=off` leaves the page as upstream drew it.
+*clear* removes them. A tab keeps writing to the persona it loaded, even after another tab
+moves the phone to a new one. Taps on the trail and the drawer are never a pet or a
+push-to-talk hold. `?talklog=off` leaves the page as upstream drew it.
 
 ### The bottom bar and the wake gate
 

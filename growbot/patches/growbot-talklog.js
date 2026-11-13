@@ -8,13 +8,14 @@
    - a fading trail of the last few lines above the caption, older ones dimmer; tapping a
      line opens it in place with the part the person never heard dimmed, behind a marker;
    - a log drawer (the trail's "log" pill, or a swipe up on the trail) with the whole day,
-     a search, and "hear the rest" on any line that was cut short.
+     a search, and "hear the rest" on any line that was cut short; it keeps a week.
 
    What was heard comes from upstream's own sentence queue. A streamed reply is voiced one
    sentence at a time through _chainQ; each queued sentence carries the caption offset it ends
    at (onSayStream's `upto`), each one _chainNext starts is playing, and the next _chainNext
-   means it finished. silence(), which every interruption runs through (barge-in, a new reply
-   over the old one, pause), marks whatever was playing or still queued as cut. A sentence cut
+   means it finished. Every path that drops the queue reports it first, and that marks whatever
+   was playing or still queued as cut: silence() (barge-in, a new reply over the old one,
+   pause), _ctxHush, and speakNow when a whole line takes the voice over a stream. A sentence cut
    while playing counts as unheard, since the person may have missed any of it. Text the page
    held back (_yieldNow: the person was talking, so the caption streamed silently) counts as
    unheard too. A muted creature is caption-only by choice, so nothing is dimmed there.
@@ -27,6 +28,8 @@
   "use strict";
 
   var KEEP = 300;
+  // A line longer than any reply, so a runaway caption cannot eat the origin's storage quota.
+  var MAX_CHARS = 4000;
   var KEEP_MS = 7 * 24 * 3600 * 1000;
   var TRAIL_LINES = 3;
   // The trail is for "what did it just say", not the history: the drawer holds that.
@@ -48,11 +51,19 @@
 
   function now() { return Date.now(); }
 
-  function storeKey() {
+  /* The persona this tab loaded, fixed once: another tab can move the phone's shared meta to a
+     new persona while this one runs on, and this tab's lines must never land in that one's log
+     (growbot-box.js keeps its soul writes to its own persona the same way). */
+  var KEY = (function () {
     var persona = "";
-    try { persona = (JSON.parse(window.localStorage.getItem("gb_box_soul") || "{}") || {}).persona || ""; } catch (e) {}
+    try {
+      var b = window.__gbBoxSoul;
+      persona = b && typeof b.persona === "string" ? b.persona
+        : (JSON.parse(window.localStorage.getItem("gb_box_soul") || "{}") || {}).persona || "";
+    } catch (e) {}
     return "gb_talk_log:" + persona;
-  }
+  })();
+  function storeKey() { return KEY; }
 
   function load() {
     try {
@@ -62,7 +73,12 @@
       log = (Array.isArray(raw) ? raw : []).filter(function (e) {
         return e && typeof e.text === "string" && typeof e.t === "number" && e.t > cutoff && (e.who === "me" || e.who === "you");
       }).slice(-KEEP);
-      log.forEach(function (e) { e.id = nextId++; if (!Array.isArray(e.chunks)) e.chunks = []; });
+      log.forEach(function (e) {
+        e.id = nextId++;
+        if (!Array.isArray(e.chunks)) e.chunks = [];
+        // A reload ended the voice: whatever was still playing or queued was never heard.
+        e.chunks.forEach(function (c) { if (c.st === "p" || c.st === "q") { c.st = "x"; e.cut = true; } });
+      });
     } catch (e) { log = []; }
   }
 
@@ -73,14 +89,14 @@
       try {
         store.setItem(storeKey(), JSON.stringify(log.slice(-KEEP).map(function (e) {
           return { who: e.who, text: e.text, t: e.t, cut: !!e.cut, held: !!e.held, soloCut: !!e.soloCut,
-            chunks: e.chunks.map(function (c) { return { s: c.s, e: c.e, st: c.st === "p" ? "x" : c.st }; }) };
+            chunks: e.chunks.map(function (c) { return { s: c.s, e: c.e, st: c.st }; }) };
         })));
       } catch (e) {}
     }, 800);
   }
 
   function add(who, text) {
-    var e = { id: nextId++, who: who, text: text, t: now(), chunks: [], cut: false, held: false, soloCut: false };
+    var e = { id: nextId++, who: who, text: text.slice(0, MAX_CHARS), t: now(), chunks: [], cut: false, held: false, soloCut: false };
     log.push(e);
     if (log.length > KEEP) log.splice(0, log.length - KEEP);
     return e;
@@ -114,21 +130,27 @@
 
   // _chainNext runs when the previous sentence finished (or on the first one).
   function next() {
-    if (playing && playing.st === "p") playing.st = "ok";
+    var done = playing && playing.st === "p";
+    if (done) playing.st = "ok";
     playing = null;
+    if (done) save();
   }
 
   function start(it) {
     if (it && it.gbTalk) { playing = it.gbTalk.c; playing.st = "p"; }
   }
 
+  // A muted creature is caption-only by choice: nothing it showed was missed.
   function held() {
+    if (window.MUTED) return;
     if (reply) reply.held = true;
     if (reply && reply.entry) reply.entry.held = true;
   }
 
   // speakNow voices a whole line at once: the caption for it was written in the same tick.
   function soloLine(text) {
+    // The caller wrote #say in this same tick, before the observer has seen it.
+    try { var say = document.getElementById("say"); if (say) caption(say.textContent); } catch (e) {}
     var me = lastMe();
     var t = String(text || "").trim();
     solo = me && t && me.text.indexOf(t.slice(0, 24)) === 0 ? me : null;
@@ -160,16 +182,38 @@
 
   /* ---------- the caption, watched ---------- */
 
+  /* The settled caption (upstream's final `said`) differs from the streamed one: trimmed, a
+     dash turned into a comma, real newlines where the stream had spaces, and on a reply cut by
+     the token limit, shortened to its last whole sentence. */
+  function norm(s) { return s.replace(/\s*—\s*/g, ", ").replace(/\s+/g, " ").trim(); }
+
+  // The same reply: grown (streaming, or a move added after it), or settled shorter. A short
+  // stray line is never taken as a shortened reply.
   function related(a, b) {
-    var n = Math.min(a.length, b.length, 24);
-    return n > 0 && a.slice(0, n) === b.slice(0, n);
+    var na = norm(a), nb = norm(b);
+    if (!na.length) return false;
+    return nb.indexOf(na) === 0 || (nb.length >= 24 && na.indexOf(nb) === 0);
+  }
+
+  // Chunk offsets were measured on the streamed text; carry them over to its settled form.
+  function settle(e, t) {
+    var old = e.text;
+    var dash = (old.match(/—/g) || []).length > (t.match(/—/g) || []).length;
+    var lead = /^\s/.test(t) ? 0 : old.length - old.replace(/^\s+/, "").length;
+    function at(i) {
+      var p = old.slice(0, i);
+      if (dash) p = p.replace(/\s*—\s*/g, ", ");
+      return Math.max(0, p.length - lead);
+    }
+    if (dash || lead) e.chunks.forEach(function (c) { c.s = at(c.s); c.e = at(c.e); });
+    e.text = t.slice(0, MAX_CHARS);
   }
 
   function caption(text) {
     var t = String(text || "").replace(/\s+$/, "");
     if (!t.trim() || /^(…|\.\.\.)$/.test(t.trim())) return;
     if (reply && reply.entry && related(reply.entry.text, t)) {
-      if (reply.entry.text !== t) { reply.entry.text = t; changed(); }
+      if (reply.entry.text !== t) { settle(reply.entry, t); changed(); }
       return;
     }
     if (reply && !reply.entry && (reply.chunks.length || !isRecent(t))) {
