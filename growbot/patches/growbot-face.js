@@ -773,9 +773,10 @@
        the canvas: the caption, the text box and the button bar own the rest, and the neck or
        chest below the band runs on behind them. */
     var z = Math.min(W / LW, H * 0.62 / 480);
-    /* The ember sits in the middle of the whole screen, in the design's units (owner,
-       2026-11-12: it read as high at the band's own 300). */
-    d.mid = (H / 2 - (H * 0.02 - 40 * z)) / z;
+    /* The ember sits between the status pills at the top and the talk trail above the caption,
+       40% down the screen, in the design's units (owner, 2026-11-13: dead centre crowded the
+       trail; 2026-11-12: the band's own 300 read as high). */
+    d.mid = (H * 0.4 - (H * 0.02 - 40 * z)) / z;
     /* The ember is a lens in a dark room: the mood sky shows only as a tint behind it. */
     if (face === "ember") {
       c.save();
