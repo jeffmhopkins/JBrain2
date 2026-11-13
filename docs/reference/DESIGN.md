@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-11-12
+> **Status:** Living · **Last verified:** 2026-11-13
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3518,6 +3518,10 @@ drawn as an original design and not a copy of any film prop.
   between words dims it. While the person speaks (the ear's VAD), faint rings fall inward.
   Thinking runs a small comet round the core.
 - **A dark room.** The mood sky shows only as a tint behind the lens.
+- **In the middle of the screen** (owner, 2026-11-12): the lens centres on the screen's
+  vertical middle, not at the face band's own height, where it read as high.
+- **No droid beeps** (owner, 2026-11-12): Dave speaks in words and light, so upstream's chirps,
+  trills and warbles play as if muted while the ember is on; their buzz stays.
 
 ## Room endpoint — the robot pet's body (settled 2026-09-13; binding mock: `docs/mocks/room-endpoint/pet-face.html`, round record `docs/mocks/room-endpoint/README.md`, plan `docs/plans/ROOM_ENDPOINT_PLAN.md`)
 

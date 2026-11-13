@@ -156,12 +156,12 @@ def test_the_pixel_eyes_give_way_only_while_the_new_face_is_on() -> None:
     assert "broken = true;" in face
 
 
-def _face_in_node(script: str) -> str:
+def _face_in_node(script: str, face_id: str = "") -> str:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
     face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
-    shim = "var window={addEventListener:function(){}},location={search:''};"
+    shim = f"var window={{addEventListener:function(){{}}}},location={{search:'?face={face_id}'}};"
     out = subprocess.run(
         [node, "-e", f"{shim}\n{face}\n{script}"], capture_output=True, text=True, check=True
     )
@@ -722,7 +722,9 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     assert "sys+=" not in page[
         page.index("var sys=buildSystem(") : page.index("var slug=brainOverride(")
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
-    assert '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep"' in page
+    assert (
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall2"' in page
+    )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
 
@@ -1627,6 +1629,63 @@ def test_a_find_that_cannot_be_answered_rides_the_next_turn(setup: str, why: str
         assert got["n"] == 120
 
 
+def test_what_it_just_found_stays_in_front_of_it_for_a_re_ask() -> None:
+    """Field test, 2026-11-12: the find said 25 minutes, its person talked over the answer, and
+    the re-ask got "I do not have that in memory". The find rides the next human turns for 90 s."""
+    got = _recall_page(
+        "var r={none:gbRecallKept()};gbRecallAsk('taco','event',{});timers.shift()();"
+        "r.kept=gbRecallKept();_gbRecallLast.t=Date.now()-GB_RECALL_KEEP_MS-1;"
+        "r.stale=gbRecallKept();console.log(JSON.stringify(r));"
+    )
+    assert got["none"] == "" and got["stale"] == ""
+    assert "== WHAT YOU LOOKED UP A MOMENT AGO ==" in got["kept"]
+    assert "lunch: a taco" in got["kept"] and "answer from it" in got["kept"]
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '_gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();' in page
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert "you have not looked yet, so say never answers and never says you do not know" in prompts
+
+
+@pytest.mark.parametrize(
+    ("box", "goals", "want"),
+    [
+        (True, None, "Dave"),
+        (True, {"selfName": "Sparky", "wants": ["a"]}, "Sparky"),
+        (False, None, ""),
+    ],
+)
+def test_a_fresh_box_persona_wakes_knowing_its_name(
+    box: bool, goals: dict[str, Any] | None, want: str
+) -> None:
+    """Owner, 2026-11-12: Dave greeted him with "I'm Sprout". A box creature born fresh takes its
+    persona's name; one already awake keeps its own, and a phone's own creature is untouched."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    soul_js = (_SITE / "v3" / "soul.js").read_text(encoding="utf-8")
+    soul: dict[str, Any] = {"meta": {"name": "Dave", "kind": "template"}}
+    if goals is not None:
+        soul["goals"] = goals
+    setup = "var window={__gbBoxSoul:" + ("{persona:'p1'}" if box else "{g2:true}") + "};"
+    script = (
+        f"var s=normalizeSoul({json.dumps(soul)});"
+        "console.log(JSON.stringify({name:s.goals.selfName,wants:s.goals.wants.length}));"
+    )
+    out = subprocess.run(
+        [
+            node,
+            "-e",
+            f"{setup}\nvar localStorage={{getItem:function(){{return null;}}}};\n"
+            f"{soul_js}\n{script}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    assert got["name"] == want and got["wants"] > 0
+
+
 def test_this_conversation_is_kept_in_page_memory_only() -> None:
     got = _recall_page(
         "gbSessAdd('moment: they just said to you: \"I said \"hi\" twice\" — answer THEM','Hello');"
@@ -2137,3 +2196,45 @@ def test_nothing_reaches_the_model_before_the_wake_tap() -> None:
     assert "if(window._wakeGateUp||_gbWarmOff" in warm
     assert '$("wgWake").addEventListener("click",function(){' in page
     assert "window._wakeGateUp=false;" in page
+
+
+def test_the_ember_sits_in_the_middle_of_the_screen() -> None:
+    """The lens read as high at the band's own height (owner, 2026-11-12): its centre is the
+    screen's vertical middle, on a tall phone and a short one."""
+    script = (
+        "var at=null;function ctx(){ var o={canvas:{width:1,height:1}};"
+        "var m={a:1,b:0,c:0,d:1,e:0,f:0};"
+        "return new Proxy(o,{get:function(t,k){ if(k in t) return t[k];"
+        " if(k==='getTransform') return function(){ return m; };"
+        " if(k==='translate') return function(x,y){ m={a:m.a,b:0,c:0,d:m.d,e:m.e+x*m.a,"
+        "f:m.f+y*m.d}; if(at===null&&x>100) at=m.f; };"
+        " if(k==='scale') return function(x,y){ m={a:m.a*x,b:0,c:0,d:m.d*y,e:m.e,f:m.f}; };"
+        " if(k==='save'||k==='restore') return function(){};"
+        " if(/^create/.test(k)) return function(){ return {addColorStop:function(){}}; };"
+        " return function(){}; }, set:function(){ return true; }}); }"
+        "var out=[];[[390,844],[375,667]].forEach(function(s){ at=null;"
+        "window.gbFace.draw(ctx(),s[0],s[1],{t:1000,emotion:'calm',eye:1,smile:0,energy:0.4,"
+        "blink:false,paused:false,dreaming:false,think:false,orbit:0,looking:false,gx:0,gy:0,"
+        "touchT:0,shake:0,talking:false,glow:'#fff'}); out.push([at,s[1]/2]); });"
+        "console.log(JSON.stringify(out));"
+    )
+    for got, mid in json.loads(_face_in_node(script, "ember")):
+        assert got == pytest.approx(mid, abs=4)
+
+
+def test_dave_makes_no_droid_beeps() -> None:
+    """Upstream's blip plays as if muted while the ember is on, keeping its buzz; any other face
+    keeps its beeps, and a muted creature stays muted."""
+    script = (
+        "var heard=[];window.MUTED=false;"
+        "window.blip=function(k){ heard.push([k,window.MUTED]); };"
+        "window.gbFace.draw({getTransform:function(){ return {a:1}; },"
+        "save:function(){},restore:function(){},translate:function(){},scale:function(){},"
+        "setTransform:function(){}},10,10,{t:1,emotion:'calm',eye:1,energy:0.4});"
+        "window.blip('chirp');window.MUTED=true;window.blip('trill');"
+        "console.log(JSON.stringify([heard,window.MUTED]));"
+    )
+    heard, muted = json.loads(_face_in_node(script, "ember"))
+    assert heard == [["chirp", True], ["trill", True]] and muted is True
+    heard, _ = json.loads(_face_in_node(script, "lantern"))
+    assert heard == [["chirp", False], ["trill", True]]
