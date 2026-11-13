@@ -969,7 +969,9 @@ function _gbFlush(id,force){ var g=_gbUtts[id]; if(!g||(!g.fin&&!force)) return;
   for(var i=0;i<g.n&&!force;i++) if(!g.done[i]) return;
   delete _gbUtts[id];
   var txt=g.text.filter(function(t){ return t; }).join(" ").replace(/\s+/g," ").trim();
-  if(!txt){ try{ toast("…didn't catch that: the speech model heard no words"); }catch(e){} return; }
+  if(!txt){ for(var j=0;j<g.n;j++) if(!g.done[j]) return;
+    if(g.why) try{ toast(g.why==="empty"?"…didn't catch that: the speech model heard no words":"…didn't catch that: the speech model heard only noise or a stock phrase"); }catch(e){}
+    return; }
   try{ logEv("stt_join",{n:g.n,ms:Date.now()-g.t0,force:force?1:0}); }catch(e){}
   try{ _convLangSaw(g.lang,txt,g.meta); }catch(e){}
   showYouSaid(txt); sendTxtFrom(txt,g.meta); }
@@ -2022,12 +2024,21 @@ PATCHES += WAKE_GATE_PATCHES
 # understand it"). An empty piece is now silent; the utterance says so only when every piece
 # came back empty (_gbFlush above).
 PIECE_PATCHES: list[tuple[str, str, str, int]] = [
+    # A piece the speech model answered with nothing usable marks its utterance; the transcript
+    # filters' own messages stay quiet for a piece (every one of heardText's toasts is a drop).
     (
         "v3/next.html",
-        '_heardDrop("empty",meta); toast("…didn\'t catch that: the speech model heard no words");'
-        " return; }",
-        '_heardDrop("empty",meta); if(!(meta&&meta.gbPiece)) toast("…didn\'t catch that: the'
-        ' speech model heard no words"); return; }',
+        "function _heardDrop(why,meta){ if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,\"\",meta);",
+        "function _heardDrop(why,meta){ if(meta&&meta.gbPiece){ var _gbG=_gbUtts[meta.gbPiece.id];"
+        " if(_gbG&&why!==\"echo\"&&(!_gbG.why||_gbG.why===\"empty\")) _gbG.why=why;"
+        " _gbPiece(meta.gbPiece,\"\",meta); }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function heardText(txt,meta,detectedLang){",
+        "function heardText(txt,meta,detectedLang){"
+        " var toast=(meta&&meta.gbPiece)?function(){}:window.toast;",
         1,
     ),
 ]

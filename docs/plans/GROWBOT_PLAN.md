@@ -369,7 +369,7 @@ scene, the carried phone or the body is moving (3 then), ~2 s less prefill a tur
 (`ROUND2_PATCHES`). Speech is transcribed in pieces while the person talks (`STREAM_PATCHES`): after 4 s of
 audio, each short pause or a full buffer sends what is held and listening goes on, and the end
 of speech sends only the last piece; the creature gets one turn with the pieces joined. This also
-ends upstream's 12 s cap, which silently dropped the rest of a longer message. A piece that comes back empty (usually the breath after the last word) is silent; "didn't catch that" shows only when every piece came back empty (`PIECE_PATCHES`). An ordinary quiet beat now waits 90 s after the last activity
+ends upstream's 12 s cap, which silently dropped the rest of a longer message. A piece the speech model answers with nothing usable (usually the breath after the last word: silence, or Whisper's "thank you") is silent; "didn't catch that" shows once, only when every piece came back that way, and never for pieces the model was not asked about (`PIECE_PATCHES`). An ordinary quiet beat now waits 90 s after the last activity
 (upstream: 8 s), so the creature never cuts in just after the person stops talking
 (`QUIET_PATCHES`). What that beat says is upstream's live 11-11 text, ported from growbot.dev
 since GitHub's last snapshot (owner, 2026-11-12): "this time is yours: you may reach for one of

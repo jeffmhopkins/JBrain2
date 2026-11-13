@@ -938,22 +938,44 @@ def test_a_lost_or_silent_piece_never_holds_the_turn() -> None:
 
 
 def test_a_silent_last_piece_is_not_a_failure() -> None:
-    """Owner, 2026-11-13: the breath after the last word comes back empty, and that piece
-    showed "didn't catch that" though the words before it reached the creature whole."""
+    """Owner, 2026-11-13: the breath after the last word comes back empty (or as Whisper's
+    "thank you"), and that piece showed "didn't catch that" though the words before it reached
+    the creature whole. A piece's drop is silent; the utterance says so once, only when every
+    piece came back with nothing, and never for pieces the model was not asked about."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    breath = """
-    utt(); feed(5000,true); feed(600,false); feed(800,true); pcmUttStop(true,300); run();
-    answer(0,"you were unable to actually"); answer(1,"");
-    """
-    got = _run_stream(page, breath)
+    drop = page[page.index("function _heardDrop(why,meta){") :]
+    drop = drop[: drop.index("\n")]
+    helper = drop + "\nfunction dropped(i,why){ _heardDrop(why,{gbPiece:stt[i].p}); }\n"
+
+    def run(scenario: str) -> dict[str, Any]:
+        return _run_stream(page, helper + scenario)
+
+    two = "utt(); feed(5000,true); feed(600,false); feed(800,true); pcmUttStop(true,300); run();"
+    got = run(two + 'answer(0,"you were unable to actually"); dropped(1,"list");')
     assert got["sent"] == ["you were unable to actually"] and got["toasts"] == []
-    silent = """
-    utt(); feed(5000,true); feed(600,false); feed(800,true); pcmUttStop(true,300); run();
-    answer(0,""); answer(1,"");
-    """
-    got = _run_stream(page, silent)
-    assert got["sent"] == [] and len(got["toasts"]) == 1 and "heard no words" in got["toasts"][0]
-    assert '_heardDrop("empty",meta); if(!(meta&&meta.gbPiece)) toast("…didn\'t catch that:' in page
+    got = run(two + 'dropped(0,"empty"); dropped(1,"empty"); now+=200000; run();')
+    assert got["sent"] == [] and got["toasts"] == [
+        "…didn't catch that: the speech model heard no words"
+    ]
+    got = run(two + 'dropped(0,"list"); dropped(1,"empty");')
+    assert got["toasts"] == [
+        "…didn't catch that: the speech model heard only noise or a stock phrase"
+    ]
+    # Pieces skipped without asking the model (asleep, the speech gate), its own voice, or a
+    # give-up while a piece is still out: no claim that the model heard nothing.
+    got = run(two + 'answer(0,""); answer(1,""); now+=200000; run();')
+    assert got["toasts"] == []
+    got = run(two + 'dropped(0,"echo"); dropped(1,"echo");')
+    assert got["toasts"] == []
+    got = run(two + 'dropped(1,"empty"); now+=30000; run(); answer(0,"late words");')
+    assert got["toasts"] == [] and got["sent"] == ["late words"]
+    got = run(
+        "utt(); feed(5000,true); feed(600,false); feed(1000,true); pcmUttStop(false,0); run();"
+        'dropped(0,"empty"); now+=200000; run();'
+    )
+    assert got["toasts"] == [] and got["sent"] == []
+    head = page[page.index("function heardText(txt,meta,detectedLang){") :][:120]
+    assert "var toast=(meta&&meta.gbPiece)?function(){}:window.toast;" in head
 
 
 def test_a_streamed_utterance_outlives_the_old_twelve_second_cap() -> None:
