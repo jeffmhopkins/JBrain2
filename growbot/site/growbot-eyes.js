@@ -15,8 +15,10 @@
   /* A tracker that stopped handing boxes over this long ago is not watching, enabled or not. */
   var FED_MS = 1500;
   var SEARCH_AFTER_MS = 5000, CLOSE_AFTER_MS = 30000;
-  /* A face rarely reaches the frame's edge, so a little gain lets the pupils use their range. */
-  var GAIN_X = 1.6, GAIN_Y = 1.2;
+  /* A face rarely reaches the frame's edge, so a little gain lets the pupils use their range;
+     side to side it is double the old 1.6, since a face barely crosses the narrow front
+     camera's frame (owner, 2026-11-13: left to right gain needs like doubled). */
+  var GAIN_X = 3.2, GAIN_Y = 1.2;
   var RETRY_MS = [30000, 120000];
 
   var model = null, loading = false, fails = 0, retryAt = 0;

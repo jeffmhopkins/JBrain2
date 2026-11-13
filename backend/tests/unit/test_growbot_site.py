@@ -336,6 +336,23 @@ def test_the_eyes_look_toward_the_face_on_screen() -> None:
     assert x > 0.5 and y > 0.2
 
 
+def test_the_eyes_follow_side_to_side_at_double_the_old_gain() -> None:
+    """A face a tenth of the frame off centre moves the eyes well over halfway sideways
+    (owner, 2026-11-13: left to right gain needs like doubled); a face at the frame's edge
+    overshoots here, and gbFace.see clamps it to the eye's range."""
+    seen = json.loads(
+        _eyes_in_node(
+            "window.gbEyes.boxes([{x:0.3,y:0.4,width:0.2,height:0.2}]);"
+            "window.gbEyes.boxes([{x:0.3,y:0.5,width:0.2,height:0.2}]);"
+            "window.gbEyes.boxes([{x:0,y:0.4,width:0.1,height:0.2}]);"
+            "console.log(JSON.stringify(seen));"
+        )
+    )
+    assert seen[0] == pytest.approx([0.64, 0])
+    assert seen[1] == pytest.approx([0.64, 0.24])
+    assert seen[2][0] > 1
+
+
 def test_the_eyes_never_run_a_second_detector_beside_the_tracker() -> None:
     """A second GPU worker could make the tracker's frame miss its 350 ms deadline, which drops
     leg tracking to the main thread for good, so the eyes' own detector waits while it is on;
