@@ -1282,8 +1282,8 @@ function gbSessAdd(u,a){ try{
    asked must finish first (its trace, its speech, its visual work), and a follow-up that cannot
    run hands its find to the person's next turn instead of leaving "let me think back" unanswered. */
 function gbRecallAsk(q,kind,extra){
-  var now=Date.now(), r, ev, tries=0, words=String(q||"").replace(/["\s]+/g," ").trim().slice(0,60);
-  if(!words||/^omit\b/i.test(words)) return;
+  var now=Date.now(), r, ev, tries=0, words=gbRecallWords(q);
+  if(!words) return;
   if(kind!=="event"){ logEv("recall_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("recall_skip",{why:"follow"}); return; }
   if(now-_gbRecallT<GB_RECALL_GAP_MS){ logEv("recall_skip",{why:"gap"}); return; }
@@ -1305,21 +1305,25 @@ function gbRecallAsk(q,kind,extra){
   setTimeout(go,0);
   return true;
 }
-/* The line said while it looks: the model's own when it only says it is thinking back, else one of
-   these. It has not looked yet, so an answer or "I don't know" there is a guess the find then
-   contradicts (field, 2026-11-13: "I found Lydian and Allura" before the find named all four). */
-var GB_RECALL_LINES=["Hmm, let me think back.","Let me look back.","One moment, I'm thinking back.","Let me remember."];
+/* The line said while it looks: the model's own only when every word of it is thinking back, else
+   one of these. It has not looked yet, so an answer or "I don't know" there is a guess the find
+   then contradicts (field, 2026-11-13: "I found <two names>" before the find named all four). */
+var GB_RECALL_LINES=["Hmm, let me think back.","Let me look back.","One moment, I'm thinking back.","Let me remember."],
+  GB_RECALL_OK={hmm:1,hm:1,um:1,oh:1,ok:1,okay:1,let:1,me:1,one:1,moment:1,sec:1,second:1,i:1,im:1,am:1,
+    think:1,thinking:1,back:1,look:1,looking:1,remember:1,see:1,wait:1,just:1,a:1,bit:1};
 function gbRecallLine(say){
-  var s=String(say||"").replace(/\s+/g," ").trim();
-  if(s&&s.length<=60&&/\b(think|thinking|remember|recall|look back|looking back|let me)\b/i.test(s)
-    &&!/\b(not|no|never|but|don'?t|can'?t|cannot|forgot|found|is|are|was|were|it'?s)\b/i.test(s)) return s;
+  var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean);
+  if(s.length<=60&&w.length&&/\b(think|thinking|remember|look)\b/.test(w.join(" "))&&w.every(function(x){ return GB_RECALL_OK[x]===1; })) return s;
   return GB_RECALL_LINES[Math.floor(Math.random()*GB_RECALL_LINES.length)];
 }
-/* With recall first in the reply, a search is known before say streams: say is not voiced as it
-   arrives, and the reply handler speaks the thinking-back line in its place. */
+/* A search word list, not the schema's OMIT or a filler some fields get ("none"). */
+function gbRecallWords(q){ var w=String(q||"").replace(/["\s]+/g," ").trim();
+  return !w||/^omit\b/i.test(w)||/^(none|null|nothing|no|n\/?a|unknown|-)$/i.test(w)?"":w.slice(0,60); }
+/* A reply that opens with a search holds its say while it streams; the reply handler speaks the
+   thinking-back line in its place. A search after say changes nothing that has been voiced. */
 function gbRecallStreaming(full){
-  var m=/"recall"\s*:\s*"([^"]*)/.exec(String(full||""));
-  return !!(m&&m[1].trim()&&!/^omit\b/i.test(m[1].trim()));
+  var m=/^\s*\{\s*"recall"\s*:\s*"([^"]*)"/.exec(String(full||""));
+  return !!(m&&gbRecallWords(m[1]));
 }
 """
 
@@ -1336,21 +1340,16 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
         "    '\"log\":\"one diary-worthy line, OMIT for routine moments\",' +\n"
         "    '\"fact\":\"OMIT unless your person just told you something worth keeping about"
         " their life, people, plans or likes: one plain line for your fact book (lunch today:"
-        " a chalupa and a taco)\",' +",
-        1,
-    ),
-    # recall comes before say, so the streamed voice learns of a search before it speaks the line
-    # (field, 2026-11-13: "I found Lydian and Allura" and "not the place itself" were spoken
-    # while the say was streaming, the recall key arriving after them).
-    (
-        "v3/prompts.js",
-        "    '\"say\":\"' + (gbTalkGrown()",
+        " a chalupa and a taco)\",' +\n"
+        # A search opens the reply when there is one, so the streamed voice knows of it before
+        # say (field, 2026-11-13: "I found <two names>" and "not the place itself" were spoken
+        # while say streamed, the recall key arriving after them). It is not first in the
+        # schema: a visual memory action owns the first key.
         "    '\"recall\":\"OMIT almost always. when they ask about something from before that"
         " you cannot see above, a few search words (taco bell order) to look through your fact"
-        " book, diary and this conversation. it comes first: you have not looked yet, so your say"
-        " is then only a short line that you are thinking back, never an answer and never that"
-        " you do not know; you answer with what you find next thought\",' +\n"
-        "    '\"say\":\"' + (gbTalkGrown()",
+        " book, diary and this conversation. when you use it, write it as the FIRST key of your"
+        " reply, before say. you have not looked yet, so that say is only a short line that you are thinking back, never an"
+        " answer and never that you do not know; you answer with what you find next thought\",' +",
         1,
     ),
     (
@@ -1370,7 +1369,7 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
         "    var _dl=0; if(o.log&&String(o.log)",
         "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))"
         " logEv(\"fact\",{n:_live.facts.length}); if(typeof o.recall===\"string\"&&"
-        "gbRecallAsk(o.recall,kind,extra)) o.say=gbRecallLine(o.say); }catch(_fe){}\n"
+        "gbRecallAsk(o.recall,kind,extra)&&!_streamSaid) o.say=gbRecallLine(o.say); }catch(_fe){}\n"
         "    var _dl=0; if(o.log&&String(o.log)",
         1,
     ),
@@ -1598,8 +1597,8 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/prompts.js",
-        " a chalupa and a taco)\",' +",
-        " a chalupa and a taco)\",' +\n"
+        " you answer with what you find next thought\",' +",
+        " you answer with what you find next thought\",' +\n"
         "    '\"sleep\":\"OMIT unless your person just said you may sleep or told you to go to"
         " sleep: then true, with a goodnight in say\",' +",
         1,
