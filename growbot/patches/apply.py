@@ -1453,30 +1453,54 @@ var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=5000, GB_TIMER_LATE
   GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,one:1,about:1,all:1};
 function gbTimers(){ var sc=_live&&_live.scratch; if(!sc) return []; return Array.isArray(sc.timers)?sc.timers:(sc.timers=[]); }
 function gbTimerAbout(v){ return String(v||"").replace(/\s+/g," ").trim().slice(0,80); }
+function gbTimerWords(about){ return about.toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length>2&&!GB_TIMER_STOP[w]; }); }
+function gbTimerHits(x,words){ return words.some(function(w){ return String(x.about).toLowerCase().indexOf(w)>=0; }); }
+/* Field, 2026-11-13: told "launch is at 5:45" at 4:34, it set 56 minutes, not 71. A clock time
+   is resolved here, in the clock's zone, to its next coming; the model never does that sum. */
+function gbClockWall(t){
+  var p={}; try{ new Intl.DateTimeFormat("en-US",{timeZone:gbClockZone(),hourCycle:"h23",hour:"2-digit",minute:"2-digit",second:"2-digit"}).formatToParts(new Date(t)).forEach(function(x){ p[x.type]=+x.value; }); }
+  catch(e){ var d=new Date(t); p={hour:d.getHours(),minute:d.getMinutes(),second:d.getSeconds()}; }
+  return ((p.hour%24)*60+p.minute)*60+p.second;
+}
+function gbTimerAtMs(v,now){
+  var m=String(v||"").trim().toLowerCase().match(/^(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?$/);
+  if(!m) return 0;
+  var h=+m[1], mi=+(m[2]||0), ap=m[3]?m[3].charAt(0):"";
+  if(mi>59||h>23||(ap&&(h<1||h>12))) return 0;
+  if(ap==="p"&&h<12) h+=12; else if(ap==="a"&&h===12) h=0;
+  var d=((h*60+mi)*60-gbClockWall(now))%86400; if(d<=0) d+=86400;
+  return now+d*1000;
+}
+function gbClockShort(t){
+  try{ return new Date(t).toLocaleTimeString("en-US",{timeZone:gbClockZone(),hour:"numeric",minute:"2-digit"}); }
+  catch(e){ return new Date(t).toTimeString().slice(0,5); }
+}
 function gbTimerSet(v,kind,extra){
   if(typeof v==="string"){ try{ v=JSON.parse(v); }catch(e){ return; } }
   if(!v||typeof v!=="object") return;
   if(kind!=="event"){ logEv("timer_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("timer_skip",{why:"follow"}); return; }
-  var list=gbTimers(), about=gbTimerAbout(v.about||v.what), m=+v.minutes, words, n;
+  var list=gbTimers(), about=gbTimerAbout(v.about||v.what), m=+v.minutes, now=Date.now(),
+    words=gbTimerWords(about), n=list.length, at=v.at!=null?gbTimerAtMs(v.at,now):0;
   if(v.cancel===true||v.cancel==="true"){
-    words=about.toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length>2&&!GB_TIMER_STOP[w]; });
-    n=list.length;
-    for(var i=list.length-1;i>=0;i--) if(!words.length||words.some(function(w){ return String(list[i].about).toLowerCase().indexOf(w)>=0; })) list.splice(i,1);
+    for(var i=list.length-1;i>=0;i--) if(!words.length||gbTimerHits(list[i],words)) list.splice(i,1);
     logEv("timer_cancel",{n:n-list.length}); gbToolPill("timer"); return true;
   }
-  if(!(m>0)||!isFinite(m)) return;
-  m=Math.min(m,GB_TIMER_MAX_MIN);
-  list.push({at:Date.now()+Math.round(m*60000),about:about||"your timer",t:Date.now()});
+  if(!at){ if(!(m>0)||!isFinite(m)) return; at=now+Math.round(Math.min(m,GB_TIMER_MAX_MIN)*60000); }
+  /* Set again for the same thing moves it: a corrected time must not leave the old one to ring. */
+  for(var j=list.length-1;j>=0;j--) if(words.length&&gbTimerHits(list[j],words)) list.splice(j,1);
+  var moved=n-list.length; m=Math.round((at-now)/60000);
+  list.push({at:at,about:about||"your timer",t:now});
   if(list.length>GB_TIMERS_MAX) list.splice(0,list.length-GB_TIMERS_MAX);
-  logEv("timer",{m:m}); gbToolPill("timer");
+  logEv("timer",{m:m,moved:moved}); gbToolPill("timer");
   return true;
 }
 function gbTimerLeft(ms){ var mn=Math.round(ms/60000); return mn<1?"under a minute":mn<90?mn+" min":Math.round(mn/6)/10+" h"; }
 function gbTimersLine(){
   var list=gbTimers(), now=Date.now();
   if(!list.length) return "";
-  return "\n\n== YOUR TIMERS (you set these for your person) ==\n"+list.map(function(x){ return "- "+x.about+": "+(x.at>now?"in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
+  /* The time now rides with them, so "how long until" is read off, not remembered or guessed. */
+  return "\n\n== YOUR TIMERS (you set these for your person; it is "+gbClockShort(now)+" now) ==\n"+list.map(function(x){ return "- "+x.about+": "+(x.at>now?"at "+gbClockShort(x.at)+", in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
 }
 function gbTimerTick(){ try{
   var list=gbTimers(), now=Date.now(), due=[];
@@ -1877,9 +1901,12 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         " write it as the FIRST key of your reply (after visual_memory if you use one), before say;"
         " that say only says you are working it out, never a number; you tell them next thought\",' +\n"
         "    '\"timer\":\"OMIT unless your person asks you to remind them of something or set a"
-        " timer: an object {\\\"minutes\\\":20,\\\"about\\\":\\\"flip the laundry\\\"}, and"
-        " say confirms it plainly; to cancel one {\\\"cancel\\\":true,\\\"about\\\":\\\"laundry\\\"}."
-        " the page tells you when it goes off\",' +\n"
+        " timer: an object {\\\"minutes\\\":20,\\\"about\\\":\\\"flip the laundry\\\"}, or, for a"
+        " clock time, {\\\"at\\\":\\\"5:45 PM\\\",\\\"about\\\":\\\"launch\\\"}: never work out"
+        " the minutes to a clock time yourself. say confirms it plainly. setting one again for the"
+        " same thing moves it, so when they correct a time, set it again. to cancel one"
+        " {\\\"cancel\\\":true,\\\"about\\\":\\\"laundry\\\"}. YOUR TIMERS shows the time now and"
+        " when each is due; read time left off it. the page tells you when it goes off\",' +\n"
         "    gbBrainFields() +\n",
         1,
     ),
@@ -2146,7 +2173,7 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2"',
         1,
     ),
     # And the soul code that names a fresh persona (NAME_PATCHES).

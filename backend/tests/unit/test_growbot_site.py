@@ -761,7 +761,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-'
-        'tools"' in page
+        'tools2"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -2038,8 +2038,8 @@ def test_a_timer_is_set_shown_cancelled_and_told_when_due() -> None:
     assert got["set"] is True and got["str"] is True
     assert got.get("tick") is None and got.get("follow") is None
     assert got["line"] == (
-        "\n\n== YOUR TIMERS (you set these for your person) ==\n"
-        "- flip the laundry: in 20 min\n- tea: in 5 min"
+        "\n\n== YOUR TIMERS (you set these for your person; it is 1:21 PM now) ==\n"
+        "- flip the laundry: at 1:41 PM, in 20 min\n- tea: at 1:26 PM, in 5 min"
     )
     assert got["cancel"] is True and got["left"] == 1 and got["after"] == 0
     [(ev, kind, extra, carried)] = got["thinks"]
@@ -2047,6 +2047,54 @@ def test_a_timer_is_set_shown_cancelled_and_told_when_due() -> None:
     assert kind == "event" and extra == {"recallFollow": True}
     assert carried == "your timer went off: flip the laundry"
     assert ["timer_due", {"late": 0}] in got["logs"] and got["empty"] == ""
+
+
+@pytest.mark.parametrize(
+    ("at", "mins"),
+    [
+        ("5:45 PM", 71),
+        ("17:45", 71),
+        ("5:45pm", 71),
+        ("6 pm", 86),
+        ("4:00 PM", 1406),
+        ("12:30 am", 476),
+    ],
+)
+def test_a_timer_for_a_clock_time_is_worked_out_on_the_page(at: str, mins: int) -> None:
+    """Field, 2026-11-13: told at 4:34 PM that launch is at 5:45, it set 56 minutes. A clock time
+    is resolved on the page to its next coming, in the phone's zone (New York here)."""
+    got = _recall_page(
+        "var T=Date.UTC(2026,10,13,21,34,0);Date.now=function(){return T;};_live={scratch:{}};"
+        f"var ok=gbTimerSet({{at:{json.dumps(at)},about:'launch'}},'event',{{}});"
+        "console.log(JSON.stringify({ok:ok,m:(_live.scratch.timers[0].at-T)/60000,"
+        "line:gbTimersLine()}));"
+    )
+    assert got["ok"] is True and got["m"] == mins
+    assert "it is 4:34 PM now" in got["line"]
+
+
+@pytest.mark.parametrize("at", ["25:00", "13 pm", "5:75", "soon", "0 am"])
+def test_a_clock_time_that_is_no_time_sets_nothing(at: str) -> None:
+    got = _recall_page(
+        "var T=Date.UTC(2026,10,13,21,34,0);Date.now=function(){return T;};_live={scratch:{}};"
+        f"var ok=gbTimerSet({{at:{json.dumps(at)},about:'launch'}},'event',{{}});"
+        "console.log(JSON.stringify({ok:ok||null,n:_live.scratch.timers.length}));"
+    )
+    assert got == {"ok": None, "n": 0}
+
+
+def test_setting_a_timer_again_moves_it_instead_of_adding_a_second() -> None:
+    """Field, 2026-11-13: corrected on the time, it answered right but left the old timer to ring
+    15 minutes early. Set again for the same thing, the timer moves."""
+    got = _recall_page(
+        "var T=Date.UTC(2026,10,13,21,34,0);Date.now=function(){return T;};_live={scratch:{}};"
+        "gbTimerSet({minutes:56,about:'launch time'},'event',{});"
+        "gbTimerSet({minutes:10,about:'tea'},'event',{});"
+        "gbTimerSet({at:'5:45 PM',about:'the launch'},'event',{});"
+        "console.log(JSON.stringify({line:gbTimersLine(),logs:logs}));"
+    )
+    assert got["line"].endswith("- tea: at 4:44 PM, in 10 min\n- the launch: at 5:45 PM, in 71 min")
+    assert ["timer", {"m": 71, "moved": 1}] in got["logs"]
 
 
 def test_a_timer_missed_while_away_is_told_late_and_says_so() -> None:
