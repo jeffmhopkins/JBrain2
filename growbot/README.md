@@ -187,8 +187,8 @@ page, so getting it back is one scan.
 - **No egress.** Every response carries a CSP of `'self'` for every fetch directive (`blob:` and
   `data:` where the app needs them, `'wasm-unsafe-eval'` for ONNX Runtime and MediaPipe, and
   the inline-script hashes from `site/csp.json`, never `'unsafe-inline'` for scripts), with
-  `frame-ancestors 'self'` plus the PWA's own origin (the site's name less `growbot.` away or
-  `:8444` at home, never a wildcard, so a jcode preview cannot frame it: the GrowBot screen
+  `frame-ancestors 'self'` plus the PWA's own origin (`GROWBOT_PWA_HOST`, the box's `JBRAIN_DOMAIN`, away; the
+  site's name less `:8444` at home; never a wildcard, so a jcode preview cannot frame it: the GrowBot screen
   opens the creature in place, in a sandboxed frame with no top navigation), `base-uri 'self'`, `form-action 'self'` and `object-src 'none'`,
   plus `nosniff`, `no-referrer` and a Permissions-Policy granting camera, microphone and the
   motion sensors to this origin. The server calls only the three URLs above, with environment

@@ -490,6 +490,8 @@ services:
       GROWBOT_STT_URL: http://tts-stt:8080/v1
       GROWBOT_TOKEN_FILE: /run/jbrain-growbot/growbot.token
       GROWBOT_NTP_PORT: "8123"
+      # The PWA's public name: the only page the away creature lets frame it (growbot/README.md).
+      GROWBOT_PWA_HOST: ${JBRAIN_DOMAIN:-}
     # SNTP for the robots (serve.py): a Pico has no internet and must set its clock before it
     # can check the box's certificate dates. Published like the proxy's 8444, for the LAN
     # only (forward it nowhere); one 48-byte reply per well-formed request, no amplification.

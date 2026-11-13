@@ -15,11 +15,12 @@ const ALLOW =
   "camera; microphone; screen-wake-lock; fullscreen; autoplay; accelerometer; gyroscope; magnetometer";
 
 // No top navigation: vendored code must not be able to send the app elsewhere (the new tab's
-// opener was cut by hand for the same reason). allow-same-origin with allow-scripts is safe
-// only because the creature is always another origin than the app.
+// opener was cut by hand for the same reason). Its popups stay sandboxed too, so none can
+// reach back through `opener.top`. allow-same-origin with allow-scripts is safe only because
+// the creature is always another origin than the app.
 const SANDBOX =
   "allow-scripts allow-same-origin allow-forms allow-modals allow-popups " +
-  "allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock";
+  "allow-downloads allow-pointer-lock";
 
 export function GrowbotFrame({
   name,

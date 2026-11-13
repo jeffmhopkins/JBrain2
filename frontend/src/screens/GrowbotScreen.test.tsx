@@ -397,6 +397,7 @@ describe("GrowbotScreen launching", () => {
     expect(frame).toHaveAttribute("referrerpolicy", "origin");
     // The vendored page must not be able to navigate the app.
     expect(frame.getAttribute("sandbox")).not.toContain("allow-top-navigation");
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-popups-to-escape-sandbox");
     expect(open).not.toHaveBeenCalled();
     expect(tickets(s)[0]?.body).toEqual({ persona: BUDDY, code: "gb-e3b6d8" });
     expect(localStorage.getItem(CERT_NOTED_KEY)).toBe("1");

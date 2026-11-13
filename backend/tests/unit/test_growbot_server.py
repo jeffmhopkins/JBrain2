@@ -323,6 +323,7 @@ def run(gb: types.ModuleType, site: Path, fake: str, tmp_path: Path) -> Iterator
         stt_url=fake + "/v1",
         token_file=token,
         trusted_proxy="127.0.0.2",
+        pwa_host="example.com",
     )
     running = _Running(gb.GrowBot(config))
     yield running
@@ -2193,20 +2194,29 @@ def test_the_pwa_alone_may_frame_the_creature(
 
 
 @pytest.mark.parametrize(
-    ("host", "away"),
+    ("host", "away", "public"),
     [
-        ("jbrain.local:8445", ""),
-        ("jbrain.local:8444", "1"),
-        ("example.com", "1"),
-        ("growbot.", "1"),
-        ("growbot.exa mple.com", "1"),
-        ("", ""),
+        ("jbrain.local:8445", "", ""),
+        ("jbrain.local:8444", "1", ""),
+        ("growbot.example.com", "1", ""),
+        ("example.com", "1", "example.com"),
+        ("growbot.example.com", "1", "exa mple.com"),
+        ("", "", ""),
     ],
 )
 def test_a_name_that_is_not_the_creatures_frames_nowhere(
-    gb: types.ModuleType, host: str, away: str
+    gb: types.ModuleType, host: str, away: str, public: str
 ) -> None:
-    assert gb.pwa_origin(host, bool(away)) == ""
+    assert gb.pwa_origin(host, bool(away), public) == ""
+
+
+def test_away_the_framer_is_the_pwas_own_name_not_the_preview_base(
+    gb: types.ModuleType,
+) -> None:
+    # A PWA on a subdomain hangs previews (and the away creature) under the apex: the apex
+    # is some other site, and only the PWA's own name may frame the creature.
+    got = gb.pwa_origin("growbot.example.com", True, "jbrain.example.com")
+    assert got == "https://jbrain.example.com"
 
 
 def test_a_cookieless_socket_from_a_browser_is_refused(run: _Running) -> None:

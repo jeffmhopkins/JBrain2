@@ -319,6 +319,10 @@ class Config:
     trusted_proxy: str = "proxy"
     # The tunnel connector: when Caddy saw it, Cloudflare's Cf-Connecting-IP names the client.
     trusted_tunnel: str = "cloudflared"
+    # The PWA's public name (JBRAIN_DOMAIN), the one page that may frame the away site. Not
+    # read off the away site's own name: the jcode preview base it hangs under may be the apex
+    # of a PWA on a subdomain, and the apex is not the app.
+    pwa_host: str = ""
 
     @classmethod
     def from_env(cls) -> Config:
@@ -337,6 +341,7 @@ class Config:
             default_model=env("GROWBOT_DEFAULT_MODEL", "qwen3-vl-30b"),
             trusted_proxy=env("GROWBOT_TRUSTED_PROXY", "proxy"),
             trusted_tunnel=env("GROWBOT_TRUSTED_TUNNEL", "cloudflared"),
+            pwa_host=env("GROWBOT_PWA_HOST", ""),
         )
 
 
@@ -380,15 +385,15 @@ def build_csp(site: Path) -> str:
 LAN_PORT = "8444"
 
 
-def pwa_origin(host: str, away: bool) -> str:
+def pwa_origin(host: str, away: bool, public: str = "") -> str:
     """The PWA's origin for a request to this site, or "": the one page allowed to frame the
-    creature (the GrowBot screen opens it in place). It is the creature's own name with the
-    creature's part taken off, `growbot.` away (proxy-preview-conf.sh) and `:8444` at home,
-    so a request that names neither frames nowhere. Never a wildcard: a jcode preview is
-    another name on the same base and must not overlay the creature."""
+    creature (the GrowBot screen opens it in place). At home it is the creature's own name less
+    `:8444`; away it is the PWA's configured public name, and only on the `growbot.` site
+    (proxy-preview-conf.sh). Never a wildcard: a jcode preview is another name on the same
+    base and must not overlay the creature."""
     host = host.strip().lower()
     if away:
-        base = host.removeprefix("growbot.") if host.startswith("growbot.") else ""
+        base = public.strip().lower() if host.startswith("growbot.") else ""
     else:
         name, _, port = host.rpartition(":")
         base = name if port == LAN_PORT else ""
@@ -1267,7 +1272,8 @@ class GrowBot:
     def _pwa_origin(self, req: Request | None) -> str:
         if req is None:
             return ""
-        return pwa_origin(req.header("host"), bool(req.header("x-growbot-away")))
+        away = bool(req.header("x-growbot-away"))
+        return pwa_origin(req.header("host"), away, self.config.pwa_host)
 
     def _base_headers(self, req: Request | None = None) -> list[tuple[str, str]]:
         pwa = self._pwa_origin(req)
