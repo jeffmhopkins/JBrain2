@@ -1348,7 +1348,7 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
         "    '\"recall\":\"OMIT almost always. when they ask about something from before that"
         " you cannot see above, a few search words (taco bell order) to look through your fact"
         " book, diary and this conversation. when you use it, write it as the FIRST key of your"
-        " reply, before say. you have not looked yet, so that say is only a short line that you are thinking back, never an"
+        " reply (after visual_memory if you use one), before say. you have not looked yet, so that say is only a short line that you are thinking back, never an"
         " answer and never that you do not know; you answer with what you find next thought\",' +",
         1,
     ),
@@ -1369,7 +1369,8 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
         "    var _dl=0; if(o.log&&String(o.log)",
         "    try{ if(typeof o.fact===\"string\"&&gbFactAdd(_live,o.fact))"
         " logEv(\"fact\",{n:_live.facts.length}); if(typeof o.recall===\"string\"&&"
-        "gbRecallAsk(o.recall,kind,extra)&&!_streamSaid) o.say=gbRecallLine(o.say); }catch(_fe){}\n"
+        "gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbRecallLine(o.say);"
+        " }catch(_fe){}\n"
         "    var _dl=0; if(o.log&&String(o.log)",
         1,
     ),

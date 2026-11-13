@@ -1693,7 +1693,7 @@ def test_a_search_comes_before_its_say_and_the_say_only_thinks_back() -> None:
     while it looks is the model's only when every word of it is thinking back."""
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert prompts.index('\'"say":"\' + (gbTalk') < prompts.index('\'"recall":"OMIT almost')
-    assert "write it as the FIRST key of your reply, before say. you have not looked yet" in prompts
+    assert "FIRST key of your reply (after visual_memory if you use one), before say." in prompts
     assert prompts.index('"recall":"OMIT almost') < prompts.index('"sleep":"OMIT unless')
     got = _recall_page(
         "var L=GB_RECALL_LINES, r={}, at=function(s){ return L.indexOf(gbRecallLine(s)); };"
@@ -1718,7 +1718,10 @@ def test_a_search_comes_before_its_say_and_the_say_only_thinks_back() -> None:
     assert got["s"] == [True, True, False, False, False, False, False]
     assert got.get("none") is None and got["asked"] is True and got.get("skipped") is None
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    wired = "gbRecallAsk(o.recall,kind,extra)&&!_streamSaid) o.say=gbRecallLine(o.say);"
+    wired = (
+        "gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory)"
+        " o.say=gbRecallLine(o.say);"
+    )
     assert wired in page
     assert page.index("o.say=gbRecallLine(o.say);") < page.index("var said=(o.say&&o.say.trim())")
     assert (
@@ -1789,7 +1792,10 @@ def test_recall_is_wired_into_the_turn() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "else _live.scratch.traces.push(_tr);\n      gbSessAdd(_tr.u,_tr.a);" in page
     assert 'gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length});' in page
-    assert "gbRecallAsk(o.recall,kind,extra)&&!_streamSaid) o.say=gbRecallLine(o.say);" in page
+    assert (
+        "gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory)"
+        " o.say=gbRecallLine(o.say);" in page
+    )
     assert '_gbLive+="\\n\\n== WHAT YOU JUST LOOKED UP ==\\n"+_gbRecallCarry;' in page
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert '\'"fact":"OMIT unless your person just told you' in prompts
