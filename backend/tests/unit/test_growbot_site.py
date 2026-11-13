@@ -2267,8 +2267,9 @@ def test_dave_makes_no_droid_beeps() -> None:
 # code reach outside themselves, and records what was called.
 _MIC_HARNESS = r"""
 var calls=[], store={}, timers=[], listeners={};
-var localStorage={}, window={_wakeGateUp:false}, document={hidden:false,
+var localStorage={}, document={hidden:false,
   addEventListener:function(k,f){ listeners[k]=f; }};
+var window={_wakeGateUp:false, addEventListener:document.addEventListener};
 function setTimeout(f,ms){ timers.push(f); return timers.length; }
 function run(){ var t=timers; timers=[]; t.forEach(function(f){ if(f!==earTick) f(); }); }
 function logEv(k,o){ calls.push(["log",k,o.m]); }
@@ -2277,7 +2278,8 @@ var GB_MIC="open", vadOn=false, recording=false, listenMode=true, speakingUntil=
 var _an={getByteTimeDomainData:function(b){ for(var i=0;i<b.length;i++) b[i]=i%2?250:6; }};
 var _anBuf=new Uint8Array(64), micRms=0, noiseFloor=0.01, _qFloor=0.01, _clipMax=0, _clipSum=0;
 var _clipN=0, _clipHot=0, _ambDuty=0, _ambDuty2=0, _ambOn=false, hum={pitch:-1};
-var actx={sampleRate:48000};
+var actx={sampleRate:48000}, paused=false, micStream=null, _micInFlight=false;
+function micHealthy(){ return true; }
 function detectPitch(){ return 220; }
 function fireReflex(k){ calls.push(["reflex",k]); }
 function vadTick(){ calls.push(["vad"]); }
@@ -2311,11 +2313,13 @@ def test_a_quiet_mic_hears_nothing_but_keeps_the_ear(mode: str) -> None:
     either), fires no reflex and does not make the creature yield; an utterance already open
     is dropped, not sent. Open mic is upstream unchanged."""
     got = _mic_page(
-        f"GB_MIC='{mode}'; vadOn=true; earTick(); var quiet=calls; calls=[];"
-        "GB_MIC='open'; earTick();"
-        "console.log(JSON.stringify({quiet:quiet,open:calls,pitch:hum.pitch,floor:noiseFloor}));"
+        f"GB_MIC='{mode}'; vadOn=true; _ambOn=true; earTick(); var quiet=calls; calls=[];"
+        "var q=[micRms,_ambOn]; GB_MIC='open'; earTick();"
+        "console.log(JSON.stringify({quiet:quiet,open:calls,floor:noiseFloor,q:q}));"
     )
     assert got["quiet"] == [["cancel"]]
+    # It senses nothing either: no sound for the thoughts, and the steady-sound sense ends.
+    assert got["q"] == [0, False]
     assert ["vad"] in got["open"] and ["barge"] in got["open"] and ["reflex", "loud"] in got["open"]
     assert got["floor"] > 0.01
 
@@ -2365,9 +2369,34 @@ def test_the_rail_carries_the_speaker_and_the_mic_mode() -> None:
     assert '(M?"speaker off":"speaker")' in page
     # Only open mic and muted shade the mode cell (owner, 2026-11-13: push to talk is unshaded).
     assert 'setC(mm,"gbkCell"+(MM==="open"?" on":(MM==="muted"?" gbkWarn on":"")));' in page
-    # A press on the creature in push mode is the talk button, ahead of every petting path.
-    pet = page[page.index('#brainPanel,#sgNudge")) return;') :]
-    ptt = pet.index('if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false)')
+    # A press on the creature in push mode is the talk button, ahead of the host's own mic asks
+    # on the same tap (which would drop its talkStart) and of every petting path.
+    pet = page[page.index('document.addEventListener("pointerdown",function(e){ voiceUnlock();') :]
+    ptt = pet.index('if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false')
+    assert ptt < pet.index("if(_micRetryArmed&&!micStream") < pet.index("if(window.__wakeSenses")
     assert ptt < pet.index("spawnSparks(") < pet.index('fireReflex("tap")')
+    # paint() writes the chip once per paint, and a press never lands on a child it replaces.
+    assert " else { setH(mc,hasTxt?snd():" in page and "#gbkMic *{pointer-events:none}" in page
     status = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
     assert 'window.listenMode && (window.GB_MIC || "open") === "open"' in status
+
+
+def test_a_push_survives_the_mic_landing_late_another_finger_and_a_hidden_page() -> None:
+    """Review of #1862: a press whose talkStart was dropped (another mic ask in flight on the
+    same tap) still starts the clip once the stream lands; lifting a second finger does not end
+    the hold; a hidden page leaves no latched hold behind; a paused creature does not record."""
+    got = _mic_page(
+        "GB_MIC='push'; gbPttDown({pointerId:1}); run(); var r={dropped:calls.slice()};"
+        "micStream={}; run(); r.landed=calls.slice(); recording=true; run(); calls=[];"
+        "listeners.pointerup({pointerId:2}); r.other=calls.slice();"
+        "listeners.pointerup({pointerId:1}); r.own=calls.slice(); calls=[];"
+        "gbPttDown({pointerId:3}); recording=true; document.hidden=true;"
+        "listeners.visibilitychange(); recording=false; document.hidden=false; calls=[];"
+        "gbPttDown({pointerId:4}); r.after=calls.slice(); calls=[];"
+        "listeners.pointerup({pointerId:4});"
+        "recording=false; calls=[]; run(); paused=true; gbPttDown({pointerId:5}); r.paused=calls;"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["dropped"] == [["start"]] and got["landed"] == [["start"], ["start"]]
+    assert got["other"] == [] and got["own"] == [["stop"]]
+    assert got["after"] == [["start"]] and got["paused"] == []
