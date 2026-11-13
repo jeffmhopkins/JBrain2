@@ -444,7 +444,8 @@ rides their turn (`RECALL_PATCHES`). While it searches, its line only says it is
 the exact time is a tool like `recall`: a `clock: true` reply field, a short checking-the-clock
 line, and a follow-up thought that tells the time read off the phone in its own zone (a phone
 that reports none, or UTC, is read as America/New_York). A search and the clock asked in one
-reply share one follow-up. Every tool call shows a chip in the status strip while it runs
+reply share one follow-up. Unlike a search it has no 15 s gap (a re-ask must be answered),
+and a follow-up that asks it gets the time in its next thought. Every tool call shows a chip in the status strip while it runs
 (`CLOCK_PATCHES`).
 
 **Its name.** Upstream's seed says "I am Sprout" and the creature's own name (`goals.selfName`) is set only when its person confirms one, so a persona named Dave woke up as Sprout. A box creature born fresh (a new, reset or seeded persona) now starts out with its persona's name; one already awake keeps its own, which the owner edits under Soul as "Calls itself" (`NAME_PATCHES`, owner 2026-11-12).

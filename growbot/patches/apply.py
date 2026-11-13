@@ -1301,9 +1301,9 @@ function gbRecallAsk(q,kind,extra){
 var _gbFollow=null;
 function gbToolFollow(tag,found,ev){
   gbToolPill(tag);
-  if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); return; }
-  var f=_gbFollow={found:found,ev:ev,tags:[tag]}, tries=0;
-  function done(){ if(_gbFollow===f) _gbFollow=null; f.tags.forEach(gbToolPillEnd); }
+  if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); _gbFollow.pills.push(_gbToolPills[tag]); return; }
+  var f=_gbFollow={found:found,ev:ev,tags:[tag],pills:[_gbToolPills[tag]]}, tries=0;
+  function done(){ if(_gbFollow===f) _gbFollow=null; f.tags.forEach(function(k,i){ gbToolPillEnd(k,f.pills[i]); }); }
   function carry(why){ _gbRecallCarry=f.found; logEv(f.tags[0]+"_carry",{why:why}); done(); }
   function go(){
     if(pendingUser) return carry("person");
@@ -1323,10 +1323,12 @@ function gbToolPill(kind){ try{
   if(_gbToolPills[kind]||!window.gbStatus||!window.gbStatus.tool) return;
   var e=window.gbStatus.tool(kind); if(!e) return;
   _gbToolPills[kind]=e;
-  setTimeout(function(){ if(_gbToolPills[kind]===e) gbToolPillEnd(kind); },GB_TOOL_PILL_MAX_MS);
+  setTimeout(function(){ gbToolPillEnd(kind,e); },GB_TOOL_PILL_MAX_MS);
 }catch(err){} }
-function gbToolPillEnd(kind){ try{
-  var e=_gbToolPills[kind]; delete _gbToolPills[kind];
+/* By entry when the caller holds one: a chip that lapsed and a newer one of its kind must not be
+   ended by the older call's hand-off. */
+function gbToolPillEnd(kind,only){ try{
+  var e=_gbToolPills[kind]; if(!e||(only!==undefined&&e!==only)) return; delete _gbToolPills[kind];
   if(e&&window.gbStatus) window.gbStatus.end(e);
 }catch(err){} }
 /* After the reply handler: a chip whose call was skipped (a gap, a tick) has nothing to wait for. */
@@ -1356,10 +1358,10 @@ function gbRecallStreaming(full){
 /* The clock (owner, 2026-11-13: "we also need a tool for time"). Its turn carries only the
    weekday and the part of the day, so the hour is asked for (`clock`) and read off the phone,
    in the phone's zone; a phone that reports none, or UTC, is taken to be at home. */
-var _gbClockT=0, GB_CLOCK_GAP_MS=15000, GB_CLOCK_HOME_TZ="America/New_York";
+var GB_CLOCK_HOME_TZ="America/New_York";
 function gbClockWanted(v){ return v===true||/^\s*(true|yes|now)\s*$/i.test(typeof v==="string"?v:""); }
 function gbClockZone(){ var z=""; try{ z=Intl.DateTimeFormat().resolvedOptions().timeZone||""; }catch(e){}
-  return !z||/^(UTC|Etc\/UTC|Etc\/GMT|GMT)$/i.test(z)?GB_CLOCK_HOME_TZ:z; }
+  return !z||/^(Etc\/)?(UTC|UCT|GMT|GMT[+-]?0|Universal|Zulu|Greenwich)$/i.test(z)?GB_CLOCK_HOME_TZ:z; }
 function gbClockNow(t){ var d=new Date(t), z=gbClockZone(), s;
   try{ s=d.toLocaleString("en-US",{timeZone:z,weekday:"long",year:"numeric",month:"long",day:"numeric",hour:"numeric",minute:"2-digit"}); }
   catch(e){ s=d.toString(); z=""; }
@@ -1369,9 +1371,11 @@ function gbClockAsk(v,kind,extra){
   var now=Date.now();
   if(!gbClockWanted(v)) return;
   if(kind!=="event"){ logEv("clock_skip",{why:"kind"}); return; }
-  if(extra&&extra.recallFollow){ logEv("clock_skip",{why:"follow"}); return; }
-  if(now-_gbClockT<GB_CLOCK_GAP_MS){ logEv("clock_skip",{why:"gap"}); return; }
-  _gbClockT=now;
+  /* No gap, unlike a search: reading the clock costs nothing, and a re-ask ("sorry, what?") must
+     not meet "let me check" and silence. A follow-up never asks again, so it cannot loop; one
+     that wants the time has it carried into the next thought instead. */
+  if(extra&&extra.recallFollow){ logEv("clock_skip",{why:"follow"});
+    _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+"you looked at the clock: "+gbClockNow(now); return; }
   logEv("clock",{});
   gbToolFollow("clock","you looked at the clock: "+gbClockNow(now),
     "you looked at the clock (the time is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice.");
@@ -1675,8 +1679,15 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "o.say=gbRecallLine(o.say); if((o.sleep===true",
         "o.say=gbRecallLine(o.say); if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&"
-        "!o.visual_memory&&!gbRecallWords(o.recall)) o.say=gbClockLine(o.say);"
-        " gbToolPillsSettle(); if((o.sleep===true",
+        "!o.visual_memory&&!(_gbFollow&&_gbFollow.tags[0]===\"recall\"))"
+        " o.say=gbClockLine(o.say); if((o.sleep===true",
+        1,
+    ),
+    # Outside the try: a throw above must not leave a skipped call's chip up.
+    (
+        "v3/next.html",
+        'kind==="event") gbSleepGrant(); }catch(_fe){}',
+        'kind==="event") gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();',
         1,
     ),
     (

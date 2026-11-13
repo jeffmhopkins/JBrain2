@@ -1855,22 +1855,28 @@ def test_the_clock_answers_in_a_follow_up_in_the_phones_zone() -> None:
     got = _recall_page(
         f"Date.now=function(){{return {_CLOCK_AT};}};"
         "var r={asked:gbClockAsk(true,'event',{})};timers.shift()();"
-        "r.again=gbClockAsk('true','event',{});"
+        "inFlight=false;r.again=gbClockAsk('true','event',{});timers.shift()();"
         "r.thinks=thinks;r.logs=logs;console.log(JSON.stringify(r));"
     )
-    assert got["asked"] is True and got.get("again") is None
-    [(ev, kind, extra, carried)] = got["thinks"]
+    # A re-ask a moment later ("sorry, what?") is answered too: the clock has no gap.
+    assert got["asked"] is True and got["again"] is True
+    (ev, kind, extra, carried), _again = got["thinks"]
     assert kind == "event" and extra == {"recallFollow": True}
     assert ev.startswith("you looked at the clock (the time is under WHAT YOU JUST LOOKED UP)")
     assert carried == (
         "you looked at the clock: it is Friday, November 13, 2026 at 1:21 PM (America/New_York)."
     )
-    assert got["logs"] == [["clock", {}], ["clock_skip", {"why": "gap"}]]
+    assert got["logs"] == [["clock", {}], ["clock", {}]]
 
 
 @pytest.mark.parametrize(
     ("tz", "want"),
-    [("America/Chicago", "12:21 PM (America/Chicago)"), ("UTC", "1:21 PM (America/New_York)")],
+    [
+        ("America/Chicago", "12:21 PM (America/Chicago)"),
+        ("UTC", "1:21 PM (America/New_York)"),
+        ("Etc/UCT", "1:21 PM (America/New_York)"),
+        ("Zulu", "1:21 PM (America/New_York)"),
+    ],
 )
 def test_a_phone_without_a_zone_reads_the_clock_at_home(tz: str, want: str) -> None:
     got = _recall_page(f"console.log(JSON.stringify({{s:gbClockNow({_CLOCK_AT})}}));", tz=tz)
@@ -1891,10 +1897,12 @@ def test_the_clock_is_not_read_from_an_echo_a_tick_or_a_follow_up(
 ) -> None:
     got = _recall_page(
         f"gbClockAsk({json.dumps(v)},{json.dumps(kind)},{json.dumps(extra)});"
-        "console.log(JSON.stringify({timers:timers.length,logs}));"
+        "console.log(JSON.stringify({timers:timers.length,logs,carry:_gbRecallCarry}));"
     )
     assert got["timers"] == 0
     assert got["logs"] == ([] if why is None else [["clock_skip", {"why": why}]])
+    # A follow-up that wants the time gets it in its next thought, not "let me check" and silence.
+    assert ("you looked at the clock: it is " in got["carry"]) == (why == "follow")
 
 
 def test_a_search_and_the_clock_in_one_reply_share_one_follow_up() -> None:
@@ -1928,6 +1936,16 @@ def test_each_tool_call_wears_a_chip_until_its_find_is_handed_on() -> None:
     assert got["d"][-2:] == ["+recall", "-recall"]
 
 
+def test_a_lapsed_chip_never_ends_a_newer_one_of_its_kind() -> None:
+    got = _recall_page(
+        "var ev=[],n=0;var window={gbStatus:{tool:function(k){var e={k:k,n:++n};ev.push('+'+n);"
+        "return e;},end:function(e){ev.push('-'+e.n);}}};"
+        "gbClockAsk(true,'event',{});var go=timers.pop(), lapse=timers.shift();lapse();"
+        "gbToolPill('clock');go();console.log(JSON.stringify({ev}));"
+    )
+    assert got["ev"] == ["+1", "-1", "+2"]
+
+
 def test_the_line_said_while_it_checks_never_guesses_the_time() -> None:
     got = _recall_page(
         "var L=GB_CLOCK_LINES, r={keep:gbClockLine('Let me check the time.'),"
@@ -1942,8 +1960,9 @@ def test_the_clock_is_wired_into_the_turn_and_the_strip() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
         "if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&!o.visual_memory&&"
-        "!gbRecallWords(o.recall)) o.say=gbClockLine(o.say); gbToolPillsSettle();"
+        '!(_gbFollow&&_gbFollow.tags[0]==="recall")) o.say=gbClockLine(o.say);'
     ) in page
+    assert "gbSleepGrant(); }catch(_fe){} gbToolPillsSettle();" in page
     assert page.index("gbToolPillsSettle();") < page.index("var said=(o.say&&o.say.trim())")
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert prompts.index('\'"recall":"OMIT almost') < prompts.index('\'"clock":"OMIT almost')
