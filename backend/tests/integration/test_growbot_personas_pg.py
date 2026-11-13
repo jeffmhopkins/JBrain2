@@ -744,6 +744,7 @@ async def test_routes_open_hand_over_and_who_wears_fish(maker: async_sessionmake
         "voice": "",
         "prefs": 0,
         "explore": True,
+        "brain": False,
     }
     # The owner's pick reaches the phone at its next poll, without a soul write.
     assert c.patch(f"/api/growbot/personas/{sprout}", json={"voice": "kokoro-bm_fable"}).is_success
