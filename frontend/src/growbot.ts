@@ -689,18 +689,27 @@ export function splitNames(names: string): string[] {
     .slice(0, 20);
 }
 
-/** Whether the creature at `url` can open inside the app here. Its session cookie is
- *  SameSite=Strict, and a frame keeps it only when the app and the creature are the same site:
- *  `:8444` on the app's own LAN name, or `growbot.<name>` under the app's public name. From any
- *  other address (the owner site's private name) the frame would open signed out. */
-export function framesHere(url: string, here: string = window.location.hostname): boolean {
-  let host: string;
+/** Whether the creature at `url` can open inside the app here, by the creature's own rule
+ *  (growbot/server/serve.py `pwa_origin`): it lets the app frame it only from its LAN name on
+ *  443 (`:8444` is the creature) or its public name (`growbot.<name>` is the creature). The
+ *  frame keeps its SameSite=Strict session only from those, and anywhere else (the owner
+ *  site's private name, a subdomain PWA under the preview apex) it would open refused or signed
+ *  out. Never in the owner app: its WebView grants no camera or microphone to a frame. */
+export function framesHere(
+  url: string,
+  here: Pick<Location, "hostname" | "port"> = window.location,
+  agent: string = navigator.userAgent,
+): boolean {
+  if (/ JBrainOwner\//.test(agent) || !here.hostname || here.port) return false;
+  let u: URL;
   try {
-    const u = new URL(url);
-    if (u.protocol !== "https:") return false;
-    host = u.hostname;
+    u = new URL(url);
   } catch {
     return false;
   }
-  return !!here && (host === here || host.endsWith(`.${here}`));
+  if (u.protocol !== "https:") return false;
+  return (
+    (u.hostname === here.hostname && u.port === "8444") ||
+    (u.hostname === `growbot.${here.hostname}` && u.port === "")
+  );
 }

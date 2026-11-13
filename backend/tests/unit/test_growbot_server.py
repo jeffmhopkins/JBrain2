@@ -2193,6 +2193,33 @@ def test_the_pwa_alone_may_frame_the_creature(
     resp.read()
 
 
+def test_a_refused_frame_counts_nothing_and_other_names_keep_self_alone(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
+    frame = {
+        "Host": "jbrain.local:8444",
+        "Sec-Fetch-Dest": "iframe",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-site",
+        "Referer": "https://abc-preview.jbrain.local/",
+    }
+    for _ in range(4):
+        resp = run.request("GET", "/open?ticket=bad", headers=frame, cookie=False)
+        assert resp.status == 403
+        resp.read()
+    # Not one of those spent a try: the PWA's own framed link still opens, same-origin too.
+    ok = {**frame, "Sec-Fetch-Site": "same-origin", "Referer": "https://jbrain.local/"}
+    resp = run.request("GET", "/open?ticket=good-ticket", headers=ok, cookie=False)
+    assert resp.status == 200 and resp.getheader("Set-Cookie")
+    resp.read()
+    # A name that is not the creature's frames nowhere but itself.
+    resp = run.request("GET", "/v3/next.html", headers={"Host": "elsewhere.example:9000"})
+    csp = resp.getheader("Content-Security-Policy") or ""
+    assert "frame-ancestors 'self';" in csp
+    resp.read()
+
+
 @pytest.mark.parametrize(
     ("host", "away", "public"),
     [

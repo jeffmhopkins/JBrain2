@@ -37,14 +37,30 @@ describe("byDay", () => {
 });
 
 describe("framesHere", () => {
-  it("frames the creature only under the app's own site", () => {
-    expect(framesHere("https://jbrain.local:8444/open?ticket=t", "jbrain.local")).toBe(true);
-    expect(framesHere("https://growbot.example.com/open", "example.com")).toBe(true);
-    // The owner site's private name is another site: a frame would open signed out.
-    expect(framesHere("https://growbot.example.com/open", "owner.jbrain.home.arpa")).toBe(false);
-    expect(framesHere("https://notexample.com/open", "example.com")).toBe(false);
-    expect(framesHere("http://jbrain.local:8444/open", "jbrain.local")).toBe(false);
-    expect(framesHere("not a url", "jbrain.local")).toBe(false);
-    expect(framesHere("https://jbrain.local:8444/open", "")).toBe(false);
+  const at = (hostname: string, port = "") => ({ hostname, port });
+  const phone = "Mozilla/5.0 (Linux; Android 14) Chrome/130";
+  it("frames the creature only where the creature lets the app frame it", () => {
+    expect(framesHere("https://jbrain.local:8444/open?t=1", at("jbrain.local"), phone)).toBe(true);
+    expect(framesHere("https://growbot.example.com/open", at("example.com"), phone)).toBe(true);
+    // The owner site's private name, and a subdomain PWA under the preview apex: elsewhere.
+    expect(
+      framesHere("https://growbot.example.com/open", at("owner.jbrain.home.arpa"), phone),
+    ).toBe(false);
+    expect(framesHere("https://growbot.example.com/open", at("jbrain.example.com"), phone)).toBe(
+      false,
+    );
+    expect(framesHere("https://jbrain.local/open", at("jbrain.local"), phone)).toBe(false);
+    expect(framesHere("https://jbrain.local:8444/open", at("jbrain.local", "8443"), phone)).toBe(
+      false,
+    );
+    expect(framesHere("https://notexample.com/open", at("example.com"), phone)).toBe(false);
+    expect(framesHere("http://jbrain.local:8444/open", at("jbrain.local"), phone)).toBe(false);
+    expect(framesHere("not a url", at("jbrain.local"), phone)).toBe(false);
+    expect(framesHere("https://jbrain.local:8444/open", at(""), phone)).toBe(false);
+  });
+
+  it("never frames in the owner app, whose WebView grants a frame no camera", () => {
+    const owner = `${phone} JBrainOwner/1.4`;
+    expect(framesHere("https://jbrain.local:8444/open", at("jbrain.local"), owner)).toBe(false);
   });
 });

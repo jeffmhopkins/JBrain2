@@ -118,6 +118,9 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     url: string | null;
     k: number;
   } | null>(null);
+  // The open frame's `k`, read by a link that comes back late: a frame closed (or left for a
+  // tab) meanwhile owns nothing any more, so its answer says and forgets nothing.
+  const openFrameK = useRef(0);
   const { isArmed, arm } = useArm();
   const foreground = useForeground();
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -278,16 +281,17 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
    *  falls back to a link to tap, which opens a tab. */
   function openFrame(what: GrowbotTicketFor & { persona: string }, name: string) {
     const k = ++seq.current;
+    openFrameK.current = k;
     setFrame({ what, name, url: null, k });
-    const current = (f: typeof frame): f is NonNullable<typeof frame> => !!f && f.k === k;
+    const current = () => mounted.current && openFrameK.current === k;
     api
       .growbotTicket(what)
       .then(({ url }) => {
-        if (!mounted.current) return;
+        if (!current()) return;
         if (framesHere(url)) {
-          setFrame((f) => (current(f) ? { ...f, url } : f));
+          setFrame((f) => (f && f.k === k ? { ...f, url } : f));
         } else {
-          setFrame((f) => (current(f) ? null : f));
+          closeFrame();
           forgetLaunchHere(what.persona);
           say("GrowBot can't open inside the app from this address — tap here to open it.", {
             href: url,
@@ -299,11 +303,16 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
         }, AFTER_LAUNCH_MS);
       })
       .catch((e) => {
-        if (!mounted.current) return;
+        if (!current()) return;
+        closeFrame();
         forgetLaunchHere(what.persona);
-        setFrame((f) => (current(f) ? null : f));
         say(`GrowBot didn't open — ${message(e)}`);
       });
+  }
+
+  function closeFrame() {
+    openFrameK.current = 0;
+    setFrame(null);
   }
 
   /** Mint a one-time link and open it in a new tab. The tab is opened FIRST, inside the tap,
@@ -370,7 +379,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
   function frameToTab() {
     if (!frame) return;
     const { what, name } = frame;
-    setFrame(null);
+    closeFrame();
     noteLaunchHere(what.persona);
     openTicket(what, `Opened ${name} in a new tab.`);
   }
@@ -1057,7 +1066,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           key={frame.k}
           name={frame.name}
           url={frame.url}
-          onClose={() => setFrame(null)}
+          onClose={closeFrame}
           onBrowser={frameToTab}
         />
       )}

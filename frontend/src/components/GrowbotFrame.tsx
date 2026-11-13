@@ -8,11 +8,13 @@ import { useBackLayer } from "../backLayers";
 import { ChevronLeftIcon, ExternalLinkIcon } from "./icons";
 
 // What the creature asks for: camera and microphone to see and hear, wake lock so the screen
-// stays on mid-walk, the motion sensors its policies steer by, and sound without a tap first.
+// stays on mid-walk, the motion sensors its policies steer by, sound without a tap first, and
+// its copy-link and share buttons.
 // The creature's own Permissions-Policy grants these to itself; a frame gets them only when
 // its parent delegates them here too.
 const ALLOW =
-  "camera; microphone; screen-wake-lock; fullscreen; autoplay; accelerometer; gyroscope; magnetometer";
+  "camera; microphone; screen-wake-lock; fullscreen; autoplay; accelerometer; gyroscope; " +
+  "magnetometer; clipboard-write; web-share";
 
 // No top navigation: vendored code must not be able to send the app elsewhere (the new tab's
 // opener was cut by hand for the same reason). Its popups stay sandboxed too, so none can
@@ -58,6 +60,9 @@ export function GrowbotFrame({
           title="Open in a browser tab"
         >
           <ExternalLinkIcon size={18} />
+          {/* Worded, not just an icon: a frame the phone refuses (an untrusted certificate
+              offers no click-through inside a frame) is blank, and this is the way out. */}
+          <span>Browser</span>
         </button>
       </header>
       {url ? (

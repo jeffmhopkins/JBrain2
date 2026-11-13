@@ -1578,6 +1578,8 @@ a.gb-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  font-size: var(--fs-secondary);
   min-width: 44px;
   min-height: 44px;
   border: 0;

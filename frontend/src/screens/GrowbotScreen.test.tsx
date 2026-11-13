@@ -1,3 +1,5 @@
+// The app on its LAN name on 443, where the creature (`:8444`) opens in place.
+// @vitest-environment-options { "url": "https://localhost/" }
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -10,6 +12,7 @@ import type {
   GrowbotRobot,
   GrowbotStatus,
 } from "../api/client";
+import { closeTopModalLayer } from "../backLayers";
 import { CERT_NOTED_KEY, LAUNCHED_KEY, THIS_PHONE_KEY } from "../growbot";
 import { GrowbotScreen } from "./GrowbotScreen";
 
@@ -453,6 +456,41 @@ describe("GrowbotScreen launching", () => {
     const link = await screen.findByRole("link", { name: /tap here to open it/ });
     expect(link).toHaveAttribute("href", "https://jbrain.local:8444/open?ticket=t");
     expect(screen.queryByRole("region", { name: /^GrowBot — / })).toBeNull();
+  });
+
+  it("closes the view on the platform Back", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    serve(UP, ticketRoute);
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
+    await creature();
+    act(() => {
+      expect(closeTopModalLayer()).toBe(true);
+    });
+    expect(screen.queryByTitle(/^GrowBot — /)).toBeNull();
+  });
+
+  it("says nothing for a link that comes back after its view was closed", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    let fail: (r: Response) => void = () => {};
+    serve(UP, (path) =>
+      path === "/api/growbot/ticket"
+        ? new Promise<Response>((res) => {
+            fail = res;
+          })
+        : null,
+    );
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Close GrowBot" }));
+    await act(async () => {
+      fail(json({ detail: "nope" }, 409));
+    });
+    expect(screen.queryByText(/GrowBot didn't open/)).toBeNull();
+    // The launch it noted stays: only an answer for the open view may take it back.
+    expect(launchedHere()).toContain(SPROUT);
   });
 
   it("leaves for a browser tab from the view, on a fresh link", async () => {
