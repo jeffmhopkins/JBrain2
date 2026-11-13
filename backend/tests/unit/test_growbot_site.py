@@ -2303,3 +2303,156 @@ def test_dave_makes_no_droid_beeps() -> None:
     assert heard == [["chirp", True], ["trill", True]] and muted is True
     heard, _ = json.loads(_face_in_node(script, "lantern"))
     assert heard == [["chirp", False], ["trill", True]]
+
+
+# The mic's three modes (owner, 2026-11-13). The harness stubs everything earTick and the mode
+# code reach outside themselves, and records what was called.
+_MIC_HARNESS = r"""
+var calls=[], store={}, timers=[], listeners={};
+var localStorage={}, document={hidden:false,
+  addEventListener:function(k,f){ listeners[k]=f; }};
+var window={_wakeGateUp:false, addEventListener:document.addEventListener};
+function setTimeout(f,ms){ timers.push(f); return timers.length; }
+function run(){ var t=timers; timers=[]; t.forEach(function(f){ if(f!==earTick) f(); }); }
+function logEv(k,o){ calls.push(["log",k,o.m]); }
+function toast(s){ calls.push(["toast"]); }
+var GB_MIC="open", vadOn=false, recording=false, listenMode=true, speakingUntil=0, _motion=false;
+var _an={getByteTimeDomainData:function(b){ for(var i=0;i<b.length;i++) b[i]=i%2?250:6; }};
+var _anBuf=new Uint8Array(64), micRms=0, noiseFloor=0.01, _qFloor=0.01, _clipMax=0, _clipSum=0;
+var _clipN=0, _clipHot=0, _ambDuty=0, _ambDuty2=0, _ambOn=false, hum={pitch:-1};
+var actx={sampleRate:48000}, paused=false, micStream=null, _micInFlight=false, _micGen=0;
+function micHealthy(){ return true; }
+function detectPitch(){ return 220; }
+function fireReflex(k){ calls.push(["reflex",k]); }
+function vadTick(){ calls.push(["vad"]); }
+function bargeTick(){ calls.push(["barge"]); }
+function vadCancel(){ vadOn=false; calls.push(["cancel"]); }
+function talkStart(){ calls.push(["start"]); }
+function talkStop(){ recording=false; calls.push(["stop"]); }
+function talkAbort(){ recording=false; calls.push(["abort"]); }
+"""
+
+
+def _mic_page(script: str) -> Any:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    ear = page[page.index("function earTick(){") : page.index("/* ---- PCM RING CAPTURE")]
+    modes = page[page.index("function gbMicSet(m){") : page.index("function vadCancel(){")]
+    out = subprocess.run(
+        [node, "-e", f"{_MIC_HARNESS}\n{ear}\n{modes}\n{script}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(out.stdout)
+
+
+@pytest.mark.parametrize("mode", ["push", "muted"])
+def test_a_quiet_mic_hears_nothing_but_keeps_the_ear(mode: str) -> None:
+    """Muted and push to talk keep the mic, but a loud room opens no utterance (so no warm-up
+    either), fires no reflex and does not make the creature yield; an utterance already open
+    is dropped, not sent. Open mic is upstream unchanged."""
+    got = _mic_page(
+        f"GB_MIC='{mode}'; vadOn=true; _ambOn=true; earTick(); var quiet=calls; calls=[];"
+        "var q=[micRms,_ambOn]; GB_MIC='open'; earTick();"
+        "console.log(JSON.stringify({quiet:quiet,open:calls,floor:noiseFloor,q:q}));"
+    )
+    assert got["quiet"] == [["cancel"]]
+    # It senses nothing either: no sound for the thoughts, and the steady-sound sense ends.
+    assert got["q"] == [0, False]
+    assert ["vad"] in got["open"] and ["barge"] in got["open"] and ["reflex", "loud"] in got["open"]
+    assert got["floor"] > 0.01
+
+
+def test_a_held_clip_is_heard_in_push_to_talk() -> None:
+    got = _mic_page(
+        "GB_MIC='push'; recording=true; listenMode=false; earTick();"
+        "console.log(JSON.stringify({calls:calls,clip:_clipN}));"
+    )
+    assert got["clip"] == 1 and ["barge"] in got["calls"]
+
+
+def test_the_mode_is_kept_per_device_and_muting_drops_what_was_being_heard() -> None:
+    got = _mic_page(
+        "vadOn=true; gbMicSet('push'); var a=[calls,localStorage.gb_mic_mode]; calls=[];"
+        "recording=true; gbMicSet('muted'); var b=[calls,localStorage.gb_mic_mode,recording];"
+        "calls=[]; gbMicSet('muted'); gbMicSet('nonsense');"
+        "console.log(JSON.stringify({a:a,b:b,c:calls,mode:GB_MIC}));"
+    )
+    assert got["a"] == [[["cancel"], ["log", "mic_mode", "push"], ["toast"]], "push"]
+    assert got["b"] == [[["abort"], ["log", "mic_mode", "muted"], ["toast"]], "muted", False]
+    assert got["c"] == [["log", "mic_mode", "open"], ["toast"]] and got["mode"] == "open"
+
+
+def test_push_to_talk_records_while_held_and_sends_on_release() -> None:
+    """A release before the mic has landed (the first press of a visit, or behind the phone's
+    permission sheet) still stops the clip the moment it starts, instead of recording the room."""
+    got = _mic_page(
+        "GB_MIC='push'; gbPttDown(); recording=true; gbPttDown(); listeners.pointerup();"
+        "var held=calls; calls=[];"
+        "gbPttDown(); listeners.pointercancel(); run(); var early=calls.slice(); recording=true;"
+        "run(); var landed=calls; calls=[];"
+        "GB_MIC='open'; gbPttDown(); listeners.pointerup(); var open=calls; calls=[];"
+        "GB_MIC='push'; window._wakeGateUp=true; gbPttDown();"
+        "console.log(JSON.stringify({held:held,early:early,landed:landed,open:open,gate:calls}));"
+    )
+    assert got["held"] == [["start"], ["stop"]]
+    assert got["early"] == [["start"]] and got["landed"] == [["start"], ["stop"]]
+    assert got["open"] == [] and got["gate"] == []
+
+
+def test_the_rail_carries_the_speaker_and_the_mic_mode() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '<button type="button" class="gbkCell" id="gbkMicMode"></button>' in page
+    assert "#gbkCells{display:grid;grid-template-columns:repeat(4,1fr);" in page
+    assert 'GB_MIC_LABEL={open:"open mic",push:"push talk",muted:"mic muted"}' in page
+    assert '(M?"speaker off":"speaker")' in page
+    # Only open mic and muted shade the mode cell (owner, 2026-11-13: push to talk is unshaded).
+    assert 'setC(mm,"gbkCell"+(MM==="open"?" on":(MM==="muted"?" gbkWarn on":"")));' in page
+    # A press on the creature in push mode is the talk button, after the first tap's handoff of
+    # the senses (so a camera carried over from v2 still reopens) and ahead of every petting path.
+    pet = page[page.index('document.addEventListener("pointerdown",function(e){ voiceUnlock();') :]
+    ptt = pet.index('if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false)')
+    assert pet.index("if(window.__wakeSenses") < pet.index('#brainPanel,#sgNudge")) return;') < ptt
+    assert ptt < pet.index("spawnSparks(") < pet.index('fireReflex("tap")')
+    # paint() writes the chip once per paint, and a press never lands on a child it replaces.
+    assert " else { setH(mc,hasTxt?snd():" in page and "#gbkMic *{pointer-events:none}" in page
+    status = (_SITE / "growbot-status.js").read_text(encoding="utf-8")
+    assert 'window.listenMode && (window.GB_MIC || "open") === "open"' in status
+
+
+def test_a_push_survives_the_mic_landing_late_another_finger_and_a_hidden_page() -> None:
+    """Review of #1862: a press whose talkStart was dropped (another mic ask in flight on the
+    same tap) still starts the clip once the stream lands; lifting a second finger does not end
+    the hold; a hidden page leaves no latched hold behind; a paused creature does not record."""
+    got = _mic_page(
+        "GB_MIC='push'; gbPttDown({pointerId:1}); run(); var r={dropped:calls.slice()};"
+        "micStream={}; run(); r.landed=calls.slice(); recording=true; run(); calls=[];"
+        "listeners.pointerup({pointerId:2}); r.other=calls.slice();"
+        "listeners.pointerup({pointerId:1}); r.own=calls.slice(); calls=[];"
+        "gbPttDown({pointerId:3}); recording=true; document.hidden=true;"
+        "listeners.visibilitychange(); recording=false; document.hidden=false; calls=[];"
+        "gbPttDown({pointerId:4}); r.after=calls.slice(); calls=[];"
+        "listeners.pointerup({pointerId:4});"
+        "recording=false; calls=[]; run(); paused=true; gbPttDown({pointerId:5}); r.paused=calls;"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["dropped"] == [["start"]] and got["landed"] == [["start"], ["start"]]
+    assert got["other"] == [] and got["own"] == [["stop"]]
+    assert got["after"] == [["start"]] and got["paused"] == []
+
+
+def test_a_push_hidden_while_the_mic_is_asked_for_records_nothing_on_return() -> None:
+    """Re-review of #1862: the ask still in flight is made stale, so the stream that lands when
+    the person comes back starts no clip; with a stream already there, nothing is retried."""
+    got = _mic_page(
+        "GB_MIC='push'; gbPttDown({pointerId:1}); _micInFlight=true; document.hidden=true;"
+        "listeners.visibilitychange(); var r={gen:_micGen,flight:_micInFlight};"
+        "document.hidden=false; micStream={}; _micInFlight=false; calls=[]; run(); run();"
+        "r.after=calls; calls=[]; gbPttDown({pointerId:2}); run(); run(); r.healthy=calls;"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["gen"] == 1 and got["flight"] is False and got["after"] == []
+    assert got["healthy"] == [["start"]]

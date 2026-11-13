@@ -360,7 +360,9 @@
     entries = kept;
 
     // With nothing under way the strip still says what it is waiting on, and for how long.
-    var base = anyOpen ? "" : window.listenMode ? "listen" : "idle";
+    // Push to talk and a muted mic leave the ear on but hear nothing on their own.
+    var hearing = window.listenMode && (window.GB_MIC || "open") === "open";
+    var base = anyOpen ? "" : hearing ? "listen" : "idle";
     if (base !== baseKind) {
       baseKind = base;
       baseSince = t;

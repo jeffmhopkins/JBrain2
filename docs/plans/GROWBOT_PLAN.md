@@ -403,6 +403,15 @@ three utterances in a row that never became a turn the page stops warming until 
 owes used to run there, before the wake tap, and now waits for it and 30 s more, so the creature
 does not greet and fall asleep (`WAKE_GATE_PATCHES`).
 
+**Speaker and mic (owner, 2026-11-13).** The creature's bottom rail has four cells: brain,
+pause, speaker (upstream's sound mute, renamed) and the mic's mode, which a tap steps through
+open mic, push to talk and mic muted, kept per phone in `localStorage gb_mic_mode`. Open mic is
+upstream: it hears whenever the ear is on. Push to talk hears only while a finger holds the mic
+button or anywhere on the creature, which then is not a pet; the held clip is upstream's manual
+clip, sent on release. Mic muted keeps the ear on, so the mic is not given up, but nothing it
+hears opens an utterance, starts a warm-up, fires a reflex or makes the creature yield. Turning
+the ear off is still a tap on the mic button (`MIC_PATCHES`).
+
 **Talk style (owner, 2026-11-12).** Upstream's creature is written for small children: ~18-word
 lines, its last 4 exchanges and 5 diary lines in view, and an adult could not hold a conversation
 with it. A persona's talk style (its `gb_talk` setting, picked on JBrain's persona page under
