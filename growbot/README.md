@@ -434,7 +434,10 @@ chip too (memory search, time, math, timer, notes search, note), named the momen
 until what it found is handed to the follow-up thought (`gbStatus.tool`, called from the page). Each chip runs a clock; a finished one shrinks to
 its icon and final time and lingers 5 s. Whatever is under way always sits at the left edge,
 newest first, with finished chips after it, most recent first; on the wake gate the strip drops
-below the GrowBot logo bar instead of covering it. A photo also flashes the
+below the GrowBot logo bar instead of covering it. Each pending timer the creature set is a pill of its own at the
+top right (`#gbTimers`), with what it is for, a live countdown and the clock time it is due, read
+each frame from the page's own timers, so it goes the moment the timer is told, moved or
+cancelled; the strip stops short of them. A photo also flashes the
 screen's edge. It watches from outside rather than patching each call site: it wraps `fetch`
 (the box's `/api/llm`, `/api/llm-stream` and `/api/fish-tts`, timed until the body is read, so a
 streamed reply counts as thinking until its last token) and the relay socket's `send` (a frame

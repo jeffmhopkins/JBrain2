@@ -456,7 +456,13 @@ never eval), answered like the clock; a sum it cannot do is said plainly. A `tim
 (`scratch.timers`, at most 8, at most a day), so a reload keeps it; each turn lists what is
 pending, the page checks every 5 s, and a due one is told in a follow-up thought, late and
 saying so when the phone was locked or closed past it. Only the tab that holds the creature
-ticks, and only while it is awake and on screen, so a stale tab never tells one unheard.
+ticks, and only while it is awake and on screen, so a stale tab never tells one unheard. A timer for a clock time (`{"at":"5:45 PM"}`) is
+worked out on the page in the clock's zone, never by the model (field, 2026-11-13: told at 4:34
+that launch was at 5:45, it set 56 minutes); the timers list shows the time now and when each is
+due, and setting one again for the same thing moves it, so a corrected time leaves no old timer. Each
+pending timer shows as a pill top-right with a countdown. Like jerv, the prompt makes arithmetic
+a tool call, not a guess: any sum past single digits, and minutes between two times of day, goes
+through `calc`, and the time is looked at again rather than remembered.
 
 **Brain tools (owner, 2026-11-12, 2026-11-13).** A persona can search the owner's JBrain notes
 (`brain`, a few search words, answered in a follow-up thought from a few short dated lines) and

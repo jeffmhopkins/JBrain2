@@ -286,6 +286,20 @@
     "#gbStatus .l{display:block;text-transform:uppercase;letter-spacing:.06em;font-size:10px;color:var(--k)}" +
     "#gbStatus .t{display:block;font:600 14px/1.1 ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}" +
     "#gbStatus .c.base{opacity:.7;border-width:1px;box-shadow:none;animation:none}" +
+    // Timers the creature set stand apart, top-right, one pill each until they go off (owner,
+    // 2026-11-13: "can they show as a pill on top right?").
+    "#gbTimers{position:fixed;z-index:2147483000;pointer-events:none;" +
+    "top:calc(env(safe-area-inset-top,0px) + 10px);right:calc(env(safe-area-inset-right,0px) + 10px);" +
+    "display:flex;flex-direction:column;align-items:flex-end;gap:6px;" +
+    "font:600 11px/1.15 system-ui,-apple-system,sans-serif;color:#e8eefc}" +
+    "#gbTimers .c{display:flex;align-items:center;gap:6px;padding:5px 9px 5px 6px;border-radius:14px;" +
+    "background:rgba(8,12,24,.78);border:2px solid #ffb08a;max-width:180px;animation:gbIn .25s ease-out}" +
+    "#gbTimers .c.due{box-shadow:0 0 12px #ffb08a;animation:gbPulse 1.2s ease-in-out infinite}" +
+    "#gbTimers .i{font-size:20px;line-height:1}" +
+    "#gbTimers .l{display:block;font-size:10px;letter-spacing:.04em;color:#ffb08a;" +
+    "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}" +
+    "#gbTimers .a{font:600 10px system-ui,-apple-system,sans-serif;opacity:.7;margin-left:5px}" +
+    "#gbTimers .t{display:block;font:600 14px/1.1 ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}" +
     "#gbFlash{position:fixed;inset:0;z-index:2147482999;pointer-events:none;opacity:0;" +
     "box-shadow:inset 0 0 0 8px #fff,inset 0 0 80px rgba(255,255,255,.55);background:rgba(255,255,255,.18)}" +
     "#gbFlash.go{animation:gbFlash .6s ease-out}" +
@@ -301,6 +315,9 @@
     flashEl = document.createElement("div");
     flashEl.id = "gbFlash";
     document.body.appendChild(flashEl);
+    timersEl = document.createElement("div");
+    timersEl.id = "gbTimers";
+    document.body.appendChild(timersEl);
     root = document.createElement("div");
     root.id = "gbStatus";
     root.setAttribute("aria-live", "polite");
@@ -337,6 +354,58 @@
 
   var baseEl = null;
   var timer = 0;
+  var timersEl = null;
+  var timerPills = [];
+
+  function countdown(ms) {
+    var s = Math.max(0, Math.ceil(ms / 1000));
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var r = s % 60;
+    var mm = (h && m < 10 ? "0" : "") + m;
+    return (h ? h + ":" : "") + mm + ":" + (r < 10 ? "0" : "") + r;
+  }
+
+  // The page keeps its timers on the creature's soul (gbTimers in apply.py); this only reads
+  // them, so a pill comes and goes exactly with the timer: set, moved, cancelled or told.
+  function renderTimers() {
+    if (!timersEl) return;
+    var list = [];
+    try {
+      if (typeof window.gbTimers === "function") list = window.gbTimers().slice();
+    } catch (err) {}
+    list.sort(function (a, b) {
+      return a.at - b.at;
+    });
+    var t = Date.now();
+    while (timerPills.length < list.length) {
+      var el = document.createElement("div");
+      el.className = "c";
+      el.innerHTML =
+        '<span class="i">⏲️</span><span><span class="l"></span><span class="t"><span class="n">' +
+        '</span><span class="a"></span></span></span>';
+      timersEl.appendChild(el);
+      timerPills.push(el);
+    }
+    while (timerPills.length > list.length) timersEl.removeChild(timerPills.pop());
+    for (var i = 0; i < list.length; i++) {
+      var x = list[i];
+      var at = "";
+      try {
+        at = typeof window.gbClockShort === "function" ? window.gbClockShort(x.at) : "";
+      } catch (err) {}
+      var el2 = timerPills[i];
+      var label = String(x.about || "timer");
+      if (el2.querySelector(".l").textContent !== label) el2.querySelector(".l").textContent = label;
+      el2.querySelector(".a").textContent = at;
+      el2.querySelector(".n").textContent = x.at > t ? countdown(x.at - t) : "due";
+      el2.classList.toggle("due", x.at <= t);
+    }
+    // The strip runs left to right under them; it stops short of the pills instead.
+    var w = list.length ? timersEl.offsetWidth + 16 : 0;
+    var right = w ? w + "px" : "";
+    if (root && root.style.right !== right) root.style.right = right;
+  }
 
   function isOpen(e, t) {
     return e.open > 0 || t < e.shownUntil;
@@ -372,6 +441,7 @@
     var t = now();
     var top = topBelowNav();
     if (root.style.top !== top) root.style.top = top;
+    if (timersEl && timersEl.style.top !== top) timersEl.style.top = top;
     order(t);
     var anyOpen = false;
     var kept = [];
@@ -431,6 +501,7 @@
       }
     }
     while (root.children.length > want.length) root.removeChild(root.lastChild);
+    renderTimers();
     schedule();
   }
 

@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=68bb2f8a70fc"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=623b3023987b"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=c7de4d065c32"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=68bb2f8a70fc"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=c7de4d065c32"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -182,7 +182,7 @@
 </div>
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -9105,33 +9105,71 @@ function gbCalcAsk(v,kind,extra){
    is told in a thought of its own, through the same follow-up a search uses. A phone that was
    locked or closed past the time tells it late, and says so. */
 var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=5000, GB_TIMER_LATE_MS=120000,
-  GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,one:1,about:1,all:1};
+  GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,time:1,one:1,about:1,all:1};
 function gbTimers(){ var sc=_live&&_live.scratch; if(!sc) return []; return Array.isArray(sc.timers)?sc.timers:(sc.timers=[]); }
 function gbTimerAbout(v){ return String(v||"").replace(/\s+/g," ").trim().slice(0,80); }
+function gbTimerWords(about){ return about.toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length>2&&!GB_TIMER_STOP[w]; }); }
+/* Whole words only ("tea" is not in "steak"). A cancel takes any timer sharing a word; a set
+   moves one only when every word of the new one is in it, so "call mom" leaves "call the dentist". */
+function gbTimerHits(x,words,all){ var have=gbTimerWords(String(x.about));
+  return words[all?"every":"some"](function(w){ return have.indexOf(w)>=0; }); }
+/* Field, 2026-11-13: told "launch is at 5:45" at 4:34, it set 56 minutes, not 71. A clock time
+   is resolved here, in the clock's zone, to its next coming; the model never does that sum. */
+function gbClockWall(t){
+  var p={}; try{ new Intl.DateTimeFormat("en-US",{timeZone:gbClockZone(),hourCycle:"h23",hour:"2-digit",minute:"2-digit",second:"2-digit"}).formatToParts(new Date(t)).forEach(function(x){ p[x.type]=+x.value; }); }
+  catch(e){ var d=new Date(t); p={hour:d.getHours(),minute:d.getMinutes(),second:d.getSeconds()}; }
+  return ((p.hour%24)*60+p.minute)*60+p.second;
+}
+function gbTimerAtMs(v,now){
+  var m=String(v||"").trim().toLowerCase().match(/^(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?$/);
+  if(!m) return 0;
+  var h=+m[1], mi=+(m[2]||0), ap=m[3]?m[3].charAt(0):"";
+  if(mi>59||h>23||(ap&&(h<1||h>12))) return 0;
+  if(ap==="p"&&h<12) h+=12; else if(ap==="a"&&h===12) h=0;
+  /* "5:45" with no AM or PM is whichever 5:45 comes first, as a person would mean it. */
+  var hs=!ap&&h>=1&&h<=12?[h%12,h%12+12]:[h], best=0;
+  hs.forEach(function(hh){ var t=gbTimerWallMs(hh*3600+mi*60,now); if(!best||t<best) best=t; });
+  return best;
+}
+/* The next instant the clock reads `sec` past midnight. One correction pass keeps a timer across
+   a change of clocks on the wall time asked for, not an hour off it. */
+function gbTimerWallMs(sec,now){
+  var d=(sec-gbClockWall(now))%86400; if(d<=0) d+=86400;
+  var t=now+d*1000, off=(sec-gbClockWall(t))%86400;
+  if(off>43200) off-=86400; else if(off<-43200) off+=86400;
+  /* A time the clocks skip (2:30 on the night they spring forward) is kept late, never early. */
+  return off&&gbClockWall(t+off*1000)!==sec%86400?t:t+off*1000;
+}
+function gbClockShort(t){
+  try{ return new Date(t).toLocaleTimeString("en-US",{timeZone:gbClockZone(),hour:"numeric",minute:"2-digit"}); }
+  catch(e){ return new Date(t).toTimeString().slice(0,5); }
+}
 function gbTimerSet(v,kind,extra){
   if(typeof v==="string"){ try{ v=JSON.parse(v); }catch(e){ return; } }
   if(!v||typeof v!=="object") return;
   if(kind!=="event"){ logEv("timer_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("timer_skip",{why:"follow"}); return; }
-  var list=gbTimers(), about=gbTimerAbout(v.about||v.what), m=+v.minutes, words, n;
+  var list=gbTimers(), about=gbTimerAbout(v.about||v.what), m=+v.minutes, now=Date.now(),
+    words=gbTimerWords(about), n=list.length, at=v.at!=null?gbTimerAtMs(v.at,now):0;
   if(v.cancel===true||v.cancel==="true"){
-    words=about.toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length>2&&!GB_TIMER_STOP[w]; });
-    n=list.length;
-    for(var i=list.length-1;i>=0;i--) if(!words.length||words.some(function(w){ return String(list[i].about).toLowerCase().indexOf(w)>=0; })) list.splice(i,1);
+    for(var i=list.length-1;i>=0;i--) if(!words.length||gbTimerHits(list[i],words)) list.splice(i,1);
     logEv("timer_cancel",{n:n-list.length}); gbToolPill("timer"); return true;
   }
-  if(!(m>0)||!isFinite(m)) return;
-  m=Math.min(m,GB_TIMER_MAX_MIN);
-  list.push({at:Date.now()+Math.round(m*60000),about:about||"your timer",t:Date.now()});
+  if(!at){ if(!(m>0)||!isFinite(m)) return; at=now+Math.round(Math.min(m,GB_TIMER_MAX_MIN)*60000); }
+  /* Set again for the same thing moves it: a corrected time must not leave the old one to ring. */
+  for(var j=list.length-1;j>=0;j--) if(words.length&&gbTimerHits(list[j],words,true)) list.splice(j,1);
+  var moved=n-list.length; m=Math.round((at-now)/60000);
+  list.push({at:at,about:about||"your timer",t:now});
   if(list.length>GB_TIMERS_MAX) list.splice(0,list.length-GB_TIMERS_MAX);
-  logEv("timer",{m:m}); gbToolPill("timer");
+  logEv("timer",{m:m,moved:moved}); gbToolPill("timer");
   return true;
 }
 function gbTimerLeft(ms){ var mn=Math.round(ms/60000); return mn<1?"under a minute":mn<90?mn+" min":Math.round(mn/6)/10+" h"; }
 function gbTimersLine(){
   var list=gbTimers(), now=Date.now();
   if(!list.length) return "";
-  return "\n\n== YOUR TIMERS (you set these for your person) ==\n"+list.map(function(x){ return "- "+x.about+": "+(x.at>now?"in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
+  /* The time now rides with them, so "how long until" is read off, not remembered or guessed. */
+  return "\n\n== YOUR TIMERS (you set these for your person; it is "+gbClockShort(now)+" now) ==\n"+list.map(function(x){ return "- "+x.about+": "+(x.at>now?"at "+gbClockShort(x.at)+", in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
 }
 function gbTimerTick(){ try{
   var list=gbTimers(), now=Date.now(), due=[];
@@ -9149,6 +9187,8 @@ function gbTimerTick(){ try{
   if(due.length&&typeof saveSoul==="function") saveSoul(_live);
 }catch(e){} }
 if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
+/* The status strip draws a pill for each pending timer (growbot-status.js) and reads them here. */
+try{ window.gbTimers=gbTimers; window.gbClockShort=gbClockShort; }catch(e){}
 /* The owner's notes (owner, 2026-11-13): a persona the owner turned brain access on for, on his
    own phone, searches his notes (`brain`) and files new ones (`jot`). The box is the gate and
    checks every call; the page only offers the fields when the box says this phone may. A search
