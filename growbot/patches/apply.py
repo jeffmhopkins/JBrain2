@@ -2284,6 +2284,98 @@ MIC_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += MIC_PATCHES
 
+# The conversation stays on screen (owner, 2026-11-13: "sometimes I interrupt it while it's
+# replying and I can't see what it was saying anymore"). growbot-talklog.js keeps every line on
+# both sides with what of each reply was heard, draws a fading trail of the last few above the
+# caption, and a log drawer. The page tells it what happens through window.gbTalk at the few
+# places that decide it: the input funnel, a think's start, the sentence queue (queued, started,
+# finished), silence(), and the two places a reply is held back while the person talks.
+TALKLOG_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        '<script src="/growbot-eyes.js"></script>',
+        '<script src="/growbot-eyes.js"></script><script src="/growbot-talklog.js"></script>',
+        1,
+    ),
+    ("v3/next.html", '<div id="youSaid"></div>', '<div id="gbTrail"></div><div id="youSaid"></div>', 1),
+    (
+        "v3/next.html",
+        'function sendTxtFrom(t,meta){ t=String(t||"").trim(); if(!t) return;',
+        'function sendTxtFrom(t,meta){ t=String(t||"").trim(); if(!t) return;'
+        " if(window.gbTalk&&!(meta&&meta.soft)) gbTalk.you(t);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_streamSpoke=""; _streamSaid=false; _streamBurst=false; _yieldSaid=0;',
+        'if(window.gbTalk) gbTalk.begin(); _streamSpoke=""; _streamSaid=false; _streamBurst=false;'
+        " _yieldSaid=0;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    speakStream(chunk,em,replyLang); if(!MUTED) _streamSaid=true;",
+        "    if(window.gbTalk) gbTalk.upto=upto; speakStream(chunk,em,replyLang);"
+        " if(window.gbTalk) gbTalk.upto=-1; if(!MUTED) _streamSaid=true;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '    if(_yieldNow()){ $("say").textContent=v.slice(0,upto); return; }',
+        '    if(_yieldNow()){ if(window.gbTalk) gbTalk.held(); $("say").textContent=v.slice(0,upto);'
+        " return; }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'else if(said&&_yieldNow()){ $("say").textContent=said;',
+        'else if(said&&_yieldNow()){ $("say").textContent=said; if(window.gbTalk) gbTalk.held();',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "cap:Date.now()}); if(!_chainBusy) _chainNext(); }",
+        "cap:Date.now()}); if(window.gbTalk) gbTalk.queued(_chainQ[_chainQ.length-1]);"
+        " if(!_chainBusy) _chainNext(); }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function _chainNext(){\n  var vg=_voiceGen, ended=false;",
+        "function _chainNext(){ if(window.gbTalk) gbTalk.next();\n  var vg=_voiceGen, ended=false;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var it=_chainQ.shift(), t=it.t, emo=it.emo, replyLang=it.lang;",
+        "var it=_chainQ.shift(), t=it.t, emo=it.emo, replyLang=it.lang; if(window.gbTalk)"
+        " gbTalk.start(it);",
+        1,
+    ),
+    # Before the queues are emptied, so what was still to be said is known to be cut.
+    (
+        "v3/next.html",
+        "function silence(){ ",
+        "function silence(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "if(!text) return; var t=speakable(speakSafe(text)); if(!t) return; _sayCap=Date.now();",
+        "if(!text) return; var t=speakable(speakSafe(text)); if(!t) return; _sayCap=Date.now();"
+        " if(window.gbTalk) gbTalk.solo(text);",
+        1,
+    ),
+    # A tap on the trail or the drawer is never a push-to-talk hold.
+    (
+        "v3/next.html",
+        '#gbk,#gbkBrainP,#gbkBack";',
+        '#gbk,#gbkBrainP,#gbkBack,#gbTrail,#gbLog";',
+        1,
+    ),
+]
+PATCHES += TALKLOG_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
@@ -2417,6 +2509,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     shutil.copyfile(HERE / "growbot-face.js", site / "growbot-face.js")
     shutil.copyfile(HERE / "growbot-status.js", site / "growbot-status.js")
     shutil.copyfile(HERE / "growbot-eyes.js", site / "growbot-eyes.js")
+    shutil.copyfile(HERE / "growbot-talklog.js", site / "growbot-talklog.js")
     # The installed app (Android): served without a session, since Chrome fetches the
     # manifest and its icons with no cookie.
     (site / "icons").mkdir(exist_ok=True)

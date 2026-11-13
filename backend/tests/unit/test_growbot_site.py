@@ -2556,3 +2556,140 @@ def test_a_push_hidden_while_the_mic_is_asked_for_records_nothing_on_return() ->
     )
     assert got["gen"] == 1 and got["flight"] is False and got["after"] == []
     assert got["healthy"] == [["start"]]
+
+
+def _talklog_in_node(script: str, stored: str = "") -> Any:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    talk = (_SITE / "growbot-talklog.js").read_text(encoding="utf-8")
+    shim = (
+        "var mem="
+        + json.dumps({"gb_box_soul": json.dumps({"persona": "dave"})})
+        + ";"
+        + (f"mem['gb_talk_log:dave']={json.dumps(stored)};" if stored else "")
+        + "var window={localStorage:{getItem:function(k){return k in mem?mem[k]:null},"
+        "setItem:function(k,v){mem[k]=v},removeItem:function(k){delete mem[k]}}},"
+        "location={search:''},document={readyState:'loading',addEventListener:function(){}};"
+    )
+    out = subprocess.run(
+        [node, "-e", f"{shim}\n{talk}\nvar T=window.gbTalk;\n{script}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(out.stdout)
+
+
+# A streamed reply as the page voices it: each sentence queued with the caption offset it ends
+# at, then started by _chainNext, then the next _chainNext when it finished.
+_REPLY = "Left spring is fraying. The opener strains. Call the installer."
+_STREAM = (
+    "T.you('what about the garage door?'); T.begin();"
+    f"var R={json.dumps(_REPLY)}, Q=[], ends=[23,43,63];"
+    "ends.forEach(function(e){ var it={}; T.upto=e; T.queued(it); Q.push(it); });"
+    "T.caption(R.slice(0,23)); T.next(); T.start(Q.shift());"
+)
+
+
+def _runs(line: dict[str, Any]) -> list[tuple[bool, str]]:
+    return [(r["heard"], r["text"]) for r in line["runs"]]
+
+
+def test_the_conversation_stays_on_screen_after_the_caption_moves_on() -> None:
+    """The talk log loads after the eyes, before any page script, and the page reports to it
+    from the places that decide what was said and heard."""
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    tags = re.findall(r"<script[^>]*>", creature)
+    assert tags[4] == '<script src="/growbot-talklog.js">'
+    talk = (_SITE / "growbot-talklog.js").read_text(encoding="utf-8")
+    assert talk == (_GROWBOT / "patches" / "growbot-talklog.js").read_text(encoding="utf-8")
+    assert re.search(r"https?://", talk) is None
+    assert '<div id="gbTrail"></div><div id="youSaid"></div>' in creature
+    for hook in (
+        "if(window.gbTalk&&!(meta&&meta.soft)) gbTalk.you(t);",
+        'if(window.gbTalk) gbTalk.begin(); _streamSpoke="";',
+        "if(window.gbTalk) gbTalk.upto=upto; speakStream(chunk,em,replyLang);",
+        "if(_yieldNow()){ if(window.gbTalk) gbTalk.held();",
+        'else if(said&&_yieldNow()){ $("say").textContent=said; if(window.gbTalk) gbTalk.held();',
+        "if(window.gbTalk) gbTalk.queued(_chainQ[_chainQ.length-1]);",
+        "function _chainNext(){ if(window.gbTalk) gbTalk.next();",
+        "replyLang=it.lang; if(window.gbTalk) gbTalk.start(it);",
+        "function silence(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",
+        "_sayCap=Date.now(); if(window.gbTalk) gbTalk.solo(text);",
+        '#gbk,#gbkBrainP,#gbkBack,#gbTrail,#gbLog";',
+    ):
+        assert creature.count(hook) == 1, hook
+    # The log never leaves the phone.
+    assert "fetch(" not in talk and "XMLHttpRequest" not in talk
+
+
+def test_a_reply_cut_short_keeps_the_part_never_heard() -> None:
+    lines = _talklog_in_node(
+        _STREAM + "T.caption(R); T.cut(Q, false); console.log(JSON.stringify(T.lines()));"
+    )
+    assert [line["who"] for line in lines] == ["you", "me"]
+    assert lines[1]["cut"] is True
+    # The sentence playing when the person cut in counts as unheard, as does all after it.
+    assert _runs(lines[1]) == [(False, _REPLY)]
+    lines = _talklog_in_node(
+        _STREAM
+        + "T.caption(R); T.next(); T.start(Q.shift()); T.cut(Q, false);"
+        + "console.log(JSON.stringify(T.lines()));"
+    )
+    assert _runs(lines[1]) == [(True, _REPLY[:23]), (False, _REPLY[23:])]
+
+
+def test_a_reply_heard_to_the_end_is_whole_and_a_later_silence_cuts_nothing() -> None:
+    lines = _talklog_in_node(
+        _STREAM
+        + "T.caption(R); T.next(); T.start(Q.shift()); T.next(); T.start(Q.shift()); T.next();"
+        + "T.cut([], false); console.log(JSON.stringify(T.lines()));"
+    )
+    assert lines[1]["cut"] is False
+    assert _runs(lines[1]) == [(True, _REPLY)]
+
+
+def test_a_reply_held_back_while_the_person_talked_reads_as_unheard() -> None:
+    lines = _talklog_in_node(
+        "T.begin(); T.held(); T.caption('You were mid-sentence.');"
+        "console.log(JSON.stringify(T.lines()));"
+    )
+    assert _runs(lines[0]) == [(False, "You were mid-sentence.")]
+
+
+def test_a_line_spoken_whole_and_cut_is_unheard_and_a_restored_caption_is_kept_once() -> None:
+    lines = _talklog_in_node(
+        "T.caption('The dream slipped away.'); T.solo('The dream slipped away.');"
+        "T.cut([], true); T.caption('napping'); T.caption('The dream slipped away.');"
+        "console.log(JSON.stringify(T.lines()));"
+    )
+    assert [line["text"] for line in lines] == ["The dream slipped away.", "napping"]
+    assert _runs(lines[0]) == [(False, "The dream slipped away.")]
+
+
+def test_the_streaming_caption_grows_one_line_not_many() -> None:
+    lines = _talklog_in_node(
+        "T.begin(); T.caption('Left spring'); T.caption('Left spring is fraying.');"
+        "T.caption('Left spring is fraying. The opener strains.');"
+        "console.log(JSON.stringify(T.lines()));"
+    )
+    assert [line["text"] for line in lines] == ["Left spring is fraying. The opener strains."]
+
+
+def test_the_log_is_kept_per_persona_and_old_lines_age_out() -> None:
+    stored = json.dumps(
+        [
+            {"who": "you", "text": "a week ago", "t": 1, "chunks": []},
+            {
+                "who": "me",
+                "text": "still here",
+                "t": 9e15,
+                "cut": True,
+                "chunks": [{"s": 0, "e": 5, "st": "ok"}, {"s": 5, "e": 10, "st": "x"}],
+            },
+        ]
+    )
+    lines = _talklog_in_node("console.log(JSON.stringify(T.lines()));", stored)
+    assert [line["text"] for line in lines] == ["still here"]
+    assert _runs(lines[0]) == [(True, "still"), (False, " here")]
