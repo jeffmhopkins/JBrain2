@@ -336,10 +336,10 @@ def test_the_eyes_look_toward_the_face_on_screen() -> None:
     assert x > 0.5 and y > 0.2
 
 
-def test_the_eyes_follow_side_to_side_at_double_the_up_and_down_gain() -> None:
+def test_the_eyes_follow_side_to_side_at_double_the_old_gain() -> None:
     """A face a tenth of the frame off centre moves the eyes well over halfway sideways
-    (owner, 2026-11-13: left to right gain needs like doubled), and the far edge still
-    clamps to the eye's range."""
+    (owner, 2026-11-13: left to right gain needs like doubled); a face at the frame's edge
+    overshoots here, and gbFace.see clamps it to the eye's range."""
     seen = json.loads(
         _eyes_in_node(
             "window.gbEyes.boxes([{x:0.3,y:0.4,width:0.2,height:0.2}]);"
