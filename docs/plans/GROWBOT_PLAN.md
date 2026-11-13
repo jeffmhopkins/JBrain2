@@ -388,12 +388,14 @@ with the words as a message of their own, so the engine resumes after the frames
 re-reading them. The engine keeps a resumable checkpoint only at the start of a request's last
 message, which is why the words are split off. Measured with replays of logged turns: prefill
 7.8 s → 1.9 s, and the split layout's replies matched the old one's. A warm-up is used once, by
-the next spoken turn, under 12 s old, and only if the history, system text, eye, state block
+the next spoken turn, under 20 s old, and only if the history, system text, eye, state block
 (scratchpad, goal and language lines, and self-stats compared without their numbers) and
-picture-memory line are unchanged and its newest frame is under 10 s old; the turn then sees and
-remembers the warm-up's frames, and its labels and self-stats numbers are up to 12 s stale. What
-it could not know (a recall, an imitation guide) rides with the words, and a turn that wants
-more frames than it holds ("look at this") is built as before. A refused or failed warm-up
+picture-memory line are unchanged and its newest frame is under 20 s old (the transcript alone
+can take 12 s to land after the person stops); the turn then sees and remembers the warm-up's
+frames, taken while the person spoke, even when it would have sent more, and its labels and
+self-stats numbers are up to 20 s stale. What it could not know (a recall, an imitation guide)
+rides with the words, and a turn asked to look ("look at this") with fewer frames than it wants
+is built as before, with fresh ones. A refused or failed warm-up
 (an HTTP error or an error in its body) is never used. Warm-ups log as `llm_warmup` in the call
 summary and the brain log, do not stamp the creature awake (a television can start one), and are
 refused off a slot pool, where one could load a model, which turns them off for the visit. An

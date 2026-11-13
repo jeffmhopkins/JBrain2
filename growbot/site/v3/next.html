@@ -8471,7 +8471,7 @@ function _runGait(spec,attempt){
 /* ---- THE FAST LOOP (slow table — LLM reasons over full memory, drives legs) ---- */
 var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
 function gbOpenDreamDue(){ return _gbDreamOnOpen&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
-var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=12000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
+var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 function gbHist(now){ var tr=gbTalkTraces(_live.scratch.traces), msgs=[], i;
   for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
@@ -8524,8 +8524,9 @@ function gbWarmTake(kind,extra,frames){
   if(!w) return null;
   if(now-w.t>GB_WARM_MAX_MS) return gbWarmSkip(w,"old");
   if(w.key!==gbWarmKey()) return gbWarmSkip(w,"moved");
-  if(w.nf<frames.length||(w.nf>0)!==(frames.length>0)) return gbWarmSkip(w,"frames");
-  if(w.nf&&now-w.ft>10000) return gbWarmSkip(w,"stale");
+  var look=typeof extra.visualUser==="string"&&typeof _GB_LOOK_WORDS!=="undefined"&&_GB_LOOK_WORDS.test(extra.visualUser);
+  if((w.nf>0)!==(frames.length>0)||(look&&w.nf<frames.length)) return gbWarmSkip(w,"frames");
+  if(w.nf&&now-w.ft>GB_WARM_MAX_MS) return gbWarmSkip(w,"stale");
   return w; }
 function gbWarmFits(w,c){
   var why=w.bad?"failed":c.sys!==w.sys?"sys":c.bl!==w.bl?"state":c.mg!==w.mg?"goal":gbShape(c.ss)!==w.ss?"stats":c.vm!==w.vm?"vm":c.blind?"blind":"";

@@ -1835,15 +1835,17 @@ PATCHES += [
 # stopped. Measured on the box with logged turns: 7.8 s of prefill fell to 1.9 s. The engine
 # keeps a reusable checkpoint only at the start of a request's last message, which is why the
 # words ride in a message of their own and the warm-up ends in "." rather than stopping short.
-# A warm-up is used once, by the next spoken turn, under 12 s old, and only when nothing it
+# A warm-up is used once, by the next spoken turn, under 20 s old, and only when nothing it
 # was built from has moved: the history, the system text, the eye, the state block (the
 # scratchpad, goal and language lines; its self-stats compared without their numbers) and the
-# picture-memory line. A warm-up's newest frame must still be under 10 s old, the page's rule
-# for any frame, and the turn sees and remembers those same frames. What the warm-up could not
+# picture-memory line. Its frames are the ones taken while the person spoke, so the turn sees
+# and remembers those same frames, even when it would have sent more of them (unless the person
+# asked it to look, when it takes fresh ones): one frame or three cost the model the same, and the transcript alone can take 12 s to land after the
+# person stops, which is why a frame may be up to 20 s old by then rather than the usual 10. What the warm-up could not
 # know (a recall, an imitation guide) rides with the words. Anything else runs as before.
 _GB_WARM_JS = r"""var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
 function gbOpenDreamDue(){ return _gbDreamOnOpen&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
-var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=12000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
+var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 function gbHist(now){ var tr=gbTalkTraces(_live.scratch.traces), msgs=[], i;
   for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
@@ -1896,8 +1898,9 @@ function gbWarmTake(kind,extra,frames){
   if(!w) return null;
   if(now-w.t>GB_WARM_MAX_MS) return gbWarmSkip(w,"old");
   if(w.key!==gbWarmKey()) return gbWarmSkip(w,"moved");
-  if(w.nf<frames.length||(w.nf>0)!==(frames.length>0)) return gbWarmSkip(w,"frames");
-  if(w.nf&&now-w.ft>10000) return gbWarmSkip(w,"stale");
+  var look=typeof extra.visualUser==="string"&&typeof _GB_LOOK_WORDS!=="undefined"&&_GB_LOOK_WORDS.test(extra.visualUser);
+  if((w.nf>0)!==(frames.length>0)||(look&&w.nf<frames.length)) return gbWarmSkip(w,"frames");
+  if(w.nf&&now-w.ft>GB_WARM_MAX_MS) return gbWarmSkip(w,"stale");
   return w; }
 function gbWarmFits(w,c){
   var why=w.bad?"failed":c.sys!==w.sys?"sys":c.bl!==w.bl?"state":c.mg!==w.mg?"goal":gbShape(c.ss)!==w.ss?"stats":c.vm!==w.vm?"vm":c.blind?"blind":"";

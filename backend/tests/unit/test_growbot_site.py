@@ -1988,7 +1988,7 @@ function fetch(url,o){ sent.push({url:url,headers:o.headers,body:JSON.parse(o.bo
       return {catch:function(h){ if(failed) h(new Error("x")); return done; }}; }}; }}; }
 function cur(o){ return Object.assign({sys:_gbWarm.sys,bl:"\n\nLIVE",mg:"",ss:"stats 2",
   vm:"\n\nVM",blind:false},o||{}); }
-var ask={humanReq:{}}, one=[{t:Date.now(),j:"NEW"}];
+var ask={humanReq:{}}, one=[{t:Date.now(),j:"NEW"}], _GB_LOOK_WORDS=/\blook\b/i;
 """
 
 
@@ -2058,8 +2058,10 @@ def test_a_warm_up_is_taken_once_and_only_when_nothing_moved() -> None:
         "again(); r.tick=!!gbWarmTake('tick',null,one); r.kept=!!_gbWarm;"
         "r.used=!!gbWarmTake('event',ask,one); r.twice=!!gbWarmTake('event',ask,one);"
         "again(); r.three=!!gbWarmTake('event',ask,one.concat(one,one));"
+        "again(); r.look=!!gbWarmTake('event',{humanReq:{},visualUser:'look at this'},"
+        "one.concat(one,one));"
         "again(); r.blindTurn=!!gbWarmTake('event',ask,[]);"
-        "again(); _gbWarm.ft-=10001; r.stale=!!gbWarmTake('event',ask,one);"
+        "again(); _gbWarm.ft-=GB_WARM_MAX_MS+1; r.stale=!!gbWarmTake('event',ask,one);"
         "again(); _live.scratch.traces.push({t:Date.now(),u:'x',a:'y'});"
         "r.moved=!!gbWarmTake('event',ask,one);"
         "again(); _gbWarm.t-=GB_WARM_MAX_MS+1; r.old=!!gbWarmTake('event',ask,one);"
@@ -2075,7 +2077,8 @@ def test_a_warm_up_is_taken_once_and_only_when_nothing_moved() -> None:
         "kept": True,
         "used": True,
         "twice": False,
-        "three": False,
+        "three": True,
+        "look": False,
         "blindTurn": False,
         "stale": False,
         "moved": False,
