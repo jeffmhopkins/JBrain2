@@ -100,7 +100,32 @@
     if (/-audio$/.test(target)) return "stt";
     if (target !== "openrouter") return "";
     var body = init && init.body;
-    return typeof body === "string" && body.indexOf('"image_url"') >= 0 ? "see" : "think";
+    return typeof body === "string" && newPicture(body) ? "see" : "think";
+  }
+
+  // A spoken turn re-sends the picture its warm-up already sent, and a warm-up resent while
+  // the person talks may carry the same frame: the flash marks only a picture the model has
+  // not been shown. A frame is known by its length and a slice from its middle; a jpeg's
+  // bytes differ there from any other capture.
+  var seen = [];
+  function newPicture(body) {
+    var re = /"url":"data:image\/[a-z]+;base64,([^"]+)"/g;
+    var m;
+    var fresh = false;
+    var any = false;
+    while ((m = re.exec(body))) {
+      any = true;
+      var b = m[1];
+      var mid = b.length >> 1;
+      var id = b.length + ":" + b.slice(mid, mid + 64);
+      if (seen.indexOf(id) < 0) {
+        fresh = true;
+        seen.push(id);
+        if (seen.length > 24) seen.shift();
+      }
+    }
+    // A picture sent some other way (a link, not inline) is new each time.
+    return fresh || (!any && body.indexOf('"image_url"') >= 0);
   }
 
   // The page aborts a reply the person talked over; that is a turn cut short, not a failure.

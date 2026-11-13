@@ -1840,9 +1840,12 @@ PATCHES += [
 # scratchpad, goal and language lines; its self-stats compared without their numbers) and the
 # picture-memory line. Its frames are the ones taken while the person spoke, so the turn sees
 # and remembers those same frames, even when it would have sent more of them (unless the person
-# asked it to look, when it takes fresh ones): one frame or three cost the model the same, and the transcript alone can take 12 s to land after the
+# asked it to look, or the creature itself is moving, when it takes fresh ones): one frame or three cost the model the same, and the transcript alone can take 12 s to land after the
 # person stops, which is why a frame may be up to 20 s old by then rather than the usual 10. What the warm-up could not
 # know (a recall, an imitation guide) rides with the words. Anything else runs as before.
+# While the person keeps talking, the warm-up is sent again only once the scene has moved (the
+# page's frame difference, the same test that lets an idle thought look) or the warm-up is
+# half its life old: a still room would only send the model the same picture again.
 _GB_WARM_JS = r"""var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
 function gbOpenDreamDue(){ return _gbDreamOnOpen&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
 var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
@@ -1859,6 +1862,7 @@ function gbWarmUp(){ var now=Date.now();
   if(window._wakeGateUp||_gbWarmOff||_gbWarmBusy||now-_gbWarmT<GB_WARM_GAP_MS||typeof window.gbBoxLive!=="function") return;
   if(_gbWarm&&_gbWarm.utt!==vadStartT){ _gbWarm=null; _gbWarmMiss++; }
   if(_gbWarmMiss>=GB_WARM_MISS) return;
+  if(_gbWarm&&!_gbWarm.bad&&frameDiff<=3&&!_rideOn&&now>=selfMoveUntil&&now-_gbWarm.t<GB_WARM_MAX_MS/2&&_gbWarm.key===gbWarmKey()) return;
   if(inFlight||!orCfg||!_live||now<coolUntil||paused||document.hidden||dreaming||energyState==="asleep"||_gbRecallCarry) return;
   if(!soulOwned()||(typeof vmBusy==="function"&&vmBusy())||llmCfg()) return;
   _gbWarmT=now;
@@ -1899,7 +1903,7 @@ function gbWarmTake(kind,extra,frames){
   if(now-w.t>GB_WARM_MAX_MS) return gbWarmSkip(w,"old");
   if(w.key!==gbWarmKey()) return gbWarmSkip(w,"moved");
   var look=typeof extra.visualUser==="string"&&typeof _GB_LOOK_WORDS!=="undefined"&&_GB_LOOK_WORDS.test(extra.visualUser);
-  if((w.nf>0)!==(frames.length>0)||(look&&w.nf<frames.length)) return gbWarmSkip(w,"frames");
+  if((w.nf>0)!==(frames.length>0)||((look||_rideOn||now<selfMoveUntil)&&w.nf<frames.length)) return gbWarmSkip(w,"frames");
   if(w.nf&&now-w.ft>GB_WARM_MAX_MS) return gbWarmSkip(w,"stale");
   return w; }
 function gbWarmFits(w,c){

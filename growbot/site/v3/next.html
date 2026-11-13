@@ -8485,6 +8485,7 @@ function gbWarmUp(){ var now=Date.now();
   if(window._wakeGateUp||_gbWarmOff||_gbWarmBusy||now-_gbWarmT<GB_WARM_GAP_MS||typeof window.gbBoxLive!=="function") return;
   if(_gbWarm&&_gbWarm.utt!==vadStartT){ _gbWarm=null; _gbWarmMiss++; }
   if(_gbWarmMiss>=GB_WARM_MISS) return;
+  if(_gbWarm&&!_gbWarm.bad&&frameDiff<=3&&!_rideOn&&now>=selfMoveUntil&&now-_gbWarm.t<GB_WARM_MAX_MS/2&&_gbWarm.key===gbWarmKey()) return;
   if(inFlight||!orCfg||!_live||now<coolUntil||paused||document.hidden||dreaming||energyState==="asleep"||_gbRecallCarry) return;
   if(!soulOwned()||(typeof vmBusy==="function"&&vmBusy())||llmCfg()) return;
   _gbWarmT=now;
@@ -8525,7 +8526,7 @@ function gbWarmTake(kind,extra,frames){
   if(now-w.t>GB_WARM_MAX_MS) return gbWarmSkip(w,"old");
   if(w.key!==gbWarmKey()) return gbWarmSkip(w,"moved");
   var look=typeof extra.visualUser==="string"&&typeof _GB_LOOK_WORDS!=="undefined"&&_GB_LOOK_WORDS.test(extra.visualUser);
-  if((w.nf>0)!==(frames.length>0)||(look&&w.nf<frames.length)) return gbWarmSkip(w,"frames");
+  if((w.nf>0)!==(frames.length>0)||((look||_rideOn||now<selfMoveUntil)&&w.nf<frames.length)) return gbWarmSkip(w,"frames");
   if(w.nf&&now-w.ft>GB_WARM_MAX_MS) return gbWarmSkip(w,"stale");
   return w; }
 function gbWarmFits(w,c){

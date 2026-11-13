@@ -394,8 +394,11 @@ picture-memory line are unchanged and its newest frame is under 20 s old (the tr
 can take 12 s to land after the person stops); the turn then sees and remembers the warm-up's
 frames, taken while the person spoke, even when it would have sent more, and its labels and
 self-stats numbers are up to 20 s stale. What it could not know (a recall, an imitation guide)
-rides with the words, and a turn asked to look ("look at this") with fewer frames than it wants
-is built as before, with fresh ones. A refused or failed warm-up
+rides with the words, and a turn asked to look ("look at this"), or taken while the creature
+itself moves, with fewer frames than it wants is built as before, with fresh ones. While the
+person keeps talking, the warm-up is resent only once the scene moves (the page's frame
+difference), the history moves, or it is 10 s old, and the status strip flashes only for a
+picture the model has not been shown, not for the turn re-sending its warm-up's. A refused or failed warm-up
 (an HTTP error or an error in its body) is never used. Warm-ups log as `llm_warmup` in the call
 summary and the brain log, do not stamp the creature awake (a television can start one), and are
 refused off a slot pool, where one could load a model, which turns them off for the visit. An
