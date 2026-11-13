@@ -440,6 +440,13 @@ turn, only on a turn that answers someone, never from the follow-up, at most one
 person speaks meanwhile or the creature cannot think, the find
 rides their turn (`RECALL_PATCHES`). While it searches, its line only says it is thinking back, never an answer or "I don't know": a reply with a search opens with `recall` (not first in the schema: a visual memory action owns that key), the streamed voice holds a say behind one, and the page swaps any say that is not purely thinking back for a stock line (field, 2026-11-13); and what it found stays in front of it for the next 90 s of its person's turns, since its answer is often talked over and a re-ask must not meet "I don't remember" (found on the box, 2026-11-12).
 
+**The clock (owner, 2026-11-13).** The turn carries only the weekday and the part of the day, so
+the exact time is a tool like `recall`: a `clock: true` reply field, a short checking-the-clock
+line, and a follow-up thought that tells the time read off the phone in its own zone (a phone
+that reports none, or UTC, is read as America/New_York). A search and the clock asked in one
+reply share one follow-up. Every tool call shows a chip in the status strip while it runs
+(`CLOCK_PATCHES`).
+
 **Its name.** Upstream's seed says "I am Sprout" and the creature's own name (`goals.selfName`) is set only when its person confirms one, so a persona named Dave woke up as Sprout. A box creature born fresh (a new, reset or seeded persona) now starts out with its persona's name; one already awake keeps its own, which the owner edits under Soul as "Calls itself" (`NAME_PATCHES`, owner 2026-11-12).
 
 **Sleep (owner, 2026-11-12).** Upstream dreamed every 12 replies, so a long conversation was

@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=735dc18eeee5"></script><script src="/growbot-face.js?v=0d5e98876088"></script><script src="/growbot-status.js?v=2e8a1524b5f2"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=c7de4d065c32"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=735dc18eeee5"></script><script src="/growbot-face.js?v=0d5e98876088"></script><script src="/growbot-status.js?v=44c9f9a23668"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=c7de4d065c32"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -182,7 +182,7 @@
 </div>
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -8713,7 +8713,7 @@ function think(event,kind,extra){
     if(!(o.scratchpad&&o.scratchpad.mood)){                                                            // no mood written this turn → emotion gently colors the weather (never stale)
       var _mm=_live.scratch.mood||(_live.scratch.mood={v:0,e:0.4}), _tgt=EMO2MOOD[emotion];
       if(_tgt){ _mm.v+=(_tgt.v-_mm.v)*0.15; _mm.e+=(_tgt.e-_mm.e)*0.15; } }                            // persisted by the turn's own saveSoul — no extra save
-    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string"&&gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbRecallLine(o.say); if((o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant(); }catch(_fe){}
+    try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact)) logEv("fact",{n:_live.facts.length}); if(typeof o.recall==="string"&&gbRecallAsk(o.recall,kind,extra)&&!_streamSaid&&!o.visual_memory) o.say=gbRecallLine(o.say); if(gbClockAsk(o.clock,kind,extra)&&!_streamSaid&&!o.visual_memory&&!gbRecallWords(o.recall)) o.say=gbClockLine(o.say); gbToolPillsSettle(); if((o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant(); }catch(_fe){}
     var _dl=0; if(o.log&&String(o.log).replace(/^\s+/,"").indexOf("📷")!==0){ soulLog(_live,o.log); _dl=_live.log[_live.log.length-1]!==_lgAt?1:0; }   // 1005 review: "📷 ..." is the ENGINE's picture-memory line (visual-memory.js vmDiaryResult); a model copying that format would be a save claim nobody confirmed
     if(typeof o.glow==="string"&&o.glow.trim()){ var _gls=(_live.scratch.glows=_live.scratch.glows||[]), _glsHad=_gls.length; _gls.push({t:Date.now(),g:String(o.glow).replace(/\s+/g," ").trim().slice(0,120)}); _live.scratch.glows=soulRoll(_live,"glows",_gls,_glsHad); _epGlow=true; }   // [P5] felt-reward: mark a delightful/identity-shaping moment; the dream weighs these most (v2:1672). whitespace collapsed (K3 0804 r2#2): glows render line-per-entry in the dream prompt — same line-anchor spoof class as traces/rules
     if(kind==="event"&&typeof o.owner==="string"&&o.owner.trim()){ var _nm=o.owner.trim().replace(/[\n\r{}"'<>|]+/g," ").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,32);
@@ -8936,7 +8936,7 @@ function gbSessAdd(u,a){ try{
    asked must finish first (its trace, its speech, its visual work), and a follow-up that cannot
    run hands its find to the person's next turn instead of leaving "let me think back" unanswered. */
 function gbRecallAsk(q,kind,extra){
-  var now=Date.now(), r, ev, tries=0, words=gbRecallWords(q);
+  var now=Date.now(), r, ev, words=gbRecallWords(q);
   if(!words) return;
   if(kind!=="event"){ logEv("recall_skip",{why:"kind"}); return; }
   if(extra&&extra.recallFollow){ logEv("recall_skip",{why:"follow"}); return; }
@@ -8947,18 +8947,44 @@ function gbRecallAsk(q,kind,extra){
   var found="you looked back through your memory for \""+words+"\" and "+(r.n?"found:"+r.text:"found nothing about it.");
   _gbRecallLast={t:now,found:found};
   ev="you looked back through your memory for \""+words+"\" (what you found is under WHAT YOU JUST LOOKED UP). now answer your person with it, in your own voice; if it does not answer what they asked, say plainly that you do not remember.";
-  function carry(why){ _gbRecallCarry=found; logEv("recall_carry",{why:why}); }
+  gbToolFollow("recall",found,ev);
+  return true;
+}
+/* What a tool found is answered by one follow-up thought. Two tools asked in one reply (a search
+   and the clock) share that thought rather than queue a second one behind it. */
+var _gbFollow=null;
+function gbToolFollow(tag,found,ev){
+  gbToolPill(tag);
+  if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); return; }
+  var f=_gbFollow={found:found,ev:ev,tags:[tag]}, tries=0;
+  function done(){ if(_gbFollow===f) _gbFollow=null; f.tags.forEach(gbToolPillEnd); }
+  function carry(why){ _gbRecallCarry=f.found; logEv(f.tags[0]+"_carry",{why:why}); done(); }
   function go(){
     if(pendingUser) return carry("person");
     var busy=inFlight||paused||document.hidden||Date.now()<coolUntil||(typeof vmBusy==="function"&&vmBusy())||energyState==="asleep";
     if(busy){ if(++tries<120) setTimeout(go,250); else carry("timeout"); return; }
-    _gbRecallCarry=found;
-    think(ev,"event",{recallFollow:true});
-    if(!inFlight) carry("refused");
+    _gbRecallCarry=f.found;
+    think(f.ev,"event",{recallFollow:true});
+    if(!inFlight) carry("refused"); else done();
   }
   setTimeout(go,0);
-  return true;
 }
+/* A tool's chip in the status strip (owner, 2026-11-13: "tool calls should also have a pill"),
+   from the moment the streamed reply shows the call until its find is handed to the follow-up
+   thought. A reply cut off mid-stream never reaches the handler, so a chip also ends on its own. */
+var _gbToolPills={}, GB_TOOL_PILL_MAX_MS=40000;
+function gbToolPill(kind){ try{
+  if(_gbToolPills[kind]||!window.gbStatus||!window.gbStatus.tool) return;
+  var e=window.gbStatus.tool(kind); if(!e) return;
+  _gbToolPills[kind]=e;
+  setTimeout(function(){ if(_gbToolPills[kind]===e) gbToolPillEnd(kind); },GB_TOOL_PILL_MAX_MS);
+}catch(err){} }
+function gbToolPillEnd(kind){ try{
+  var e=_gbToolPills[kind]; delete _gbToolPills[kind];
+  if(e&&window.gbStatus) window.gbStatus.end(e);
+}catch(err){} }
+/* After the reply handler: a chip whose call was skipped (a gap, a tick) has nothing to wait for. */
+function gbToolPillsSettle(){ for(var k in _gbToolPills) if(!_gbFollow||_gbFollow.tags.indexOf(k)<0) gbToolPillEnd(k); }
 /* The line said while it looks: the model's own only when every word of it is thinking back, else
    one of these. It has not looked yet, so an answer or "I don't know" there is a guess the find
    then contradicts (field, 2026-11-13: "I found <two names>" before the find named all four). */
@@ -8976,8 +9002,43 @@ function gbRecallWords(q){ var w=String(q||"").replace(/["\s]+/g," ").trim();
 /* A reply that opens with a search holds its say while it streams; the reply handler speaks the
    thinking-back line in its place. A search after say changes nothing that has been voiced. */
 function gbRecallStreaming(full){
-  var m=/^\s*\{\s*"recall"\s*:\s*"([^"]*)"/.exec(String(full||""));
-  return !!(m&&gbRecallWords(m[1]));
+  var s=String(full||""), m=/^\s*\{\s*"recall"\s*:\s*"([^"]*)"/.exec(s);
+  if(m&&gbRecallWords(m[1])){ gbToolPill("recall"); return true; }
+  if(/^\s*\{\s*"clock"\s*:\s*(true\b|"(true|yes|now)")/i.test(s)){ gbToolPill("clock"); return true; }
+  return false;
+}
+/* The clock (owner, 2026-11-13: "we also need a tool for time"). Its turn carries only the
+   weekday and the part of the day, so the hour is asked for (`clock`) and read off the phone,
+   in the phone's zone; a phone that reports none, or UTC, is taken to be at home. */
+var _gbClockT=0, GB_CLOCK_GAP_MS=15000, GB_CLOCK_HOME_TZ="America/New_York";
+function gbClockWanted(v){ return v===true||/^\s*(true|yes|now)\s*$/i.test(typeof v==="string"?v:""); }
+function gbClockZone(){ var z=""; try{ z=Intl.DateTimeFormat().resolvedOptions().timeZone||""; }catch(e){}
+  return !z||/^(UTC|Etc\/UTC|Etc\/GMT|GMT)$/i.test(z)?GB_CLOCK_HOME_TZ:z; }
+function gbClockNow(t){ var d=new Date(t), z=gbClockZone(), s;
+  try{ s=d.toLocaleString("en-US",{timeZone:z,weekday:"long",year:"numeric",month:"long",day:"numeric",hour:"numeric",minute:"2-digit"}); }
+  catch(e){ s=d.toString(); z=""; }
+  return "it is "+s+(z?" ("+z+")":"")+".";
+}
+function gbClockAsk(v,kind,extra){
+  var now=Date.now();
+  if(!gbClockWanted(v)) return;
+  if(kind!=="event"){ logEv("clock_skip",{why:"kind"}); return; }
+  if(extra&&extra.recallFollow){ logEv("clock_skip",{why:"follow"}); return; }
+  if(now-_gbClockT<GB_CLOCK_GAP_MS){ logEv("clock_skip",{why:"gap"}); return; }
+  _gbClockT=now;
+  logEv("clock",{});
+  gbToolFollow("clock","you looked at the clock: "+gbClockNow(now),
+    "you looked at the clock (the time is under WHAT YOU JUST LOOKED UP). now tell your person, in your own voice.");
+  return true;
+}
+/* Like the thinking-back line: the model's own only when it only says it is checking. */
+var GB_CLOCK_LINES=["Let me check the time.","One moment, let me look at the clock.","Let me see what time it is."],
+  GB_CLOCK_OK={let:1,me:1,check:1,checking:1,the:1,time:1,clock:1,one:1,moment:1,sec:1,second:1,hmm:1,hm:1,ok:1,okay:1,
+    look:1,looking:1,at:1,see:1,what:1,it:1,is:1,i:1,ill:1,quick:1,a:1,just:1,wait:1};
+function gbClockLine(say){
+  var s=String(say||"").replace(/\s+/g," ").trim(), w=s.toLowerCase().replace(/['’]/g,"").split(/[^a-z]+/).filter(Boolean);
+  if(s.length<=60&&w.length&&/\b(check|checking|clock|time)\b/.test(w.join(" "))&&w.every(function(x){ return GB_CLOCK_OK[x]===1; })) return s;
+  return GB_CLOCK_LINES[Math.floor(Math.random()*GB_CLOCK_LINES.length)];
 }
 function traceMoment(u){
   var s=String(u||"").replace(/\s+/g," ");

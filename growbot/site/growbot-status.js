@@ -35,7 +35,11 @@
     move: { icon: "🦿", label: "moving", colour: "#ffd84a" },
     listen: { icon: "🎧", label: "listening", colour: "#74ffb4" },
     idle: { icon: "💤", label: "idle", colour: "#7f8ba3" },
+    // Tool calls: the page names each one as the model asks for it (gbToolPill in apply.py).
+    recall: { icon: "🔎", label: "memory search", colour: "#9ad0ff" },
+    clock: { icon: "🕐", label: "time", colour: "#ffe08a" },
   };
+  var TOOL_MIN_MS = 1500;
 
   var off = false;
   try {
@@ -85,6 +89,13 @@
     e.shownUntil = now() + SNAP_SHOW_MS;
     end(e);
     flash();
+  }
+
+  // A tool runs on the page in a moment; its chip stays long enough to be read.
+  function tool(kind) {
+    var e = begin(kind);
+    if (e) e.shownUntil = Math.max(e.shownUntil, now() + TOOL_MIN_MS);
+    return e;
   }
 
   // -- the hooks -------------------------------------------------------------------------
@@ -428,5 +439,5 @@
     else mount();
   }
 
-  window.gbStatus = { begin: begin, end: end, snap: snap };
+  window.gbStatus = { begin: begin, end: end, snap: snap, tool: tool };
 })();
