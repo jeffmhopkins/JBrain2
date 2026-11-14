@@ -2558,6 +2558,52 @@ WAKE_GATE_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += WAKE_GATE_PATCHES
 
+# The camera walk (GrowBot_Training configs/camera_walk.toml) takes a third command beside
+# cmd_forward and cmd_yaw: cmd_pitch, the camera height (-1 low .. +1 tall). The runner feeds
+# it from cmd.pitch, and an app that sends none gets +1, the stance trained by default.
+RUNNER_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "growbot_runner.js",
+        "prev_action_N, cmd_forward, cmd_yaw,\n",
+        "prev_action_N, cmd_forward, cmd_yaw, cmd_pitch,\n",
+        1,
+    ),
+    (
+        "growbot_runner.js",
+        "this.usesCmd = all.some((c) => c === 'cmd_forward' || c === 'cmd_yaw');",
+        "this.usesCmd = all.some((c) => c === 'cmd_forward' || c === 'cmd_yaw' || c === 'cmd_pitch');",
+        1,
+    ),
+    (
+        "growbot_runner.js",
+        "'gyro_z', 'cmd_forward', 'cmd_yaw',\n",
+        "'gyro_z', 'cmd_forward', 'cmd_yaw', 'cmd_pitch',\n",
+        1,
+    ),
+    (
+        "growbot_runner.js",
+        "prev_action_N/cmd_forward/cmd_yaw/cmd_mode_*",
+        "prev_action_N/cmd_forward/cmd_yaw/cmd_pitch/cmd_mode_*",
+        1,
+    ),
+    (
+        "growbot_runner.js",
+        "(caller applies the z-up Rx). cmd:{fwd,yaw} optional.\n",
+        "(caller applies the z-up Rx). cmd:{fwd,yaw,pitch} optional.\n"
+        "  // pitch: the camera walk's camera-height command (-1 low .. +1 tall); absent reads +1,\n"
+        "  // standing tall, the stance it was trained to hold by default.\n",
+        1,
+    ),
+    (
+        "growbot_runner.js",
+        "      cmd_forward: cmd.fwd, cmd_yaw: cmd.yaw,\n",
+        "      cmd_forward: cmd.fwd, cmd_yaw: cmd.yaw, cmd_pitch: typeof cmd.pitch === 'number'"
+        " && isFinite(cmd.pitch) ? cmd.pitch : 1,\n",
+        1,
+    ),
+]
+PATCHES += RUNNER_PATCHES
+
 # A streamed utterance's last piece is often only the breath after the last word, and the speech
 # model hears nothing in it. That piece used to show "didn't catch that" while the words before
 # it reached the creature whole (owner, 2026-11-13: "showing an error message that it couldn't
