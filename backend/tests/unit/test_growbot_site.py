@@ -738,19 +738,24 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert '_gbLive=(buildSystem.live||"")+(moveGuideText.live||"")' in page
     # The movement guide's live lines (latest move, seek beat, stance) leave it in every mode.
-    guide = page[page.index("function moveGuideText(){") : page.index("/* ---- MIMIC")]
+    guide = page[page.index("function moveGuideText(){") : page.index("var lastMotionEvT=0;")]
     assert guide.count("moveGuideText.live=") == 3
     for moving in (
         "goalBlock()",
         "gaitList()",
         "_recStatus()",
         "_namedStatus()",
+        "_getupAutoRestGuide()",
         "_expressionGuide()",
     ):
         for line in guide.splitlines():
             if moving in line and "return " in line:
                 assert line.index("moveGuideText.live=") < line.index(moving), moving
-    assert "_gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text;" in page
+    # The diary ask (upstream's memlogAsk, wider after a quiet stretch) depends on the diary.
+    assert (
+        '_gbLive+=(typeof memlogAsk==="function"?memlogAsk(_live.log,Date.now()):MEMLOG_ASK);'
+        " if(_recall&&_recall.text) _gbLive+=_recall.text;" in page
+    )
     fixed = (
         'sys+=(typeof gaitList==="function"&&gaitList.fixed||"")'
         '+(typeof selfStats==="function"&&selfStats.fixed||"")'
@@ -775,7 +780,7 @@ def test_the_fixed_rules_ride_the_system_message_and_the_state_stays_live() -> N
     stats = page[page.index("function selfStats(){") : page.index("/* ===== BRAIN TAB")]
     fixed = page[page.index('var GB_SELF_FIXED="') : page.index("function selfStats(){")]
     live = stats[stats.index('return "== WHAT YOU ARE RIGHT NOW') :]
-    for moving in ("_bootT", "callsSinceBoot", "seekGoal", "camOn", "moving", "lastMimic"):
+    for moving in ("_bootT", "callsSinceBoot", "seekGoal", "camOn", "moving"):
         assert moving in live and moving not in fixed, moving
     for rule in ("You think whenever", "Quiet does not put you to sleep", "don't deflect"):
         assert rule in fixed and rule not in live, rule
@@ -788,7 +793,13 @@ def test_the_fixed_rules_ride_the_system_message_and_the_state_stays_live() -> N
     rules = gaits[gaits.index("gaitList.fixed=") : gaits.index("  return spinFeedback")]
     now = gaits[gaits.index("  return spinFeedback") :]
     assert "== TRAINED WALKS" in rules and "normalSpinTruth()" in rules
-    for moving in ("forwardWalkState", "lines.join", "normalSpinTruth.now", "spinMeasLine"):
+    for moving in (
+        "forwardWalkState",
+        "lines.join",
+        "normalSpinTruth.now",
+        "spinMeasLine",
+        "moveMeasLine",
+    ):
         assert moving in now and moving not in rules, moving
 
     vm = (_SITE / "v3" / "visual-memory.js").read_text(encoding="utf-8")
@@ -2542,22 +2553,25 @@ def test_leave_to_sleep_ends_what_it_was_doing() -> None:
 def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "due=callsSinceDream>=12" not in page
+    assert "function _dreamDue(now){ return gbSleepDue(); }" in page
     assert (
-        "due=gbSleepAllowed() || gbOpenDreamDue() || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);"
+        "return gbSleepAllowed() || gbOpenDreamDue() || (Date.now()-lastActT>GB_SLEEP_IDLE_MS"
+        " && callsSinceDream>=3);"
     ) in page
-    assert 'Date.now()-_humanT<30000&&!gbSleepAllowed()?"human":""' in page
-    assert "  if(due) dream(gbSleepAllowed()); }" in page
+    assert 'Date.now()-_humanT<DREAM_QUIET_MS&&!gbSleepAllowed()?"human":' in page
+    assert " dream(gbSleepAllowed()); } }" in page
     assert (
         "if((gbSleepAllowed()||gbOpenDreamDue())&&!_speechBusy()&&!pendingUser){ maybeDream();"
         in page
     )
-    assert "IDLE_DREAM_MS=300000" in page and "IDLE_DREAM_MS=120000" not in page
-    assert "function maybeDream(){ try{ gbSleepEnds(); }catch(e){} var _dw0=" in page
+    # Upstream's own idle dream clock is gone; the five idle minutes are the sleep rule's own.
+    assert "IDLE_DREAM_MS" not in page and "GB_SLEEP_IDLE_MS=300000" in page
+    assert "function maybeDream(){ try{ gbSleepEnds(); }catch(e){} var _od=false;" in page
     assert "_gbSleepOK=false; _gbDreamOnOpen=false;" in page
     assert '+(_gbSleepWhy||"a quiet stillness came over it")+gbDreamSession();' in page
     assert '_t.indexOf("🌙 dreamed")!==0 && _t.indexOf("📖")!==0;' in page
     assert "applyDream(o,lived); gbDreamKeep(o); }" in page
-    assert "brainOverride(orCfg.dream,true),1000,90000)" in page
+    assert "brainOverride(orCfg.dream,true),1000,90000" in page
     assert "_gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){" in page
     assert "_gbSess.push({t:Date.now(),txt:got}); gbVisitKeep(" in page
     assert "Date.now()-(+_gbLastV.t||0)>GB_OPEN_GAP_MS) _gbDreamOnOpen=true;" in page
@@ -2592,6 +2606,7 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     # The beat's own gates are the ones the 90 s test above pins; only its words are chosen.
     assert page.index(words) < page.index("if(idle>=GB_QUIET_AFTER_MS") < beat.start()
     assert "gb_quiet" not in page and 'get("quiet")' not in page
+
     setting = "" if explore is None else f"window.__gbBoxExplore={explore};"
     # Inside a function, so the page's globals never meet whatever this Node version ships.
     script = (
@@ -2600,6 +2615,17 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
     assert want in json.loads(out.stdout)
+
+
+def test_no_phone_switch_changes_what_the_page_asks_the_box_for() -> None:
+    """Upstream's Nov 12 per-phone switches (a URL parameter kept in phone storage) would
+    re-split the prompt, send speculative transcriptions, or send speech to an OpenRouter
+    audio lane the box answers with a 400. The box decides, so each is pinned off."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    for pinned in ("var CACHE_SPLIT=false;", "var FAST_EAR=false;", "var STTOR_ON=false;"):
+        assert page.count(pinned) == 1, pinned
+    for switch in ("cachesplit", "fastear", "sttor"):
+        assert f'get("{switch}")' not in page and f"localStorage.gb_{switch}=" not in page
 
 
 _WARM_HARNESS = r"""
@@ -3059,12 +3085,18 @@ def test_nothing_reaches_the_model_before_the_wake_tap() -> None:
     call (a thought, a dream, a warm-up) waits for the wake tap."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     for head in ("function think(event,kind,extra){\n", "function dream(force){\n"):
-        assert page[page.index(head) + len(head) :].startswith("  if(window._wakeGateUp) return;")
+        # Upstream's own bookkeeping and early returns may sit above the gate; nothing that
+        # reaches out does, and the gate still comes before every busy or ownership check.
+        body = page[page.index(head) + len(head) :].split("\n")
+        gate = body.index("  if(window._wakeGateUp) return;")
+        assert gate <= 5
+        assert body[gate + 1].startswith('  if(typeof vmBusy==="function"&&vmBusy()) return;')
+        assert not any("fetch(" in line or "send(" in line for line in body[:gate])
     warm = page[page.index("function gbWarmUp(){") : page.index("function gbWarmFresh(){")]
     assert "if(window._wakeGateUp||_gbWarmOff" in warm
     assert 'function _askWaitWhy(q){\n  if(window._wakeGateUp) return "gate";' in page
     assert "window._wakeGateUp=false; _gbWokeT=Date.now();" in page
-    assert "due=gbSleepAllowed() || gbOpenDreamDue()" in page
+    assert "return gbSleepAllowed() || gbOpenDreamDue() ||" in page
     assert "if((gbSleepAllowed()||gbOpenDreamDue())&&" in page
     gated = page[page.index("function dream(force){") :]
     gated = gated[: gated.index("_gbDreamOnOpen=false")]
@@ -3245,7 +3277,7 @@ def test_the_rail_carries_the_speaker_and_the_mic_mode() -> None:
     ptt = pet.index('if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false)')
     assert (
         pet.index("if(window.__wakeSenses")
-        < pet.index('#brainPanel,#sgNudge,#gbTrail,#gbLog")) return;')
+        < pet.index('#brainPanel,#sgNudge,#bkNudge,#expressionBench,#gbTrail,#gbLog")) return;')
         < ptt
     )
     assert ptt < pet.index("spawnSparks(") < pet.index('fireReflex("tap")')
@@ -3360,7 +3392,7 @@ def test_the_conversation_stays_on_screen_after_the_caption_moves_on() -> None:
         "_sayCap=Date.now(); if(window.gbTalk){ gbTalk.cut(_chainQ,_voiceActive);"
         " gbTalk.solo(text); }",
         "function _ctxHush(){ if(window.gbTalk) gbTalk.cut(_chainQ,_voiceActive); ",
-        '#modebar,#brainPanel,#sgNudge,#gbTrail,#gbLog")) return;',
+        '#brainPanel,#sgNudge,#bkNudge,#expressionBench,#gbTrail,#gbLog")) return;',
         '#gbk,#gbkBrainP,#gbkBack,#gbTrail,#gbLog";',
     ):
         assert creature.count(hook) == 1, hook

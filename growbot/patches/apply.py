@@ -35,6 +35,9 @@ EXCLUDED = {
     "feedback-widget.js",
     "tester/custom.html",
     "tester/face-original.html",
+    # A remote for a servo arm on a Pico running upstream's arm_body.py, which no robot here
+    # carries and this checkout's firmware does not ship.
+    "tester/arm.html",
 }
 
 # What PWA flashing writes to a robot (the api's growbot/provision.py FILE_MAP), hashed into
@@ -223,7 +226,7 @@ PATCHES: list[tuple[str, str, str, int]] = [
     ],
     (
         "v3/next.html",
-        '<script src="/v2/mespeak.js?v=0624c" onerror="window.__loadErr='
+        '<script src="/v3/mespeak.js?v=1016a" onerror="window.__loadErr='
         "(window.__loadErr||'')+'mespeak.js '\"></script>",
         "",
         1,
@@ -242,8 +245,8 @@ PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        'vtFish.key=String(_vt.fish.key||"");',
-        'vtFish.key=String(_vt.fish.key||"box");',
+        "vtFish.key=fishClean(_vt.fish.key);",
+        'vtFish.key=fishClean(_vt.fish.key)||"box";',
         1,
     ),
     (
@@ -267,18 +270,25 @@ PATCHES: list[tuple[str, str, str, int]] = [
         "body:JSON.stringify({text:t,voice:window.__gbBoxVoice||vtFish.voice||'',",
         1,
     ),
-    # No third-party origins: Google Fonts (the pixel face falls back to the system monospace)
-    # and the feedback widget.
+    # No third-party origins: Google Fonts (the pixel face falls back to the system monospace),
+    # upstream's funnel counter and the feedback widget.
     (
         "v3/next.html",
         '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>',
         "",
         1,
     ),
+    ("v3/next.html", '<link rel="preconnect" href="https://fonts.googleapis.com"/>', "", 1),
+    (
+        "v3/next.html",
+        '<script defer src="https://funnel-dash-henna.vercel.app/t.js" data-site="growbot"></script>',
+        "",
+        1,
+    ),
     (
         "v3/next.html",
         '<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"'
-        ' rel="stylesheet"/>',
+        ' rel="stylesheet" media="print" onload="this.media=\'all\'"/>',
         "",
         1,
     ),
@@ -286,6 +296,12 @@ PATCHES: list[tuple[str, str, str, int]] = [
     (
         "tester/index.html",
         '<script src="/feedback-widget.js" data-surface="controller"></script>',
+        "",
+        1,
+    ),
+    (
+        "tester/index.html",
+        '<a class=link href="/tester/arm.html">Added a servo arm? Open the arm controls</a>',
         "",
         1,
     ),
@@ -367,14 +383,14 @@ PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        "  cx.clearRect(0,0,W,H); cx.imageSmoothingEnabled=false;"
-        " cx.drawImage(px,0,0,PW,PH,0,0,W,H); }",
-        "  cx.clearRect(0,0,W,H); cx.imageSmoothingEnabled=false;"
+        "  if(!window._wakeGateUp){ cx.clearRect(0,0,W,H); cx.imageSmoothingEnabled=false;"
+        " cx.drawImage(px,0,0,PW,PH,0,0,W,H); } }   /* 1109 (review D-02): the full-screen",
+        "  if(!window._wakeGateUp){ cx.clearRect(0,0,W,H); cx.imageSmoothingEnabled=false;"
         " cx.drawImage(px,0,0,PW,PH,0,0,W,H);"
         " if(_gbF) _gbF.draw(cx,W,H,{t:t,emotion:emotion,eye:P.eye,smile:_smileR,"
         "energy:moodCur.e,blink:t<blinkUntil,paused:paused,dreaming:dreaming,think:_think,"
         "orbit:_oa,looking:_looking,gx:gx2/3,gy:gy2/2,touchT:_lt?_lt.t:0,shake:shakeCur,"
-        "talking:Date.now()<speakingUntil,glow:col}); }",
+        "talking:Date.now()<speakingUntil,glow:col}); } }   /* 1109 (review D-02): the full-screen",
         1,
     ),
     # The eyes follow a face (growbot-eyes.js): the leg tracker hands over every box it keeps,
@@ -395,8 +411,8 @@ PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        "            if(boxes.length)lastFaceAt=now;",
-        "            if(window.gbEyes)window.gbEyes.boxes(boxes); if(boxes.length)lastFaceAt=now;",
+        "/*}WORLD-EYE*/if(boxes.length)lastFaceAt=now;",
+        "/*}WORLD-EYE*/if(window.gbEyes)window.gbEyes.boxes(boxes); if(boxes.length)lastFaceAt=now;",
         1,
     ),
     # Not following, the tracker only glanced once a second, and that is the eyes' only feed on
@@ -514,9 +530,23 @@ ERROR_PATCHES: list[tuple[str, str, str, int]] = [
     ],
     (
         "v3/next.html",
-        f'if(hotSamp<Math.round(0.120*_pcmRate)){{ toast("{_DC}");',
-        f'if(hotSamp<Math.round(0.120*_pcmRate)){{ toast("{_DC}: no voice in the clip, too quiet'
-        ' or too far away");',
+        f'toast("{_DC}"); try{{ logEv("drop",{{w:"unvoiced"',
+        f'toast("{_DC}: no voice in the clip, too quiet or too far away");'
+        ' try{ logEv("drop",{w:"unvoiced"',
+        1,
+    ),
+    # The ear's rescue listens again to a clip it thought unvoiced, and says the same if that
+    # finds nothing either.
+    (
+        "v3/next.html",
+        f'_rq?function(){{ toast("{_DC}"); }}:null',
+        f'_rq?function(){{ toast("{_DC}: no voice in the clip, too quiet or too far away"); }}:null',
+        1,
+    ),
+    (
+        "v3/next.html",
+        f'if(_rq) toast("{_DC}");',
+        f'if(_rq) toast("{_DC}: no voice in the clip, too quiet or too far away");',
         1,
     ),
     (
@@ -533,6 +563,13 @@ ERROR_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
+        "logEv('drop',{w:'prep_error'});}catch(e){}toast(\"didn't catch that, say it once more\")",
+        "logEv('drop',{w:'prep_error'});}catch(e){}"
+        "toast(\"didn't catch that: the clip couldn't be read. say it once more\")",
+        1,
+    ),
+    (
+        "v3/next.html",
         "toast(\"didn't catch that, say it once more\")",
         "toast(\"didn't catch that: the clip was too short. say it once more\")",
         2,
@@ -545,7 +582,7 @@ ERROR_PATCHES: list[tuple[str, str, str, int]] = [
         2,
     ),
     # The box's model said why in the stream (an OpenAI error frame); keep its words.
-    ("v3/next.html", "streamFailed=false;", 'streamFailed=false,streamErr="";', 1),
+    ("v3/next.html", "streamFailed=false, rsn=0;", 'streamFailed=false,streamErr="", rsn=0;', 1),
     (
         "v3/next.html",
         "if(j&&j.error){streamFailed=true;",
@@ -633,21 +670,24 @@ SPEED_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        "+activityContract()+goalBlock();   /* 0929 P1 (X8)",
-        '+activityContract()+((moveGuideText.live=goalBlock()),"");   /* 0929 P1 (X8)',
+        "+activityContract()+goalBlock();   /* 1015: the 0929 P1 (X8)",
+        '+activityContract()+((moveGuideText.live=goalBlock()),"");   /* 1015: the 0929 P1 (X8)',
         1,
     ),
     (
         "v3/next.html",
         '+(typeof bodyWalkTruth==="function"?bodyWalkTruth(body):"")+/*LAB-GETUP{*/'
         '(typeof getupOn==="function"&&getupOn()?_recStatus():"")+/*}LAB-GETUP*/'
-        '(typeof _namedStatus==="function"?_namedStatus():"")+gaitList()+activityContract()'
-        '+goalBlock()+(typeof _expressionGuide==="function"?_expressionGuide():"");',
+        '(typeof _namedStatus==="function"?_namedStatus():"")'
+        '+(typeof _getupAutoRestGuide==="function"?_getupAutoRestGuide():"")+gaitList()'
+        '+activityContract()+goalBlock()'
+        '+(typeof _expressionGuide==="function"?_expressionGuide():"");',
         '+(typeof bodyWalkTruth==="function"?bodyWalkTruth(body):"")+activityContract()'
         "+((moveGuideText.live=/*LAB-GETUP{*/"
         '(typeof getupOn==="function"&&getupOn()?_recStatus():"")+/*}LAB-GETUP*/'
-        '(typeof _namedStatus==="function"?_namedStatus():"")+gaitList()+goalBlock()'
-        '+(typeof _expressionGuide==="function"?_expressionGuide():"")),"");',
+        '(typeof _namedStatus==="function"?_namedStatus():"")'
+        '+(typeof _getupAutoRestGuide==="function"?_getupAutoRestGuide():"")+gaitList()'
+        '+goalBlock()+(typeof _expressionGuide==="function"?_expressionGuide():"")),"");',
         1,
     ),
     (
@@ -671,8 +711,10 @@ SPEED_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        'sys+=MEMLOG_ASK; if(_recall&&_recall.text) sys+=_recall.text;',
-        '_gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text;'
+        'sys+=(typeof memlogAsk==="function"?memlogAsk(_live.log,Date.now()):MEMLOG_ASK);'
+        " if(_recall&&_recall.text) sys+=_recall.text;",
+        '_gbLive+=(typeof memlogAsk==="function"?memlogAsk(_live.log,Date.now()):MEMLOG_ASK);'
+        " if(_recall&&_recall.text) _gbLive+=_recall.text;"
         ' if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;',
         1,
     ),
@@ -765,7 +807,8 @@ FIXED_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        '  return spinFeedback+(typeof spinMeasLine==="function"?spinMeasLine():"")+"\\n\\n=='
+        '  return spinFeedback+(typeof spinMeasLine==="function"?spinMeasLine():"")'
+        '+(typeof moveMeasLine==="function"?moveMeasLine():"")+"\\n\\n=='
         " TRAINED WALKS (your gait library",
         '  gaitList.fixed="\\n\\n== TRAINED WALKS (your gait library',
         1,
@@ -777,7 +820,8 @@ FIXED_PATCHES: list[tuple[str, str, str, int]] = [
         '    "To walk with one, use walk:{gait,dir,secs}; dir:\\"stop\\" halts. Which gaits you'
         " have and how your spins run right now are under YOUR GAITS RIGHT NOW in this turn's"
         ' message.";\n'
-        '  return spinFeedback+(typeof spinMeasLine==="function"?spinMeasLine():"")+"\\n\\n=='
+        '  return spinFeedback+(typeof spinMeasLine==="function"?spinMeasLine():"")'
+        '+(typeof moveMeasLine==="function"?moveMeasLine():"")+"\\n\\n=='
         ' YOUR GAITS RIGHT NOW ==\\n"+(typeof normalSpinTruth==="function"&&normalSpinTruth.now?'
         'normalSpinTruth.now+" ":"")+(typeof forwardWalkState',
         1,
@@ -1103,9 +1147,10 @@ STREAM_PATCHES: list[tuple[str, str, str, int]] = [
     # The mic going away mid-message still delivers what was heard, the held audio included.
     (
         "v3/next.html",
-        "function pcmTapDown(){ try{if(",
+        "function pcmTapDown(){ if(typeof _earPrepCancel==='function')_earPrepCancel(); try{if(",
         "function pcmTapDown(){ try{ var _gbU=_pcmUtt; if(_gbU&&_gbU.gbId&&_gbUtts[_gbU.gbId])"
-        " _gbFinal(_gbU,true,0); }catch(e){} try{if(",
+        " _gbFinal(_gbU,true,0); }catch(e){}"
+        " if(typeof _earPrepCancel==='function')_earPrepCancel(); try{if(",
         1,
     ),
     (
@@ -1126,8 +1171,8 @@ PATCHES += STREAM_PATCHES
 QUIET_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
-        "if(idle>=8000 && now-lastBeatT>240000){",
-        "if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){",
+        "if(idle>=8000 && now-lastBeatT>240000/*QUIET-SETTLE{*/",
+        "if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000/*QUIET-SETTLE{*/",
         1,
     ),
     (
@@ -1677,11 +1722,11 @@ RECALL_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        'if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK;',
+        'if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=(typeof memlogAsk==="function"',
         'if(_gbRecallCarry){ _gbLive+="\\n\\n== WHAT YOU JUST LOOKED UP ==\\n"+_gbRecallCarry;'
         ' _gbRecallCarry=""; } else if(_hreqAtIssue) _gbLive+=gbRecallKept();'
         ' if(_hreqAtIssue&&typeof MEMLOG_ASK==="string")'
-        " _gbLive+=MEMLOG_ASK;",
+        ' _gbLive+=(typeof memlogAsk==="function"',
         1,
     ),
     (
@@ -1739,7 +1784,8 @@ PATCHES += NAME_PATCHES
 
 # Sleep (owner, 2026-11-12: "dream in between sessions or if a session goes long ... the
 # creature can say it's tired and wants to sleep. And then if I give it permission to sleep or I
-# exit the session it'll have the dream"). Upstream dreamed every 12 replies, mid-conversation.
+# exit the session it'll have the dream"). Upstream dreams when enough has happened (_dreamDue:
+# every 10 to 30 minutes of an active visit), mid-conversation; that test is ours instead.
 # Now a dream comes when the person lets it sleep (a `sleep` reply field), after 5 quiet minutes
 # (the visit has ended with the page open), or at the first lull of a new visit when the last one
 # was never dreamed (a closed page cannot dream). A long visit makes it sleepy: after 60 replies,
@@ -1750,7 +1796,10 @@ _GB_SLEEP_PAGE_JS = r"""var _gbSleepOK=false, _gbSleepAt=0, _gbDreamOnOpen=false
   GB_SLEEP_IDLE_MS=300000, GB_OPEN_GAP_MS=600000, GB_TIRED_REPLIES=60, GB_TIRED_MIN=20,
   GB_TIRED_MS=1800000, GB_DREAM_SESS=80, GB_SLEEP_HOLD_MS=180000;
 /* Permission to sleep lasts a few minutes: a dream that cannot start by then (energy, a busy
-   body) must not leave the person's 30 s guard off and a goodnight hanging over a live chat. */
+   body) must not leave the person's quiet guard off and a goodnight hanging over a live chat. */
+function gbSleepDue(){
+  return gbSleepAllowed() || _gbDreamOnOpen || (Date.now()-lastActT>GB_SLEEP_IDLE_MS && callsSinceDream>=3);
+}
 function gbSleepAllowed(){
   if(_gbSleepOK&&Date.now()-_gbSleepAt>GB_SLEEP_HOLD_MS){ _gbSleepOK=false; try{ logEv("sleep_expired",{}); }catch(e){} }
   return _gbSleepOK;
@@ -1764,7 +1813,7 @@ var _gbSleepReq=0;
 function gbSleepGrant(){ _gbSleepOK=true; _gbSleepAt=Date.now(); logEv("sleep_ok",{csd:callsSinceDream});
   try{ _gbSleepReq=typeof _humanReqN==="number"?_humanReqN:0; }catch(e){} }
 function gbSleepEnds(){ try{
-  if(gbSleepAllowed()&&!pendingUser&&!(_humanT>_gbSleepAt)&&(typeof _humanReqN!=="number"||_humanReqN===_gbSleepReq)&&(seekGoal||actOn||mimicOn)) endActivity("sleep");
+  if(gbSleepAllowed()&&!pendingUser&&!(_humanT>_gbSleepAt)&&(typeof _humanReqN!=="number"||_humanReqN===_gbSleepReq)&&(seekGoal||actOn)) endActivity("sleep");
 }catch(e){} }
 /* The visit's lines not yet dreamed ride the soul (scratch.visit), so a dream after a reload or
    on the next day's open still sees the conversation it should keep; a landed dream clears them,
@@ -1807,24 +1856,34 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
         "  _gbSess.push({t:Date.now(),txt:got}); gbVisitKeep(_gbSess[_gbSess.length-1]);",
         1,
     ),
+    # Every door upstream dreams through (the reply handler, the cadence, behind the wake
+    # screen, an overdue dream in an activity) asks _dreamDue; ours answers.
     (
         "v3/next.html",
-        "var idle=Date.now()-lastActT, due=callsSinceDream>=12 || (idle>120000 &&"
-        " callsSinceDream>=3);",
-        "var idle=Date.now()-lastActT, due=gbSleepAllowed() || _gbDreamOnOpen"
-        " || (idle>GB_SLEEP_IDLE_MS && callsSinceDream>=3);",
+        "function _dreamDue(now){ try{",
+        "function _dreamDue(now){ return gbSleepDue(); }\n"
+        "/* upstream's own clock, kept unpatched beside ours and never called */\n"
+        "function _gbUpstreamDreamDue(now){ try{",
         1,
     ),
-    # Its person just let it sleep: their last words are the permission, not a turn to wait out.
+    # Its person just let it sleep: their last words are the permission, and the goodnight its
+    # own, not a turn to wait out.
     (
         "v3/next.html",
-        'Date.now()-_humanT<30000?"human":""',
-        'Date.now()-_humanT<30000&&!gbSleepAllowed()?"human":""',
+        'Date.now()-_humanT<DREAM_QUIET_MS?"human":Date.now()-Math.max(lastSpokeT,speakingUntil)'
+        '<DREAM_QUIET_MS?"self":',
+        'Date.now()-_humanT<DREAM_QUIET_MS&&!gbSleepAllowed()?"human":Date.now()-Math.max('
+        'lastSpokeT,speakingUntil)<DREAM_QUIET_MS&&!gbSleepAllowed()?"self":',
         1,
     ),
     # Permission outranks the cooldown and a failed dream's backoff; dream() keeps every other
     # gate (energy, ownership, pause), and maybeDream has already waited out speech and motion.
-    ("v3/next.html", "  if(due) dream(); }", "  if(due) dream(gbSleepAllowed()); }", 1),
+    (
+        "v3/next.html",
+        " dream(); } }   // 1026: _dreamOd",
+        " dream(gbSleepAllowed()); } }   // 1026: _dreamOd",
+        1,
+    ),
     # The goodnight is still being spoken when the reply handler asks, and a new visit's first
     # replies are mostly spoken too; the cadence asks again once the mouth is quiet.
     (
@@ -1834,8 +1893,12 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
         " if(inFlight||dreaming) return; }\n    if(actQuiet) return;",
         1,
     ),
-    ("v3/next.html", "IDLE_DREAM_MS=120000", "IDLE_DREAM_MS=300000", 1),
-    ("v3/next.html", "function maybeDream(){ var _dw0=", "function maybeDream(){ try{ gbSleepEnds(); }catch(e){} var _dw0=", 1),
+    (
+        "v3/next.html",
+        "function maybeDream(){ var _od=false;",
+        "function maybeDream(){ try{ gbSleepEnds(); }catch(e){} var _od=false;",
+        1,
+    ),
     # "Go to sleep" and "go to bed" are the plainest ways to let it sleep, and upstream's seek
     # words read them as a place to find, so the sleep it was given became a hunt for "sleep".
     (
@@ -1869,15 +1932,15 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        "var o=jparse(raw); if(o){ applyDream(o,lived); }",
-        "var o=jparse(raw); if(o){ applyDream(o,lived); gbDreamKeep(o); }",
+        " applyDream(o,lived); }        // <-- sealed write path.",
+        " applyDream(o,lived); gbDreamKeep(o); }        // <-- sealed write path.",
         1,
     ),
     # The summary and facts need room beside the identity work.
     (
         "v3/next.html",
-        "brainOverride(orCfg.dream,true),700,90000)",
-        "brainOverride(orCfg.dream,true),1000,90000)",
+        "brainOverride(orCfg.dream,true),700,90000",
+        "brainOverride(orCfg.dream,true),1000,90000",
         1,
     ),
     ("v3/next.html", "if(_gbRecallCarry){", "_gbLive+=gbTiredLine(); if(_gbRecallCarry){", 1),
@@ -2038,9 +2101,44 @@ QUIET_TEXT_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        'think("QUIET COMPANY — you are awake together.',
-        'think(window.__gbBoxExplore!==false?GB_EXPLORE_TXT:"QUIET COMPANY — you are awake'
-        ' together.',
+        'think(/*QUIET-ARM{*/QUIET_ARM_TXT||/*}QUIET-ARM*/"QUIET COMPANY — you are awake together.',
+        'think(window.__gbBoxExplore!==false?GB_EXPLORE_TXT:"QUIET COMPANY — you are awake together.',
+        1,
+    ),
+    # Upstream's own per-phone text switch (?quiet=, gb_quiet) would let a URL or phone storage
+    # override the persona's choice; the box decides, so the page keeps upstream's default text.
+    (
+        "v3/next.html",
+        '/*QUIET-ARM{*/var QUIET_ARM=(function(){ var _qp=null; try{ _qp=new URLSearchPar'
+        'ams(location.search).get("quiet"); }catch(e){}   /* 1111 QUIET MOMENT TEXT (Brit'
+        ' 11-11: after the quiet drill, the new text for everyone, no desk warning). It c'
+        'hanges ONLY the text the quiet beat in the cadence tick hands to think(): same k'
+        'ind, gates and spacing. 1 = the default (wants text), 2 = explore text, 0 = the '
+        'old QUIET COMPANY text. Same shape as ?judge: the URL value is read OUTSIDE the '
+        'storage try and answers for this visit even when storage throws. ?quiet=0 or ?qu'
+        'iet=2 is kept per device (key gb_quiet); ?quiet=1 removes it; any other value is'
+        ' ignored (quietarmtest) */ if(_qp==="0"){ try{ localStorage.gb_quiet="0"; }catch'
+        '(e){} return 0; } if(_qp==="2"){ try{ localStorage.gb_quiet="2"; }catch(e){} ret'
+        'urn 2; } if(_qp==="1"){ try{ localStorage.removeItem("gb_quiet"); }catch(e){} re'
+        'turn 1; } try{ var _qv=localStorage.gb_quiet; return _qv==="0"?0:_qv==="2"?2:1; '
+        '}catch(e){ return 1; } })(), QUIET_ARM_TXT=QUIET_ARM===1?"QUIET — nothing has ha'
+        'ppened for a while. This time is yours: you may reach for one of your wants with'
+        ' your own body.":QUIET_ARM===2?"QUIET — nothing has happened for a while. When i'
+        'n doubt, go explore new spaces in the world.":"";/*}QUIET-ARM*/',
+        'var QUIET_ARM=1, QUIET_ARM_TXT="";',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'try{ if(QUIET_ARM!==1) logEv("quiet_arm",{v:QUIET_ARM}); }catch(e){}',
+        "",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "/*QUIET-SETTLE{*/&&now-lastBeatT>(now-Math.max(_quietWakeT,_quietWordT,tapReflexT))/2"
+        "/*}QUIET-SETTLE*/",
+        "",
         1,
     ),
 ]
@@ -2356,7 +2454,7 @@ function gbWarmUp(){ var now=Date.now();
       parts.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+f.j}}); });
     var vmc=(typeof vmTurnContext==="function"&&typeof vmStreamSpeech==="function"&&typeof vmReplyGuard==="function")?{user:"·",asked:false}:null;
     var sys=buildSystem(gbSoulView(),{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText();
-    var vm=(typeof vmPrompt==="function"?vmPrompt(vmc):""), ss=selfStats(), bl=buildSystem.live||"", mg=moveGuideText.live||"", live=bl+mg+"\n\n"+ss+vm, tired=gbTiredLine(), memlog=(typeof MEMLOG_ASK==="string")?MEMLOG_ASK:"";
+    var vm=(typeof vmPrompt==="function"?vmPrompt(vmc):""), ss=selfStats(), bl=buildSystem.live||"", mg=moveGuideText.live||"", live=bl+mg+"\n\n"+ss+vm, tired=gbTiredLine(), memlog=(typeof MEMLOG_ASK==="string")?(typeof memlogAsk==="function"?memlogAsk(_live.log,now):MEMLOG_ASK):"";
     live+=tired+memlog;
     sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||"");
     var pre={role:"user",content:parts.length?parts:""};
@@ -2525,8 +2623,8 @@ WAKE_GATE_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        "due=gbSleepAllowed() || _gbDreamOnOpen",
-        "due=gbSleepAllowed() || gbOpenDreamDue()",
+        "return gbSleepAllowed() || _gbDreamOnOpen ||",
+        "return gbSleepAllowed() || gbOpenDreamDue() ||",
         1,
     ),
     (
@@ -2541,19 +2639,15 @@ WAKE_GATE_PATCHES: list[tuple[str, str, str, int]] = [
         'function _askWaitWhy(q){\n  if(window._wakeGateUp) return "gate";\n  if(paused) return "paused";',
         1,
     ),
+    # think() and dream() both open their gates with these two lines (after dream() has read
+    # and cleared its one-call flags), so the screen's gate leads them in both.
     (
         "v3/next.html",
-        'function think(event,kind,extra){\n  if(typeof vmBusy==="function"&&vmBusy()) return;',
-        'function think(event,kind,extra){\n  if(window._wakeGateUp) return;\n'
-        '  if(typeof vmBusy==="function"&&vmBusy()) return;',
-        1,
-    ),
-    (
-        "v3/next.html",
-        'function dream(force){\n  if(typeof vmBusy==="function"&&vmBusy()) return;',
-        'function dream(force){\n  if(window._wakeGateUp) return;\n'
-        '  if(typeof vmBusy==="function"&&vmBusy()) return;',
-        1,
+        '  if(typeof vmBusy==="function"&&vmBusy()) return;\n  if(!soulOwned()) return;'
+        "   // MEMORY OWNERSHIP",
+        '  if(window._wakeGateUp) return;\n  if(typeof vmBusy==="function"&&vmBusy()) return;\n'
+        "  if(!soulOwned()) return;   // MEMORY OWNERSHIP",
+        2,
     ),
 ]
 PATCHES += WAKE_GATE_PATCHES
@@ -2670,7 +2764,7 @@ document.addEventListener("pointercancel",gbPttUp);
 document.addEventListener("visibilitychange",function(){ if(document.hidden) gbPttHide(); });
 window.addEventListener("pagehide",gbPttHide);
 document.addEventListener("contextmenu",function(e){ if(GB_MIC==="push"&&e.target&&e.target.closest&&(e.target.closest("#gbkMic")||!e.target.closest(GB_PTT_NOT))) e.preventDefault(); });
-var GB_PTT_NOT="input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge,#gbk,#gbkBrainP,#gbkBack";
+var GB_PTT_NOT="input,textarea,select,button,#fmStep,#editPanels,#feed,#modebar,#motionSilent,#gbNewHere,#brainPanel,#sgNudge,#bkNudge,#expressionBench,#gbk,#gbkBrainP,#gbkBack";
 """
 _GB_MIC_ICONS = r"""function gbSpk(on){ return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"></path>'+(on?'<path d="M16.5 8.5a5 5 0 0 1 0 7"></path><path d="M19 6a8.5 8.5 0 0 1 0 12"></path>':'<path d="M17 9l5 6"></path><path d="M22 9l-5 6"></path>')+'</svg>'; }
 function gbMicIcon(m){ var mic='<rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"></path><path d="M12 18v3"></path>';
@@ -2702,8 +2796,8 @@ MIC_PATCHES: list[tuple[str, str, str, int]] = [
     # In push mode a press anywhere on the creature is a press of the talk button, not a pet.
     (
         "v3/next.html",
-        "tapping the CREATURE is (audit: brain-panel touches were petting)\n",
-        "tapping the CREATURE is (audit: brain-panel touches were petting)\n"
+        "like #sgNudge, so that tap is not a pet either\n",
+        "like #sgNudge, so that tap is not a pet either\n"
         '    if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false){ gbPttDown(e); return; }\n',
         1,
     ),
@@ -2921,10 +3015,8 @@ TALKLOG_PATCHES: list[tuple[str, str, str, int]] = [
     # touch on the creature: the trail's lines and the drawer's text are not.
     (
         "v3/next.html",
-        'x.closest("input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge"))'
-        " return;",
-        'x.closest("input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge,'
-        '#gbTrail,#gbLog")) return;',
+        '#brainPanel,#sgNudge,#bkNudge,#expressionBench")) return;',
+        '#brainPanel,#sgNudge,#bkNudge,#expressionBench,#gbTrail,#gbLog")) return;',
         1,
     ),
     # The person's words linger whole under the trail (owner, 2026-11-14: "cut off"), not the
@@ -3019,8 +3111,8 @@ QUIET_RIDE_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        "var _g=_sttGate(d);",
-        'var _g=_sttGate(d); var _gbNz=_g.drop?"":gbNoiseClip((meta&&meta.gbSnap)||_sp,_sr);'
+        'logEv("stt",_sr); }catch(e){} var _g=_sttGate(d);',
+        'logEv("stt",_sr); }catch(e){} var _g=_sttGate(d); var _gbNz=_g.drop?"":gbNoiseClip((meta&&meta.gbSnap)||_sp,_sr);'
         ' if(_gbNz){ try{ _listenStash=null; logEv("stt_noise",{w:_gbNz});'
         ' if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); }catch(_nz){}'
         ' _sttPhase("done"); return; }',
@@ -3115,6 +3207,75 @@ EAR_TAG_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += EAR_TAG_PATCHES
+
+# Upstream's Nov 12 page added a line about a robot's armed parts (an arm) after the prompt
+# was assembled: whether they are online changes turn to turn, so it rides the turn's own
+# message with the rest of the state, not the cached system message (SPEED_PATCHES).
+UPSTREAM_1112_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        '  if(typeof _partsLine==="function") sys+=_partsLine();   // 1104 parts',
+        "  // 1104 parts",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "_gbLive+=gbTiredLine()+gbTimersLine();",
+        'if(typeof _partsLine==="function") _gbLive+=_partsLine();'
+        " _gbLive+=gbTiredLine()+gbTimersLine();",
+        1,
+    ),
+]
+PATCHES += UPSTREAM_1112_PATCHES
+
+# Upstream's Nov 12 page added per-phone switches (a URL parameter kept in phone storage) that
+# change what the page asks the box for. The box decides how the creature talks to its models,
+# so each is pinned to the behaviour the box serves: the prompt split stays ours (SPEED_PATCHES),
+# speculative transcription stays off, and speech goes to the transcription lanes the box
+# answers (Groq, then DeepInfra) rather than an OpenRouter audio lane it does not serve, which
+# upstream turned on by default.
+PHONE_SWITCH_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'var CACHE_SPLIT=(function(){ try{ var q=new URLSearchParams(location.search).get'
+        '("cachesplit"); if(q==="1") localStorage.gb_cachesplit="1"; else if(q==="0") loc'
+        'alStorage.removeItem("gb_cachesplit"); if(q!==null){ try{ var u=new URL(location'
+        '.href); u.searchParams.delete("cachesplit"); history.replaceState(null,"",u.path'
+        'name+u.search+u.hash); }catch(_re){} } return localStorage.gb_cachesplit==="1"; '
+        '}catch(e){ return false; } })();',
+        'var CACHE_SPLIT=false;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'var FAST_EAR=(function(){ var KILL=0; try{ var q=new URLSearchParams(location.se'
+        'arch).get("fastear"); if(q==="1") localStorage.gb_fastear="1"; else if(q==="0") '
+        'localStorage.removeItem("gb_fastear"); if(q!==null){ try{ var u=new URL(location'
+        '.href); u.searchParams.delete("fastear"); history.replaceState(null,"",u.pathnam'
+        'e+u.search+u.hash); }catch(_re){} } return !KILL&&localStorage.gb_fastear==="1";'
+        ' }catch(e){ return false; } })();',
+        'var FAST_EAR=false;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'var STTOR_ON=(function(){ var _op=null; try{ _op=new URLSearchParams(location.se'
+        'arch).get("sttor"); }catch(e){}\n  if(_op==="0"){ try{ localStorage.gb_sttor="0";'
+        ' }catch(e){} return false; }\n  if(_op==="1"){ try{ localStorage.removeItem("gb_s'
+        'ttor"); }catch(e){} return true; }\n  try{ return localStorage.gb_sttor!=="0"; }c'
+        'atch(e){ return true; } })();\n',
+        'var STTOR_ON=false;\n',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '/*STT-OR{*/ try{ if(typeof STTOR_ON!=="undefined"&&!STTOR_ON) logEv("stt_or",{of'
+        'f:1}); }catch(e){}',
+        '/*STT-OR{*/',
+        1,
+    ),
+]
+PATCHES += PHONE_SWITCH_PATCHES
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
