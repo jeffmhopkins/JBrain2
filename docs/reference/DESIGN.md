@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-11-14 — the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
+> **Status:** Living · **Last verified:** 2026-11-14 — leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1663,7 +1663,11 @@ arrange the grid themselves):
 - Every overlay surface must have a visible, tappable exit; a gesture is
   never the only way out (settled in Phase 1 polish).
 - **Picking a tile closes the launcher** (owner, 2026-11-14): the card opens and the grid
-  goes away beneath it, so leaving the card lands on home, not back on the grid.
+  goes away beneath it, so leaving the card lands on home, not back on the grid. **Jobs is
+  the exception** (owner, 2026-11-14): leaving it (arrow or back gesture) reopens the
+  launcher, since a run is watched, left and checked again from the grid; its tile carries
+  an amber dot and "running" while a launcher run is live, and the screen opens on Runs
+  then, the running run first.
 - **The owner arranges it like a phone home screen.** A long-press enters edit
   mode (tiles wiggle; a **Done** button joins the head). Edit mode is its own
   back layer, as on an Android home screen: back (and Escape) leaves edit mode
