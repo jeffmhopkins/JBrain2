@@ -64,11 +64,15 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   // One swipe menu open at a time, as on the Chats list ("s:<spec>" or "r:<run id>").
   const [railId, setRailId] = useState<string | null>(null);
   const { isArmed, arm } = useArm();
+  // Bumped each time a run's menu opens, so a delete armed before the menu closed is not
+  // still armed when it opens again (the Chats list disarms on close too).
+  const [railSeq, setRailSeq] = useState(0);
   // Re-reading the training repo's jobs.toml, and what the last read found.
   const [pulling, setPulling] = useState(false);
   const [pulled, setPulled] = useState<{ ok: boolean; text: string } | null>(null);
   // The one job the Runs tab is narrowed to (from a job's View runs), and the groups the
-  // owner has folded shut ("jobs:<category>", "archived:<category>", "r:<spec>").
+  // owner has folded shut ("jobs:<category>", "archived:<category>", "r:<spec>", and
+  // "a:<spec>" for the Archived tab's runs).
   const [focus, setFocus] = useState<string | null>(null);
   const [shut, setShut] = useState<Set<string>>(() => new Set());
   const foreground = useForeground();
@@ -113,7 +117,14 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   const shelved = new Set(archived.map((s) => s.name));
   // A run archived on its own leaves the Runs list for the Archived tab, as a chat does.
   const current = jobs.filter((j) => isLive(j) || (!j.archived && !shelved.has(j.spec_name)));
-  const archivedRuns = jobs.filter((j) => j.archived && !isLive(j));
+  // A run archived under an archived job type stays with that type (its View runs), so
+  // unarchiving the run can't send it nowhere: the Runs list still hides the type's runs.
+  const archivedRuns = jobs.filter((j) => j.archived && !isLive(j) && !shelved.has(j.spec_name));
+  // A focused job (its View runs) shows all its runs, even an archived type's, but never
+  // one archived on its own: that one lives on the Archived tab.
+  const runsOf = (spec: string) =>
+    jobs.filter((j) => j.spec_name === spec && (isLive(j) || !j.archived));
+  const runRows = focus ? runsOf(focus) : current;
   const liveSpecs = new Set(jobs.filter(isLive).map((j) => j.spec_name));
   const shelf = tab === "archived" ? archived : active;
 
@@ -210,7 +221,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   // Delete arms on the first tap and goes on the second, as the Chats list's does: a run's
   // files and any sharelink go with it.
   async function remove(job: JlaunchJob) {
-    if (!arm(`del:${job.id}`)) return;
+    if (!arm(`del:${job.id}:${railSeq}`)) return;
     setRailId(null);
     setDeleting(job.id);
     try {
@@ -278,7 +289,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
         label: "delete",
         tone: "delete",
         icon: <TrashIcon size={18} />,
-        armed: isArmed(`del:${job.id}`),
+        armed: isArmed(`del:${job.id}:${railSeq}`),
         onClick: () => void remove(job),
       },
     ];
@@ -302,7 +313,10 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
               className="jl-run"
               label={`Open ${runLabel(job)} of ${job.title}`}
               open={railId === `r:${job.id}`}
-              onOpenChange={(o) => setRailId(o ? `r:${job.id}` : null)}
+              onOpenChange={(o) => {
+                if (o) setRailSeq((n) => n + 1);
+                setRailId(o ? `r:${job.id}` : null);
+              }}
               onTap={() => setOpenId(job.id)}
               actions={runActions(job)}
             >
@@ -410,7 +424,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                   <div className="jl-rows">
                     {group.map((spec) => {
                       const open = expanded === spec.name;
-                      const runs = jobs.filter((j) => j.spec_name === spec.name).length;
+                      const runs = runsOf(spec.name).length;
                       return (
                         <div key={spec.name} className={`jl-spec${open ? " open" : ""}`}>
                           <SwipeRow
@@ -486,7 +500,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                 </>
               )}
             </>
-          ) : (focus ? jobs : current).length === 0 ? (
+          ) : runRows.length === 0 ? (
             <p className="jl-empty">
               {jobs.length > 0
                 ? "Every run is archived — find them on the Archived tab."
@@ -499,10 +513,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                   Showing one job's runs · <span className="jl-filter-x">Show all</span>
                 </button>
               )}
-              {runList(
-                (focus ? jobs : current).filter((j) => !focus || j.spec_name === focus),
-                "r",
-              )}
+              {runList(runRows, "r")}
             </>
           )}
         </div>

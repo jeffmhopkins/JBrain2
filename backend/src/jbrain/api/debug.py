@@ -236,7 +236,8 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # run the owner asked for can start while they sleep; and deleting a finished
             # run (`DELETE /jlaunch/jobs/{id}`, refused while live), and noting what a run
             # was for (`PATCH /jlaunch/jobs/{id}`), and archiving a job type (`PUT
-            # /jlaunch/specs/{name}/archive`), and re-reading the job types from the
+            # /jlaunch/specs/{name}/archive`) or one run (`PUT /jlaunch/jobs/{id}/archive`),
+            # and re-reading the job types from the
             # training repo's jobs.toml (`POST /jlaunch/specs/refresh`), so a job pushed
             # there runs with no box update; and stopping a run (`POST
             # /jlaunch/jobs/{id}/stop`, the graceful SIGTERM), so a bad run ends without

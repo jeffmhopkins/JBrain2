@@ -183,6 +183,49 @@ describe("JlaunchScreen", () => {
     await waitFor(() => expect(screen.queryByText("Archived runs")).toBeNull());
   });
 
+  it("drops a run archived from a job's View runs, and keeps an archived type's runs with it", async () => {
+    const OLD = { ...SPEC, name: "erdos", title: "Census", archived: true } as JlaunchSpec;
+    let runs = [
+      job("b2", "succeeded"),
+      job("a1", "failed"),
+      { ...job("c3", "succeeded"), spec_name: "erdos", title: "Census", archived: true },
+    ] as JlaunchJob[];
+    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC, OLD]);
+    vi.spyOn(api, "jlaunchJobs").mockImplementation(async () => runs);
+    vi.spyOn(api, "jlaunchArchiveRun").mockImplementation(async (id, on) => {
+      runs = runs.map((r) => (r.id === id ? { ...r, archived: on } : r));
+      return runs.find((r) => r.id === id) as JlaunchJob;
+    });
+    render(<JlaunchScreen onClose={() => {}} />);
+    // The Census run is under an archived type: the type holds it, not "Archived runs".
+    fireEvent.click(await screen.findByRole("tab", { name: /Archived/ }));
+    expect(screen.queryByText("Archived runs")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /^Jobs/ }));
+    fireEvent.click(screen.getByText("GrowBot look"));
+    fireEvent.click(screen.getByRole("button", { name: "View runs of GrowBot look" }));
+    swipe(screen.getByRole("button", { name: "Open v2 of Run b2" }));
+    fireEvent.click(screen.getByRole("button", { name: "archive" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Open v2 of Run b2" })).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: "Open v1 of Run a1" })).toBeTruthy();
+  });
+
+  it("disarms a run's delete once its menu closes", async () => {
+    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC]);
+    vi.spyOn(api, "jlaunchJobs").mockResolvedValue([job("b2", "failed")]);
+    const del = vi.spyOn(api, "jlaunchDelete").mockResolvedValue();
+    render(<JlaunchScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /Runs/ }));
+    const row = screen.getByRole("button", { name: "Open v2 of Run b2" });
+    swipe(row);
+    fireEvent.click(screen.getByRole("button", { name: "delete" }));
+    fireEvent.click(row); // a tap on the open row closes its menu
+    swipe(row);
+    expect(screen.getByRole("button", { name: "delete" })).toBeTruthy();
+    expect(del).not.toHaveBeenCalled();
+  });
+
   it("offers no archive for a job while one of its runs is going", async () => {
     vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC]);
     vi.spyOn(api, "jlaunchJobs").mockResolvedValue([job("a1", "running")]);
