@@ -26012,23 +26012,6 @@ button.task-band:active {
 .jl-spec:first-child {
   border-top: 0;
 }
-.jl-spec-head {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  text-align: left;
-  padding: 12px 13px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-.jl-spec-head:hover {
-  background: var(--surface-2);
-}
 .jl-spec-title {
   display: block;
   font-weight: 600;
@@ -26066,69 +26049,6 @@ button.task-band:active {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px 8px;
-  cursor: pointer;
-}
-/* archive / restore, on a job's row and on its runs' header */
-.jl-spec-line,
-.jl-group-line {
-  display: flex;
-  align-items: stretch;
-}
-.jl-spec-line .jl-spec-head,
-.jl-group-line .jl-group-head {
-  flex: 1;
-  min-width: 0;
-}
-.jl-shelf {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 44px;
-  padding: 0 12px;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  color: var(--text-3);
-  cursor: pointer;
-}
-.jl-spec-line .jl-shelf {
-  border-left: 1px solid var(--border);
-}
-.jl-group-line {
-  gap: 8px;
-}
-.jl-group-line .jl-shelf {
-  min-width: 44px;
-  min-height: 44px;
-  margin: -10px 0 -6px;
-  padding: 0 6px;
-}
-.jl-shelf:hover:not(:disabled) {
-  color: var(--amber);
-}
-.jl-shelf.restore {
-  color: var(--amber);
-}
-.jl-shelf:disabled {
-  opacity: 0.4;
-}
-/* keeps a header with no archive (a running job) lined up with the rest */
-.jl-shelf.none {
-  visibility: hidden;
-}
-.jl-shelved-undo {
-  font: inherit;
-  font-weight: 600;
-  color: var(--amber);
-  background: none;
-  border: 0;
-  /* a 44px tap target without moving the line it sits in */
-  padding: 12px 10px;
-  margin: -12px -10px;
   cursor: pointer;
 }
 .jl-spec-runs:disabled {
@@ -26185,13 +26105,12 @@ button.task-band:active {
 }
 .jl-group-head .jl-tab-live {
   margin-left: 0;
-  flex: none;
 }
 .jl-group-head .jl-spec-chev {
   margin-left: auto;
   transform: rotate(-90deg);
 }
-.jl-group.open > .jl-group-line .jl-spec-chev {
+.jl-group.open > .jl-group-head .jl-spec-chev {
   transform: none;
 }
 .jl-filter {
@@ -26248,42 +26167,26 @@ button.task-band:active {
   font-family: var(--font-mono);
 }
 
-/* a run row with its delete beside it */
-.jl-run {
-  display: flex;
-  align-items: stretch;
-  border-top: 1px solid var(--border);
-}
-.jl-run:first-child {
-  border-top: 0;
-}
-.jl-run .jl-row {
-  border: 0;
-  border-radius: 0;
-  flex: 1;
-  min-width: 0;
-}
-.jl-run-del {
-  flex: none;
-  display: flex;
-  align-items: center;
-  padding: 0 14px;
-  background: transparent;
-  border: 0;
-  border-left: 1px solid var(--border);
-  border-radius: 0;
-  color: var(--text-3);
+/* job and run rows wear the Chats list's swipe menu (components/SwipeRow) */
+.jl-screen .swipe-tap {
+  padding: 12px 13px;
+  color: var(--text);
   cursor: pointer;
 }
-.jl-run-del:hover {
-  color: var(--rose);
+.jl-screen .swipe-tap:hover {
+  background: var(--surface-2);
 }
-.jl-run-del:disabled {
-  opacity: 0.4;
+.jl-screen .rail-archive {
+  background: var(--steel-tint);
+  color: var(--steel);
 }
-.jl-run-del.none {
-  cursor: default;
-  visibility: hidden;
+.jl-shelf-h {
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+  margin: 22px 2px 10px;
 }
 /* one pill width, so every run's title starts in the same column */
 .jl-run .jl-pill {
@@ -26303,25 +26206,6 @@ button.task-band:active {
   border: 1px solid var(--border);
   border-radius: 16px;
   overflow: hidden;
-}
-.jl-row {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  text-align: left;
-  padding: 12px 13px;
-  border-top: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-.jl-row:first-child {
-  border-top: 0;
-}
-.jl-row:hover {
-  background: var(--surface-2);
 }
 .jl-row-main {
   flex: 1;

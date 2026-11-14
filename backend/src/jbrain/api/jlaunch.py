@@ -289,6 +289,37 @@ async def set_note(request: Request, jid: str, note: str, ctx: SessionContext) -
     return row.__dict__
 
 
+class ArchiveRunRequest(BaseModel):
+    archived: bool
+
+
+@router.put("/jlaunch/jobs/{jid}/archive")
+async def archive_run(
+    jid: str, body: ArchiveRunRequest, owner: OwnerDep, request: Request
+) -> dict[str, Any]:
+    return await set_run_archived(request, jid, body.archived, _owner_ctx(owner.id))
+
+
+async def set_run_archived(
+    request: Request, jid: str, archived: bool, ctx: SessionContext
+) -> dict[str, Any]:
+    """Archive or restore one run (the owner's, or a debug token's). A live run is refused
+    with 409: archiving it would hide what's running from the Runs list."""
+    _valid_id(jid)
+    _client(request)  # 404 when the launcher is off, as every route here
+    async with scoped_session(_maker(request), ctx) as db:
+        row = await _REPO.get(db, jid)
+        if row is None:
+            raise HTTPException(status_code=404, detail="unknown job")
+        if archived and row.state in _LIVE_STATES:
+            raise HTTPException(status_code=409, detail="the job is still running")
+        await _REPO.set_archived(db, jid, archived=archived)
+        row = await _REPO.get(db, jid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown job")
+    return row.__dict__
+
+
 @router.post("/jlaunch/jobs/{jid}/stop")
 async def stop_job(jid: str, owner: OwnerDep, request: Request) -> dict[str, Any]:
     return await _control_then_mirror(request, owner, jid, "stop")

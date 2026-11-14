@@ -1,9 +1,9 @@
 // The Jobs launcher (jlaunch) — the self-contained full-screen overlay the "Jobs" tile
 // opens (like JcodeScreen/Tasks). Three tabs: Jobs (the registered computations as compact
-// rows that expand to their notes and a Start button), Runs (past and current runs, a
-// finished one deletable in place) and Archived (job types put away, with their runs).
-// Picking a run opens the tabbed job screen (Overview · Terminal · Result) with
-// start/stop/kill, a live
+// rows that expand to their notes and a Start button), Runs (past and current runs) and
+// Archived. Jobs and runs wear the Chats list's swipe-left menu: archive (or unarchive)
+// and a tap-again delete. Picking a run opens the tabbed job screen (Overview · Terminal ·
+// Result) with start/stop/kill, a live
 // xterm, a Live card for a job that keeps a live folder, and — once a run finishes — a
 // download and a public results sharelink. Variant C from the GUI gate (docs/mocks/jlaunch/);
 // the Live card is variant A of docs/mocks/jlaunch-live/. Owner-only; the tile is hidden
@@ -13,6 +13,8 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { ApiError, api } from "../api/client";
 import { useBackLayer } from "../backLayers";
 import { EngineBanner } from "../components/EngineBanner";
+import { type RailAction, SwipeRow } from "../components/SwipeRow";
+import { useArm } from "../components/growbotArm";
 import {
   ArchiveIcon,
   ChevronDownIcon,
@@ -20,6 +22,7 @@ import {
   ChevronRightIcon,
   RefreshIcon,
   TrashIcon,
+  UndoIcon,
 } from "../components/icons";
 import { fmtEta, jlaunchLiveUrl, jlaunchResultUrl } from "../jlaunch/live";
 import { jlaunchShareUrl } from "../jlaunch/share";
@@ -58,11 +61,12 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [archiving, setArchiving] = useState<string | null>(null);
+  // One swipe menu open at a time, as on the Chats list ("s:<spec>" or "r:<run id>").
+  const [railId, setRailId] = useState<string | null>(null);
+  const { isArmed, arm } = useArm();
   // Re-reading the training repo's jobs.toml, and what the last read found.
   const [pulling, setPulling] = useState(false);
   const [pulled, setPulled] = useState<{ ok: boolean; text: string } | null>(null);
-  // The job type just archived, so the owner sees where it went and can take it back.
-  const [shelvedNote, setShelvedNote] = useState<JlaunchSpec | null>(null);
   // The one job the Runs tab is narrowed to (from a job's View runs), and the groups the
   // owner has folded shut ("jobs:<category>", "archived:<category>", "r:<spec>").
   const [focus, setFocus] = useState<string | null>(null);
@@ -107,12 +111,11 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   const archived = specs.filter((s) => s.archived);
   const active = specs.filter((s) => !s.archived);
   const shelved = new Set(archived.map((s) => s.name));
-  const current = jobs.filter((j) => isLive(j) || !shelved.has(j.spec_name));
-  const shelf = tab === "archived" ? archived : active;
-  // The note stands only while its job is still archived and still on the launcher: a
-  // restore elsewhere, or a repo refresh that drops the job, makes its Undo a lie.
-  const shelvedSpec = shelvedNote && archived.find((s) => s.name === shelvedNote.name);
+  // A run archived on its own leaves the Runs list for the Archived tab, as a chat does.
+  const current = jobs.filter((j) => isLive(j) || (!j.archived && !shelved.has(j.spec_name)));
+  const archivedRuns = jobs.filter((j) => j.archived && !isLive(j));
   const liveSpecs = new Set(jobs.filter(isLive).map((j) => j.spec_name));
+  const shelf = tab === "archived" ? archived : active;
 
   // Keep a running job's phase and pill current on the Runs list, as the job screen does.
   useEffect(() => {
@@ -174,11 +177,11 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   }
 
   async function archive(spec: JlaunchSpec, on: boolean) {
+    setRailId(null);
     setArchiving(spec.name);
     try {
       await api.jlaunchArchive(spec.name, on);
       setExpanded(null);
-      setShelvedNote((prev) => (on ? spec : prev?.name === spec.name ? null : prev));
     } catch {
       alert(on ? "Couldn't archive the job type." : "Couldn't restore the job type.");
     } finally {
@@ -187,13 +190,28 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
     }
   }
 
+  async function archiveRun(job: JlaunchJob, on: boolean) {
+    setRailId(null);
+    try {
+      await api.jlaunchArchiveRun(job.id, on);
+    } catch (err) {
+      alert(
+        err instanceof ApiError && err.status === 409
+          ? "That run is still going — stop it first."
+          : on
+            ? "Couldn't archive the run."
+            : "Couldn't unarchive the run.",
+      );
+    } finally {
+      void refresh();
+    }
+  }
+
+  // Delete arms on the first tap and goes on the second, as the Chats list's does: a run's
+  // files and any sharelink go with it.
   async function remove(job: JlaunchJob) {
-    if (
-      !confirm(
-        `Delete ${runLabel(job)} (${job.state}) of “${job.title}”? Its files and any sharelink go too.`,
-      )
-    )
-      return;
+    if (!arm(`del:${job.id}`)) return;
+    setRailId(null);
     setDeleting(job.id);
     try {
       await api.jlaunchDelete(job.id);
@@ -207,6 +225,105 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
       setDeleting(null);
       void refresh();
     }
+  }
+
+  // A job type archives whole (its finished runs go with it) and never mid-run; it can't
+  // be deleted here, since it comes from the code or the training repo's jobs.toml.
+  function specActions(spec: JlaunchSpec): RailAction[] {
+    if (archiving === spec.name) return [];
+    if (spec.archived) {
+      return [
+        {
+          key: "unarchive",
+          label: "unarchive",
+          tone: "archive",
+          icon: <UndoIcon size={18} />,
+          onClick: () => void archive(spec, false),
+        },
+      ];
+    }
+    if (liveSpecs.has(spec.name)) return [];
+    return [
+      {
+        key: "archive",
+        label: "archive",
+        tone: "archive",
+        icon: <ArchiveIcon size={18} />,
+        onClick: () => void archive(spec, true),
+      },
+    ];
+  }
+
+  // A live run has no menu: stop it from its screen first, then archive or delete it.
+  function runActions(job: JlaunchJob): RailAction[] {
+    if (isLive(job) || deleting === job.id) return [];
+    return [
+      job.archived
+        ? {
+            key: "unarchive",
+            label: "unarchive",
+            tone: "archive",
+            icon: <UndoIcon size={18} />,
+            onClick: () => void archiveRun(job, false),
+          }
+        : {
+            key: "archive",
+            label: "archive",
+            tone: "archive",
+            icon: <ArchiveIcon size={18} />,
+            onClick: () => void archiveRun(job, true),
+          },
+      {
+        key: "delete",
+        label: "delete",
+        tone: "delete",
+        icon: <TrashIcon size={18} />,
+        armed: isArmed(`del:${job.id}`),
+        onClick: () => void remove(job),
+      },
+    ];
+  }
+
+  // Runs grouped under their job; `fold` keeps the Runs and Archived tabs' folds apart.
+  function runList(list: JlaunchJob[], fold: string): ReactNode {
+    return runGroups(list, specs).map((g) => (
+      <Group
+        key={g.spec}
+        label={g.title}
+        count={g.runs.length}
+        live={g.runs.some(isLive)}
+        open={!shut.has(`${fold}:${g.spec}`)}
+        onToggle={() => toggle(`${fold}:${g.spec}`)}
+      >
+        <div className="jl-rows">
+          {g.runs.map((job) => (
+            <SwipeRow
+              key={job.id}
+              className="jl-run"
+              label={`Open ${runLabel(job)} of ${job.title}`}
+              open={railId === `r:${job.id}`}
+              onOpenChange={(o) => setRailId(o ? `r:${job.id}` : null)}
+              onTap={() => setOpenId(job.id)}
+              actions={runActions(job)}
+            >
+              <StatePill state={job.state} />
+              <span className="jl-row-main">
+                <span className="jl-row-title">
+                  <span className="jl-rev">{runLabel(job)}</span>
+                  {job.note ? <span className="jl-run-note"> · {job.note}</span> : null}
+                </span>
+                <span className="jl-row-sub">
+                  {job.state === "running" || job.state === "cloning"
+                    ? `${job.phase}…`
+                    : relative(job.finished_at || job.started_at || job.created_at || null)}
+                </span>
+              </span>
+              <ChevronRightIcon size={16} />
+            </SwipeRow>
+          ))}
+        </div>
+      </Group>
+    ));
   }
 
   return (
@@ -236,19 +353,6 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
       {pulled && state.kind === "ready" && (
         <output className={`jl-pulled${pulled.ok ? "" : " bad"}`}>{pulled.text}</output>
       )}
-      {shelvedSpec && state.kind === "ready" && (
-        <output className="jl-pulled jl-shelved">
-          Archived “{shelvedSpec.title}” and its finished runs — they're on the Archived tab.{" "}
-          <button
-            type="button"
-            className="jl-shelved-undo"
-            disabled={archiving === shelvedSpec.name}
-            onClick={() => void archive(shelvedSpec, false)}
-          >
-            Undo
-          </button>
-        </output>
-      )}
 
       {state.kind === "disabled" ? (
         <p className="jl-empty">The job launcher isn't enabled on this server.</p>
@@ -273,7 +377,11 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
               >
                 {t === "jobs" ? "Jobs" : t === "runs" ? "Runs" : "Archived"}
                 <span className="jl-tab-n">
-                  {t === "jobs" ? active.length : t === "runs" ? current.length : archived.length}
+                  {t === "jobs"
+                    ? active.length
+                    : t === "runs"
+                      ? current.length
+                      : archived.length + archivedRuns.length}
                 </span>
                 {t === "runs" && anyLive && <span className="jl-tab-live" aria-hidden="true" />}
               </button>
@@ -281,16 +389,17 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
           </div>
 
           {tab !== "runs" ? (
-            shelf.length === 0 ? (
-              <p className="jl-empty">
-                {tab === "archived"
-                  ? "Nothing archived. Tap the archive box beside a job, or beside a job's runs, to move it here."
-                  : archived.length > 0
-                    ? "Every job type is archived — restore one from the Archived tab."
-                    : "The launcher has no job types."}
-              </p>
-            ) : (
-              groupBy(shelf, (spec) => spec.category || "Other").map(([category, group]) => (
+            <>
+              {shelf.length === 0 && (tab === "jobs" || archivedRuns.length === 0) && (
+                <p className="jl-empty">
+                  {tab === "archived"
+                    ? "Nothing archived. Swipe a job or a run left to archive it."
+                    : archived.length > 0
+                      ? "Every job type is archived — unarchive one from the Archived tab."
+                      : "The launcher has no job types."}
+                </p>
+              )}
+              {groupBy(shelf, (spec) => spec.category || "Other").map(([category, group]) => (
                 <Group
                   key={category}
                   label={category}
@@ -304,33 +413,25 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                       const runs = jobs.filter((j) => j.spec_name === spec.name).length;
                       return (
                         <div key={spec.name} className={`jl-spec${open ? " open" : ""}`}>
-                          <div className="jl-spec-line">
-                            <button
-                              type="button"
-                              className="jl-spec-head"
-                              aria-expanded={open}
-                              onClick={() => setExpanded(open ? null : spec.name)}
-                            >
-                              <span className="jl-row-main">
-                                <span className="jl-spec-title">{spec.title}</span>
-                                <span className="jl-row-sub">
-                                  {spec.est_hours} · {spec.all_cores ? "all cores" : "single core"}{" "}
-                                  · {spec.disk_gb} GB
-                                </span>
+                          <SwipeRow
+                            className="jl-spec-row"
+                            expanded={open}
+                            open={railId === `s:${spec.name}`}
+                            onOpenChange={(o) => setRailId(o ? `s:${spec.name}` : null)}
+                            onTap={() => setExpanded(open ? null : spec.name)}
+                            actions={specActions(spec)}
+                          >
+                            <span className="jl-row-main">
+                              <span className="jl-spec-title">{spec.title}</span>
+                              <span className="jl-row-sub">
+                                {spec.est_hours} · {spec.all_cores ? "all cores" : "single core"} ·{" "}
+                                {spec.disk_gb} GB
                               </span>
-                              <span className="jl-spec-chev" aria-hidden="true">
-                                <ChevronDownIcon size={16} />
-                              </span>
-                            </button>
-                            {/* Archiving sits on the row itself, not behind the expand: tucked
-                              inside the card it went unfound (owner, 2026-11-14). */}
-                            <ShelfButton
-                              spec={spec}
-                              live={liveSpecs.has(spec.name)}
-                              busy={archiving === spec.name}
-                              onShelf={(on) => void archive(spec, on)}
-                            />
-                          </div>
+                            </span>
+                            <span className="jl-spec-chev" aria-hidden="true">
+                              <ChevronDownIcon size={16} />
+                            </span>
+                          </SwipeRow>
                           {open && (
                             // Only the Start button starts a run: a stray tap while scrolling
                             // must not launch hours of work (owner, 2026-11-14).
@@ -377,12 +478,18 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                     })}
                   </div>
                 </Group>
-              ))
-            )
+              ))}
+              {tab === "archived" && archivedRuns.length > 0 && (
+                <>
+                  <h3 className="jl-shelf-h">Archived runs</h3>
+                  {runList(archivedRuns, "a")}
+                </>
+              )}
+            </>
           ) : (focus ? jobs : current).length === 0 ? (
             <p className="jl-empty">
               {jobs.length > 0
-                ? "Only archived jobs' runs — open one from the Archived tab to see them."
+                ? "Every run is archived — find them on the Archived tab."
                 : "No runs yet — start one from the Jobs tab."}
             </p>
           ) : (
@@ -392,82 +499,10 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                   Showing one job's runs · <span className="jl-filter-x">Show all</span>
                 </button>
               )}
-              {runGroups(focus ? jobs : current, specs)
-                .filter((g) => !focus || g.spec === focus)
-                .map((g) => (
-                  <Group
-                    key={g.spec}
-                    label={g.title}
-                    count={g.runs.length}
-                    live={g.runs.some(isLive)}
-                    open={!shut.has(`r:${g.spec}`)}
-                    onToggle={() => toggle(`r:${g.spec}`)}
-                    action={
-                      // Archiving is per job type, so it rides the job's header; a job
-                      // the launcher no longer has offers none (the api would refuse it).
-                      g.specRow ? (
-                        <ShelfButton
-                          spec={g.specRow}
-                          live={liveSpecs.has(g.spec)}
-                          busy={archiving === g.spec}
-                          onShelf={(on) => {
-                            if (g.specRow) void archive(g.specRow, on);
-                          }}
-                        />
-                      ) : (
-                        <span className="jl-shelf none" aria-hidden="true" />
-                      )
-                    }
-                  >
-                    <div className="jl-rows">
-                      {g.runs.map((job) => (
-                        <div key={job.id} className="jl-run">
-                          <button
-                            type="button"
-                            className="jl-row"
-                            onClick={() => setOpenId(job.id)}
-                            aria-label={`Open ${runLabel(job)} of ${job.title}`}
-                          >
-                            <StatePill state={job.state} />
-                            <span className="jl-row-main">
-                              <span className="jl-row-title">
-                                <span className="jl-rev">{runLabel(job)}</span>
-                                {job.note ? (
-                                  <span className="jl-run-note"> · {job.note}</span>
-                                ) : null}
-                              </span>
-                              <span className="jl-row-sub">
-                                {job.state === "running" || job.state === "cloning"
-                                  ? `${job.phase}…`
-                                  : relative(
-                                      job.finished_at || job.started_at || job.created_at || null,
-                                    )}
-                              </span>
-                            </span>
-                            <ChevronRightIcon size={16} />
-                          </button>
-                          {/* A live run has no delete here: stop it from its screen first. The
-                              placeholder keeps every row's chevron in one column. */}
-                          {isLive(job) ? (
-                            <span className="jl-run-del none" aria-hidden="true">
-                              <TrashIcon size={16} />
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              className="jl-run-del"
-                              disabled={deleting === job.id}
-                              onClick={() => void remove(job)}
-                              aria-label={`Delete ${runLabel(job)} of ${job.title}`}
-                            >
-                              <TrashIcon size={16} />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </Group>
-                ))}
+              {runList(
+                (focus ? jobs : current).filter((j) => !focus || j.spec_name === focus),
+                "r",
+              )}
             </>
           )}
         </div>
@@ -483,7 +518,6 @@ function Group({
   live = false,
   open,
   onToggle,
-  action = null,
   children,
 }: {
   label: string;
@@ -491,63 +525,20 @@ function Group({
   live?: boolean;
   open: boolean;
   onToggle: () => void;
-  action?: ReactNode;
   children: ReactNode;
 }): ReactNode {
   return (
     <section className={`jl-group${open ? " open" : ""}`}>
-      <div className="jl-group-line">
-        <button type="button" className="jl-group-head" aria-expanded={open} onClick={onToggle}>
-          <span className="jl-group-label">{label}</span>
-          <span className="jl-group-n">{count}</span>
-          {live && <span className="jl-tab-live" aria-hidden="true" />}
-          <span className="jl-spec-chev" aria-hidden="true">
-            <ChevronDownIcon size={14} />
-          </span>
-        </button>
-        {action}
-      </div>
+      <button type="button" className="jl-group-head" aria-expanded={open} onClick={onToggle}>
+        <span className="jl-group-label">{label}</span>
+        <span className="jl-group-n">{count}</span>
+        {live && <span className="jl-tab-live" aria-hidden="true" />}
+        <span className="jl-spec-chev" aria-hidden="true">
+          <ChevronDownIcon size={14} />
+        </span>
+      </button>
       {open && children}
     </section>
-  );
-}
-
-/** Archive a job type (an archive box), or restore an archived one (a labelled Restore).
- * A job with a run going offers no archive: shelving it mid-run would hide what's running
- * from its own Jobs row. The placeholder keeps the column lined up. */
-function ShelfButton({
-  spec,
-  live,
-  busy,
-  onShelf,
-}: {
-  spec: JlaunchSpec;
-  live: boolean;
-  busy: boolean;
-  onShelf: (archived: boolean) => void;
-}): ReactNode {
-  if (live && !spec.archived) return <span className="jl-shelf none" aria-hidden="true" />;
-  return spec.archived ? (
-    <button
-      type="button"
-      className="jl-shelf restore"
-      disabled={busy}
-      onClick={() => onShelf(false)}
-      aria-label={`Restore ${spec.title}`}
-    >
-      Restore
-    </button>
-  ) : (
-    <button
-      type="button"
-      className="jl-shelf"
-      disabled={busy}
-      onClick={() => onShelf(true)}
-      aria-label={`Archive ${spec.title}`}
-      title="Archive this job and its finished runs"
-    >
-      <ArchiveIcon size={16} />
-    </button>
   );
 }
 
@@ -575,16 +566,15 @@ function groupBy<T>(items: T[], key: (item: T) => string): [string, T[]][] {
 function runGroups(
   jobs: JlaunchJob[],
   specs: JlaunchSpec[],
-): { spec: string; title: string; specRow: JlaunchSpec | undefined; runs: JlaunchJob[] }[] {
-  const byName = new Map(specs.map((s) => [s.name, s]));
+): { spec: string; title: string; runs: JlaunchJob[] }[] {
+  const titles = new Map(specs.map((s) => [s.name, s.title]));
   // A running run leads: its job's group first, and it first within the group (stable
   // sorts, so the rest keep their newest-first order).
   const live = (runs: JlaunchJob[]) => (runs.some(isLive) ? 0 : 1);
   return groupBy(jobs, (j) => j.spec_name)
     .map(([spec, runs]) => ({
       spec,
-      title: byName.get(spec)?.title ?? runs[0]?.title ?? spec,
-      specRow: byName.get(spec),
+      title: titles.get(spec) ?? runs[0]?.title ?? spec,
       runs: [...runs].sort((a, b) => live([a]) - live([b])),
     }))
     .sort((a, b) => live(a.runs) - live(b.runs));

@@ -29,6 +29,7 @@ export function SwipeRow({
   onOpenChange,
   onTap,
   label,
+  expanded,
   className = "",
   children,
 }: {
@@ -38,6 +39,8 @@ export function SwipeRow({
   onTap: () => void;
   /** The tap target's accessible name. */
   label?: string;
+  /** Set when the tap opens something in place (a row that expands): its aria-expanded. */
+  expanded?: boolean;
   className?: string;
   children: ReactNode;
 }) {
@@ -119,7 +122,13 @@ export function SwipeRow({
         onTouchMove={move}
         onTouchEnd={end}
       >
-        <button type="button" className="swipe-tap" aria-label={label} onClick={tap}>
+        <button
+          type="button"
+          className="swipe-tap"
+          aria-label={label}
+          aria-expanded={expanded}
+          onClick={tap}
+        >
           {children}
         </button>
       </div>

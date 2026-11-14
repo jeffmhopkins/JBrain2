@@ -87,6 +87,8 @@ export interface JlaunchJob {
   revision?: number | null;
   /** The owner's own note on what the run was for. */
   note?: string;
+  /** Archived on its own: off the Runs list, onto the Archived tab. */
+  archived?: boolean;
   /** When the mirror first saw the run (the mirror keeps no started_at of its own). */
   created_at?: string;
 }

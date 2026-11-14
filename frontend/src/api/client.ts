@@ -7370,6 +7370,17 @@ export const api = {
     });
   },
 
+  /** Archive one run (it moves to the Archived tab) or restore it. 409 for a live run. */
+  async jlaunchArchiveRun(id: string, archived: boolean): Promise<JlaunchJob> {
+    return (
+      await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}/archive`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived }),
+      })
+    ).json();
+  },
+
   /** Set the owner's note on a run (what it was for); returns the run with it. */
   async jlaunchSetNote(id: string, note: string): Promise<JlaunchJob> {
     return (
