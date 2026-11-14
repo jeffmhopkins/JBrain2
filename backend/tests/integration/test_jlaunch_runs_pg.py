@@ -6,11 +6,12 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.db.session import jlaunch_share_context, scoped_session
-from jbrain.models.jlaunch import JlaunchRunRepo
+from jbrain.db.session import SessionContext, jlaunch_share_context, scoped_session
+from jbrain.models.jlaunch import JlaunchRunRepo, JlaunchSpecArchiveRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -20,6 +21,7 @@ pytestmark = [
 ]
 
 _REPO = JlaunchRunRepo()
+_ARCHIVE = JlaunchSpecArchiveRepo()
 
 
 @pytest.fixture
@@ -73,3 +75,25 @@ async def test_a_share_visitor_cannot_note_a_run(maker: async_sessionmaker) -> N
     async with scoped_session(maker, OWNER) as db:
         row = await _REPO.get(db, "shr1")
     assert row is not None and row.note == ""
+
+
+async def test_archived_job_types_are_owner_only(maker: async_sessionmaker) -> None:
+    """Migration 0270: the archive list is the owner's; any other session sees and writes
+    nothing (the RLS isolation every new table carries)."""
+    name = f"walk-{uuid.uuid4().hex[:8]}"
+    async with scoped_session(maker, OWNER) as db:
+        await _ARCHIVE.set(db, name, archived=True)
+        await _ARCHIVE.set(db, name, archived=True)  # idempotent
+        assert name in await _ARCHIVE.names(db)
+    for other in (
+        SessionContext(principal_kind="capability_token", domain_scopes=("general",)),
+        jlaunch_share_context("00000000-0000-0000-0000-000000000000"),
+    ):
+        async with scoped_session(maker, other) as db:
+            assert await _ARCHIVE.names(db) == set()
+        with pytest.raises(DBAPIError):
+            async with scoped_session(maker, other) as db:
+                await _ARCHIVE.set(db, f"x-{name}", archived=True)
+    async with scoped_session(maker, OWNER) as db:
+        await _ARCHIVE.set(db, name, archived=False)
+        assert name not in await _ARCHIVE.names(db)

@@ -45,6 +45,16 @@ def _no_db(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(jlaunch._REPO, "upsert", _noop)
     monkeypatch.setattr(jlaunch._REPO, "delete", _noop)
     monkeypatch.setattr(jlaunch._REPO, "set_artifact", _noop)
+    shelf: set[str] = set()  # the archived job types, in memory
+
+    async def _names(*_a: object) -> set[str]:
+        return set(shelf)
+
+    async def _set(_db: object, name: str, *, archived: bool) -> None:
+        (shelf.add if archived else shelf.discard)(name)
+
+    monkeypatch.setattr(jlaunch._ARCHIVE, "names", _names)
+    monkeypatch.setattr(jlaunch._ARCHIVE, "set", _set)
 
 
 def test_non_owner_is_forbidden() -> None:
@@ -405,3 +415,23 @@ def test_specs_carry_a_category() -> None:
     assert jlaunch._category({"name": "es_census_1e13"}) == "Math"
     assert jlaunch._category({"name": "other"}) == "Other"
     assert jlaunch._category({"name": "growbot_x", "category": "Lab"}) == "Lab"
+
+
+def test_archive_and_restore_a_job_type(_no_db: None) -> None:
+    client = TestClient(_app(OWNER, jlaunch_client=FakeJlaunchClient()))
+    url = "/api/jlaunch/specs/erdos_straus_1e12/archive"
+    assert client.get("/api/jlaunch/specs").json()[0]["archived"] is False
+    assert client.put(url, json={"archived": True}).status_code == 204
+    assert client.get("/api/jlaunch/specs").json()[0]["archived"] is True
+    assert client.put(url, json={"archived": False}).status_code == 204
+    assert client.get("/api/jlaunch/specs").json()[0]["archived"] is False
+    # Only a job type the launcher has can be archived; any well-formed name restores.
+    unknown = "/api/jlaunch/specs/nosuch/archive"
+    assert client.put(unknown, json={"archived": True}).status_code == 404
+    assert client.put(unknown, json={"archived": False}).status_code == 204
+    assert (
+        client.put("/api/jlaunch/specs/bad.name/archive", json={"archived": True}).status_code
+        == 404
+    )
+    nobody = TestClient(_app(NON_OWNER, jlaunch_client=FakeJlaunchClient()))
+    assert nobody.put(url, json={"archived": True}).status_code == 403

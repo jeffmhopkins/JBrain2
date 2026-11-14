@@ -7311,6 +7311,15 @@ export const api = {
     ).json();
   },
 
+  /** Archive a job type (it moves to the Archived tab) or restore it. Its runs stay. */
+  async jlaunchArchive(name: string, archived: boolean): Promise<void> {
+    await request(`/api/jlaunch/specs/${encodeURIComponent(name)}/archive`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived }),
+    });
+  },
+
   /** Set the owner's note on a run (what it was for); returns the run with it. */
   async jlaunchSetNote(id: string, note: string): Promise<JlaunchJob> {
     return (

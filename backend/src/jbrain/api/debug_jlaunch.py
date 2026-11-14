@@ -1,13 +1,14 @@
-"""`/api/debug/jlaunch/*` — the assistant's read-only window on the job launcher.
+"""`/api/debug/jlaunch/*` — the assistant's window on the job launcher.
 
 The owner has no terminal, so a long run on the box (a GrowBot training run, a census)
 is followed from a debug token: the runs and their state, the console tail, a running
 job's live folder (progress, the latest replay, the latest weights) and the finished
-result. Three writes: starting a registered spec (owner, 2026-11-14: the owner went to bed
+result. Its writes: starting a registered spec (owner, 2026-11-14: the owner went to bed
 handing the assistant "start the camera walk and look training"), which runs only what
 the code-defined spec registry holds, one job at a time, exactly as the PWA's Start; and
 deleting a finished run (owner, 2026-11-14: "delete bad runs ... via debug token"), which
-refuses a live one; and the owner's note on a run. Stopping a run stays with the owner.
+refuses a live one; the owner's note on a run; and archiving a job type. Stopping a run
+stays with the owner.
 The bytes come back exactly as the owner's routes serve them (`jlaunch.py`).
 """
 
@@ -57,6 +58,18 @@ async def jlaunch_note(
     jlaunch._valid_id(jid)
     request.state.debug_detail = f"jlaunch note {jid}"
     return await jlaunch.set_note(request, jid, body.note, _OWNER_CTX)
+
+
+@router.put("/specs/{name}/archive", status_code=204)
+async def jlaunch_archive(
+    name: str, body: jlaunch.ArchiveSpecRequest, request: Request, _p: DebugDep
+) -> None:
+    """**Archive or restore a job type** (`{"archived": true|false}`), as the PWA's Archive
+    and Restore do: it moves between the Jobs and Archived tabs; its runs are untouched."""
+    if not jlaunch._SPEC_RE.match(name):
+        raise HTTPException(status_code=404, detail="unknown job spec")
+    request.state.debug_detail = f"jlaunch archive {name} {body.archived}"
+    await jlaunch.set_archived(request, name, body.archived, _OWNER_CTX)
 
 
 @router.get("")

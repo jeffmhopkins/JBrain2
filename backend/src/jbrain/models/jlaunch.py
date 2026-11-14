@@ -64,6 +64,18 @@ class JlaunchRun(Base):
     )
 
 
+class JlaunchSpecArchive(Base):
+    """A job type the owner archived (0270): out of the Jobs tab, into Archived."""
+
+    __tablename__ = "jlaunch_spec_archive"
+    __table_args__ = {"schema": "app"}
+
+    spec_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    archived_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 @dataclass(frozen=True)
 class JlaunchRunRow:
     """A plain view of a run row, safe to return from a route."""
@@ -206,3 +218,24 @@ class JlaunchRunRepo:
 
     async def delete(self, session: AsyncSession, run_id: str) -> None:
         await session.execute(delete(JlaunchRun).where(JlaunchRun.id == run_id))
+
+
+class JlaunchSpecArchiveRepo:
+    """The owner's archived job types, on a caller-supplied RLS-scoped session."""
+
+    async def names(self, session: AsyncSession) -> set[str]:
+        result = await session.execute(select(JlaunchSpecArchive.spec_name))
+        return set(result.scalars())
+
+    async def set(self, session: AsyncSession, spec_name: str, *, archived: bool) -> None:
+        """Archive or restore a job type. Idempotent either way."""
+        if archived:
+            await session.execute(
+                pg_insert(JlaunchSpecArchive)
+                .values(spec_name=spec_name)
+                .on_conflict_do_nothing(index_elements=[JlaunchSpecArchive.spec_name])
+            )
+        else:
+            await session.execute(
+                delete(JlaunchSpecArchive).where(JlaunchSpecArchive.spec_name == spec_name)
+            )

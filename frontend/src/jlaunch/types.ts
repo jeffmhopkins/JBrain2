@@ -17,6 +17,8 @@ export interface JlaunchSpec {
   live?: boolean;
   /** The Jobs tab's group ("Math", "Robot", …), named by the api. */
   category?: string;
+  /** The owner archived this job type: it lists on the Archived tab, not Jobs. */
+  archived?: boolean;
 }
 
 /** One file in a running job's live folder (GET /jlaunch/jobs/{id}/live). */
