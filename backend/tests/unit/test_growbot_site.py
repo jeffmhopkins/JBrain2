@@ -2160,30 +2160,71 @@ def test_a_due_timer_waits_while_this_tab_cannot_tell_it(setup: str) -> None:
     assert got == {"left": 1, "n": 0}
 
 
+_HOLD_SETUP = (
+    "var said=[],holds=[],cap='';var $=function(){ return {set textContent(v){ cap=v; }}; };"
+    "function speak(t){ said.push([t,Date.now()]); } var lastSpokeT=0;"
+    "var _th=think; think=function(a,b,c){ holds.push(_gbHoldNext); _th(a,b,c); };"
+    "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};var r={};"
+    "gbTimerSet({minutes:1,about:'oven'},'event',{});var due=T+60000;"
+)
+
+
 def test_a_timer_is_thought_about_early_and_said_on_its_second() -> None:
     """Owner, 2026-11-13: the alert took seconds to think and voice, so it landed late. The
     thought starts 12 s early, its voice is held to the timer's second, and the timer (and its
-    pill) stays until then without being offered to the model as still pending."""
+    pill) stays until it is said."""
     got = _recall_page(
-        "var said=[],holds=[],cap='';var $=function(){ return {set textContent(v){ cap=v; }}; };"
-        "function speak(t){ said.push([t,Date.now()]); } var lastSpokeT=0;"
-        "var _th=think; think=function(a,b,c){ holds.push(_gbHoldNext); _th(a,b,c); };"
-        "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};var r={};"
-        "gbTimerSet({minutes:1,about:'oven'},'event',{});var due=T+60000;"
-        "T=due-13000;gbTimerTick();r.early=thinks.length+timers.length;"
+        _HOLD_SETUP + "T=due-13000;gbTimerTick();r.early=thinks.length+timers.length;"
         "T=due-11000;gbTimerTick();timers.shift()();r.held=holds[0]-due;"
-        "r.listed=_live.scratch.timers.length;r.line=gbTimersLine();"
+        "r.listed=_live.scratch.timers.length;r.line=gbTimersLine();inFlight=false;"
         "gbHoldSay('Your oven timer is up.','calm','en',due);r.before=said.length;"
         "T=due;timers.shift()();r.at=said[0][1]-due;r.cap=cap;"
-        "gbTimerTick();r.after=_live.scratch.timers.length;console.log(JSON.stringify(r));"
+        "r.after=_live.scratch.timers.length;console.log(JSON.stringify(r));"
     )
-    assert got["early"] == 0 and got["held"] == 0
-    assert got["listed"] == 1 and got["line"] == ""
+    assert got["early"] == 0 and got["held"] == 0 and got["listed"] == 1
+    assert "- oven: going off at 1:22 PM; you will tell them at that second" in got["line"]
     assert got["before"] == 0 and got["at"] == 0 and got["cap"] == "Your oven timer is up."
     assert got["after"] == 0
 
 
-def test_a_held_reply_is_silent_until_the_second_and_a_late_one_is_not_held() -> None:
+@pytest.mark.parametrize(
+    ("meanwhile", "says", "left", "told"),
+    [
+        # cancelled in the window: never said
+        ("_live.scratch.timers.length=0;", 0, 0, 0),
+        # the phone locked: handed back, told late by the tick
+        ("document.hidden=true;", 0, 1, 0),
+        # a person's turn in flight: waits for it, then says it
+        ("inFlight=true;timers.shift()();inFlight=false;", 1, 0, 0),
+    ],
+)
+def test_a_held_timer_line_minds_what_happened_in_the_window(
+    meanwhile: str, says: int, left: int, told: int
+) -> None:
+    """Review, 2026-11-14: cancelled, locked, or talking: the held line must not ring blindly."""
+    got = _recall_page(
+        _HOLD_SETUP + "T=due-11000;gbTimerTick();timers.shift()();inFlight=false;"
+        "gbHoldSay('Your oven timer is up.','calm','en',due);T=due;"
+        + meanwhile
+        + "timers.shift()();"
+        "console.log(JSON.stringify({says:said.length,left:_live.scratch.timers.length,"
+        "told:_gbTimerTold.length}));"
+    )
+    assert got == {"says": says, "left": left, "told": told}
+
+
+def test_a_held_timer_that_cannot_be_thought_about_is_handed_back_not_said_early() -> None:
+    """Review, 2026-11-14: a refused follow-up carried "your timer went off" into the next turn,
+    up to 12 s early. It is handed back to the tick instead."""
+    got = _recall_page(
+        _HOLD_SETUP + "starts=false;T=due-11000;gbTimerTick();timers.shift()();"
+        "console.log(JSON.stringify({carry:_gbRecallCarry,told:_gbTimerTold.length,"
+        "follow:!!_gbFollow}));"
+    )
+    assert got == {"carry": "", "told": 0, "follow": False}
+
+
+def test_a_held_reply_is_silent_until_the_second() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "var _gbHold=_gbHoldNext; _gbHoldNext=0;" in page
     assert (
@@ -2191,8 +2232,9 @@ def test_a_held_reply_is_silent_until_the_second_and_a_late_one_is_not_held() ->
         "vmStreamSpeech(full,_vmTurn)))onSayStream(full,_replyLang);"
     ) in page
     assert (
-        "else if(said&&Date.now()<_gbHold){ gbHoldSay(said,o.emotion,_replyLang,_gbHold); }"
-        ' else if(said){ $("say").textContent=said; speak(said,o.emotion,_replyLang,undefined,'
+        'if(_gbHold&&_streamSaid) gbHoldSay("",o.emotion,_replyLang,_gbHold);'
+        " if(_gbHold&&!_streamSaid){ gbHoldSay(said,o.emotion,_replyLang,_gbHold); }"
+        " else if(phoneDir){ var _ph="
     ) in page
     assert page.index("var _gbHold=_gbHoldNext;") < page.index("vmStreamSpeech(full,_vmTurn)))")
 
