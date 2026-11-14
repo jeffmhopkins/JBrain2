@@ -12,12 +12,17 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, get_args
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+
+# What the pad does with a policy (migration 0272): `walk` drives its four keys, `turn` its
+# left and right keys, `trick` is a trick button that holds it facing ahead.
+Motion = Literal["walk", "turn", "trick"]
+MOTIONS: tuple[str, ...] = get_args(Motion)
 
 # The largest library policy: the trained MLPs are tens of KB, upstream's biggest stock walk
 # about 600 KB; the creature parses it whole on the phone.
@@ -71,6 +76,9 @@ class PolicyRow:
     bytes: int
     created_at: datetime
     contract: Contract
+    enabled: bool = True
+    motion: str = "walk"
+    active: bool = False
 
 
 def summary(policy: Any) -> Contract:
@@ -145,6 +153,9 @@ def _row(r: Any) -> PolicyRow:
         bytes=r.bytes,
         created_at=r.created_at,
         contract=summary(r.policy),
+        enabled=bool(r.enabled),
+        motion=str(r.motion),
+        active=bool(r.active),
     )
 
 
@@ -162,6 +173,18 @@ class PolicyRepo(Protocol):
     ) -> PolicyRow: ...
 
     async def rename(self, ctx: SessionContext, pid: str, name: str) -> PolicyRow | None: ...
+
+    async def update(
+        self,
+        ctx: SessionContext,
+        pid: str,
+        *,
+        enabled: bool | None = None,
+        motion: str | None = None,
+        active: bool | None = None,
+    ) -> PolicyRow | None:
+        """Set the owner's switches; making one active clears its family's other one."""
+        ...
 
     async def delete(self, ctx: SessionContext, pid: str) -> bool: ...
 
@@ -181,7 +204,7 @@ def _stub(key: str) -> str:
 
 
 _COLS = (
-    "id, name, source_job, source_spec, bytes, created_at,"
+    "id, name, source_job, source_spec, bytes, created_at, enabled, motion, active,"
     " jsonb_build_object('obs_spec', policy->'obs_spec', "
     + ", ".join(_stub(k) for k in ("mean", "std", "layers"))
     + ") AS policy"
@@ -252,6 +275,43 @@ class SqlPolicyRepo:
                 )
             ).first()
             # Read inside the transaction, so a row summary() refuses rolls the rename back.
+            return _row(r) if r is not None else None
+
+    async def update(
+        self,
+        ctx: SessionContext,
+        pid: str,
+        *,
+        enabled: bool | None = None,
+        motion: str | None = None,
+        active: bool | None = None,
+    ) -> PolicyRow | None:
+        """None when there is no such policy; PolicyError as rename()."""
+        if motion is not None and motion not in MOTIONS:
+            raise ValueError(f"not a motion: {motion!r}")
+        async with scoped_session(self._maker, ctx) as session:
+            if active:
+                # Before the row's own update, so the one-active index never sees two.
+                await session.execute(
+                    text(
+                        "UPDATE app.growbot_policies SET active = false WHERE active"
+                        " AND id <> CAST(:i AS uuid) AND source_spec = (SELECT source_spec"
+                        " FROM app.growbot_policies WHERE id = CAST(:i AS uuid))"
+                    ),
+                    {"i": pid},
+                )
+            r = (
+                await session.execute(
+                    text(
+                        "UPDATE app.growbot_policies SET"
+                        " enabled = COALESCE(:e, enabled),"
+                        " motion = COALESCE(:m, motion),"
+                        " active = COALESCE(:a, active)"
+                        f" WHERE id = CAST(:i AS uuid) RETURNING {_COLS}"
+                    ),
+                    {"e": enabled, "m": motion, "a": active, "i": pid},
+                )
+            ).first()
             return _row(r) if r is not None else None
 
     async def delete(self, ctx: SessionContext, pid: str) -> bool:

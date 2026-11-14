@@ -99,6 +99,31 @@ class FakePolicies:
         self.rows[pid] = (row, got[1])
         return row
 
+    async def update(
+        self,
+        ctx: SessionContext,
+        pid: str,
+        *,
+        enabled: bool | None = None,
+        motion: str | None = None,
+        active: bool | None = None,
+    ) -> PolicyRow | None:
+        self.contexts.append(ctx)
+        got = self.rows.get(pid)
+        if got is None:
+            return None
+        if active:
+            for k, (r, p) in list(self.rows.items()):
+                if k != pid and r.source_spec == got[0].source_spec and r.active:
+                    self.rows[k] = (PolicyRow(**{**r.__dict__, "active": False}), p)
+        change: dict[str, Any] = {}
+        for key, value in (("enabled", enabled), ("motion", motion), ("active", active)):
+            if value is not None:
+                change[key] = value
+        row = PolicyRow(**{**got[0].__dict__, **change})
+        self.rows[pid] = (row, got[1])
+        return row
+
     async def delete(self, ctx: SessionContext, pid: str) -> bool:
         return self.rows.pop(pid, None) is not None
 
@@ -238,6 +263,43 @@ async def test_rename_and_delete(tmp_path: Path) -> None:
     assert client.delete("/api/growbot/policies/not-an-id").status_code == 422
 
 
+async def test_the_owner_switches_a_policy_off_sets_its_motion_and_picks_its_family(
+    tmp_path: Path,
+) -> None:
+    client, lib, jl, _ = _app(tmp_path)
+    jid = await _finished(jl, "growbot_camera_walk", {"policy_final.json": FINAL})
+    one = client.post("/api/growbot/policies", json={"job_id": jid, "name": "a"}).json()
+    two = client.post("/api/growbot/policies", json={"job_id": jid, "name": "b"}).json()
+    # A new policy is on, a walk, and not picked: the pad offers its family's newest.
+    assert (one["enabled"], one["motion"], one["active"]) == (True, "walk", False)
+    off = client.patch(f"/api/growbot/policies/{one['id']}", json={"enabled": False}).json()
+    assert off["enabled"] is False and off["name"] == "a"
+    trick = client.patch(f"/api/growbot/policies/{two['id']}", json={"motion": "trick"}).json()
+    assert trick["motion"] == "trick"
+    client.patch(f"/api/growbot/policies/{one['id']}", json={"active": True})
+    client.patch(f"/api/growbot/policies/{two['id']}", json={"active": True})
+    listed = {p["name"]: p["active"] for p in client.get("/api/growbot/policies").json()}
+    assert listed == {"a": False, "b": True}
+    both = client.patch(f"/api/growbot/policies/{one['id']}", json={"name": "c", "motion": "turn"})
+    assert (both.json()["name"], both.json()["motion"]) == ("c", "turn")
+    resp = client.patch(f"/api/debug/growbot/policies/{one['id']}", json={"enabled": True})
+    assert resp.json()["enabled"] is True and lib.contexts[-1].principal_id == "debug-console"
+    other = str(uuid.uuid4())
+    assert (
+        client.patch(f"/api/growbot/policies/{other}", json={"motion": "walk"}).status_code == 404
+    )
+
+
+@pytest.mark.parametrize(
+    "body", [{}, {"motion": "dance"}, {"active": False}, {"enabled": "yes"}, {"name": ""}]
+)
+async def test_a_switch_must_say_something_it_can_do(tmp_path: Path, body: dict[str, Any]) -> None:
+    client, _, jl, _ = _app(tmp_path)
+    jid = await _finished(jl, "growbot_camera_walk", {"policy_final.json": FINAL})
+    pid = client.post("/api/growbot/policies", json={"job_id": jid, "name": "a"}).json()["id"]
+    assert client.patch(f"/api/growbot/policies/{pid}", json=body).status_code == 422
+
+
 async def test_no_launcher_means_nothing_to_add(tmp_path: Path) -> None:
     client, _, jl, _ = _app(tmp_path)
 
@@ -314,6 +376,9 @@ async def test_a_walk_names_a_library_policy_for_the_creature(
     resp = client.post(move, json={"move": "spin_left", "secs": 5, "policy": pid})
     assert resp.status_code == 200
     assert sent == [{"code": "gb-a1", "move": "spin_left", "secs": 5, "policy": pid}]
+    # A trick holds a library policy facing ahead.
+    assert client.post(move, json={"move": "look", "secs": 4, "policy": pid}).status_code == 200
+    assert sent.pop() == {"code": "gb-a1", "move": "look", "secs": 4, "policy": pid}
     # A gesture runs no policy, a missing one is never sent, and an id is a uuid.
     assert client.post(move, json={"move": "bow", "policy": pid}).status_code == 422
     missing = str(uuid.uuid4())

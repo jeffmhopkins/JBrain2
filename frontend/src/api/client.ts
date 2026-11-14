@@ -3941,6 +3941,7 @@ export type GrowbotMove =
   | "bow"
   | "sway"
   | "gesture"
+  | "look"
   | "stop";
 
 /** A walk trained by a Jobs GrowBot job, kept in the box's policy library. `contract` is what
@@ -3953,6 +3954,23 @@ export interface GrowbotPolicy {
   bytes: number;
   created_at: string;
   contract: { facing: "nose" | "camera"; speed: boolean; pitch: boolean; control_hz: number };
+  /** Offered on the pad; off keeps it in the library, unused (absent: an older box, on). */
+  enabled?: boolean;
+  /** What the pad does with it: walk drives its four keys, turn its left and right keys,
+   *  trick is a button that holds it facing ahead (absent: an older box, walk). */
+  motion?: GrowbotMotion;
+  /** The one of its family (source_spec) the pad offers; with none, the newest enabled. */
+  active?: boolean;
+}
+
+export type GrowbotMotion = "walk" | "turn" | "trick";
+
+/** The owner's switches for one library policy. */
+export interface GrowbotPolicyPatch {
+  name?: string;
+  enabled?: boolean;
+  motion?: GrowbotMotion;
+  active?: true;
 }
 
 /** A finished GrowBot training job whose policy can be added to the library. */
@@ -8393,6 +8411,14 @@ export const api = {
     const response = await request(
       `/api/growbot/policies/${encodeURIComponent(id)}`,
       jsonInit("PATCH", { name }),
+    );
+    return (await response.json()) as GrowbotPolicy;
+  },
+
+  async updateGrowbotPolicy(id: string, patch: GrowbotPolicyPatch): Promise<GrowbotPolicy> {
+    const response = await request(
+      `/api/growbot/policies/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", patch),
     );
     return (await response.json()) as GrowbotPolicy;
   },

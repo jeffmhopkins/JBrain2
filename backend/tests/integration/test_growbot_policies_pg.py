@@ -64,6 +64,35 @@ async def test_the_library_round_trips(maker: async_sessionmaker) -> None:
     assert not await repo.exists(OWNER, row.id)
 
 
+async def test_the_switches_keep_one_active_per_family(maker: async_sessionmaker) -> None:
+    repo = SqlPolicyRepo(maker)
+    a = await repo.add(OWNER, "A", POLICY, 10, "job1", "growbot_camera_walk")
+    b = await repo.add(OWNER, "B", POLICY, 10, "job2", "growbot_camera_walk")
+    c = await repo.add(OWNER, "C", POLICY, 10, "job3", "growbot_look")
+    assert (a.enabled, a.motion, a.active) == (True, "walk", False)
+    await repo.update(OWNER, a.id, active=True)
+    await repo.update(OWNER, c.id, active=True)
+    got = await repo.update(OWNER, b.id, active=True, motion="trick", enabled=False)
+    assert got is not None and (got.active, got.motion, got.enabled) == (True, "trick", False)
+    rows = {r.name: r.active for r in await repo.list(OWNER)}
+    # Picking B unpicked A, its own family's; C's family keeps its pick.
+    assert rows == {"A": False, "B": True, "C": True}
+    # Nothing given changes nothing.
+    same = await repo.update(OWNER, c.id)
+    assert same is not None and (same.active, same.motion, same.enabled) == (True, "walk", True)
+    assert await repo.update(OWNER, "00000000-0000-0000-0000-000000000000", enabled=False) is None
+    with pytest.raises(ValueError, match="motion"):
+        await repo.update(OWNER, a.id, motion="dance")
+    async with scoped_session(maker, OWNER) as session:
+        with pytest.raises(DBAPIError):
+            await session.execute(
+                text(
+                    "UPDATE app.growbot_policies SET active = true"
+                    " WHERE source_spec = 'growbot_camera_walk'"
+                )
+            )
+
+
 async def test_a_listing_reads_the_weights_only_as_present(maker: async_sessionmaker) -> None:
     """list() summarises a stand-in for the weights, which must still tell a row with empty
     ones apart: that row is left out, as summary() refuses it."""

@@ -1,9 +1,18 @@
 // The Body tab's trained walks (owner, 2026-11-14: "load these policies ... pull it directly
 // from the tasks that train them"). One sheet off the Move pane's "Walk with" row: the box's
-// policy library (rename, delete), then the finished Jobs training runs it can add from.
+// policy library, then the finished Jobs training runs it can add from. Each policy can be
+// renamed, deleted, switched off, given a motion, and picked as its family's one (owner,
+// 2026-11-14: "in manage we should be able to change policy availability ... or set motion
+// types ... for each one in a family"); `offered` is what the pad then shows.
 
 import { useEffect, useState } from "react";
-import { type GrowbotPolicy, type GrowbotPolicySource, api } from "../api/client";
+import {
+  type GrowbotMotion,
+  type GrowbotPolicy,
+  type GrowbotPolicyPatch,
+  type GrowbotPolicySource,
+  api,
+} from "../api/client";
 import { Sheet } from "./Sheet";
 import { useArm } from "./growbotArm";
 
@@ -26,6 +35,34 @@ function when(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? "" : DAY.format(d);
 }
 
+const MOTIONS: { id: GrowbotMotion; label: string }[] = [
+  { id: "walk", label: "Walk" },
+  { id: "turn", label: "Turn" },
+  { id: "trick", label: "Trick" },
+];
+
+export const motionOf = (p: GrowbotPolicy): GrowbotMotion => p.motion ?? "walk";
+const enabledOf = (p: GrowbotPolicy): boolean => p.enabled !== false;
+
+/** The policies the pad offers for `motion`: the enabled ones, one per family (source_spec),
+ *  the family's picked one, else its newest. In the library's order. */
+export function offered(all: GrowbotPolicy[], motion: GrowbotMotion): GrowbotPolicy[] {
+  const pick = new Map<string, GrowbotPolicy>();
+  for (const p of all) {
+    if (!enabledOf(p) || motionOf(p) !== motion) continue;
+    const had = pick.get(p.source_spec);
+    if (
+      !had ||
+      (p.active && !had.active) ||
+      (!!p.active === !!had.active && p.created_at > had.created_at)
+    ) {
+      pick.set(p.source_spec, p);
+    }
+  }
+  const chosen = new Set(pick.values());
+  return all.filter((p) => chosen.has(p));
+}
+
 /** What kind of walk the pad drives, in words: which end leads and what it takes. */
 export function walkKind(p: GrowbotPolicy): string {
   const lead = p.contract.facing === "camera" ? "camera end first" : "nose first";
@@ -42,12 +79,20 @@ function startName(s: GrowbotPolicySource): string {
 
 function Row({
   p,
+  inUse,
+  siblings,
   onRenamed,
+  onPicked,
   onDeleted,
   say,
 }: {
   p: GrowbotPolicy;
+  // The pad offers this one now.
+  inUse: boolean;
+  // Others of its family with the same motion, enabled: only then is there a pick to make.
+  siblings: number;
   onRenamed: (p: GrowbotPolicy) => void;
+  onPicked: (p: GrowbotPolicy) => void;
   onDeleted: () => void;
   say: (text: string, bad?: boolean) => void;
 }) {
@@ -61,6 +106,16 @@ function Row({
     if (!next || next === p.name) return;
     try {
       onRenamed(await api.renameGrowbotPolicy(p.id, next));
+    } catch (e) {
+      say(message(e), true);
+    }
+  }
+
+  async function patch(change: GrowbotPolicyPatch) {
+    try {
+      const got = await api.updateGrowbotPolicy(p.id, change);
+      if (change.active) onPicked(got);
+      else onRenamed(got);
     } catch (e) {
       say(message(e), true);
     }
@@ -85,6 +140,40 @@ function Row({
           <span className="gb-t2">
             {walkKind(p)} · {Math.max(1, Math.round(p.bytes / 1024))} KB · added{" "}
             {when(p.created_at)}
+            {!enabledOf(p) ? " · off" : inUse ? " · on the pad" : ""}
+          </span>
+          <span className="gb-chips gb-pol-switches">
+            <button
+              type="button"
+              className={`gb-chip${enabledOf(p) ? " on" : ""}`}
+              aria-pressed={enabledOf(p)}
+              aria-label={`Offer ${p.name} on the pad`}
+              onClick={() => void patch({ enabled: !enabledOf(p) })}
+            >
+              {enabledOf(p) ? "On" : "Off"}
+            </button>
+            {MOTIONS.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={`gb-chip${motionOf(p) === m.id ? " on" : ""}`}
+                aria-pressed={motionOf(p) === m.id}
+                aria-label={`${p.name} is a ${m.label.toLowerCase()}`}
+                onClick={() => motionOf(p) !== m.id && void patch({ motion: m.id })}
+              >
+                {m.label}
+              </button>
+            ))}
+            {enabledOf(p) && siblings > 0 && !inUse && (
+              <button
+                type="button"
+                className="gb-chip add"
+                aria-label={`Use ${p.name} for its family`}
+                onClick={() => void patch({ active: true })}
+              >
+                Use this one
+              </button>
+            )}
           </span>
         </span>
       ) : (
@@ -175,8 +264,29 @@ export function GrowbotPoliciesSheet({ policies, onChange, onClose }: Props) {
             <Row
               key={p.id}
               p={p}
+              inUse={offered(policies, motionOf(p)).includes(p)}
+              siblings={
+                policies.filter(
+                  (x) =>
+                    x.id !== p.id &&
+                    enabledOf(x) &&
+                    x.source_spec === p.source_spec &&
+                    motionOf(x) === motionOf(p),
+                ).length
+              }
               say={say}
               onRenamed={(n) => onChange((all) => all.map((x) => (x.id === n.id ? n : x)))}
+              onPicked={(n) =>
+                onChange((all) =>
+                  all.map((x) =>
+                    x.id === n.id
+                      ? n
+                      : x.source_spec === n.source_spec
+                        ? { ...x, active: false }
+                        : x,
+                  ),
+                )
+              }
               onDeleted={() => {
                 onChange((all) => all.filter((x) => x.id !== p.id));
                 // Its job can be added again, unless another copy from it is still on the box.

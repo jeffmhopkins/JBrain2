@@ -2631,6 +2631,17 @@ def test_a_walk_can_name_a_library_policy_for_the_creature(run: _Running) -> Non
     page.shut()
 
 
+def test_a_trick_names_a_library_policy_for_the_creature(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    t = _answering(page, {"ok": True, "state": "accepted"})
+    got = _move(run, {"code": "gb-abc123", "move": "look", "secs": 4, "policy": _PID})
+    t.join(5)
+    assert got[0] == 200
+    page.shut()
+
+
 def test_a_move_without_a_policy_sends_none(run: _Running) -> None:
     page = _phone(run, "/d/gb-abc123-agent")
     page.text({"t": "hello"})

@@ -135,7 +135,8 @@ MAX_PEERS_PER_CHANNEL = 8
 # What the PWA's Body tab may ask the creature on the robot to do, and for how long a walk or
 # spin runs. The creature runs its own policies with its phone's IMU (growbot-box.js).
 # The escape spins and the tall stand are the live app's tricks the creature already runs for its
-# brain; `gesture` plays one of its body's named gestures (a soul's own saved ones too) by `name`.
+# brain; `gesture` plays one of its body's named gestures (a soul's own saved ones too) by `name`;
+# `look` runs a library policy (the Body tab's trick ones) facing ahead where it stands.
 MOVES = frozenset(
     {
         "forward",
@@ -149,11 +150,12 @@ MOVES = frozenset(
         "bow",
         "sway",
         "gesture",
+        "look",
         "stop",
     }
 )
 MOVE_SECS = (1.0, 15.0)
-WALKS = frozenset({"forward", "back", "spin_left", "spin_right"})
+WALKS = frozenset({"forward", "back", "spin_left", "spin_right", "look"})
 # A gesture name upstream's creature can play (next.html _gestName): anything else it never can.
 GESTURE_RE = re.compile(r"[a-z0-9_-]+(?: [a-z0-9_-]+)*")
 GESTURE_MAX = 16
