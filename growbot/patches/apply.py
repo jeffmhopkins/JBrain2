@@ -1310,7 +1310,8 @@ function gbToolFollow(tag,found,ev,hold){
   /* Appended, never overwritten: a note that did not save, or another find, may be waiting. */
   function carry(why){
     /* A timer told early that cannot be thought about now is handed back, not said 12 s early. */
-    if(f.hold&&Date.now()<f.hold&&f.tags.every(function(k){ return k==="timer"; })){ _gbRecallCarry=_gbRecallCarry.split("\n"+f.found).join("").split(f.found).join(""); gbTimerUntell(f.hold); logEv("timer_carry",{why:why}); return done(); }
+    if(f.hold&&Date.now()>=f.hold) gbTimerDone(f.hold);
+    else if(f.hold&&f.tags.every(function(k){ return k==="timer"; })){ _gbRecallCarry=_gbRecallCarry.split("\n"+f.found).join("").split(f.found).join(""); gbTimerUntell(f.hold); logEv("timer_carry",{why:why}); return done(); }
     if(_gbRecallCarry.indexOf(f.found)<0) _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found; if(f.tags.indexOf("brain")>=0) _gbBrainCarried=true; logEv(f.tags[0]+"_carry",{why:why}); done(); }
   function go(){
     if(pendingUser) return carry("person");
@@ -1531,6 +1532,8 @@ function gbTimerTick(){ try{
   /* Only the tab that holds the creature, and only when it can speak: a stale tab or a locked
      phone leaves the timer pending, so it is told (late, saying so) once it can be. */
   if((typeof soulOwned==="function"&&!soulOwned())||paused||document.hidden||energyState==="asleep") return;
+  /* A turn under way (a person's) goes first; the timer is started after it, not handed back each second. */
+  if(pendingUser||inFlight) return;
   /* Owner, 2026-11-13: the thought that tells a timer takes seconds, so it starts GB_TIMER_LEAD_MS
      early and its voice is held for the timer's own second (gbHoldSay). The timer stays listed,
      marked told in this tab only, so a reload in that window tells it again rather than never. */
@@ -1547,6 +1550,13 @@ function gbTimerTick(){ try{
 }catch(e){} }
 if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
 function gbTimerUntell(at){ _gbTimerTold=_gbTimerTold.filter(function(x){ return x.at>at; }); }
+/* Told timers due by `at` leave the list for good: their line is said, or carried into a turn. */
+function gbTimerDone(at){
+  var list=gbTimers(), xs=_gbTimerTold.filter(function(x){ return x.at<=at&&list.indexOf(x)>=0; });
+  xs.forEach(function(x){ list.splice(list.indexOf(x),1); });
+  gbTimerUntell(at); if(xs.length&&typeof saveSoul==="function") saveSoul(_live);
+  return xs;
+}
 /* The voice of a reply started early for a timer waits for the timer's second. Then: a timer
    cancelled or moved meanwhile is not said; a creature that cannot speak now (paused, hidden,
    asleep, another tab) hands it back to be told late; and it never talks over a line under way
@@ -1560,8 +1570,7 @@ function gbHoldSay(said,emo,lang,at){
     if((typeof soulOwned==="function"&&!soulOwned())||paused||document.hidden||energyState==="asleep"){ gbTimerUntell(at); logEv("timer_said",{handed:1}); return; }
     if(((typeof speakingUntil==="number"&&now<speakingUntil)||inFlight||(typeof vadOn!=="undefined"&&vadOn))&&said&&waited<GB_TIMER_WAIT_MS){ waited+=250; setTimeout(go,250); return; }
     if(said){ $("say").textContent=said; speak(said,emo,lang); lastSpokeT=now; }
-    var list=gbTimers(); xs.forEach(function(x){ list.splice(list.indexOf(x),1); });
-    gbTimerUntell(at); if(typeof saveSoul==="function") saveSoul(_live);
+    gbTimerDone(at);
     logEv("timer_said",{late:now-at});
   }catch(e){} }
   setTimeout(go,Math.max(0,at-Date.now()));

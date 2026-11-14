@@ -3408,3 +3408,16 @@ def test_each_pending_timer_is_a_pill_top_right_until_it_goes() -> None:
     assert 'if (typeof window.gbTimers === "function") list = window.gbTimers().slice();' in strip
     assert 'x.at > t ? countdown(x.at - t) : "due"' in strip
     assert strip.index("renderTimers();\n    schedule();") > strip.index("function render()")
+
+
+def test_a_timer_follow_up_that_waits_past_its_second_tells_it_once() -> None:
+    """Review, 2026-11-14: a follow-up that gave up after the timer's second carried it into the
+    next turn but left it listed, so a minute later it was told again."""
+    got = _recall_page(
+        _HOLD_SETUP + "T=due-11000;gbTimerTick();inFlight=true;var go=timers.shift();go();"
+        "T=due+30000;while(timers.length){ timers.shift()(); }"
+        "inFlight=false;T=due+90000;gbTimerTick();"
+        "console.log(JSON.stringify({carry:_gbRecallCarry,left:_live.scratch.timers.length,"
+        "thinks:thinks.length}));"
+    )
+    assert got == {"carry": "your timer went off: oven", "left": 0, "thinks": 0}
