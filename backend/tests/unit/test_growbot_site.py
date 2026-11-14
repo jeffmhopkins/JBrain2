@@ -2937,8 +2937,8 @@ def _history_in_node(body: str) -> dict:
 def test_the_history_reads_the_same_from_turn_to_turn() -> None:
     """Field, 2026-11-13: only the system text was ever reused, because the window dropped an
     exchange and every "[96s ago]" changed each turn, so each warm-up re-read the conversation.
-    Every exchange now carries the clock time it happened, and kid talk's window holds still
-    until it is twice its size, so turn N+1's history starts with all of turn N's."""
+    Every exchange now carries the day and part of the day it happened, and kid talk's window
+    holds still until it is twice its size, so turn N+1's history starts with all of turn N's."""
     got = _history_in_node(
         "for(var i=0;i<14;i++) say(i);"
         "var r={kept:kept(),last:turns[turns.length-1],lens:lens(),first:turns[0][0]};"
@@ -2949,9 +2949,9 @@ def test_the_history_reads_the_same_from_turn_to_turn() -> None:
         if got["lens"][n] > got["lens"][n - 1]:
             assert k == 2 * got["lens"][n - 1], (n, k)
     last = got["last"]
-    assert last[0] == "[friday evening] q10" and last[1] == '{"say":"a10"}'
-    assert last[6] == "[friday evening] q13"
-    assert got["first"] == "[friday afternoon] q0"
+    assert last[0] == "[friday evening, nov 13] q10" and last[1] == '{"say":"a10"}'
+    assert last[6] == "[friday evening, nov 13] q13"
+    assert got["first"] == "[friday afternoon, nov 13] q0"
     # A switch to grown-up talk gets everything since the last dream (here: never), at once.
     assert got["grown"] == 14
 
@@ -2985,6 +2985,26 @@ def test_grown_up_talk_keeps_everything_since_it_last_slept() -> None:
         if cap[n] > cap[n - 1]:
             assert k == 2 * cap[n - 1], (n, k)
     assert 0 < got["end"] <= got["tok"]
+
+
+def test_a_full_store_jumps_rather_than_slides() -> None:
+    """Review: with no dream in a full 120-trace store, each shift dropped the start, and the
+    window slid one exchange a turn, breaking the cache every turn. It now jumps by half, and a
+    dream stamped in the future (a clock set back) never empties the window."""
+    got = _history_in_node(
+        "GROWN=true;for(var i=0;i<160;i++) say(i);"
+        "var r={lens:lens(),kept:kept()};"
+        "_live.scratch.lastDream={t:Date.now()+86400000};turns=[];"
+        "for(i=160;i<164;i++) say(i);r.future=lens();"
+        "console.log(JSON.stringify(r));"
+    )
+    lens, kept = got["lens"], got["kept"]
+    slides = [n for n in range(1, len(lens)) if lens[n] <= lens[n - 1] and kept[n - 1] == 0]
+    assert len(slides) <= 2, slides
+    for n, k in enumerate(kept, start=1):
+        if lens[n] > lens[n - 1]:
+            assert k == 2 * lens[n - 1], (n, k)
+    assert min(got["future"]) > 3
 
 
 def test_a_reply_seals_the_history_it_grew() -> None:
