@@ -48,13 +48,17 @@ import type {
   JcodeShareToken,
   NewSessionInput,
 } from "../jcode/types";
+import { jlaunchLiveUrl } from "../jlaunch/live";
 import type {
   JlaunchJob,
+  JlaunchLiveFile,
+  JlaunchProgress,
   JlaunchShare,
   JlaunchShareToken,
   JlaunchSpec,
   PublicJlaunchRun,
 } from "../jlaunch/types";
+
 import type { PanelReport } from "../panelStatus";
 import { publicOrigin } from "../publicOrigin";
 import type { SdrBands, SpectrumRange } from "../sdrBands";
@@ -7305,6 +7309,16 @@ export const api = {
   /** The live (non-revoked) share links for a job (owner only) — metadata only. */
   async jlaunchListShares(id: string): Promise<JlaunchShare[]> {
     return (await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}/shares`)).json();
+  },
+
+  /** The files in a job's live folder (owner only). 404 (ApiError) when the job keeps none. */
+  async jlaunchLiveFiles(id: string): Promise<JlaunchLiveFile[]> {
+    return (await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}/live`)).json();
+  },
+
+  /** A live folder's progress.json. */
+  async jlaunchProgress(id: string): Promise<JlaunchProgress> {
+    return (await request(jlaunchLiveUrl(id, "progress.json"))).json();
   },
 
   /** Revoke a results-share link (owner only). */

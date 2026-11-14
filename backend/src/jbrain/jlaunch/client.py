@@ -47,6 +47,10 @@ class JlaunchApi(Protocol):
 
     def stream_artifact(self, jid: str) -> Any: ...
 
+    async def list_live(self, jid: str) -> list[dict[str, Any]]: ...
+
+    async def get_live(self, jid: str, name: str) -> tuple[bytes, str]: ...
+
 
 class JlaunchClient:
     def __init__(
@@ -127,6 +131,24 @@ class JlaunchClient:
         except httpx.HTTPError as exc:
             raise JlaunchError(f"jlaunch control server error: {exc}") from exc
 
+    async def list_live(self, jid: str) -> list[dict[str, Any]]:
+        return await self._json("GET", f"/jobs/{jid}/live")
+
+    async def get_live(self, jid: str, name: str) -> tuple[bytes, str]:
+        """One file from a job's live folder and its media type. The control server caps
+        these (32 MB) and allowlists the names, so a whole read is fine."""
+        try:
+            async with self._client() as client:
+                resp = await client.get(f"/jobs/{jid}/live/{name}")
+                resp.raise_for_status()
+                return resp.content, resp.headers.get("content-type", "")
+        except httpx.HTTPStatusError as exc:
+            raise JlaunchError(
+                f"jlaunch control server error: {exc}", status=exc.response.status_code
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise JlaunchError(f"jlaunch control server error: {exc}") from exc
+
 
 class FakeJlaunchClient:
     """In-memory control server for tests: no httpx, no network."""
@@ -137,6 +159,8 @@ class FakeJlaunchClient:
         self._artifact = artifact
         # Specs the fake advertises; tests assert the api forwards the selection.
         self.started_specs: list[str] = []
+        # jid -> {name: (bytes, media type)}: what each job's live folder holds.
+        self.live: dict[str, dict[str, tuple[bytes, str]]] = {}
 
     def _make(self, jid: str, spec: str) -> dict[str, Any]:
         return {
@@ -179,7 +203,7 @@ class FakeJlaunchClient:
 
     async def get_job(self, jid: str) -> dict[str, Any]:
         if jid not in self._jobs:
-            raise JlaunchError(f"unknown job: {jid}")
+            raise JlaunchError(f"unknown job: {jid}", status=404)
         return self._jobs[jid]
 
     async def start_job(self, spec: str) -> dict[str, Any]:
@@ -206,6 +230,22 @@ class FakeJlaunchClient:
     async def stream_artifact(self, jid: str):
         await self.get_job(jid)
         yield self._artifact
+
+    async def list_live(self, jid: str) -> list[dict[str, Any]]:
+        await self.get_job(jid)
+        if jid not in self.live:
+            raise JlaunchError("this job has no live folder", status=404)
+        return [
+            {"name": n, "bytes": len(b), "modified_at": "2026-08-03T01:00:00+00:00"}
+            for n, (b, _t) in self.live[jid].items()
+        ]
+
+    async def get_live(self, jid: str, name: str) -> tuple[bytes, str]:
+        await self.get_job(jid)
+        found = self.live.get(jid, {}).get(name)
+        if found is None:
+            raise JlaunchError("no such live file", status=404)
+        return found
 
     # -- test helpers ------------------------------------------------------------
 

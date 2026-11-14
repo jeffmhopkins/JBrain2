@@ -56,6 +56,10 @@ class JobSpec:
     disk_gb: int
     all_cores: bool
     notes: str
+    # A folder (relative to the checkout root) the job keeps current while it runs, for
+    # watching from the phone: progress, a fresh replay, the latest weights. Only plain
+    # files in it are served, through an allowlist of names and types. Empty = none.
+    live_dir: str = ""
 
     def public(self) -> dict[str, object]:
         return {
@@ -68,6 +72,7 @@ class JobSpec:
             "disk_gb": self.disk_gb,
             "all_cores": self.all_cores,
             "notes": self.notes,
+            "live": bool(self.live_dir),
         }
 
 
@@ -82,6 +87,10 @@ def _validate(spec: JobSpec) -> JobSpec:
             raise SpecError(f"{spec.name}: invalid branch")
     if not spec.phases:
         raise SpecError(f"{spec.name}: empty phases")
+    if spec.live_dir and (
+        spec.live_dir.startswith("/") or ".." in spec.live_dir.split("/")
+    ):
+        raise SpecError(f"{spec.name}: live_dir must stay inside the checkout")
     return spec
 
 
@@ -232,8 +241,10 @@ GROWBOT_HEADING_WALK = _validate(
             "(configs/heading_walk.toml) on every core. The download is the run "
             "folder: the policy JSON the app loads, replay.html (open it in a browser "
             "to watch the walks in 3D), the evaluation, checkpoints and TensorBoard "
-            "logs."
+            "logs. While it trains, the Live card shows progress and a 3D replay "
+            "of the latest checkpoint."
         ),
+        live_dir="runs/jlaunch/live",
     )
 )
 

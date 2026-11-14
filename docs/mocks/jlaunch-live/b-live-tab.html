@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · Math launcher live view — B: its own Live tab (mock)</title>
+<style>
+  :root{--bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;--text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--steel-tint:rgba(127,167,201,.14);--amber-tint:rgba(201,163,106,.14);
+    --rose-tint:rgba(207,138,143,.14);--green-tint:rgba(143,188,154,.14);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;--mono:ui-monospace,Menlo,Consolas,monospace}
+  @media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#F6F6F4;--surface:#fff;--surface-2:#F0F0EE;--border:#E2E2DF;--text:#1B1C1E;--text-2:#5E6168;--text-3:#9A9DA3}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4}
+  .wrap{max-width:520px;margin:0 auto;padding:0 14px 40px}
+  .topbar{display:flex;align-items:center;gap:10px;height:56px;position:sticky;top:0;background:var(--bg);z-index:5}
+  .tt{font-size:15px;font-weight:600;font-family:var(--mono)}
+  .pill{margin-left:auto;font-size:10.5px;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid var(--border)}
+  .pill.run{color:var(--amber);background:var(--amber-tint)}.pill.ok{color:var(--green);background:var(--green-tint)}
+  p.intro{color:var(--text-2);font-size:13px;margin:2px 0 12px;line-height:1.5}p.intro b{color:var(--text)}
+  .tabs{display:flex;border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:12px}
+  .tab{flex:1;padding:.7em 0;font-size:13px;color:var(--text-2);background:transparent;border:0;cursor:pointer;font:inherit;font-size:13px}
+  .tab+.tab{border-left:1px solid var(--border)}.tab.on{color:var(--text);background:var(--amber-tint)}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:999px;background:var(--amber);margin-left:6px;animation:b 1.2s infinite}
+  @keyframes b{50%{opacity:.3}}
+  .pane{display:none}.pane.on{display:block}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:15px;margin-bottom:12px}
+  h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);font-weight:600}
+  .bar{height:8px;border-radius:999px;background:var(--surface-2);overflow:hidden}.fill{height:100%;background:var(--amber);border-radius:999px;transition:width .6s}
+  .meta{display:flex;justify-content:space-between;margin-top:6px;font-family:var(--mono);font-size:11.5px;color:var(--text-2)}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--border);font-family:var(--mono);font-size:12px;color:var(--text-2)}
+  .row span:last-child{color:var(--text);text-align:right}
+  .btn{display:block;width:100%;text-align:center;padding:12px;border-radius:12px;margin-top:11px;font:inherit;font-weight:600;font-size:14px;cursor:pointer;text-decoration:none;
+    color:var(--steel);border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));background:var(--steel-tint)}
+  .file{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--border);font-size:12px;color:var(--text-2);font-family:var(--mono)}
+  .dl{border:1px solid color-mix(in srgb,var(--steel) 40%,var(--border));color:var(--steel);border-radius:8px;padding:3px 9px;font-size:11.5px;background:none;cursor:pointer}
+  .ctl{display:flex;gap:8px;margin-bottom:12px}.ctl button{flex:1;padding:12px;border-radius:12px;font:inherit;font-weight:600;font-size:13px;border:1px solid var(--border);cursor:pointer}
+  .stop{color:var(--amber);background:var(--amber-tint)}.kill{color:var(--rose);background:var(--rose-tint)}
+  .phase{display:flex;justify-content:space-between;padding:9px 0;border-top:1px solid var(--border);font-family:var(--mono);font-size:13px;color:var(--text-3)}
+  .phase:first-of-type{border-top:0}.phase.done{color:var(--green)}.phase.now{color:var(--amber)}
+  .stage{height:220px;border-radius:12px;background:linear-gradient(#20242a,#121417);position:relative;overflow:hidden;border:1px solid var(--border)}
+  .grid{position:absolute;inset:40% -40% -40%;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:28px 28px;transform:perspective(300px) rotateX(60deg)}
+  .robot{position:absolute;left:50%;top:52%;width:34px;height:22px;background:#d9a441;border-radius:4px;transform:translate(-50%,-50%) rotate(var(--r,0deg))}
+  .arrow{position:absolute;left:50%;top:52%;width:70px;height:3px;background:var(--rose);transform-origin:0 50%;transform:rotate(var(--t,-90deg))}
+  .hud{position:absolute;left:10px;top:8px;font-family:var(--mono);font-size:11px;color:#c6c8cb}
+  .demo{display:flex;gap:6px;margin:0 0 12px}.demo button{flex:1;font:inherit;font-size:12px;padding:7px;border-radius:9px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer}
+  .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--border);padding:8px 14px;border-radius:10px;font-size:12.5px;display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="topbar"><span style="color:var(--text-2)">‹</span><span class="tt">growbot_heading_walk</span><span class="pill run" id="pill">running</span></header>
+  <p class="intro"><b>B — a fourth tab, Live, opened first while the run trains.</b> Same contents as A but with room to grow (charts later); Overview keeps the job details and phases. Costs a fourth tab on a narrow phone.</p>
+  <div class="demo"><button onclick="sim.speed()">Fast-forward training</button><button onclick="sim.finish()">Finish the run</button></div>
+  <div class="tabs"><button class="tab on" data-p="lv" onclick="tabs(this)">Live<span class="dot livedot"></span></button><button class="tab" data-p="ov" onclick="tabs(this)">Overview</button><button class="tab" data-p="te" onclick="tabs(this)">Terminal</button><button class="tab" data-p="re" onclick="tabs(this)">Result</button></div><div class="pane on" id="lv"><div class="ctl runonly"><button class="stop">Stop</button><button class="kill">Kill</button></div><div class="card"><h3>Live · Training heading_walk<span class="dot livedot"></span></h3>
+  <div class="bar"><div class="fill"></div></div><div class="meta"><span class="pct"></span><span class="eta"></span></div>
+  <div class="rows" style="margin-top:11px"></div>
+  <button class="btn watch" onclick="toast('Opens the 3D replay in a new tab')"></button>
+  <div class="file" style="margin-top:10px"><span class="pol"></span><button class="dl" onclick="toast('Downloads the policy JSON')">Download</button></div>
+</div></div><div class="pane" id="ov"><div class="card"><h3>Phases</h3><div class="phase done"><span>install</span><span>2m 10s</span></div><div class="phase done"><span>smoke</span><span>41s</span></div><div class="phase now"><span>train</span><span>…</span></div><div class="phase"><span>package</span><span>—</span></div></div></div><div class="pane" id="te"><div class="card" style="font-family:var(--mono);font-size:11.5px;color:#c6c8cb;background:#0b0c0e">| v_along | 0.0182 |<br>| abs_err_deg | 61 |<br>== checkpoint 900000 ==<br>live: replay written</div></div><div class="pane" id="re"><div class="card resultonly"><h3>Download</h3><button class="btn" onclick="toast('Downloads the whole run, 41 MB')">Download growbot_heading_walk_artifacts.tar.gz · 41 MB</button></div>
+<div class="card runonly" style="display:block"><p style="color:var(--text-2);font-size:13px;margin:0">The headline, download and sharelink appear here once the run finishes and passes verification.</p></div></div>
+<div class="toast" id="toast"></div>
+<script>
+const $=(s)=>document.querySelectorAll(s);
+const sim={pct:23,done:false,fast:false,
+  speed(){this.fast=!this.fast},
+  finish(){this.pct=100;this.done=true;render()}};
+function toast(t){const e=document.getElementById('toast');e.textContent=t;e.style.display='block';clearTimeout(e._t);e._t=setTimeout(()=>e.style.display='none',1800)}
+function eta(){const m=Math.round((100-sim.pct)*1.6);return m<60?`about ${m} min left`:`about ${Math.floor(m/60)} h ${m%60} min left`}
+function rows(){const p=sim.pct;return [["Steps",`${Math.round(p*30000).toLocaleString()} of 3,000,000`],["Speed","412 steps/s"],
+  ["Toward target",`${(0.4+p*0.02).toFixed(1)} cm/s (cap 3.0)`],["Heading error",`${Math.round(90-p*0.6)}°`],["Falls",`${(2.4-p*0.022).toFixed(1)} per 1,000 steps`],
+  sim.done?["Final evaluation","toward 2.3 cm/s, error 31°, 0 falls"]:["Latest replay",`at ${(Math.floor(p/10)*300000).toLocaleString()} steps`]]}
+function render(){
+  $('.fill').forEach(e=>e.style.width=sim.pct+'%');
+  $('.pct').forEach(e=>e.textContent=Math.floor(sim.pct)+'%');
+  $('.eta').forEach(e=>e.textContent=sim.done?'finished':eta());
+  $('.rows').forEach(e=>e.innerHTML=rows().map(([a,b])=>`<div class="row"><span>${a}</span><span>${b}</span></div>`).join(''));
+  $('.watch').forEach(e=>e.textContent=sim.done?'Watch the final policy walk in 3D ↗':'Watch the latest walk in 3D ↗');
+  $('.pol').forEach(e=>e.textContent=sim.done?'policy_final.json · 29 KB':'policy_latest.json · 29 KB');
+  $('.resultonly').forEach(e=>e.style.display=sim.done?'block':'none');
+  $('.runonly').forEach(e=>e.style.display=sim.done?'none':'flex');
+  $('.livedot').forEach(e=>e.style.display=sim.done?'none':'inline-block');
+  const pill=document.getElementById('pill');pill.textContent=sim.done?'succeeded':'running';pill.className='pill '+(sim.done?'ok':'run');
+}
+setInterval(()=>{if(sim.done)return;sim.pct=Math.min(99.9,sim.pct+(sim.fast?3:0.15));render()},1000);
+let ang=0;setInterval(()=>{ang+=sim.done?3:1.2;$('.robot').forEach(e=>e.style.setProperty('--r',(-90+Math.sin(ang/20)*20)+'deg'))},60);
+function tabs(btn){const g=btn.parentElement;g.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t===btn));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id===btn.dataset.p))}
+render();
+</script>
+</body></html>

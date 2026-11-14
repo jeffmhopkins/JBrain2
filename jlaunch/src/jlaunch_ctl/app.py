@@ -23,7 +23,7 @@ from fastapi import (
     HTTPException,
     WebSocket,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from jlaunch_ctl.jobs import BusyError, JobError, JobManager
@@ -134,6 +134,28 @@ def create_app(
         spec = SPECS.get(job.spec_name)
         media = spec.artifact_media_type if spec else "application/octet-stream"
         return FileResponse(path, media_type=media, filename=jobs.artifact_name(jid))
+
+    @authed.get("/jobs/{jid}/live")
+    def list_live(jid: str) -> list[dict[str, object]]:
+        _require(jobs, jid)
+        try:
+            return jobs.live_files(jid)
+        except JobError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @authed.get("/jobs/{jid}/live/{name}")
+    def get_live(jid: str, name: str) -> Response:
+        _require(jobs, jid)
+        try:
+            data, media = jobs.read_live(jid, name)
+        except JobError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        # The backend decides how this is shown; here it is only ever bytes + a type.
+        return Response(
+            data,
+            media_type=media,
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
 
     app.include_router(authed)
 

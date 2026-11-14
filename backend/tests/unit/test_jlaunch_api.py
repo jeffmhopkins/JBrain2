@@ -166,3 +166,107 @@ def test_mint_share_streams_and_returns_token(
     assert r.status_code == 201
     assert r.json()["token"] == "secret-token"
     assert captured["run_id"] == job["id"]
+
+
+# -- live folder + result download ----------------------------------------------------
+
+
+def _live_app(principal: PrincipalInfo = OWNER) -> tuple[TestClient, FakeJlaunchClient, str]:
+    import asyncio
+
+    fake = FakeJlaunchClient(artifact=b"RESULT")
+    jid = asyncio.run(fake.start_job("growbot_heading_walk"))["id"]
+    fake.live[jid] = {
+        "progress.json": (b'{"percent": 10}', "application/json"),
+        "replay.html": (b"<script>alert(1)</script>", "text/html; charset=utf-8"),
+    }
+    return TestClient(_app(principal, jlaunch_client=fake)), fake, jid
+
+
+def test_live_and_download_are_owner_only() -> None:
+    client, _, jid = _live_app(NON_OWNER)
+    assert client.get(f"/api/jlaunch/jobs/{jid}/live").status_code == 403
+    assert client.get(f"/api/jlaunch/jobs/{jid}/live/progress.json").status_code == 403
+    assert client.get(f"/api/jlaunch/jobs/{jid}/artifact").status_code == 403
+
+
+def test_live_page_is_sandboxed_and_never_cached() -> None:
+    from jbrain.api.jshare_public import SANDBOX
+
+    client, _, jid = _live_app()
+    listed = client.get(f"/api/jlaunch/jobs/{jid}/live").json()
+    assert {f["name"] for f in listed} == {"progress.json", "replay.html"}
+    page = client.get(f"/api/jlaunch/jobs/{jid}/live/replay.html")
+    assert page.status_code == 200
+    # Job-written script on the app's origin: the sandbox is what keeps it off the session.
+    assert page.headers["content-security-policy"] == SANDBOX
+    assert page.headers["x-content-type-options"] == "nosniff"
+    assert page.headers["cache-control"] == "no-store"
+    assert "content-disposition" not in page.headers
+    dl = client.get(f"/api/jlaunch/jobs/{jid}/live/progress.json?download=1")
+    assert dl.headers["content-disposition"] == 'attachment; filename="progress.json"'
+    assert dl.headers["content-security-policy"] == SANDBOX
+
+
+def test_live_bad_or_missing_names_are_404() -> None:
+    client, _, jid = _live_app()
+    for name in ("nope.json", ".hidden.json", "a%2Fb.json"):
+        assert client.get(f"/api/jlaunch/jobs/{jid}/live/{name}").status_code == 404, name
+    assert client.get("/api/jlaunch/jobs/zzz/live").status_code == 404
+    assert client.get("/api/jlaunch/jobs/bad$id/live").status_code == 404
+
+
+def test_job_without_live_folder_is_404() -> None:
+    import asyncio
+
+    fake = FakeJlaunchClient()
+    jid = asyncio.run(fake.start_job("erdos_straus_1e12"))["id"]
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    assert client.get(f"/api/jlaunch/jobs/{jid}/live").status_code == 404
+
+
+def test_live_upstream_failure_is_502() -> None:
+    class _Down(FakeJlaunchClient):
+        async def list_live(self, jid: str) -> list[dict[str, object]]:
+            raise JlaunchError("connection refused")
+
+    fake = _Down()
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    assert client.get("/api/jlaunch/jobs/j1/live").status_code == 502
+
+
+def test_result_downloads_only_once_succeeded() -> None:
+    client, fake, jid = _live_app()
+    assert client.get(f"/api/jlaunch/jobs/{jid}/artifact").status_code == 404
+    fake.mark_succeeded(jid)
+    got = client.get(f"/api/jlaunch/jobs/{jid}/artifact")
+    assert got.status_code == 200
+    assert got.content == b"RESULT"
+    assert got.headers["content-disposition"] == ('attachment; filename="es_1e12_artifacts.tar.gz"')
+    assert got.headers["content-length"] == str(len(b"RESULT"))
+    assert client.get("/api/jlaunch/jobs/zzz/artifact").status_code == 404
+
+
+async def test_real_client_live_calls_pass_the_upstream_status_through() -> None:
+    import httpx
+
+    from jbrain.jlaunch import JlaunchClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/jobs/j1/live":
+            return httpx.Response(200, json=[{"name": "progress.json"}])
+        if request.url.path == "/jobs/j1/live/progress.json":
+            return httpx.Response(200, content=b"{}", headers={"content-type": "application/json"})
+        if request.url.path == "/jobs/j1/live/down.json":
+            raise httpx.ConnectError("refused")
+        return httpx.Response(404, json={"detail": "no such live file"})
+
+    client = JlaunchClient("http://jl", "tok", transport=httpx.MockTransport(handler))
+    assert await client.list_live("j1") == [{"name": "progress.json"}]
+    assert await client.get_live("j1", "progress.json") == (b"{}", "application/json")
+    with pytest.raises(JlaunchError) as missing:
+        await client.get_live("j1", "nope.json")
+    assert missing.value.status == 404
+    with pytest.raises(JlaunchError) as down:
+        await client.get_live("j1", "down.json")
+    assert down.value.status is None

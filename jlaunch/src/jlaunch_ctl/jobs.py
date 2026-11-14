@@ -21,10 +21,12 @@ import contextlib
 import json
 import logging
 import os
+import re
 import secrets
 import shlex
 import shutil
 import signal
+import stat
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,6 +45,19 @@ _log = logging.getLogger("jlaunch_ctl.jobs")
 # The tail of the durable console log kept on the job record for a post-mortem view once
 # the terminal is gone (a reconnect after the job ends has no live PTY to attach to).
 _CONSOLE_TAIL_BYTES = 16 * 1024
+# What a live folder may serve. The job is untrusted code that can put anything in its
+# checkout, so a name must be plain (no paths, no dotfiles such as the trainer's
+# write-then-rename temporaries) and of a known type, and only regular files are read.
+_LIVE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+LIVE_TYPES = {
+    ".json": "application/json",
+    ".html": "text/html; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".png": "image/png",
+    ".gz": "application/gzip",
+}
+LIVE_MAX_BYTES = 32 * 1024 * 1024
 
 # States: queued (never used at max_concurrent_jobs=1 unless busy), cloning/running are
 # live; succeeded/failed/killed are terminal.
@@ -313,8 +328,78 @@ class JobManager:
         spec = get_spec(self.get(jid).spec_name)
         return Path(spec.artifact_path).name if spec else "artifact"
 
+    # -- live folder -------------------------------------------------------------
+
+    def _live_dir(self, jid: str) -> Path:
+        job = self.get(jid)
+        spec = get_spec(job.spec_name)
+        if spec is None or not spec.live_dir:
+            raise JobError("this job has no live folder")
+        workspace = Path(job.workspace).resolve()
+        folder = (workspace / spec.live_dir).resolve()
+        # The job could make the folder (or a parent) a symlink out of its checkout.
+        if not folder.is_relative_to(workspace):
+            raise JobError("live folder is outside the checkout")
+        return folder
+
+    def live_files(self, jid: str) -> list[dict[str, object]]:
+        """The servable files in a job's live folder, newest first. Empty until the job
+        has written any."""
+        folder = self._live_dir(jid)
+        files: list[dict[str, object]] = []
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            return files
+        for entry in entries:
+            if not _live_name_ok(entry.name):
+                continue
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            files.append(
+                {
+                    "name": entry.name,
+                    "bytes": st.st_size,
+                    "modified_at": datetime.fromtimestamp(st.st_mtime, UTC).isoformat(),
+                }
+            )
+        files.sort(key=lambda f: str(f["modified_at"]), reverse=True)
+        return files
+
+    def read_live(self, jid: str, name: str) -> tuple[bytes, str]:
+        """One live file's bytes and media type. Opened without following a symlink and
+        read whole, so what is checked is what is served."""
+        if not _live_name_ok(name):
+            raise JobError("no such live file")
+        folder = self._live_dir(jid)
+        try:
+            fd = os.open(folder / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except OSError as exc:
+            raise JobError("no such live file") from exc
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise JobError("no such live file")
+            if st.st_size > LIVE_MAX_BYTES:
+                raise JobError("live file is too large")
+            with os.fdopen(fd, "rb", closefd=False) as fh:
+                data = fh.read(LIVE_MAX_BYTES + 1)
+        finally:
+            os.close(fd)
+        if len(data) > LIVE_MAX_BYTES:
+            raise JobError("live file is too large")
+        return data, LIVE_TYPES[Path(name).suffix]
+
     def close_all(self) -> None:
         self._registry.close_all()
+
+
+def _live_name_ok(name: str) -> bool:
+    return bool(_LIVE_NAME_RE.match(name)) and Path(name).suffix in LIVE_TYPES
 
 
 def _read_json(path: Path) -> dict[str, object] | None:
