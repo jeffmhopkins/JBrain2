@@ -8,6 +8,7 @@ tests/integration/test_growbot_policies_pg.py); the job launcher is FakeJlaunchC
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from datetime import UTC, datetime
@@ -31,7 +32,7 @@ from jbrain.growbot.policies import (
     parse,
     summary,
 )
-from jbrain.jlaunch import FakeJlaunchClient
+from jbrain.jlaunch import FakeJlaunchClient, JlaunchError
 from jbrain.storage import FsInternalSecrets
 
 OWNER = PrincipalInfo(id="00000000-0000-0000-0000-000000000001", kind="owner", label="owner")
@@ -135,6 +136,21 @@ class FakePolicies:
         row = PolicyRow(**{**got[0].__dict__, **change})
         self.rows[pid] = (row, got[1])
         return row
+
+    async def replace_policy(
+        self,
+        ctx: SessionContext,
+        pid: str,
+        policy: dict[str, Any],
+        size: int,
+        source_job: str,
+    ) -> bool:
+        got = self.rows.get(pid)
+        if got is None:
+            return False
+        fields = {**got[0].__dict__, "bytes": size, "source_job": source_job}
+        self.rows[pid] = (PolicyRow(**{**fields, "contract": summary(policy)}), policy)
+        return True
 
     async def delete(self, ctx: SessionContext, pid: str) -> bool:
         return self.rows.pop(pid, None) is not None
@@ -402,3 +418,105 @@ async def test_a_walk_names_a_library_policy_for_the_creature(
     assert client.post(move, json={"move": "forward", "policy": missing}).status_code == 404
     assert client.post(move, json={"move": "forward", "policy": "../x"}).status_code == 422
     assert len(sent) == 1
+
+
+def _keep(jl: FakeJlaunchClient, slug: str, title: str, body: bytes, job: str) -> None:
+    blob = hashlib.sha1(b"blob %d\0" % len(body) + body, usedforsecurity=False).hexdigest()
+    jl.kept[slug] = ({"slug": slug, "title": title, "job": job, "blob": blob}, body)
+
+
+async def test_kept_policies_sync_from_the_training_repo(tmp_path: Path) -> None:
+    client, lib, jl, _ = _app(tmp_path)
+    # A walk added from a job stays whatever the repo says.
+    jid = await _finished(jl, "growbot_heading_walk", {"policy_final.json": FINAL})
+    from_job = client.post("/api/growbot/policies", json={"job_id": jid, "name": "Mine"}).json()
+    _keep(jl, "look-v1", "Look v1", FINAL, "growbot_look")
+    _keep(jl, "walk-v2", "Walk  v2", FINAL, "growbot_heading_walk")
+    got = client.post("/api/growbot/policies/refresh")
+    assert got.status_code == 200
+    assert got.json()["added"] == ["Look v1", "Walk v2"] and got.json()["skipped"] == []
+    rows = {r["name"]: r for r in client.get("/api/growbot/policies").json()}
+    assert rows["Look v1"]["source_spec"] == "growbot_look"
+    assert rows["Look v1"]["source_job"].startswith("repo:look-v1@")
+    look_id = rows["Look v1"]["id"]
+
+    # Nothing changed: nothing happens.
+    again = client.post("/api/growbot/policies/refresh").json()
+    assert (again["added"], again["updated"], again["removed"]) == ([], [], [])
+
+    # The owner renames it, then the repo changes its file: same row, new weights, name kept.
+    client.patch(f"/api/growbot/policies/{look_id}", json={"name": "Steady look"})
+    newer = json.dumps(policy(facing="camera")).encode()
+    _keep(jl, "look-v1", "Look v1", newer, "growbot_look")
+    del jl.kept["walk-v2"]
+    _keep(jl, "bad", "Broken", b"not json", "growbot_look")
+    _keep(jl, "math", "Math", FINAL, "erdos_straus_1e12")
+    changed = client.post("/api/growbot/policies/refresh").json()
+    assert changed["updated"] == ["Steady look"] and changed["removed"] == ["Walk v2"]
+    assert changed["added"] == [] and changed["skipped"][0].startswith("Broken: ")
+    row, body = lib.rows[look_id]
+    assert row.name == "Steady look" and row.contract.facing == "camera" and body["obs_spec"]
+    names = {r["name"] for r in client.get("/api/growbot/policies").json()}
+    assert names == {"Steady look", from_job["name"]}
+
+
+async def test_kept_policy_refresh_errors_and_debug_twin(tmp_path: Path) -> None:
+    client, lib, jl, _ = _app(tmp_path)
+    _keep(jl, "look-v1", "Look v1", FINAL, "growbot_look")
+    assert client.post("/api/debug/growbot/policies/refresh").json()["added"] == ["Look v1"]
+    jl.refresh_result = JlaunchError("policies/index.toml policy 1: slug must be", status=422)
+    bad = client.post("/api/growbot/policies/refresh")
+    assert bad.status_code == 422 and "slug must be" in bad.json()["detail"]
+    jl.refresh_result = {"commit": "b" * 40, "added": [], "removed": []}
+
+    async def down() -> dict[str, Any]:
+        raise JlaunchError("connect refused")
+
+    jl.list_kept_policies = down  # type: ignore[method-assign]
+    assert client.post("/api/growbot/policies/refresh").status_code == 502
+    assert [r.name for r, _p in lib.rows.values()] == ["Look v1"]
+
+
+async def test_kept_sync_heals_races_and_odd_listings(tmp_path: Path) -> None:
+    client, lib, jl, _ = _app(tmp_path)
+    _keep(jl, "look-v1", "Look v1", FINAL, "growbot_look")
+    client.post("/api/growbot/policies/refresh")
+    # A second process's sync added the same kept walk again: the extra row goes.
+    ((row, body),) = lib.rows.values()
+    await lib.add(lib.contexts[0], "Look v1", body, row.bytes, row.source_job, row.source_spec)
+    assert len(lib.rows) == 2
+    assert client.post("/api/growbot/policies/refresh").json()["removed"] == ["Look v1"]
+    assert list(lib.rows) == [row.id]
+
+    # The launcher re-read the repo between the list and the read: skipped, not mis-tagged.
+    entry, _body = jl.kept["look-v1"]
+    newer = json.dumps(policy(facing="camera")).encode()
+    jl.kept["look-v1"] = ({**entry, "blob": "f" * 40}, newer)
+    got = client.post("/api/growbot/policies/refresh").json()
+    assert got["updated"] == [] and "changed while being read" in got["skipped"][0]
+
+    # A row deleted mid-sync isn't reported as updated.
+    async def gone(*_a: Any, **_k: Any) -> bool:
+        return False
+
+    _keep(jl, "look-v1", "Look v1", newer, "growbot_look")
+    lib.replace_policy = gone  # type: ignore[method-assign]
+    assert client.post("/api/growbot/policies/refresh").json()["updated"] == []
+
+    # A listing entry that breaks the launcher's own rules is ignored, and so its row goes.
+    jl.kept = {
+        "Bad Slug": (
+            {"slug": "Bad Slug", "title": "x", "job": "growbot_look", "blob": "a" * 40},
+            FINAL,
+        )
+    }
+    assert client.post("/api/growbot/policies/refresh").json()["removed"] == ["Look v1"]
+    assert lib.rows == {}
+
+
+async def test_a_bad_index_on_the_launcher_is_a_422(tmp_path: Path) -> None:
+    client, lib, jl, _ = _app(tmp_path)
+    jl.kept_error = "policies/index.toml policy 1: policies/x/y.json isn't in the repo"
+    bad = client.post("/api/growbot/policies/refresh")
+    assert bad.status_code == 422 and "isn't in the repo" in bad.json()["detail"]
+    assert lib.rows == {}

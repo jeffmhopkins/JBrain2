@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 # Job ids are the manager's hex tokens; gate the shape so a malformed id can never be
 # interpolated anywhere downstream.
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 
 
 class StartJobRequest(BaseModel):
@@ -112,6 +113,31 @@ def create_app(
         if catalog is None:
             raise HTTPException(status_code=404, detail="no job catalog")
         return catalog.status()
+
+    @authed.get("/catalog/policies")
+    def kept_policies() -> dict[str, object]:
+        """The kept policies the training repo's policies/index.toml lists."""
+        if catalog is None:
+            raise HTTPException(status_code=404, detail="no job catalog")
+        return {
+            "commit": catalog.commit,
+            "policies": catalog.policies(),
+            "error": catalog.policy_error,
+        }
+
+    @authed.get("/catalog/policies/{slug}")
+    def kept_policy(slug: str) -> Response:
+        if catalog is None or not _SLUG_RE.fullmatch(slug):
+            raise HTTPException(status_code=404, detail="no such kept policy")
+        try:
+            data = catalog.policy_bytes(slug)
+        except CatalogError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(
+            data,
+            media_type="application/json",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
 
     @authed.post("/catalog/refresh")
     async def catalog_refresh() -> dict[str, object]:

@@ -147,6 +147,7 @@ async def test_the_library_is_owner_only(maker: async_sessionmaker) -> None:
         assert not await repo.exists(ctx, row.id), ctx
         assert await repo.rename(ctx, row.id, "x") is None, ctx
         assert not await repo.delete(ctx, row.id), ctx
+        assert not await repo.replace_policy(ctx, row.id, {"x": 1}, 1, "repo:x@y"), ctx
         with pytest.raises(DBAPIError):
             await repo.add(ctx, "b", POLICY, 1, "", "")
     assert [r.name for r in await repo.list(OWNER)] == ["a"]
@@ -166,3 +167,18 @@ async def test_the_table_refuses_a_bad_name_or_a_non_object(maker: async_session
                     " VALUES ('x', '[1]'::jsonb, 1)"
                 )
             )
+
+
+async def test_a_kept_policy_is_replaced_in_place(maker: async_sessionmaker) -> None:
+    repo = SqlPolicyRepo(maker)
+    row = await repo.add(OWNER, "Look v1", POLICY, 10, "repo:look-v1@" + "a" * 40, "growbot_look")
+    await repo.rename(OWNER, row.id, "Steady")
+    newer = {**POLICY, "mean": [0.5, 0.5]}
+    tag = "repo:look-v1@" + "b" * 40
+    assert await repo.replace_policy(OWNER, row.id, newer, 20, tag)
+    [got] = await repo.list(OWNER)
+    assert (got.id, got.name, got.bytes, got.source_job) == (row.id, "Steady", 20, tag)
+    assert await repo.get_json(OWNER, row.id) == newer
+    assert not await repo.replace_policy(
+        OWNER, "00000000-0000-0000-0000-000000000000", newer, 1, tag
+    )

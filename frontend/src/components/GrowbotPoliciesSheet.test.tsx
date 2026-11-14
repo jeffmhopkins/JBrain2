@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GrowbotPolicy } from "../api/client";
-import { GrowbotPoliciesSheet, offered, offeredFor, walkKind } from "./GrowbotPoliciesSheet";
+import {
+  GrowbotPoliciesSheet,
+  keptText,
+  offered,
+  offeredFor,
+  walkKind,
+} from "./GrowbotPoliciesSheet";
 
 // The Trained walks sheet: the box's library, and the finished training jobs it adds from.
 
@@ -241,5 +247,62 @@ describe("walkKind", () => {
         }),
       ),
     ).toBe("camera end first, with speed");
+  });
+  it("pulls the walks kept in the training repo and says what changed", async () => {
+    const kept = policy({
+      id: "2d1c2f4e-0a3b-4c5d-9e6f-7a8b9c0d1e2f",
+      name: "Look v1",
+      source_job: `repo:look-v1@${"a".repeat(40)}`,
+      source_spec: "growbot_look",
+    });
+    const sync = {
+      commit: "1234567890abcdef1234567890abcdef12345678",
+      added: ["Look v1"],
+      updated: [],
+      removed: [],
+      skipped: [],
+    };
+    const calls = serve((c) =>
+      c.url.endsWith("/refresh")
+        ? json(sync)
+        : c.url.endsWith("/sources")
+          ? json([])
+          : json([kept, policy()]),
+    );
+    const { box, onChange } = holder([policy()]);
+    render(<GrowbotPoliciesSheet policies={[policy()]} onChange={onChange} onClose={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Refresh walks from the training repo" }),
+    );
+    await screen.findByText("Added Look v1 (training repo at 1234567).");
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/refresh"))).toBe(true);
+    expect(box.all).toEqual([kept, policy()]);
+  });
+
+  it("says why a refresh from the training repo failed", async () => {
+    serve((c) =>
+      c.url.endsWith("/refresh")
+        ? json({ detail: "policies/index.toml policy 1: slug must be" }, 422)
+        : json([]),
+    );
+    render(<GrowbotPoliciesSheet policies={[]} onChange={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Refresh walks from the training repo" }),
+    );
+    await screen.findByText(/slug must be/);
+  });
+
+  it("words every kind of refresh outcome", () => {
+    const base = { commit: "", added: [], updated: [], removed: [], skipped: [] };
+    expect(keptText(base)).toBe("Up to date with the training repo.");
+    expect(
+      keptText({
+        ...base,
+        commit: "f".repeat(40),
+        updated: ["A"],
+        removed: ["B"],
+        skipped: ["C: not a policy"],
+      }),
+    ).toBe("Updated A. Removed B. Couldn't take C: not a policy (training repo at fffffff).");
   });
 });
