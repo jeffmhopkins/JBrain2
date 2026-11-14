@@ -226,6 +226,9 @@ async def test_the_catalog_survives_a_restart(tmp_path) -> None:
     "body",
     [
         "not json",
+        "[]",
+        '"x"',
+        json.dumps({"known": [], "listed": 3, "commit": 5, "fetched_at": {}}),
         json.dumps({"listed": ["growbot_x"], "known": {"growbot_x": {"entry": {}}}}),
         json.dumps(
             {
@@ -469,6 +472,7 @@ def local_repo(tmp_path, monkeypatch) -> Path:
     for c in CONFIGS:
         (src / c).write_text("")
     (src / "configs" / "sub" / "deep.toml").write_text("")
+    (src / "configs" / "look.toml").chmod(0o755)
     os.symlink("/etc/passwd", src / "configs" / "link.toml")
     _git(src, "add", "-A")
     _git(src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x")
@@ -511,6 +515,30 @@ async def test_git_fetch_refuses_a_huge_manifest(tmp_path, local_repo):
     _git(local_repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "z")
     with pytest.raises(CatalogError, match="over 64 KB"):
         await git_fetch(tmp_path / "f")
+
+
+async def test_a_refresh_that_cant_save_keeps_the_old_list(tmp_path) -> None:
+    repo = FakeRepo()
+    cat = Catalog(str(tmp_path), fetch=repo)
+    await cat.refresh()
+    repo.manifest, repo.commit = _job(name="growbot_new"), SHA2
+    (tmp_path / "catalog.tmp").mkdir()  # the save's temp file can't be written
+    with pytest.raises(CatalogError):
+        await cat.refresh()
+    assert cat.owns("growbot_look") and not cat.owns("growbot_new")
+    assert cat.commit == SHA1 and cat.status()["error"]
+    assert get_spec("growbot_new") is None
+
+
+async def test_an_os_error_in_the_fetch_is_a_catalog_error(tmp_path) -> None:
+    async def broken(dest: Path) -> Snapshot:
+        raise FileNotFoundError("git")
+
+    cat = Catalog(str(tmp_path), fetch=broken)
+    with pytest.raises(CatalogError):
+        await cat.refresh()
+    await cat.refresh_quietly()
+    assert "git" in str(cat.status()["error"])
 
 
 async def test_concurrent_refreshes_share_one_fetch(tmp_path) -> None:

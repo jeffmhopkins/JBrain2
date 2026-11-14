@@ -237,7 +237,8 @@ def _plain_blobs(ls_tree_z: str) -> dict[str, str]:
     for record in ls_tree_z.split("\0"):
         meta, _, path = record.partition("\t")
         parts = meta.split()
-        if len(parts) == 3 and parts[0] == "100644" and parts[1] == "blob":
+        # 100755 too: an executable bit is no reason to call a config missing.
+        if len(parts) == 3 and parts[0] in ("100644", "100755") and parts[1] == "blob":
             out[path] = parts[2]
     return out
 
@@ -300,28 +301,39 @@ class Catalog:
 
     def load(self) -> None:
         """Restore the last good catalog from the work volume. A missing or damaged file
-        leaves it empty until the next refresh, and an entry that fails a fresh entry's
-        checks is dropped rather than trusted."""
-        with contextlib.suppress(OSError, json.JSONDecodeError, TypeError, ValueError):
+        leaves it empty until the next refresh (never a server that won't start), and an
+        entry that fails a fresh entry's checks is dropped rather than trusted."""
+        try:
             data = json.loads(self._file.read_text())
-            known = {}
-            for name, rec in dict(data.get("known", {})).items():
-                with contextlib.suppress(
-                    CatalogError, SpecError, KeyError, TypeError, ValueError
-                ):
-                    # The work volume is writable by a running job, so a saved entry
-                    # gets every check a fresh one does except the config's presence.
-                    entry = _check_entry(rec["entry"], 0, set(), None)
-                    commit = str(rec["commit"])
-                    if name == entry["name"]:
-                        build_spec(entry, commit)
-                        known[name] = (entry, commit)
-            self._known = known
-            self._listed = {
-                n: known[n][0] for n in data.get("listed", []) if n in known
-            }
-            self.commit = str(data.get("commit", ""))
-            self.fetched_at = data.get("fetched_at")
+        except (OSError, ValueError):
+            data = None
+        if not isinstance(data, dict):
+            self._publish()
+            return
+        known: dict[str, tuple[dict[str, object], str]] = {}
+        saved = data.get("known")
+        for name, rec in (saved if isinstance(saved, dict) else {}).items():
+            with contextlib.suppress(
+                CatalogError, SpecError, KeyError, TypeError, ValueError
+            ):
+                # The work volume is writable by a running job, so a saved entry gets
+                # every check a fresh one does except the config's presence.
+                entry = _check_entry(rec["entry"], 0, set(), None)
+                commit = rec["commit"]
+                if name == entry["name"] and isinstance(commit, str):
+                    build_spec(entry, commit)
+                    known[name] = (entry, commit)
+        listed = data.get("listed")
+        names = (
+            [n for n in listed if isinstance(n, str)]
+            if isinstance(listed, list)
+            else []
+        )
+        commit, fetched_at = data.get("commit"), data.get("fetched_at")
+        self._known = known
+        self._listed = {n: known[n][0] for n in names if n in known}
+        self.commit = commit if isinstance(commit, str) else ""
+        self.fetched_at = fetched_at if isinstance(fetched_at, str) else None
         self._publish()
 
     async def refresh(self) -> dict[str, object]:
@@ -335,26 +347,27 @@ class Catalog:
         async with self._lock:
             # Off the work volume: a running job can write there, and must not be able
             # to stand in for the repo's files mid-read.
-            scratch = Path(tempfile.mkdtemp(prefix="jlaunch-catalog-"))
-            try:
-                snapshot = await self._fetch(scratch / "repo")
-                entries = parse_manifest(snapshot)
-            except CatalogError as exc:
-                self.error = str(exc)
-                _log.warning("catalog refresh failed: %s", exc)
-                raise
-            finally:
-                shutil.rmtree(scratch, ignore_errors=True)
             before = set(self._listed)
-            self._listed = {str(e["name"]): e for e in entries}
-            for name, entry in self._listed.items():
-                self._known[name] = (entry, snapshot.commit)
-            self.commit = snapshot.commit
-            self.fetched_at = datetime.now(UTC).isoformat()
-            self.error = None
+            try:
+                snapshot, entries = await self._read()
+                listed = {str(e["name"]): e for e in entries}
+                known = {
+                    **self._known,
+                    **{n: (e, snapshot.commit) for n, e in listed.items()},
+                }
+                fetched_at = datetime.now(UTC).isoformat()
+                # Saved before it's swapped in: a full disk leaves memory and the file
+                # agreeing on the old list.
+                self._save(snapshot.commit, fetched_at, listed, known)
+            except (CatalogError, OSError, ValueError) as exc:
+                err = exc if isinstance(exc, CatalogError) else CatalogError(str(exc))
+                self.error = str(err)
+                _log.warning("catalog refresh failed: %s", err)
+                raise err from exc
+            self._listed, self._known = listed, known
+            self.commit, self.fetched_at, self.error = snapshot.commit, fetched_at, None
             self._publish()
-            self._save()
-            after = set(self._listed)
+            after = set(listed)
             _log.info(
                 "catalog refresh commit=%s jobs=%d", snapshot.commit[:12], len(after)
             )
@@ -363,6 +376,16 @@ class Catalog:
                 "added": sorted(after - before),
                 "removed": sorted(before - after),
             }
+
+    async def _read(self) -> tuple[Snapshot, list[dict[str, object]]]:
+        # Off the work volume: a running job can write there, and must not be able to
+        # stand in for the repo's files mid-read.
+        scratch = Path(tempfile.mkdtemp(prefix="jlaunch-catalog-"))
+        try:
+            snapshot = await self._fetch(scratch / "repo")
+            return snapshot, parse_manifest(snapshot)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
 
     async def refresh_quietly(self) -> None:
         """Refresh if the repo answers; otherwise run from the last good catalog."""
@@ -376,14 +399,18 @@ class Catalog:
         specs_mod.LISTED_REPO_SPECS.clear()
         specs_mod.LISTED_REPO_SPECS.extend(sorted(self._listed))
 
-    def _save(self) -> None:
+    def _save(
+        self,
+        commit: str,
+        fetched_at: str,
+        listed: dict[str, dict[str, object]],
+        known: dict[str, tuple[dict[str, object], str]],
+    ) -> None:
         data = {
-            "commit": self.commit,
-            "fetched_at": self.fetched_at,
-            "listed": sorted(self._listed),
-            "known": {
-                n: {"entry": e, "commit": c} for n, (e, c) in self._known.items()
-            },
+            "commit": commit,
+            "fetched_at": fetched_at,
+            "listed": sorted(listed),
+            "known": {n: {"entry": e, "commit": c} for n, (e, c) in known.items()},
         }
         self._file.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._file.with_suffix(".tmp")
