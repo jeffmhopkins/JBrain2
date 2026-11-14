@@ -245,3 +245,28 @@ def test_result_downloads_only_once_succeeded() -> None:
     assert got.headers["content-disposition"] == ('attachment; filename="es_1e12_artifacts.tar.gz"')
     assert got.headers["content-length"] == str(len(b"RESULT"))
     assert client.get("/api/jlaunch/jobs/zzz/artifact").status_code == 404
+
+
+async def test_real_client_live_calls_pass_the_upstream_status_through() -> None:
+    import httpx
+
+    from jbrain.jlaunch import JlaunchClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/jobs/j1/live":
+            return httpx.Response(200, json=[{"name": "progress.json"}])
+        if request.url.path == "/jobs/j1/live/progress.json":
+            return httpx.Response(200, content=b"{}", headers={"content-type": "application/json"})
+        if request.url.path == "/jobs/j1/live/down.json":
+            raise httpx.ConnectError("refused")
+        return httpx.Response(404, json={"detail": "no such live file"})
+
+    client = JlaunchClient("http://jl", "tok", transport=httpx.MockTransport(handler))
+    assert await client.list_live("j1") == [{"name": "progress.json"}]
+    assert await client.get_live("j1", "progress.json") == (b"{}", "application/json")
+    with pytest.raises(JlaunchError) as missing:
+        await client.get_live("j1", "nope.json")
+    assert missing.value.status == 404
+    with pytest.raises(JlaunchError) as down:
+        await client.get_live("j1", "down.json")
+    assert down.value.status is None

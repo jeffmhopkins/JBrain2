@@ -350,6 +350,8 @@ function OverviewPane({
 export function LiveCard({ job }: { job: JlaunchJob }): ReactNode {
   const [files, setFiles] = useState<JlaunchLiveFile[] | null>(null);
   const [progress, setProgress] = useState<JlaunchProgress | null>(null);
+  // A 404 means this job's spec keeps no live folder: stop asking for the rest of the run.
+  const [none, setNone] = useState(false);
   const foreground = useForeground();
   const live = isLive(job);
 
@@ -357,17 +359,22 @@ export function LiveCard({ job }: { job: JlaunchJob }): ReactNode {
     let listed: JlaunchLiveFile[];
     try {
       listed = await api.jlaunchLiveFiles(job.id);
-    } catch {
-      setFiles(null); // no live folder (or the launcher is unreachable): no card
-      return;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        setNone(true);
+        setFiles(null);
+      }
+      return; // anything else is transient: keep what is showing, the next poll retries
     }
     setFiles(listed);
-    if (listed.some((f) => f.name === "progress.json")) {
-      try {
-        setProgress(await api.jlaunchProgress(job.id));
-      } catch {
-        /* mid-rewrite or malformed — keep the last good one */
-      }
+    if (!listed.some((f) => f.name === "progress.json")) {
+      setProgress(null);
+      return;
+    }
+    try {
+      setProgress(await api.jlaunchProgress(job.id));
+    } catch {
+      /* mid-rewrite or malformed — keep the last good one */
     }
   }, [job.id]);
 
@@ -378,13 +385,14 @@ export function LiveCard({ job }: { job: JlaunchJob }): ReactNode {
   }, [load, job.state]);
 
   useEffect(() => {
-    if (!live || !foreground) return;
+    if (!live || !foreground || none) return;
     const t = setInterval(() => void load(), LIVE_POLL_MS);
     return () => clearInterval(t);
-  }, [live, foreground, load]);
+  }, [live, foreground, none, load]);
 
   if (!files) return null;
   const pct = typeof progress?.percent === "number" ? progress.percent : null;
+  const rows = summaryRows(progress);
   const pages = files.filter((f) => f.name.endsWith(".html"));
   const others = files.filter((f) => !f.name.endsWith(".html") && f.name !== "progress.json");
   return (
@@ -410,10 +418,11 @@ export function LiveCard({ job }: { job: JlaunchJob }): ReactNode {
           </div>
         </>
       )}
-      {progress?.summary && progress.summary.length > 0 && (
+      {rows.length > 0 && (
         <div className="jl-times">
-          {progress.summary.map((row) => (
-            <div key={row.label} className="jl-time">
+          {rows.map((row, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: labels may repeat; the order is the file's
+            <div key={i} className="jl-time">
               <span>{row.label}</span>
               <span>{row.value}</span>
             </div>
@@ -431,7 +440,12 @@ export function LiveCard({ job }: { job: JlaunchJob }): ReactNode {
           target="_blank"
           rel="noopener noreferrer"
         >
-          {f.name === "replay.html" ? "Watch the latest walk in 3D" : `Open ${f.name}`} ↗
+          {f.name !== "replay.html"
+            ? `Open ${f.name}`
+            : live
+              ? "Watch it train in 3D (live)"
+              : "Watch the final walk in 3D"}{" "}
+          ↗
         </a>
       ))}
       {others.length > 0 && (
@@ -450,6 +464,20 @@ export function LiveCard({ job }: { job: JlaunchJob }): ReactNode {
       )}
     </div>
   );
+}
+
+/** progress.json's summary rows, kept only where they are plain text: the job wrote the
+ * file, and a wrong shape must not take the job screen down with it. */
+export function summaryRows(progress: JlaunchProgress | null): { label: string; value: string }[] {
+  const raw: unknown = progress?.summary;
+  if (!Array.isArray(raw)) return [];
+  const plain = (v: unknown) => typeof v === "string" || typeof v === "number";
+  return raw
+    .filter((r): r is { label: string | number; value: string | number } => {
+      const row = r as { label?: unknown; value?: unknown } | null;
+      return !!row && plain(row.label) && plain(row.value);
+    })
+    .map((r) => ({ label: String(r.label), value: String(r.value) }));
 }
 
 function TerminalPane({ job }: { job: JlaunchJob }): ReactNode {
