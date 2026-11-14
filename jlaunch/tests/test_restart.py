@@ -235,3 +235,38 @@ def test_an_unknown_state_or_bad_path_in_a_record_is_made_safe(tmp_path) -> None
         manager.live_files("0000beef")
     with pytest.raises(JobError):
         manager.artifact_path("0000beef")
+
+
+async def test_a_deeply_nested_record_cannot_break_the_run_list(tmp_path) -> None:
+    import httpx
+
+    from jlaunch_ctl.app import create_app
+    from jlaunch_ctl.config import Settings
+
+    deep: object = 1
+    for _ in range(300):
+        deep = [deep]
+    folder = tmp_path / "state" / "00000d0e"
+    folder.mkdir(parents=True)
+    (folder / "job.json").write_text(
+        json.dumps(
+            {
+                "spec_name": "x",
+                "state": "succeeded",
+                "machine": {"cores": 32, "deep": deep},
+                "phase_times": [{"phase": "train", "seconds": 5, "deep": deep}],
+                "headline": ["h" * 600] * 300,
+            }
+        )
+    )
+    manager = _manager(tmp_path)
+    app = create_app(Settings(token="t"), manager, TerminalRegistry())  # type: ignore[call-arg]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://t"
+    ) as client:
+        resp = await client.get("/jobs", headers={"Authorization": "Bearer t"})
+    assert resp.status_code == 200
+    job = manager.get("00000d0e")
+    assert job.machine == {"cores": 32}
+    assert job.phase_times == [{"phase": "train", "seconds": 5}]
+    assert len(job.headline) == 256 and len(job.headline[0]) == 512

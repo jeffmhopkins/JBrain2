@@ -185,12 +185,12 @@ class JobManager:
         # follow a symlink there (the folder itself, or one planted at the temp name)
         # and never open anything that could block, such as a FIFO.
         tmp = f".{_RECORD}.tmp"
-        data = json.dumps(asdict(job)).encode()
         try:
+            data = json.dumps(asdict(job)).encode()
             folder = os.open(
                 self._state_root / job.id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
             )
-        except OSError:
+        except (OSError, ValueError, RecursionError):
             _log.warning("job record not saved id=%s", job.id, exc_info=True)
             return
         try:
@@ -199,7 +199,9 @@ class JobManager:
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK
             fd = os.open(tmp, flags, 0o600, dir_fd=folder)
             try:
-                os.write(fd, data)
+                view = memoryview(data)
+                while view:
+                    view = view[os.write(fd, view) :]
             finally:
                 os.close(fd)
             os.replace(tmp, _RECORD, src_dir_fd=folder, dst_dir_fd=folder)
@@ -403,11 +405,11 @@ class JobManager:
         rc = status.get("rc") if status else None
         if status and "phase" in status:
             job.phase = str(status["phase"])
-        job.phase_times = _read_jsonl(state / "phase_times.jsonl")
-        job.headline = _read_lines(state / "headline.txt")
+        job.phase_times = _flat_rows(_read_jsonl(state / "phase_times.jsonl"))
+        job.headline = _short_lines(_read_lines(state / "headline.txt"))
         job.console_tail = _read_tail(state / "console.log")
 
-        artifact = workspace / spec.artifact_path
+        artifact = workspace / (self._artifact_rel(job) or spec.artifact_path)
         if artifact.is_file():
             job.artifact_present = True
             job.artifact_bytes = artifact.stat().st_size
@@ -600,6 +602,31 @@ def _read_record(path: Path) -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
+# What the job's own files may put on its record: flat rows of plain values, a bounded
+# number of short lines. Nested values could be deep enough to fail serialising the run
+# list (every run then vanishes from the app), and a record past _RECORD_MAX_BYTES
+# would be skipped on reload.
+_MAX_ROWS = 256
+_MAX_LINE = 512
+
+
+def _flat(row: dict) -> dict[str, object]:
+    scalar = (str, int, float, bool, type(None))
+    out: dict[str, object] = {}
+    for k, v in list(row.items())[:64]:
+        if isinstance(k, str) and isinstance(v, scalar):
+            out[k[:_MAX_LINE]] = v[:_MAX_LINE] if isinstance(v, str) else v
+    return out
+
+
+def _flat_rows(rows: list) -> list[dict[str, object]]:
+    return [_flat(r) for r in rows[:_MAX_ROWS] if isinstance(r, dict)]
+
+
+def _short_lines(lines: list[str]) -> list[str]:
+    return [line[:_MAX_LINE] for line in lines[:_MAX_ROWS]]
+
+
 def _rel_path(value: object) -> str:
     # A checkout-relative path, or nothing: never absolute, never up and out, no NUL.
     if not isinstance(value, str) or not value or "\0" in value:
@@ -626,9 +653,7 @@ def _job_from_record(
 
     def rows(key: str) -> list:
         value = data.get(key)
-        return (
-            [r for r in value if isinstance(r, dict)] if isinstance(value, list) else []
-        )
+        return _flat_rows(value) if isinstance(value, list) else []
 
     state = text("state")
     if not state or not text("spec_name"):
@@ -653,10 +678,10 @@ def _job_from_record(
         started_at=opt_text("started_at"),
         finished_at=opt_text("finished_at"),
         verify_ok=verify if isinstance(verify, bool) else None,
-        headline=[h for h in headline if isinstance(h, str)]
+        headline=_short_lines([h for h in headline if isinstance(h, str)])
         if isinstance(headline, list)
         else [],
-        machine=machine if isinstance(machine, dict) else {},
+        machine=_flat(machine) if isinstance(machine, dict) else {},
         phase_times=rows("phase_times"),
         error=opt_text("error"),
         artifact_present=data.get("artifact_present") is True,
