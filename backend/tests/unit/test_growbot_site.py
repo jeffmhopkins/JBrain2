@@ -3088,7 +3088,10 @@ def test_nothing_reaches_the_model_before_the_wake_tap() -> None:
         # Upstream's own bookkeeping and early returns may sit above the gate; nothing that
         # reaches out does, and the gate still comes before every busy or ownership check.
         body = page[page.index(head) + len(head) :].split("\n")
-        gate = body.index("  if(window._wakeGateUp) return;")
+        # A dream the box already made (DREAM_LATER_PATCHES) is the one thing past it: no
+        # model call is left in it.
+        line = "  if(window._wakeGateUp&&!_gbCannedGo) return;" if "dream" in head else ""
+        gate = body.index(line or "  if(window._wakeGateUp) return;")
         assert gate <= 5
         assert body[gate + 1].startswith('  if(typeof vmBusy==="function"&&vmBusy()) return;')
         assert not any("fetch(" in line or "send(" in line for line in body[:gate])
@@ -3100,7 +3103,9 @@ def test_nothing_reaches_the_model_before_the_wake_tap() -> None:
     assert "if((gbSleepAllowed()||gbOpenDreamDue())&&" in page
     gated = page[page.index("function dream(force){") :]
     gated = gated[: gated.index("_gbDreamOnOpen=false")]
-    assert gated.index("if(window._wakeGateUp) return;") < gated.index("_dreamT0=Date.now();")
+    assert gated.index("if(window._wakeGateUp&&!_gbCannedGo) return;") < gated.index(
+        "_dreamT0=Date.now();"
+    )
 
 
 def test_the_dream_a_visit_owes_waits_past_the_hello() -> None:
@@ -3111,14 +3116,174 @@ def test_the_dream_a_visit_owes_waits_past_the_hello() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     code = page[page.index("var _gbWokeT=0") : page.index("var _gbWarm=null")]
     script = (
-        "var window={_wakeGateUp:true}, _gbDreamOnOpen=true, r={};"
+        "var window={_wakeGateUp:true}, _gbDreamOnOpen=true, _gbBoxAsk=false, r={};"
         f"{code}"
         "r.gate=gbOpenDreamDue(); window._wakeGateUp=false; _gbWokeT=Date.now();"
         "r.hello=gbOpenDreamDue(); _gbWokeT-=GB_WOKE_HOLD_MS; r.later=gbOpenDreamDue();"
+        "_gbBoxAsk=true; r.asking=gbOpenDreamDue(); _gbBoxAsk=false;"
         "_gbDreamOnOpen=false; r.none=gbOpenDreamDue(); console.log(JSON.stringify(r));"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
-    assert json.loads(out.stdout) == {"gate": False, "hello": False, "later": True, "none": False}
+    # While the page asks the box for the dream it made, the open-time dream waits for it.
+    assert json.loads(out.stdout) == {
+        "gate": False,
+        "hello": False,
+        "later": True,
+        "asking": False,
+        "none": False,
+    }
+
+
+_DREAM_LATER_HARNESS = r"""
+var logs=[], sent=[], dreams=[], called=[], document={hidden:true,addEventListener:function(){}},
+  window={__gbBoxSoul:{persona:"p-1"}},
+  _live={scratch:{pt:3,visit:[{t:5,txt:"we baked"}]},identityAt:9},
+  inFlight=false, dreaming=false, _flightT=0, dreamScene=true, _skyHue=265, _gbSleepWhy="x",
+  _gbDreamOnOpen=true, owned=true, refuse=false, local=null,
+  el={classList:{remove:function(){}},style:{}};
+function logEv(k,d){ logs.push([k,d]); }
+function h8(s){ return "h"+s.length; }
+function gbVisit(){ return _live.scratch.visit; }
+function soulOwned(){ return owned; }
+function llmCfg(){ return local; }
+function $(){ return el; }
+function _mkBody(slug,maxTok,oai){
+  return {model:slug,max_tokens:maxTok,messages:oai,provider:{x:1}}; }
+function callModel(){ called.push([].slice.call(arguments)); return Promise.resolve("model"); }
+function fetch(url,opt){ sent.push([url,JSON.parse(opt.body),!!opt.keepalive]);
+  return Promise.resolve({status:200,json:function(){ return Promise.resolve(reply); }}); }
+function setTimeout(f){ return 0; } function clearTimeout(){}
+var reply={ok:true};
+function dream(force){ dreams.push([force,_gbPackGo,_gbCannedGo]); if(refuse) return;
+  if(_gbPackGo||_gbCannedGo){ inFlight=true; dreaming=true;
+    return gbDreamCall("SYS",[{role:"user",content:"U"}],"dreamer",1000,90000)
+      .then(function(raw){ dreams.push(["landed",raw]); inFlight=false; dreaming=false; },
+            function(e){ if(e&&e.gbPacked) gbPackUnwind(11); }); } }
+"""
+
+
+def _dream_later(script: str) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("var _gbPackGo=false") : page.index("function dream(force){")]
+    out = subprocess.run(
+        [node, "-e", f"{_DREAM_LATER_HARNESS}\n{code}\n{script}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout)
+    assert isinstance(got, dict)
+    return got
+
+
+def test_a_page_going_away_hands_its_dream_to_the_box() -> None:
+    """Owner, 2026-11-14: the dream a visit leaves runs an hour after the page closes, not at
+    the next open. The page hands the box the very call dream() would make, and unwinds."""
+    got = _dream_later(
+        "gbDreamPack(0);"
+        "setImmediate(function(){ console.log(JSON.stringify({sent:sent,dreams:dreams,"
+        "logs:logs,inFlight:inFlight,dreaming:dreaming,sky:_skyHue,why:_gbSleepWhy,"
+        "go:_gbPackGo})); });"
+    )
+    assert got["dreams"] == [[False, True, False]]
+    [(url, msg, keepalive)] = got["sent"]
+    assert url == "/api/box/dream" and keepalive is True
+    assert msg["op"] == "later" and msg["persona"] == "p-1" and msg["print"].startswith("h")
+    assert msg["body"]["messages"] == [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "U"},
+    ]
+    assert msg["body"]["model"] == "dreamer" and msg["body"]["max_tokens"] == 1000
+    assert got["logs"][0][0] == "dream_later"
+    # Nothing landed: the page is as it was before the dream began, and no model was called.
+    assert got["inFlight"] is False and got["dreaming"] is False and got["sky"] == 11
+    assert got["why"] == "" and got["go"] is False
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "document.hidden=false;",
+        "_live.scratch.visit=[];",
+        "window.__gbBoxSoul={g2:true};",
+        "local={url:'http://rig'};",
+        "dreaming=true;",
+        "_gbCanned={raw:'x',print:'y'};",
+    ],
+)
+def test_only_an_undreamed_box_visit_going_away_is_handed_over(setup: str) -> None:
+    """Shown, nothing said since the last dream, a soul on the phone, a local brain the box
+    cannot reach, a dream already under way or one collected and not yet landed: no hand-over."""
+    got = _dream_later(
+        f"{setup}gbDreamPack(0);console.log(JSON.stringify({{sent:sent,d:dreams}}));"
+    )
+    assert got == {"sent": [], "d": []}
+
+
+def test_a_held_hand_over_is_tried_again_and_never_leaves_the_flag_up() -> None:
+    """dream() keeps its own gates; one that holds the hand-over back clears the flag (so the
+    next real dream is never packed) and the page asks again while it lives, three times."""
+    got = _dream_later(
+        "var later=[];setTimeout=function(f){ later.push(f); return 1; };"
+        "refuse=true;gbDreamPack(0);var r={tries:later.length,go:_gbPackGo,d:dreams.length};"
+        "refuse=false;inFlight=true;later.shift()();r.busy=later.length;r.d2=dreams.length;"
+        "later.shift()();later.shift()();r.left=later.length;"
+        "inFlight=false;owned=false;gbDreamPack(0);r.unowned=later.length+dreams.length;"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got == {"tries": 1, "go": False, "d": 1, "busy": 1, "d2": 1, "left": 0, "unowned": 1}
+
+
+def test_an_open_takes_the_box_dream_and_lands_it_without_a_model_call() -> None:
+    got = _dream_later(
+        'document.hidden=false;reply={ok:true,raw:\'{"dream_say":"hi"}\',print:gbDreamPrint()};'
+        "var r={first:gbCannedDream(),ask:_gbBoxAsk};"
+        "setImmediate(function(){ r.asked=_gbBoxAsk; r.onOpen=_gbDreamOnOpen;"
+        " r.landing=gbCannedDream(); r.again=gbCannedDream();"
+        " setImmediate(function(){ r.sent=sent; r.dreams=dreams; r.called=called.length;"
+        " r.logs=logs; console.log(JSON.stringify(r)); }); });"
+    )
+    assert got["first"] is False and got["ask"] is True
+    assert got["asked"] is False and got["onOpen"] is False
+    assert got["sent"] == [["/api/box/dream", {"op": "open", "persona": "p-1"}, False]]
+    assert got["landing"] is True and got["again"] is False
+    assert got["dreams"] == [[False, False, True], ["landed", '{"dream_say":"hi"}']]
+    assert got["called"] == 0
+    assert got["logs"] == [["dream_box", {"n": 18}]]
+
+
+def test_a_box_dream_for_a_soul_that_moved_on_is_dropped() -> None:
+    """Asked once per visit; an answer whose visit or identity has since changed never lands."""
+    got = _dream_later(
+        "document.hidden=false;reply={ok:true,raw:'x',print:gbDreamPrint()};gbCannedDream();"
+        "setImmediate(function(){ _live.identityAt=10; var r={landed:gbCannedDream(),"
+        " canned:_gbCanned,dreams:dreams,asks:sent.length,logs:logs};"
+        " console.log(JSON.stringify(r)); });"
+    )
+    assert got["landed"] is False and got["canned"] is None and got["dreams"] == []
+    assert got["asks"] == 1 and got["logs"][-1] == ["dream_box_stale", {}]
+
+
+def test_the_dream_later_is_wired_through_dream_itself() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    body = page[page.index("function dream(force){") :]
+    body = body[: body.index("\n}\n")]
+    assert "gbDreamCall(buildDreamSystem(DREAM_SYS,_live,_convLang)," in body
+    assert "callModel(buildDreamSystem(" not in body
+    assert (
+        "}).catch(function(e){ if(_dgen!==_flightGen) return;"
+        " if(e&&e.gbPacked){ gbPackUnwind(_preSky); return; }"
+    ) in body
+    assert 'trig:_gbPackGo?"later":_gbCannedGo?"box":force?"forced":"auto",' in body
+    # The cadence asks the box after its own holds, before any other dream door.
+    tick = page[page.index("if(paused||document.hidden) return;") :]
+    assert tick.index("    if(gbCannedDream()) return;\n") < tick.index("_dreamOverdue(now)")
+    # The open-time dream is the fallback, for a gap past the box's hour.
+    assert "GB_OPEN_GAP_MS=3900000" in page
+    assert "function gbOpenDreamDue(){ return _gbDreamOnOpen&&!_gbBoxAsk&&" in page
 
 
 def test_the_ember_sits_between_the_pills_and_the_trail() -> None:

@@ -23,7 +23,7 @@ import threading
 import time
 import types
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -69,6 +69,8 @@ class _Fake(BaseHTTPRequestHandler):
     root_cert: bytes = b"-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
     tts_status = 200
     llm_status = 200
+    # How long a buffered chat completion takes to answer.
+    llm_sleep = 0.0
     # The speech service's sound tagger: (status, body) for POST /tag.
     tag_reply: tuple[int, bytes] = (404, b"{}")
     # Who wears each robot: code -> (persona, phone). Nobody, unless a test says so.
@@ -232,6 +234,7 @@ class _Fake(BaseHTTPRequestHandler):
                     time.sleep(0.05)
                 self.wfile.write(b"e\r\ndata: [DONE]\n\n\r\n0\r\n\r\n")
                 return
+            time.sleep(_Fake.llm_sleep)
             reply = {"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]}
             self._reply(200, json.dumps(reply).encode())
         elif self.path == "/v1/audio/transcriptions":
@@ -323,6 +326,7 @@ def fake() -> Iterator[str]:
     _Fake.tag_reply = (404, b"{}")
     _Fake.tts_status = 200
     _Fake.llm_status = 200
+    _Fake.llm_sleep = 0.0
     _Fake.riders = {}
     _Fake.body_status = 200
     _Fake.soul = {}
@@ -3712,3 +3716,136 @@ def test_a_replaced_creature_pages_gestures_go_with_it(run: _Running) -> None:
     new.shut()
     old.shut()
     chip.shut()
+
+
+# --- the dream a page could not stay open for -------------------------------------------
+
+
+_DREAM_BODY = {
+    "model": "moonshotai/kimi-k2.6",
+    "max_tokens": 1000,
+    "messages": [{"role": "system", "content": "dream"}, {"role": "user", "content": "today"}],
+    "provider": {"order": ["x"]},
+}
+
+
+def _dream_calls() -> list[dict[str, Any]]:
+    return [s for s in list(_Fake.seen) if s["path"].endswith("/chat/completions")]
+
+
+def _later(run: _Running, mark: str = "h1234") -> tuple[int, Any]:
+    body = {"op": "later", "persona": _PERSONA, "print": mark, "body": _DREAM_BODY}
+    return _soul_call(run, "POST", "/api/box/dream", body)
+
+
+def _open(run: _Running) -> tuple[int, Any]:
+    return _soul_call(run, "POST", "/api/box/dream", {"op": "open", "persona": _PERSONA})
+
+
+def _until(check: Callable[[], bool], within: float = 3.0) -> None:
+    deadline = time.monotonic() + within
+    while not check():
+        if time.monotonic() > deadline:
+            raise AssertionError("never happened")
+        time.sleep(0.02)
+
+
+def test_a_dream_handed_over_is_made_later_and_handed_back_once(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Owner, 2026-11-14: the dream runs a while after the page goes away, through the
+    creature's own lane as its persona, and the next open takes the answer, once."""
+    monkeypatch.setattr(gb, "DREAM_LATER_S", 0.2)
+    assert _later(run) == (200, {"ok": True})
+    assert _dream_calls() == []
+    _until(lambda: len(_dream_calls()) == 1)
+    call = _dream_calls()[0]
+    assert call["auth"] == f"Bearer {_TOKEN}" and call["persona"] == _PERSONA
+    # Only the engine's fields, on the box's own model, as any of the page's calls.
+    assert json.loads(call["body"]) == {
+        "model": "qwen3-vl-30b",
+        "max_tokens": 1000,
+        "messages": _DREAM_BODY["messages"],
+        "stream": False,
+    }
+    _until(lambda: run.app._dreams.get(_PERSONA) is not None and run.app._dreams[_PERSONA].raw)
+    assert _open(run) == (200, {"ok": True, "raw": "hi", "print": "h1234"})
+    assert _open(run) == (200, {"ok": True})
+
+
+def test_a_visit_opening_first_calls_the_dream_off(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "DREAM_LATER_S", 0.4)
+    assert _later(run)[0] == 200
+    assert _open(run) == (200, {"ok": True})
+    time.sleep(0.6)
+    assert _dream_calls() == [] and run.app._dreams == {}
+
+
+def test_a_newer_hand_over_replaces_the_waiting_one(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "DREAM_LATER_S", 0.3)
+    _later(run, "old")
+    _later(run, "new")
+    _until(lambda: len(_dream_calls()) >= 1)
+    _until(lambda: _PERSONA in run.app._dreams and run.app._dreams[_PERSONA].state == "ready")
+    time.sleep(0.2)
+    assert len(_dream_calls()) == 1
+    assert _open(run)[1]["print"] == "new"
+
+
+def test_an_open_as_the_box_dreams_waits_for_the_answer(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "DREAM_LATER_S", 0.0)
+    _Fake.llm_sleep = 0.5
+    _later(run)
+    _until(lambda: len(_dream_calls()) == 1)
+    assert _open(run) == (200, {"ok": True, "raw": "hi", "print": "h1234"})
+
+
+@pytest.mark.parametrize("status", [500, 400])
+def test_a_dream_that_fails_leaves_the_next_open_to_dream(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    monkeypatch.setattr(gb, "DREAM_LATER_S", 0.0)
+    _Fake.llm_status = status
+    _later(run)
+    _until(lambda: len(_dream_calls()) == 1)
+    _until(lambda: run.app._dreams == {})
+    assert _open(run) == (200, {"ok": True})
+
+
+def test_the_dream_route_refuses_what_is_not_theirs(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "DREAM_LATER_S", 60.0)
+    # A G2 session keeps its soul on the phone, and dreams there.
+    later = {"op": "later", "persona": _PERSONA, "print": "h", "body": _DREAM_BODY}
+    assert _soul_call(run, "POST", "/api/box/dream", later, cookie=run.cookie) == (204, None)
+    assert _soul_call(run, "GET", "/api/box/dream")[0] == 405
+    for bad in (
+        ["no"],
+        {"op": "dream", "persona": _PERSONA},
+        {**later, "body": {"messages": "x"}},
+        {**later, "body": "x"},
+        {**later, "print": ""},
+        {**later, "print": "p" * 65},
+        {**later, "print": 7},
+    ):
+        assert _soul_call(run, "POST", "/api/box/dream", bad)[0] == 400
+    for named in ("", "1" + _PERSONA[1:], None):
+        other = {**later, "persona": named}
+        assert _soul_call(run, "POST", "/api/box/dream", other) == (409, {"error": "other"})
+    assert run.app._dreams == {}
+    huge = {**later, "body": {"messages": [{"role": "user", "content": "x" * 300_000}]}}
+    headers = {"Cookie": _persona_cookie(run), "Content-Type": "application/json"}
+    resp = run.request("POST", "/api/box/dream", json.dumps(huge).encode(), headers, cookie=False)
+    resp.read()
+    assert resp.status == 413
+    # A box holds one waiting dream per persona, and only so many personas.
+    for n in range(gb.DREAMS_MAX):
+        run.app._dreams[f"p{n}"] = gb._Later("m", {})
+    assert _later(run) == (503, {"error": "the box is busy"})
