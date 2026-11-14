@@ -9,6 +9,7 @@
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
+import { useBackLayer } from "../backLayers";
 import { EngineBanner } from "../components/EngineBanner";
 import {
   ChevronDownIcon,
@@ -82,6 +83,15 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Jobs opens on Runs while something is running (owner, 2026-11-14), once, on the first
+  // list: after that the tab is the owner's.
+  const opened = useRef(false);
+  useEffect(() => {
+    if (state.kind !== "ready" || opened.current) return;
+    opened.current = true;
+    if (state.jobs.some(isLive)) setTab("runs");
+  }, [state]);
 
   const specs = state.kind === "ready" ? state.specs : [];
   const jobs = state.kind === "ready" ? state.jobs : [];
@@ -487,19 +497,24 @@ function groupBy<T>(items: T[], key: (item: T) => string): [string, T[]][] {
   return [...groups];
 }
 
-/** Runs grouped under their job, the job with the newest run first (the api lists runs
- * newest first, so first-seen order is that). A job title comes from its spec when the
- * launcher still has it, else from the run. */
+/** Runs grouped under their job, a job with a running run first, then the job with the
+ * newest run (the api lists runs newest first, so first-seen order is that). A job title
+ * comes from its spec when the launcher still has it, else from the run. */
 function runGroups(
   jobs: JlaunchJob[],
   specs: JlaunchSpec[],
 ): { spec: string; title: string; runs: JlaunchJob[] }[] {
   const titles = new Map(specs.map((s) => [s.name, s.title]));
-  return groupBy(jobs, (j) => j.spec_name).map(([spec, runs]) => ({
-    spec,
-    title: titles.get(spec) ?? runs[0]?.title ?? spec,
-    runs,
-  }));
+  // A running run leads: its job's group first, and it first within the group (stable
+  // sorts, so the rest keep their newest-first order).
+  const live = (runs: JlaunchJob[]) => (runs.some(isLive) ? 0 : 1);
+  return groupBy(jobs, (j) => j.spec_name)
+    .map(([spec, runs]) => ({
+      spec,
+      title: titles.get(spec) ?? runs[0]?.title ?? spec,
+      runs: [...runs].sort((a, b) => live([a]) - live([b])),
+    }))
+    .sort((a, b) => live(a.runs) - live(b.runs));
 }
 
 /** "v3", or "run" for a row from before runs were numbered. */
@@ -512,6 +527,8 @@ function runLabel(job: JlaunchJob): string {
 type Tab = "overview" | "terminal" | "result";
 
 function JlaunchJobScreen({ jobId, onClose }: { jobId: string; onClose: () => void }) {
+  // The platform back gesture climbs off a run to the Jobs list, not out of Jobs.
+  useBackLayer(onClose);
   const [job, setJob] = useState<JlaunchJob | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const [busy, setBusy] = useState(false);

@@ -293,6 +293,15 @@ export function App() {
     setCard(target);
   }
 
+  // Leaving Jobs (its back arrow or the back gesture) lands on the launcher it came from,
+  // not home (owner, 2026-11-14) — the one card that does, since a run is often watched,
+  // left, and checked again from the grid. A job's own screen climbs off first (its back
+  // layer), so back from a run returns to the Jobs list.
+  function closeJobs() {
+    setCard(null);
+    setLauncherOpen(true);
+  }
+
   function openMinecraftFromOps() {
     setMinecraftFromOps(true);
     setCard("minecraft");
@@ -570,7 +579,7 @@ export function App() {
     if (card === "tasks") return setCard(null);
     if (card === "image") return setCard(null);
     if (card === "jcode") return setCard(null);
-    if (card === "jlaunch") return setCard(null);
+    if (card === "jlaunch") return closeJobs();
     if (card === "petcontrol") return setCard(null);
     // jpanel (either tab) brings its own full-screen wrap and back bar.
     if (card === "jpanel") return setCard(null);
@@ -816,7 +825,7 @@ export function App() {
       {/* Code mode (jcode) is a self-contained full-screen overlay (its own back
           bar + internal list↔session navigation), like Tasks/Automations. */}
       {card === "jcode" && <JcodeScreen onClose={() => setCard(null)} />}
-      {card === "jlaunch" && <JlaunchScreen onClose={() => setCard(null)} />}
+      {card === "jlaunch" && <JlaunchScreen onClose={closeJobs} />}
       {card === "petcontrol" && <ControlScreen onClose={() => setCard(null)} />}
       {/* One surface, two doors: the jpanel tile opens it on Messages, the Endpoints tile
           opens the same screen on its Flash tab. The flasher is no longer a screen of its

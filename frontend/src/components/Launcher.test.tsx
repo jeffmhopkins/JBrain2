@@ -199,6 +199,17 @@ describe("Launcher controlled retreat", () => {
     expect(screen.queryByRole("navigation", { name: "Launcher" })).toBeNull();
   });
 
+  it("drops the retreat when reopened mid-exit", () => {
+    const { rerender } = render(<Launcher open onClose={noop} onNavigate={noop} />);
+    rerender(<Launcher open={false} onClose={noop} onNavigate={noop} />);
+    act(() => vi.advanceTimersByTime(50));
+    rerender(<Launcher open onClose={noop} onNavigate={noop} />);
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.getByRole("navigation", { name: "Launcher" })).not.toHaveClass(
+      "launcher-closing",
+    );
+  });
+
   it("unmounts immediately when reduced motion is preferred", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true }));
     const { rerender } = render(<Launcher open onClose={noop} onNavigate={noop} />);
@@ -752,5 +763,57 @@ describe("Launcher GrowBot tile", () => {
     const tile = screen.getByRole("button", { name: /GrowBot/ });
     await new Promise((r) => setTimeout(r, 20));
     expect(tile).toHaveTextContent(/^GrowBot$/);
+  });
+});
+
+// A training run takes hours: the Jobs tile says one is going without being opened.
+describe("Launcher Jobs tile", () => {
+  beforeEach(() => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function freshLauncher(jobs: unknown[]) {
+    const ok = (b: unknown) =>
+      new Response(JSON.stringify(b), { headers: { "Content-Type": "application/json" } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input) === "/api/jlaunch/specs"
+          ? ok([])
+          : String(input) === "/api/jlaunch/jobs"
+            ? ok(jobs)
+            : new Response(null, { status: 404 }),
+      ),
+    );
+    // The launcher-enabled probe is cached per module: a fresh copy probes this box.
+    vi.resetModules();
+    return (await import("./Launcher")).Launcher;
+  }
+
+  it("dots the tile while a run is live", async () => {
+    const Fresh = await freshLauncher([
+      { id: "a", state: "running" },
+      { id: "b", state: "failed" },
+    ]);
+    render(<Fresh open onClose={() => {}} onNavigate={vi.fn()} />);
+    const tile = await screen.findByRole("button", { name: /Jobs/ });
+    await waitFor(() => expect(tile).toHaveTextContent("running"));
+    expect(tile.querySelector(".mc-tile-dot.run")).not.toBeNull();
+  });
+
+  it("shows nothing when no run is live", async () => {
+    const Fresh = await freshLauncher([{ id: "b", state: "succeeded" }]);
+    render(<Fresh open onClose={() => {}} onNavigate={vi.fn()} />);
+    const tile = await screen.findByRole("button", { name: /Jobs/ });
+    await waitFor(() =>
+      expect(vi.mocked(fetch).mock.calls.some(([u]) => String(u) === "/api/jlaunch/jobs")).toBe(
+        true,
+      ),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(tile).toHaveTextContent(/^Jobs$/);
   });
 });
