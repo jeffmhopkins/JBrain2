@@ -15,6 +15,8 @@ export interface JlaunchSpec {
   notes: string;
   /** The spec keeps a live folder (progress, replay, latest weights) while it runs. */
   live?: boolean;
+  /** The Jobs tab's group ("Math", "Robot", …), named by the api. */
+  category?: string;
 }
 
 /** One file in a running job's live folder (GET /jlaunch/jobs/{id}/live). */
@@ -63,6 +65,12 @@ export interface JlaunchJob {
   artifact_present: boolean;
   artifact_bytes: number | null;
   console_tail: string;
+  /** This run's number among its job's runs (v1, v2, …), from the run mirror. */
+  revision?: number | null;
+  /** The owner's own note on what the run was for. */
+  note?: string;
+  /** When the mirror first saw the run (the mirror keeps no started_at of its own). */
+  created_at?: string;
 }
 
 /** The owner's copy-link secret for a run — returned once by mint, never re-readable. */

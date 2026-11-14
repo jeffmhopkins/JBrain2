@@ -18,6 +18,7 @@ function job(id: string, state: string): JlaunchJob {
     id,
     state,
     title: `Run ${id}`,
+    revision: id === "a1" ? 1 : 2,
     spec_name: "growbot_look",
     phase: "train",
     started_at: "2026-11-14T08:00:00Z",
@@ -52,9 +53,9 @@ describe("JlaunchScreen", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<JlaunchScreen onClose={() => {}} />);
     fireEvent.click(await screen.findByRole("tab", { name: /Runs/ }));
-    expect(screen.getByText("Run a1")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Delete run Run a1" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Delete run Run b2" }));
+    expect(screen.getByRole("button", { name: "Open v1 of Run a1" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Delete v1 of Run a1" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Delete v2 of Run b2" }));
     await waitFor(() => expect(del).toHaveBeenCalledWith("b2"));
   });
 
@@ -66,7 +67,31 @@ describe("JlaunchScreen", () => {
     const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
     render(<JlaunchScreen onClose={() => {}} />);
     fireEvent.click(await screen.findByRole("tab", { name: /Runs/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete run Run b2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete v2 of Run b2" }));
     await waitFor(() => expect(alert).toHaveBeenCalledWith(expect.stringMatching(/stop it first/)));
+  });
+
+  it("groups jobs by category and jumps from a job to just its runs", async () => {
+    const MATH = { ...SPEC, name: "erdos", title: "Census", category: "Math" } as JlaunchSpec;
+    const ROBOT = { ...SPEC, category: "Robot" } as JlaunchSpec;
+    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([MATH, ROBOT]);
+    vi.spyOn(api, "jlaunchJobs").mockResolvedValue([
+      { ...job("b2", "succeeded"), note: "lower lr" } as JlaunchJob,
+      { ...job("c3", "failed"), spec_name: "erdos", title: "Census" } as JlaunchJob,
+    ]);
+    render(<JlaunchScreen onClose={() => {}} />);
+    const robot = await screen.findByRole("button", { name: /Robot/ });
+    expect(screen.getByRole("button", { name: /Math/ })).toBeTruthy();
+    // A category folds shut, and opens again.
+    fireEvent.click(robot);
+    expect(screen.queryByText("GrowBot look")).toBeNull();
+    fireEvent.click(robot);
+    fireEvent.click(screen.getByText("GrowBot look"));
+    fireEvent.click(screen.getByRole("button", { name: "View runs of GrowBot look" }));
+    expect(screen.getByRole("tab", { name: /Runs/ }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText(/lower lr/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /of Census/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Show all/ }));
+    expect(screen.getByRole("button", { name: "Open v2 of Census" })).toBeTruthy();
   });
 });

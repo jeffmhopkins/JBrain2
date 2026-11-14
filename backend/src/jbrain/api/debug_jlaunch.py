@@ -3,12 +3,12 @@
 The owner has no terminal, so a long run on the box (a GrowBot training run, a census)
 is followed from a debug token: the runs and their state, the console tail, a running
 job's live folder (progress, the latest replay, the latest weights) and the finished
-result. Two writes: starting a registered spec (owner, 2026-11-14: the owner went to bed
+result. Three writes: starting a registered spec (owner, 2026-11-14: the owner went to bed
 handing the assistant "start the camera walk and look training"), which runs only what
 the code-defined spec registry holds, one job at a time, exactly as the PWA's Start; and
 deleting a finished run (owner, 2026-11-14: "delete bad runs ... via debug token"), which
-refuses a live one. Stopping a run stays with the owner. The bytes come back exactly as
-the owner's routes serve them (`jlaunch.py`).
+refuses a live one; and the owner's note on a run. Stopping a run stays with the owner.
+The bytes come back exactly as the owner's routes serve them (`jlaunch.py`).
 """
 
 from __future__ import annotations
@@ -46,6 +46,17 @@ async def jlaunch_delete(jid: str, request: Request, _p: DebugDep) -> None:
     jlaunch._valid_id(jid)
     request.state.debug_detail = f"jlaunch delete {jid}"
     await jlaunch.delete(request, jid, _OWNER_CTX)
+
+
+@router.patch("/jobs/{jid}")
+async def jlaunch_note(
+    jid: str, body: jlaunch.RunNoteRequest, request: Request, _p: DebugDep
+) -> dict[str, Any]:
+    """**Set a run's note** (what it was for), as the PWA's run screen does. Returns the
+    run as the mirror holds it, `revision` included."""
+    jlaunch._valid_id(jid)
+    request.state.debug_detail = f"jlaunch note {jid}"
+    return await jlaunch.set_note(request, jid, body.note, _OWNER_CTX)
 
 
 @router.get("")

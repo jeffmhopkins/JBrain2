@@ -26019,9 +26019,29 @@ button.task-band:active {
   line-height: 1.55;
   margin: 0 0 11px;
 }
+.jl-spec-actions {
+  display: flex;
+  gap: 8px;
+}
+.jl-spec-runs {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 8px;
+  cursor: pointer;
+}
+.jl-spec-runs:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .jl-spec-start {
   display: block;
-  width: 100%;
+  flex: 1;
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -26034,6 +26054,93 @@ button.task-band:active {
 }
 .jl-spec-start:hover {
   border-color: var(--amber);
+}
+
+/* collapsible groups: a category of jobs, or one job's runs */
+.jl-group {
+  margin-bottom: 14px;
+}
+.jl-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 2px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-3);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.jl-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jl-group-n {
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.jl-group-head .jl-tab-live {
+  margin-left: 0;
+}
+.jl-group-head .jl-spec-chev {
+  margin-left: auto;
+  transform: rotate(-90deg);
+}
+.jl-group.open > .jl-group-head .jl-spec-chev {
+  transform: none;
+}
+.jl-filter {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-2);
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.jl-filter-x {
+  color: var(--amber);
+  font-weight: 600;
+}
+.jl-rev {
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+.jl-run-note {
+  color: var(--text-2);
+}
+.jl-note {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.jl-note-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+}
+.jl-note .jl-btn {
+  flex: none;
+  padding: 9px 14px;
 }
 
 /* tab counts */
