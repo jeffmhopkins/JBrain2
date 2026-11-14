@@ -8506,10 +8506,26 @@ function _runGait(spec,attempt){
 /* ---- THE FAST LOOP (slow table — LLM reasons over full memory, drives legs) ---- */
 var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
 function gbOpenDreamDue(){ return _gbDreamOnOpen&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
-var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
+var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000, GB_WARM_LOOK_MS=3000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
-function gbHist(now){ var tr=gbTalkTraces(_live.scratch.traces), msgs=[], i;
-  for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
+/* The box resumes a turn from the longest prefix it read before, so the history ahead of the new
+   words has to read the same from turn to turn. Upstream's last-N window dropped the oldest
+   exchange every turn and stamped each one "[96s ago]", which changed every turn too, so only the
+   system text was ever reused and every warm-up re-read the whole conversation (field,
+   2026-11-13: 2.4-3k tokens, 8-12 s, with real turns waiting behind it). Now the window starts
+   at a fixed exchange and grows before it jumps forward (kid talk 4 to 8 exchanges; grown-up 12
+   until the 16-trace store drops its first exchange), and only the newest exchanges carry their
+   age; older ones read "[earlier]". A window shorter than the talk style's (a switch to grown-up)
+   jumps at once. */
+var _gbHistFrom="", GB_HIST_AGED=2;
+function gbHistKey(x){ return (x&&x.t||0)+"|"+String(x&&x.u||"").slice(0,80); }
+function gbHistWindow(all){ all=all||[]; var n=gbTalkTraces(all).length, i=-1, k;
+  if(_gbHistFrom) for(k=0;k<all.length;k++) if(gbHistKey(all[k])===_gbHistFrom){ i=k; break; }
+  if(i<0||all.length-i>2*n||all.length-i<n){ i=Math.max(0,all.length-n); _gbHistFrom=all.length?gbHistKey(all[i]):""; }
+  return all.slice(i); }
+function gbHist(now){ var tr=gbHistWindow(_live.scratch.traces), msgs=[], i;
+  for (i=0;i<tr.length;i++){ var aged=i>=tr.length-GB_HIST_AGED;
+    msgs.push({role:"user",content:(tr[i].t?(aged?"["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] ":"[earlier] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
   return msgs; }
 function gbWarmKey(){ var t=(_live&&_live.scratch&&_live.scratch.traces)||[], l=t[t.length-1]; return t.length+":"+(l?(l.t||0)+":"+gbTraceReply(l):"")+":"+(camOn?1:0)+":"+camFacing; }
 function gbSoulView(){ var v=(MODE==="phone")?Object.assign({},_live,{body:null}):_live;
@@ -8526,7 +8542,7 @@ function gbWarmUp(){ var now=Date.now();
   if(!soulOwned()||(typeof vmBusy==="function"&&vmBusy())||llmCfg()) return;
   _gbWarmT=now;
   try{
-    var nf=(frameDiff>3||_rideOn||now<selfMoveUntil)?3:1, cut=now-10000, frames=camOn?eyeBuf.filter(function(f){ return f.t>=cut; }).slice(-nf):[], parts=[];
+    var nf=1, cut=now-10000, frames=camOn?eyeBuf.filter(function(f){ return f.t>=cut; }).slice(-nf):[], parts=[];
     if(camOn&&!frames.length) return;
     var eyeWord=(camFacing==="environment")?"your rear eye, the back of your head":"your forward eye, the screen side";
     frames.forEach(function(f){ var ago=Math.max(0,Math.round((now-f.t)/1000));
@@ -8562,7 +8578,10 @@ function gbWarmTake(kind,extra,frames){
   if(now-w.t>GB_WARM_MAX_MS) return gbWarmSkip(w,"old");
   if(w.key!==gbWarmKey()) return gbWarmSkip(w,"moved");
   var look=typeof extra.visualUser==="string"&&typeof _GB_LOOK_WORDS!=="undefined"&&_GB_LOOK_WORDS.test(extra.visualUser);
-  if((w.nf>0)!==(frames.length>0)||((look||_rideOn||now<selfMoveUntil)&&w.nf<frames.length)) return gbWarmSkip(w,"frames");
+  if((w.nf>0)!==(frames.length>0)) return gbWarmSkip(w,"frames");
+  /* One frame a turn: words about looking ("what am I holding") need the picture from now, not
+     the one the warm-up took as they started talking. */
+  if(look&&w.nf&&(w.moved||now-w.ft>GB_WARM_LOOK_MS)) return gbWarmSkip(w,"look");
   if(w.nf&&now-w.ft>GB_WARM_MAX_MS) return gbWarmSkip(w,"stale");
   return w; }
 function gbWarmFits(w,c){
@@ -8613,7 +8632,7 @@ function think(event,kind,extra){
   var _fCut=Date.now()-10000;
   var _soft=(kind==="tick")&&!(extra&&extra.watch)&&_softMoveN>=12&&frameDiff<=3&&(Date.now()-_softSeenT>40000);   /* 0815 fishtank: ≥12 charged samples of banded quiet motion (~3s+ of life in frame) earns ONE eye, at most every 40s — bounded so a fan or TV costs a quarter of a watch tick's spend, not every tick (the FATLAB +3.4s/image economics stand). The eye is how it stays awake at the tank: a sighted tick that sees fish ANSWERS, and answering is activity. */
   if(_soft){ _softSeenT=Date.now(); try{ logEv("soft_watch",{fd:Math.round(frameDiff*100)/100,n:_softMoveN}); }catch(e){} }
-  var _nf=(kind==="tick")?((extra&&extra.watch)?1:((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0)):((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||(extra&&extra.beat&&seekGoal)||(extra&&typeof extra.visualUser==="string"&&_GB_LOOK_WORDS.test(extra.visualUser)))?3:1);   // FATLAB 0710 (5 tiers × 5 real k2.6 calls): ANY image ≈ +3.4s (5.6s→2.2s text-only; 1 vs 3 frames = SAME; slim prompts = noise) → idle ticks think BLIND (the senses line already carries bright/dark), the WATCH tick keeps 1 fresh eye (its whole job is looking), events/seek-beats keep full 3-frame sight (change detection is the game). [box: a spoken turn keeps 1 unless something moves, a seek beat runs or the words ask to look] 0811 CARRY-AWARE (tester field: carried on a room tour, the creature repeated "closet door, lamp, blanket pile" five times — idle beats were BLIND while the whole world moved): an idle tick keeps ONE eye when the scene is visibly changing (frameDiff>3, the facePresent bar), the phone is being carried (_rideOn), or its own body is moving. A still table stays blind and cheap exactly as measured; motion pays +3.4s for sight, which is the right trade mid-tour.
+  var _nf=(kind==="tick")?((extra&&extra.watch)?1:((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0)):1;   // FATLAB 0710 (5 tiers × 5 real k2.6 calls): ANY image ≈ +3.4s (5.6s→2.2s text-only; 1 vs 3 frames = SAME; slim prompts = noise) → idle ticks think BLIND (the senses line already carries bright/dark), the WATCH tick keeps 1 fresh eye (its whole job is looking), events/seek-beats keep full 3-frame sight (change detection is the game). [box: every turn sends at most one frame, the newest] 0811 CARRY-AWARE (tester field: carried on a room tour, the creature repeated "closet door, lamp, blanket pile" five times — idle beats were BLIND while the whole world moved): an idle tick keeps ONE eye when the scene is visibly changing (frameDiff>3, the facePresent bar), the phone is being carried (_rideOn), or its own body is moving. A still table stays blind and cheap exactly as measured; motion pays +3.4s for sight, which is the right trade mid-tour.
   var frames=(camOn&&_nf)?eyeBuf.filter(function(f){ return f.t>=_fCut; }).slice(-_nf):[];  // eyes OPEN + fresh (≤10s) only — never stale frames (audit)
   if(camOn&&_nf&&!frames.length){ var e0=captureEye(); if(e0&&!(_eyeSameN>0&&eyeBuf.length&&e0===eyeBuf[eyeBuf.length-1].j)) frames=[{t:Date.now(),j:e0}]; }   // fallback: one fresh frame if the ring is empty (never for a blind tick). 0811 P2b: a fallback capture byte-identical to the last ring frame is the frozen element again — do not launder it in with a fresh timestamp, or the cannot-see line below can never fire. The _eyeSameN>0 requirement (K3 F3) means we only refuse when eyeTick has ACTUALLY WITNESSED consecutive identical frames while visible: coming back from a backgrounded tab the ring has merely aged, the element is mid-resume, and refusing there would announce blindness with a perfectly good camera — the same lie as the bug, pointing the other way
   var _gw=gbWarmTake(kind,extra,frames); if(_gw) frames=_gw.frames;

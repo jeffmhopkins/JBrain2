@@ -887,20 +887,18 @@ ROUND2_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0)):3;",
-        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0))"
-        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||(extra&&extra.beat&&seekGoal)"
-        "||(extra&&typeof extra.visualUser===\"string\"&&_GB_LOOK_WORDS.test(extra.visualUser)))"
-        "?3:1);",
+        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||_soft)?1:0)):1;",
         1,
     ),
-    # Three frames still ride a seek beat (watching for its goal is comparing over time) and a
-    # person's words about looking ("watch this", "what am I holding"): by the time speech is
-    # transcribed the wave may be over, and the older frames hold it.
+    # One frame a turn on the box (owner, 2026-11-13, on the drive: "at most one frame per
+    # turn"). Upstream sent three whenever the scene moved, and on a moving truck it always
+    # moved: each extra frame cost the box about 1.5 s of reading (warm-ups 8 s with one frame,
+    # 11 s with three), and three near-identical road pictures were what he kept describing.
     (
         "v3/next.html",
         "events/seek-beats keep full 3-frame sight (change detection is the game).",
-        "events/seek-beats keep full 3-frame sight (change detection is the game). [box: a"
-        " spoken turn keeps 1 unless something moves, a seek beat runs or the words ask to look]",
+        "events/seek-beats keep full 3-frame sight (change detection is the game). [box: every"
+        " turn sends at most one frame, the newest]",
         1,
     ),
     (
@@ -2290,10 +2288,26 @@ PATCHES += [
 # half its life old: a still room would only send the model the same picture again.
 _GB_WARM_JS = r"""var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
 function gbOpenDreamDue(){ return _gbDreamOnOpen&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
-var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
+var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000, GB_WARM_LOOK_MS=3000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
-function gbHist(now){ var tr=gbTalkTraces(_live.scratch.traces), msgs=[], i;
-  for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?("["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
+/* The box resumes a turn from the longest prefix it read before, so the history ahead of the new
+   words has to read the same from turn to turn. Upstream's last-N window dropped the oldest
+   exchange every turn and stamped each one "[96s ago]", which changed every turn too, so only the
+   system text was ever reused and every warm-up re-read the whole conversation (field,
+   2026-11-13: 2.4-3k tokens, 8-12 s, with real turns waiting behind it). Now the window starts
+   at a fixed exchange and grows before it jumps forward (kid talk 4 to 8 exchanges; grown-up 12
+   until the 16-trace store drops its first exchange), and only the newest exchanges carry their
+   age; older ones read "[earlier]". A window shorter than the talk style's (a switch to grown-up)
+   jumps at once. */
+var _gbHistFrom="", GB_HIST_AGED=2;
+function gbHistKey(x){ return (x&&x.t||0)+"|"+String(x&&x.u||"").slice(0,80); }
+function gbHistWindow(all){ all=all||[]; var n=gbTalkTraces(all).length, i=-1, k;
+  if(_gbHistFrom) for(k=0;k<all.length;k++) if(gbHistKey(all[k])===_gbHistFrom){ i=k; break; }
+  if(i<0||all.length-i>2*n||all.length-i<n){ i=Math.max(0,all.length-n); _gbHistFrom=all.length?gbHistKey(all[i]):""; }
+  return all.slice(i); }
+function gbHist(now){ var tr=gbHistWindow(_live.scratch.traces), msgs=[], i;
+  for (i=0;i<tr.length;i++){ var aged=i>=tr.length-GB_HIST_AGED;
+    msgs.push({role:"user",content:(tr[i].t?(aged?"["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] ":"[earlier] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
   return msgs; }
 function gbWarmKey(){ var t=(_live&&_live.scratch&&_live.scratch.traces)||[], l=t[t.length-1]; return t.length+":"+(l?(l.t||0)+":"+gbTraceReply(l):"")+":"+(camOn?1:0)+":"+camFacing; }
 function gbSoulView(){ var v=(MODE==="phone")?Object.assign({},_live,{body:null}):_live;
@@ -2310,7 +2324,7 @@ function gbWarmUp(){ var now=Date.now();
   if(!soulOwned()||(typeof vmBusy==="function"&&vmBusy())||llmCfg()) return;
   _gbWarmT=now;
   try{
-    var nf=(frameDiff>3||_rideOn||now<selfMoveUntil)?3:1, cut=now-10000, frames=camOn?eyeBuf.filter(function(f){ return f.t>=cut; }).slice(-nf):[], parts=[];
+    var nf=1, cut=now-10000, frames=camOn?eyeBuf.filter(function(f){ return f.t>=cut; }).slice(-nf):[], parts=[];
     if(camOn&&!frames.length) return;
     var eyeWord=(camFacing==="environment")?"your rear eye, the back of your head":"your forward eye, the screen side";
     frames.forEach(function(f){ var ago=Math.max(0,Math.round((now-f.t)/1000));
@@ -2346,7 +2360,10 @@ function gbWarmTake(kind,extra,frames){
   if(now-w.t>GB_WARM_MAX_MS) return gbWarmSkip(w,"old");
   if(w.key!==gbWarmKey()) return gbWarmSkip(w,"moved");
   var look=typeof extra.visualUser==="string"&&typeof _GB_LOOK_WORDS!=="undefined"&&_GB_LOOK_WORDS.test(extra.visualUser);
-  if((w.nf>0)!==(frames.length>0)||((look||_rideOn||now<selfMoveUntil)&&w.nf<frames.length)) return gbWarmSkip(w,"frames");
+  if((w.nf>0)!==(frames.length>0)) return gbWarmSkip(w,"frames");
+  /* One frame a turn: words about looking ("what am I holding") need the picture from now, not
+     the one the warm-up took as they started talking. */
+  if(look&&w.nf&&(w.moved||now-w.ft>GB_WARM_LOOK_MS)) return gbWarmSkip(w,"look");
   if(w.nf&&now-w.ft>GB_WARM_MAX_MS) return gbWarmSkip(w,"stale");
   return w; }
 function gbWarmFits(w,c){

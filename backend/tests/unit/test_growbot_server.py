@@ -1209,8 +1209,6 @@ def test_llm_passes_only_inline_images(run: _Running) -> None:
         {"type": "image_url", "image_url": {"url": frame + "\nhttp://x"}},
         {"type": "image_url"},
         {"type": "video_url", "video_url": {"url": "http://x/v.mp4"}},
-        {"type": "audio_url", "audio_url": {"url": "http://x/a.wav"}},
-        {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
         {"type": "file", "file": {"file_id": "x"}},
         {"type": "text", "text": {"url": "http://x"}},
         "a bare string part",
@@ -1248,6 +1246,32 @@ def test_the_doors_are_not_queued_behind_brain_calls(run: _Running, gb: types.Mo
         release.set()
         for future in held:
             future.result(5)
+
+
+def test_a_sound_to_name_is_answered_as_heard_nothing(run: _Running) -> None:
+    """Field, 2026-11-13: no model on the box hears audio, so the ear's clip reached the
+    creature's model stripped to "name this sound", which said SPEECH every time and took its
+    slot. Now the sidecar answers empty and the model is never called."""
+    before = len([s for s in _Fake.seen if s["path"].endswith("/chat/completions")])
+    for part in (
+        {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
+        {"type": "audio_url", "audio_url": {"url": "http://x/a.wav"}},
+    ):
+        content = [{"type": "text", "text": "Listen. Name the sound."}, part]
+        body = json.dumps({"model": "x", "messages": [{"role": "user", "content": content}]})
+        resp = run.request("POST", "/api/llm?target=openrouter", body.encode())
+        assert resp.status == 200
+        assert json.loads(resp.read())["choices"][0]["message"]["content"] == ""
+        stream = run.request("POST", "/api/llm-stream?target=openrouter", body.encode())
+        assert stream.status == 200
+        text = stream.read().decode()
+        assert text.endswith("data: [DONE]\n\n")
+        assert json.loads(text.split("\n")[0][len("data: ") :])["choices"][0]["delta"] == {
+            "role": "assistant",
+            "content": "",
+        }
+    after = len([s for s in _Fake.seen if s["path"].endswith("/chat/completions")])
+    assert after == before
 
 
 def test_llm_refuses_a_body_that_is_not_a_chat(run: _Running) -> None:
