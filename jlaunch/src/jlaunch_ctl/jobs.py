@@ -181,13 +181,32 @@ class JobManager:
     # -- records -----------------------------------------------------------------
 
     def _save(self, job: Job) -> None:
-        path = self._state_root / job.id / _RECORD
-        tmp = path.with_name(f".{_RECORD}.tmp")
+        # The job can write its state folder, and this runs on the event loop: never
+        # follow a symlink there (the folder itself, or one planted at the temp name)
+        # and never open anything that could block, such as a FIFO.
+        tmp = f".{_RECORD}.tmp"
+        data = json.dumps(asdict(job)).encode()
         try:
-            tmp.write_text(json.dumps(asdict(job)))
-            tmp.replace(path)
+            folder = os.open(
+                self._state_root / job.id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
         except OSError:
             _log.warning("job record not saved id=%s", job.id, exc_info=True)
+            return
+        try:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp, dir_fd=folder)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK
+            fd = os.open(tmp, flags, 0o600, dir_fd=folder)
+            try:
+                os.write(fd, data)
+            finally:
+                os.close(fd)
+            os.replace(tmp, _RECORD, src_dir_fd=folder, dst_dir_fd=folder)
+        except OSError:
+            _log.warning("job record not saved id=%s", job.id, exc_info=True)
+        finally:
+            os.close(folder)
 
     def _load_records(self) -> None:
         """Read back the runs a previous control server started.
@@ -207,10 +226,16 @@ class JobManager:
                 follow_symlinks=False
             ):
                 continue
-            data = _read_json(Path(entry.path) / _RECORD)
-            if not data:
+            # One bad record (deep nesting, a huge number, junk types) must never stop
+            # the server starting: it would fail the same way after every Update.
+            try:
+                data = _read_record(Path(entry.path) / _RECORD)
+                job = _job_from_record(
+                    entry.name, data, self._workspace_root / entry.name
+                )
+            except Exception:
+                _log.warning("job record skipped id=%s", entry.name, exc_info=True)
                 continue
-            job = _job_from_record(entry.name, data, self._workspace_root / entry.name)
             if job is not None:
                 self._jobs[job.id] = job
 
@@ -447,8 +472,11 @@ class JobManager:
     # -- artifact ----------------------------------------------------------------
 
     def _artifact_rel(self, job: Job) -> str:
+        # The run's own, as its spec was at start: the spec may have moved it since.
+        if job.artifact_path:
+            return job.artifact_path
         spec = get_spec(job.spec_name)
-        return spec.artifact_path if spec is not None else job.artifact_path
+        return spec.artifact_path if spec is not None else ""
 
     def _artifact_dest(self, job: Job) -> Path:
         name = Path(self._artifact_rel(job)).name or "artifact"
@@ -477,8 +505,10 @@ class JobManager:
 
     def _live_dir(self, jid: str) -> Path:
         job = self.get(jid)
-        spec = get_spec(job.spec_name)
-        live_dir = spec.live_dir if spec is not None else job.live_dir
+        live_dir = job.live_dir
+        if not live_dir:
+            spec = get_spec(job.spec_name)
+            live_dir = spec.live_dir if spec is not None else ""
         if not live_dir:
             raise JobError("this job has no live folder")
         workspace = Path(job.workspace).resolve()
@@ -544,7 +574,48 @@ class JobManager:
         self._registry.close_all()
 
 
-def _job_from_record(jid: str, data: dict[str, object], workspace: Path) -> Job | None:
+_RECORD_MAX_BYTES = 1024 * 1024
+_RECORD_STATES = frozenset({"cloning", "running", "succeeded", "failed", "killed"})
+
+
+def _read_record(path: Path) -> dict[str, object] | None:
+    """A job record, or None. Opened without following a symlink or blocking on a FIFO,
+    and size-capped, as the job can plant anything there; any parse error is the
+    caller's to skip."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > _RECORD_MAX_BYTES:
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as fh:
+            raw = fh.read(_RECORD_MAX_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(raw) > _RECORD_MAX_BYTES:
+        return None
+    data = json.loads(raw.decode("utf-8", errors="replace"))
+    return data if isinstance(data, dict) else None
+
+
+def _rel_path(value: object) -> str:
+    # A checkout-relative path, or nothing: never absolute, never up and out, no NUL.
+    if not isinstance(value, str) or not value or "\0" in value:
+        return ""
+    parts = Path(value).parts
+    if Path(value).is_absolute() or ".." in parts:
+        return ""
+    return value
+
+
+def _job_from_record(
+    jid: str, data: dict[str, object] | None, workspace: Path
+) -> Job | None:
+    if not data:
+        return None
+
     def text(key: str) -> str:
         value = data.get(key)
         return value if isinstance(value, str) else ""
@@ -562,6 +633,10 @@ def _job_from_record(jid: str, data: dict[str, object], workspace: Path) -> Job 
     state = text("state")
     if not state or not text("spec_name"):
         return None
+    # The api treats states it doesn't know (such as "queued") as live and refuses to
+    # delete them, and jlaunch never reaps them: an unknown state ends as failed.
+    if state not in _RECORD_STATES:
+        state = "failed"
     machine = data.get("machine")
     verify = data.get("verify_ok")
     size = data.get("artifact_bytes")
@@ -590,8 +665,8 @@ def _job_from_record(jid: str, data: dict[str, object], workspace: Path) -> Job 
         else None,
         console_tail=text("console_tail"),
         commit=text("commit"),
-        live_dir=text("live_dir"),
-        artifact_path=text("artifact_path"),
+        live_dir=_rel_path(data.get("live_dir")),
+        artifact_path=_rel_path(data.get("artifact_path")),
     )
 
 
