@@ -865,16 +865,14 @@ def test_past_replies_go_back_to_the_model_in_its_own_json_shape() -> None:
     assert json.loads(empty) == {"say": ""}
 
 
-def test_a_spoken_turn_sends_one_frame_unless_something_is_moving() -> None:
-    """Each frame is ~300 tokens of prefill on the box; three only when there is change to see."""
+def test_a_turn_sends_at_most_one_frame() -> None:
+    """Owner, 2026-11-13, on the drive: "at most one frame per turn". On a moving truck every
+    turn sent three near-identical road frames; each cost the box about 1.5 s of reading."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     line = page[page.index("var _nf=(kind===") :]
     line = line[: line.index(";")]
-    assert line.endswith(
-        ":((frameDiff>3||_rideOn||Date.now()<selfMoveUntil||(extra&&extra.beat&&seekGoal)"
-        '||(extra&&typeof extra.visualUser==="string"&&_GB_LOOK_WORDS.test(extra.visualUser)))'
-        "?3:1)"
-    )
+    assert line.endswith("?1:0)):1")
+    assert "    var nf=1, cut=now-10000," in page
     words = page[page.index("var _GB_LOOK_WORDS=/") :]
     words = words[len("var _GB_LOOK_WORDS=/") : words.index("/i;")]
     look = re.compile(words.replace("\\b", r"\b"), re.IGNORECASE)
@@ -2904,6 +2902,44 @@ def test_the_page_warms_while_the_person_talks_and_the_turn_takes_it() -> None:
     hold = think.index('if(kind!=="event"&&vadOn&&gbWarmFresh()) return;')
     assert hold < think.index("inFlight=true")
     assert think.count("function gbTraceReply") == 0 and "msgs=gbHist(now);" in think
+
+
+def test_the_history_reads_the_same_from_turn_to_turn() -> None:
+    """Field, 2026-11-13: only the system text was ever reused, because the window dropped an
+    exchange and every "[96s ago]" changed each turn, so each warm-up re-read the conversation.
+    The window now holds still until it is twice its size, and only the newest exchanges carry
+    their age, so turn N+1's history starts with turn N's, word for word."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("function gbTraceReply(t){") : page.index("function gbWarmKey(){")]
+    script = (
+        "var N=4;function gbTalkTraces(a){ return a.slice(-N); }"
+        "function traceMoment(u){ return u; }"
+        "var _live={scratch:{traces:[]}}, T=1000000, turns=[];"
+        f"{code}\n"
+        "function say(i){ _live.scratch.traces.push({u:'q'+i,a:'a'+i,t:T});"
+        " if(_live.scratch.traces.length>16) _live.scratch.traces.shift(); T+=30000;"
+        " turns.push(gbHist(T).map(function(m){ return m.content; })); }"
+        "for(var i=0;i<14;i++) say(i);"
+        "var kept=[];"
+        "for(var j=1;j<turns.length;j++){ var a=turns[j-1], b=turns[j], k=0;"
+        " while(k<a.length&&k<b.length&&a[k]===b[k]) k++; kept.push(k); }"
+        "console.log(JSON.stringify({kept:kept,last:turns[turns.length-1],"
+        "lens:turns.map(function(t){ return t.length/2; })}));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    got = json.loads(out.stdout)
+    assert got["lens"] == [1, 2, 3, 4, 5, 6, 7, 8, 4, 5, 6, 7, 8, 4]
+    # Everything but the last three exchanges (the two that carry an age, and the one that
+    # just lost it) is the same text as the turn before, except when the window jumps.
+    for n, k in enumerate(got["kept"], start=1):
+        if got["lens"][n] > got["lens"][n - 1]:
+            assert k >= 2 * max(0, got["lens"][n - 1] - 2) - 1, (n, k)
+    last = got["last"]
+    assert last[0] == "[earlier] q10" and last[1] == '{"say":"a10"}'
+    assert last[4] == "[60s ago] q12" and last[6] == "[30s ago] q13"
 
 
 def test_the_warm_up_builds_the_system_text_as_the_turn_does() -> None:

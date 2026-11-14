@@ -2071,6 +2071,13 @@ class GrowBot:
         return json_response(200, {"ok": True})
 
     async def llm(self, req: Request, *, stream: bool) -> Response:
+        if _asks_to_hear(req.body):
+            # The page's sound-naming ear sends the clip as audio, which no model on the box can
+            # take: stripped, it reached the creature's model as a bare "name this sound", which
+            # answered "SPEECH: someone is talking" every time (field, 2026-11-13), sent the
+            # noise on to whisper, and took the creature's slot and its cached prompt with it.
+            # Nothing was heard, so nothing is named: the ear reads an empty answer as silence.
+            return _nothing_heard(stream)
         models = await self._call(self.models)
         body = self.llm_body(req.body, stream, models)
         if body is None:
@@ -2760,6 +2767,40 @@ def _stt_failure(up: Upstream) -> str:
     if up.why == "broken":
         return "the box's speech model sent a broken answer"
     return f"the box's speech model failed (HTTP {up.status})"
+
+
+AUDIO_PARTS = frozenset({"input_audio", "audio_url"})
+
+
+def _asks_to_hear(raw: bytes) -> bool:
+    """A chat whose message carries a sound for the model to hear."""
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return False
+    messages = body.get("messages") if isinstance(body, dict) else None
+    if not isinstance(messages, list):
+        return False
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list) and any(
+            isinstance(p, dict) and p.get("type") in AUDIO_PARTS for p in content
+        ):
+            return True
+    return False
+
+
+def _nothing_heard(stream: bool) -> Response:
+    reply = {"role": "assistant", "content": ""}
+    if not stream:
+        choice = {"index": 0, "message": reply, "finish_reason": "stop"}
+        return json_response(200, {"object": "chat.completion", "choices": [choice]})
+    chunk = {
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": reply, "finish_reason": "stop"}],
+    }
+    body = f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode()
+    return Response(200, body, "text/event-stream")
 
 
 def _inline_images_only(message: object) -> object:
