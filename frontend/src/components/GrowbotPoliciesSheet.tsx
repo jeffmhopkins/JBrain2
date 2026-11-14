@@ -3,7 +3,12 @@
 // policy library (rename, delete), then the finished Jobs training runs it can add from.
 
 import { useEffect, useState } from "react";
-import { type GrowbotPolicy, type GrowbotPolicySource, api } from "../api/client";
+import {
+  type GrowbotKeptSync,
+  type GrowbotPolicy,
+  type GrowbotPolicySource,
+  api,
+} from "../api/client";
 import { Sheet } from "./Sheet";
 import { useArm } from "./growbotArm";
 
@@ -30,6 +35,18 @@ function when(iso: string | null): string {
 export function walkKind(p: GrowbotPolicy): string {
   const lead = p.contract.facing === "camera" ? "camera end first" : "nose first";
   return p.contract.speed ? `${lead}, with speed` : `${lead}, heading only`;
+}
+
+/** One line on what a refresh from the training repo did. */
+export function keptText(r: GrowbotKeptSync): string {
+  const parts = [
+    r.added.length ? `Added ${r.added.join(", ")}` : "",
+    r.updated.length ? `Updated ${r.updated.join(", ")}` : "",
+    r.removed.length ? `Removed ${r.removed.join(", ")}` : "",
+    r.skipped.length ? `Couldn't take ${r.skipped.join("; ")}` : "",
+  ].filter(Boolean);
+  const at = r.commit ? ` (training repo at ${r.commit.slice(0, 7)})` : "";
+  return parts.length ? `${parts.join(". ")}${at}.` : `Up to date with the training repo${at}.`;
 }
 
 // A trained walk's starting name: the job's kind and the day it finished.
@@ -147,6 +164,23 @@ export function GrowbotPoliciesSheet({ policies, onChange, onClose }: Props) {
 
   const say = (text: string, bad = false) => setNote({ text, bad });
 
+  // Walks kept in the training repo (owner, 2026-11-14: "finished policies should get saved
+  // to our training repo, and the growbot GUI ... should pull from that on a refresh").
+  async function pullKept() {
+    if (busy) return;
+    setBusy("kept");
+    try {
+      const r = await api.refreshGrowbotKept();
+      const fresh = await api.growbotPolicies();
+      onChange(() => fresh);
+      say(keptText(r), r.skipped.length > 0);
+    } catch (e) {
+      say(message(e), true);
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function add(s: GrowbotPolicySource) {
     if (busy) return;
     setBusy(s.job_id);
@@ -193,6 +227,24 @@ export function GrowbotPoliciesSheet({ policies, onChange, onClose }: Props) {
           ))}
         </div>
       )}
+
+      <div className="gb-sec-h">From the training repo</div>
+      <div className="gb-li gb-pol-row">
+        <span className="gb-tx">
+          <span className="gb-t2">
+            Walks we kept in GrowBot_Training. Refresh brings in new and changed ones.
+          </span>
+        </span>
+        <button
+          type="button"
+          className="gb-btn"
+          disabled={!!busy}
+          aria-label="Refresh walks from the training repo"
+          onClick={() => void pullKept()}
+        >
+          {busy === "kept" ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
 
       <div className="gb-sec-h">From finished training jobs</div>
       {sources === null ? (

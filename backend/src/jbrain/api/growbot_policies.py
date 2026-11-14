@@ -8,6 +8,9 @@ file into the library (`jbrain.growbot.policies`), so it outlives the job.
 - `router` — the owner: the library (list, add from a job, rename, delete) and the finished
   jobs it can add from.
 - `debug_router` — the same reads and the add, through the debug token (CLAUDE.md #10).
+- Kept policies (owner, 2026-11-14: "finished policies should get saved to our training repo,
+  and the growbot GUI ... should pull from that on a refresh"): the ones the training repo's
+  `policies/index.toml` lists, read by the launcher. A refresh syncs them into the library.
 - `internal_router` — the sidecar (`growbot.token`): one policy's JSON, which the creature
   page loads when the Body tab drives it.
 """
@@ -80,6 +83,25 @@ class RenameIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
 
     _name = field_validator("name")(_clean_name)
+
+
+class KeptSyncOut(BaseModel):
+    """What a refresh from the training repo changed in the library (titles), and any
+    kept policy it couldn't take, with why."""
+
+    commit: str
+    added: list[str]
+    updated: list[str]
+    removed: list[str]
+    skipped: list[str]
+
+
+# A kept policy's row: `repo:<slug>@<blob>`, so a sync can tell which index entry a row is
+# and whether its file changed, without a column of its own. A job id never has a colon.
+_KEPT_PREFIX = "repo:"
+_KEPT_RE = re.compile(r"^repo:([a-z0-9][a-z0-9-]{0,47})@([0-9a-f]{40})$")
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+_BLOB_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 class SourceOut(BaseModel):
@@ -171,6 +193,68 @@ async def _add(request: Request, ctx: SessionContext, body: AddIn) -> PolicyOut:
     return _out(row)
 
 
+async def _sync_kept(request: Request, ctx: SessionContext) -> KeptSyncOut:
+    """Re-read the training repo, then make the library's kept policies match its index:
+    add new ones, swap in a changed file, remove the ones it dropped. A row's name and the
+    owner's choices about it are never touched, and walks added from a job are left alone.
+    One file that isn't a drivable policy is skipped, not fatal."""
+    client = jlaunch._client(request)
+    await jlaunch.refresh_catalog(request)
+    try:
+        listing = await client.list_kept_policies()
+    except JlaunchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    repo = _repo(request)
+    have: dict[str, tuple[PolicyRow, str]] = {}
+    for row in await repo.list(ctx):
+        m = _KEPT_RE.fullmatch(row.source_job)
+        if m:
+            have[m.group(1)] = (row, m.group(2))
+    out = KeptSyncOut(
+        commit=str(listing.get("commit") or ""), added=[], updated=[], removed=[], skipped=[]
+    )
+    listed: set[str] = set()
+    for entry in listing.get("policies") or []:
+        slug, blob = str(entry.get("slug") or ""), str(entry.get("blob") or "")
+        try:
+            title = _clean_name(str(entry.get("title") or slug))[:60]
+        except ValueError:
+            title = slug
+        family = str(entry.get("job") or "")
+        if not _SLUG_RE.fullmatch(slug) or not _BLOB_RE.fullmatch(blob):
+            continue
+        if not family.startswith(_SPEC_PREFIX):
+            continue
+        listed.add(slug)
+        current = have.get(slug)
+        if current is not None and current[1] == blob:
+            continue
+        try:
+            raw = await client.get_kept_policy(slug)
+            policy, _contract = parse(raw)
+        except (JlaunchError, PolicyError) as exc:
+            out.skipped.append(f"{title}: {exc}")
+            continue
+        tag = f"{_KEPT_PREFIX}{slug}@{blob}"
+        if current is None:
+            await repo.add(ctx, title, policy, len(raw), tag, family)
+            out.added.append(title)
+        else:
+            await repo.replace_policy(ctx, current[0].id, policy, len(raw), tag)
+            out.updated.append(current[0].name)
+    for slug, (row, _blob) in have.items():
+        if slug not in listed and await repo.delete(ctx, row.id):
+            out.removed.append(row.name)
+    return out
+
+
+@router.post("/policies/refresh")
+async def refresh_kept(request: Request, owner: OwnerDep) -> KeptSyncOut:
+    """Pull the kept policies from the training repo into the library. 422 says what's
+    wrong with the repo's files; 502 when the repo or the launcher can't be reached."""
+    return await _sync_kept(request, _owner_ctx(owner))
+
+
 @router.get("/policies")
 async def list_policies(request: Request, owner: OwnerDep) -> list[PolicyOut]:
     return await _list(request, _owner_ctx(owner))
@@ -224,6 +308,12 @@ async def debug_list_sources(request: Request, _p: DebugDep) -> list[SourceOut]:
 async def debug_add_policy(request: Request, _p: DebugDep, body: AddIn) -> PolicyOut:
     request.state.debug_detail = f"growbot add policy from {body.job_id}"
     return await _add(request, _DEBUG_OWNER, body)
+
+
+@debug_router.post("/policies/refresh")
+async def debug_refresh_kept(request: Request, _p: DebugDep) -> KeptSyncOut:
+    request.state.debug_detail = "growbot refresh kept policies"
+    return await _sync_kept(request, _DEBUG_OWNER)
 
 
 @internal_router.get("/policies/{pid}")

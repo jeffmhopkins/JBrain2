@@ -54,6 +54,10 @@ class JlaunchApi(Protocol):
 
     async def refresh_catalog(self) -> dict[str, Any]: ...
 
+    async def list_kept_policies(self) -> dict[str, Any]: ...
+
+    async def get_kept_policy(self, slug: str) -> bytes: ...
+
 
 class JlaunchClient:
     def __init__(
@@ -137,6 +141,24 @@ class JlaunchClient:
     async def list_live(self, jid: str) -> list[dict[str, Any]]:
         return await self._json("GET", f"/jobs/{jid}/live")
 
+    async def list_kept_policies(self) -> dict[str, Any]:
+        """The kept policies the training repo's policies/index.toml lists, as last read."""
+        return await self._json("GET", "/catalog/policies")
+
+    async def get_kept_policy(self, slug: str) -> bytes:
+        """One kept policy's JSON bytes (the launcher caps them at 4 MB)."""
+        try:
+            async with self._client() as client:
+                resp = await client.get(f"/catalog/policies/{slug}")
+                resp.raise_for_status()
+                return resp.content
+        except httpx.HTTPStatusError as exc:
+            raise JlaunchError(
+                f"jlaunch control server error: {exc}", status=exc.response.status_code
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise JlaunchError(f"jlaunch control server error: {exc}") from exc
+
     async def refresh_catalog(self) -> dict[str, Any]:
         """Re-read the training repo's jobs.toml. A clone of a small repo, so it gets the
         artifact's longer read allowance rather than the 30 s control timeout."""
@@ -183,6 +205,8 @@ class FakeJlaunchClient:
         self.started_specs: list[str] = []
         # jid -> {name: (bytes, media type)}: what each job's live folder holds.
         self.live: dict[str, dict[str, tuple[bytes, str]]] = {}
+        # The training repo's kept policies: (index entry, bytes) by slug.
+        self.kept: dict[str, tuple[dict[str, Any], bytes]] = {}
         # What the next catalog refresh answers: a result, or an error to raise.
         self.refresh_result: dict[str, Any] | JlaunchError = {
             "commit": "a" * 40,
@@ -276,6 +300,14 @@ class FakeJlaunchClient:
         if found is None:
             raise JlaunchError("no such live file", status=404)
         return found
+
+    async def list_kept_policies(self) -> dict[str, Any]:
+        return {"commit": "a" * 40, "policies": [e for e, _b in self.kept.values()]}
+
+    async def get_kept_policy(self, slug: str) -> bytes:
+        if slug not in self.kept:
+            raise JlaunchError("no such kept policy", status=404)
+        return self.kept[slug][1]
 
     async def refresh_catalog(self) -> dict[str, Any]:
         if isinstance(self.refresh_result, JlaunchError):

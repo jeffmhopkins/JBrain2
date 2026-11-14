@@ -704,6 +704,14 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   refresh button (and a debug token's `POST /jlaunch/specs/refresh`) re-reads it; the box
   also re-reads it when it starts and before each Start, and a run clones the exact commit it
   was read at and records it.
+  ✅ Kept walks from the training repo (owner, 2026-11-14: *"finished policies should get saved
+  to our training repo, and the growbot GUI in our pwa should pull from that on a refresh"*;
+  only *"the ones we pick"*): a kept run lives in the training repo's `policies/<slug>/`, and
+  `policies/index.toml` lists the ones the Body tab offers. The launcher reads the index and the
+  files with the jobs refresh (`jlaunch_ctl/policy_index.py`, checked against their git blob
+  ids). The *Trained walks* sheet's Refresh (`POST /growbot/policies/refresh`, with a debug
+  twin) makes the library match: it adds new entries, swaps changed weights in place, and
+  removes dropped entries. Walks added from a job are left alone.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic. Its store
   landed early with the brain log (§2 "Brain log", migration 0262); reading it in the PWA and

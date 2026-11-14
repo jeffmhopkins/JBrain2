@@ -163,6 +163,15 @@ class PolicyRepo(Protocol):
 
     async def rename(self, ctx: SessionContext, pid: str, name: str) -> PolicyRow | None: ...
 
+    async def replace_policy(
+        self,
+        ctx: SessionContext,
+        pid: str,
+        policy: dict[str, Any],
+        size: int,
+        source_job: str,
+    ) -> bool: ...
+
     async def delete(self, ctx: SessionContext, pid: str) -> bool: ...
 
     async def get_json(self, ctx: SessionContext, pid: str) -> dict[str, Any] | None: ...
@@ -253,6 +262,26 @@ class SqlPolicyRepo:
             ).first()
             # Read inside the transaction, so a row summary() refuses rolls the rename back.
             return _row(r) if r is not None else None
+
+    async def replace_policy(
+        self,
+        ctx: SessionContext,
+        pid: str,
+        policy: dict[str, Any],
+        size: int,
+        source_job: str,
+    ) -> bool:
+        """Swap in a new version of a policy's weights (a kept policy the training repo
+        changed). The row keeps its id, name and every choice the owner made about it."""
+        async with scoped_session(self._maker, ctx) as session:
+            done = await session.execute(
+                text(
+                    "UPDATE app.growbot_policies SET policy = CAST(:p AS jsonb), bytes = :b,"
+                    " source_job = :j WHERE id = CAST(:i AS uuid) RETURNING id"
+                ),
+                {"p": json.dumps(policy), "b": size, "j": source_job, "i": pid},
+            )
+            return done.first() is not None
 
     async def delete(self, ctx: SessionContext, pid: str) -> bool:
         async with scoped_session(self._maker, ctx) as session:

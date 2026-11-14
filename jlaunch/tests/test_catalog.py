@@ -27,6 +27,7 @@ from jlaunch_ctl.catalog import (
 )
 from jlaunch_ctl.config import Settings
 from jlaunch_ctl.jobs import JobError, JobManager
+from jlaunch_ctl.policy_index import blob_id
 from jlaunch_ctl.runner import build_script
 from jlaunch_ctl.specs import get_spec, listed_specs
 from jlaunch_ctl.terminal import TerminalRegistry
@@ -71,13 +72,30 @@ class FakeRepo:
         self.configs = CONFIGS
         self.fail: str | None = None
         self.fetches = 0
+        # The kept policies: the index's text and {path: bytes} under policies/.
+        self.index = ""
+        self.files: dict[str, bytes] = {}
+        self.reads = 0
 
     async def __call__(self, dest: Path) -> Snapshot:
         self.fetches += 1
         if self.fail:
             raise CatalogError(self.fail)
         dest.mkdir(parents=True, exist_ok=True)
-        return Snapshot(self.manifest, self.commit, self.configs)
+        by_blob = {blob_id(b): b for b in self.files.values()}
+
+        async def read(blob: str) -> bytes:
+            self.reads += 1
+            return by_blob[blob]
+
+        return Snapshot(
+            self.manifest,
+            self.commit,
+            self.configs,
+            policy_index=self.index,
+            policy_blobs={p: (blob_id(b), len(b)) for p, b in self.files.items()},
+            read_blob=read,
+        )
 
 
 def _snap(manifest: str, configs: frozenset[str] = CONFIGS) -> Snapshot:
@@ -474,6 +492,12 @@ def local_repo(tmp_path, monkeypatch) -> Path:
     (src / "configs" / "sub" / "deep.toml").write_text("")
     (src / "configs" / "look.toml").chmod(0o755)
     os.symlink("/etc/passwd", src / "configs" / "link.toml")
+    (src / "policies" / "look-v1").mkdir(parents=True)
+    (src / "policies" / "look-v1" / "policy_final.json").write_bytes(b'{"w": [1]}')
+    (src / "policies" / "index.toml").write_text(
+        '[[policy]]\nslug = "look-v1"\ntitle = "Look v1"\njob = "growbot_look"\n'
+        'file = "policies/look-v1/policy_final.json"\n'
+    )
     _git(src, "add", "-A")
     _git(src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x")
 
@@ -498,6 +522,18 @@ async def test_git_fetch_reads_plain_files_from_git_itself(tmp_path, local_repo)
     # The symlink and the nested file are not configs; nothing was checked out.
     assert snap.configs == CONFIGS
     assert not (tmp_path / "f" / "jobs.toml").exists()
+    path = "policies/look-v1/policy_final.json"
+    blob, size = snap.policy_blobs[path]
+    assert size == 10 and blob == blob_id(b'{"w": [1]}')
+    assert 'slug = "look-v1"' in snap.policy_index
+    assert snap.read_blob is not None and await snap.read_blob(blob) == b'{"w": [1]}'
+
+
+async def test_a_real_refresh_keeps_the_policies(tmp_path, local_repo):
+    cat = Catalog(str(tmp_path / "state"))
+    got = await cat.refresh()
+    assert got["policies"] == ["look-v1"]
+    assert cat.policy_bytes("look-v1") == b'{"w": [1]}'
 
 
 async def test_git_fetch_without_a_manifest(tmp_path, local_repo):
