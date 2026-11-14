@@ -7,6 +7,7 @@ import asyncio
 
 import pytest
 
+from jlaunch_ctl import jobs as jobs_mod
 from jlaunch_ctl.jobs import BusyError, JobError
 from jlaunch_ctl.specs import Phase
 from tests.conftest import wait_terminal
@@ -130,3 +131,47 @@ async def test_delete_kills_running_job(manager, register_spec) -> None:
     await manager.delete(job.id)
     with pytest.raises(JobError):
         manager.get(job.id)
+
+
+def test_job_files_with_bad_bytes_read_without_raising(tmp_path) -> None:
+    # A non-UTF-8 byte in a job-written file used to raise out of finalize, leaving the
+    # run "running" for good with nothing to kill.
+    lines = tmp_path / "headline.txt"
+    lines.write_bytes(b"hard primes: \xff\n")
+    assert jobs_mod._read_lines(lines) == ["hard primes: \ufffd"]
+    status = tmp_path / "status.json"
+    status.write_bytes(b"[1, 2]")  # valid JSON, not an object
+    assert jobs_mod._read_json(status) is None
+    times = tmp_path / "phase_times.jsonl"
+    times.write_bytes(b'{"phase": "a", "seconds": 1}\n3\n\xff\n')
+    assert jobs_mod._read_jsonl(times) == [{"phase": "a", "seconds": 1}]
+
+
+async def test_a_failing_finalize_still_ends_the_job(
+    manager, register_spec, monkeypatch
+) -> None:
+    register_spec("test_finboom", (Phase("gen", "true"),))
+
+    def boom(*_a: object) -> object:
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(manager, "_collect", boom)
+    job = await manager.start("test_finboom")
+    done = await wait_terminal(manager, job.id)
+    assert done.state == "failed"
+    assert "finalize failed: disk on fire" in (done.error or "")
+
+
+async def test_an_orphaned_run_is_reaped_and_frees_the_slot(
+    manager, register_spec
+) -> None:
+    # The run's terminal is gone but its end was never recorded (close() fires no
+    # on_exit): it must not stay "running", unkillable, holding the one-job slot.
+    register_spec("test_orphan", (Phase("sleep", "sleep 30"),))
+    job = await manager.start("test_orphan")
+    manager._registry._terms[job.id].close()
+    assert manager.get(job.id).state == "failed"
+    nxt = await manager.start("test_orphan")
+    assert manager.get(nxt.id).state == "running"
+    await manager.kill(nxt.id)
+    assert (await wait_terminal(manager, nxt.id)).state == "killed"
