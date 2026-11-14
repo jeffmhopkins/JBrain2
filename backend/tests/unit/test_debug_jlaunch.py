@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from jbrain.api.jshare_public import SANDBOX
 from jbrain.jlaunch import FakeJlaunchClient, JlaunchError
 from tests.unit.test_debug_api import _auth, _state, debug_client  # noqa: F401 - fixture
+from tests.unit.test_jlaunch_api import _no_db  # noqa: F401 - fixture
 
 _PROGRESS = b'{"percent": 42}'
 
@@ -67,11 +68,10 @@ def test_result_downloads_once_finished(debug_client: tuple[TestClient, str]) ->
     assert got.headers["content-disposition"].startswith("attachment;")
 
 
-def test_cannot_control_a_run(debug_client: tuple[TestClient, str]) -> None:  # noqa: F811
+def test_cannot_stop_or_delete_a_run(debug_client: tuple[TestClient, str]) -> None:  # noqa: F811
     client, key = debug_client
     fake, jid = _launcher(client)
     for method, path in (
-        ("POST", "/api/debug/jlaunch/jobs"),
         ("POST", f"/api/debug/jlaunch/jobs/{jid}/stop"),
         ("DELETE", f"/api/debug/jlaunch/jobs/{jid}"),
     ):
@@ -79,11 +79,16 @@ def test_cannot_control_a_run(debug_client: tuple[TestClient, str]) -> None:  # 
     assert (asyncio.run(fake.get_job(jid)))["state"] == "running"
 
 
-def test_starts_a_registered_spec_and_nothing_else(debug_client: tuple[TestClient, str]) -> None:  # noqa: F811
+def test_starts_a_registered_spec_and_nothing_else(
+    debug_client: tuple[TestClient, str],  # noqa: F811
+    _no_db: None,  # noqa: F811
+) -> None:
     client, key = debug_client
     fake, _ = _launcher(client)
     body = {"spec": "growbot_camera_walk"}
     assert client.post("/api/debug/jlaunch/jobs", json=body).status_code == 401
+    bad = client.post("/api/debug/jlaunch/jobs", json={"spec": "x" * 200}, headers=_auth(key))
+    assert bad.status_code == 422
     got = client.post("/api/debug/jlaunch/jobs", json=body, headers=_auth(key))
     assert got.status_code == 201 and fake.started_specs[-1] == "growbot_camera_walk"
     jid = got.json()["id"]

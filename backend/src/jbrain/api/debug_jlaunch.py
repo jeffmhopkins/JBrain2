@@ -16,7 +16,6 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
 
 from jbrain.api import jlaunch
 from jbrain.api.deps import DebugDep
@@ -29,12 +28,10 @@ router = APIRouter(prefix="/debug/jlaunch")
 _OWNER_CTX = SessionContext(principal_id="debug-console", principal_kind="owner")
 
 
-class StartIn(BaseModel):
-    spec: str
-
-
 @router.post("/jobs", status_code=201)
-async def jlaunch_start(body: StartIn, request: Request, _p: DebugDep) -> dict[str, Any]:
+async def jlaunch_start(
+    body: jlaunch.StartJobRequest, request: Request, _p: DebugDep
+) -> dict[str, Any]:
     """**Start a run** of a registered spec (names from `GET /debug/jlaunch`), as the PWA's
     Start does. 404 for an unknown spec, 409 while another job is running."""
     request.state.debug_detail = f"jlaunch start {body.spec}"
