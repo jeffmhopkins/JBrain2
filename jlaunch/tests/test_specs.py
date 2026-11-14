@@ -108,3 +108,23 @@ def test_native_spec_build_script_skips_clone() -> None:
     assert "clone" in build_script(py, "/tmp/state")  # the Python spec still clones
     assert "run_phase census" in native_script
     assert "run_phase package" in native_script
+
+
+def test_growbot_heading_walk_spec_registered() -> None:
+    from jlaunch_ctl.runner import build_script
+
+    spec = get_spec("growbot_heading_walk")
+    assert spec is not None
+    assert spec.repo_url == "https://github.com/jeffmhopkins/GrowBot_Training"
+    assert spec.branch == "main"
+    assert [p.name for p in spec.phases] == ["install", "smoke", "train", "package"]
+    # run.sh names the run "jlaunch"; the verify log and the tarball come from it.
+    assert "./run.sh jlaunch" in spec.phases[2].run
+    assert "runs/jlaunch.tar.gz" in spec.phases[3].run
+    assert spec.phases[3].run.endswith(spec.artifact_path)
+    assert spec.verify_log == "runs/jlaunch/export_verify.log"
+    assert spec.verify_must_end_with == "EXPORT OK"
+    assert spec.all_cores is True
+    script = build_script(spec, "/tmp/state")
+    assert "run_phase clone" in script
+    assert "run_phase train" in script
