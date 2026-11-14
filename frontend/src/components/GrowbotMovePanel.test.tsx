@@ -133,6 +133,14 @@ describe("GrowbotMovePanel", () => {
     expect(document.querySelector(".gb-move-drain")).toBeNull();
   });
 
+  it("asks the robot to get up from lying on its back", async () => {
+    const fetch = serve(json({ ok: true, state: "accepted", why: "" }));
+    render(<GrowbotMovePanel robot={robot()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Get up" }));
+    await screen.findByText("Getting up.");
+    expect(sent(fetch).body).toEqual({ move: "get_up", secs: 0 });
+  });
+
   it("runs the live app's tricks: the tall stance and the escape spins for the picked seconds", async () => {
     const fetch = serve(json({ ok: true, state: "accepted", why: "" }));
     render(<GrowbotMovePanel robot={robot()} />);

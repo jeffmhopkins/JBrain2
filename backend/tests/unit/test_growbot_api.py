@@ -351,7 +351,7 @@ def test_a_drive_names_only_a_trained_walk(
     assert sidecar.sent == []
 
 
-@pytest.mark.parametrize("move", ["spin_escape_left", "spin_escape_right", "stand_tall"])
+@pytest.mark.parametrize("move", ["spin_escape_left", "spin_escape_right", "stand_tall", "get_up"])
 def test_the_live_apps_tricks_go_to_the_sidecar(
     tmp_path: Path, repo: FakeRepo, sidecar: Sidecar, move: str
 ) -> None:

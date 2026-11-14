@@ -3928,7 +3928,7 @@ export interface GrowbotUpstream {
 
 /** What the Body tab can ask the creature wearing a robot to do: walks and spins (escape
  *  spins too) run the creature's own policies on its phone's motion sensors, stand_tall is its
- *  tall pose, gestures are its named keyframes (`gesture` plays any of them by name). */
+ *  tall pose, get_up its tested get-up from lying on its back, gestures are its named keyframes (`gesture` plays any of them by name). */
 export type GrowbotMove =
   | "forward"
   | "back"
@@ -3937,6 +3937,7 @@ export type GrowbotMove =
   | "spin_escape_left"
   | "spin_escape_right"
   | "stand_tall"
+  | "get_up"
   | "wiggle"
   | "bow"
   | "sway"

@@ -3643,7 +3643,7 @@ def test_the_robot_list_carries_the_creatures_gesture_names(run: _Running) -> No
     chip.shut()
 
 
-@pytest.mark.parametrize("move", ["spin_escape_left", "spin_escape_right", "stand_tall"])
+@pytest.mark.parametrize("move", ["spin_escape_left", "spin_escape_right", "stand_tall", "get_up"])
 def test_the_live_apps_tricks_reach_the_creature(run: _Running, move: str) -> None:
     page = _phone(run, "/d/gb-abc123-agent")
     page.text({"t": "hello"})
