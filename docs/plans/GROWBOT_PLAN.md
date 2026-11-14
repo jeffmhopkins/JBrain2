@@ -462,7 +462,9 @@ ticks, and only while it is awake and on screen, so a stale tab never tells one 
 worked out on the page in the clock's zone, never by the model (field, 2026-11-13: told at 4:34
 that launch was at 5:45, it set 56 minutes); the timers list shows the time now and when each is
 due, and setting one again for the same thing moves it, so a corrected time leaves no old timer. Each
-pending timer shows as a pill top-right with a countdown. Like jerv, the prompt makes arithmetic
+pending timer shows as a pill top-right with a countdown. A timer's thought starts 12 s early and
+its voice is held for the timer's own second, so it is said on time, not a think-and-voice late
+(owner, 2026-11-13); a person who speaks first is answered as ever and told it in that turn. Like jerv, the prompt makes arithmetic
 a tool call, not a guess: any sum past single digits, and minutes between two times of day, goes
 through `calc`, and the time is looked at again rather than remembered.
 

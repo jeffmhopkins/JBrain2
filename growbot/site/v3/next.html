@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=68bb2f8a70fc"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=c7de4d065c32"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=68bb2f8a70fc"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -2301,7 +2301,7 @@ function _bodySound(txt,meta){   // 0925 body sounds: the soft clip's row, conte
   try{ if(!(_earHeard&&t<_earHeard.t)) _earHeard={t:t,src:src,rid:0,txt:_softLine([w])}; }catch(e){}   // the namer's own newer-wins rule (_listenMaybe): an older clip never replaces newer hearing
   try{ toast("👂 a short sound",4000); }catch(e){}
 }
-function showYouSaid(txt){ var el=document.getElementById("youSaid"); if(!el) return; el.textContent='you: \u201c'+String(txt).slice(0,140)+'\u201d'; el.style.display="block"; clearTimeout(showYouSaid._t); showYouSaid._t=setTimeout(function(){ el.style.display="none"; },7000); }   // lingers the last thing YOU said (Brit 0728: the fleeting toast wasn't enough); cleared on the next capture or after 7s
+function showYouSaid(txt){ var el=document.getElementById("youSaid"); if(!el) return; el.textContent='you: \u201c'+String(txt)+'\u201d'; el.style.display="block"; clearTimeout(showYouSaid._t); showYouSaid._t=setTimeout(function(){ el.style.display="none"; },7000); }   // lingers the last thing YOU said (Brit 0728: the fleeting toast wasn't enough); cleared on the next capture or after 7s
 
 /* ---- legs over the shared relay ---- */
 /* 0813 PAIR LEGS — ONE door, on a control that is actually reachable. My first attempt hung this on the relayTxt status label and it SHIPPED BROKEN: `body:not(.editing) #liveCard h3{display:none}` hides that label in play mode and `#liveCard{pointer-events:none}` (with only `.row` getting events back) makes it unclickable even when shown, so the door existed only for someone who already knew about 🧠 → ⚙. My browser check "passed" because I asked for `getComputedStyle(cursor)` and a title attribute — both of which a display:none element answers perfectly. I verified the properties I set instead of the behaviour a user needs, which is the exact failure I had been naming all week. Lesson in one line: to prove a control is reachable, click it. */
@@ -8635,7 +8635,7 @@ function think(event,kind,extra){
   var _recall=null; try{ if(_hreqAtIssue&&typeof diaryRecall==="function"&&extra&&typeof extra.visualUser==="string"&&extra.visualUser.trim()) _recall=diaryRecall(_live.log,extra.visualUser,now,[(_live.goals&&_live.goals.selfName)||"",typeof ownerTok==="function"?ownerTok():""]); }catch(e){ _recall=null; }   /* 1005 WHOLE-DIARY RECALL (prompts.js diaryRecall): a person's words can pull up to 3 OLDER diary lines into this prompt, only when they cue a memory or share 2+ rare words with a line. Human turns only; the creature's and owner's own names never count as a match (review: the creature's name was the top false trigger). */
   var sys=buildSystem(soulView,{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText(), _gbVm=(typeof vmPrompt==="function"?vmPrompt(_vmTurn):""), _gbSS=selfStats(), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+_gbSS+_gbVm, _gbLiveN=_gbLive.length;    // + short-term self-knowledge (introspection); speech-style rule appended HERE because buildSystem/constitution live in /v3/prompts.js (Brit 0726, item 5)
   if(_imitationAtIssue&&_imitationCtl)_gbLive+=_imitationCtl.guide(_imitationAtIssue);
-  _gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; if(_gbBrainCarried){ _gbBrainQuiet=true; _gbBrainCarried=false; } } else if(_hreqAtIssue) _gbLive+=gbRecallKept(); var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false; if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(_gw&&gbWarmFits(_gw,{sys:sys,bl:buildSystem.live||"",mg:moveGuideText.live||"",ss:_gbSS,vm:_gbVm,blind:parts.length-1!==frames.length*2})){ msgs=gbWarmMsgs(_gw,_gbLive,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
+  _gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; if(_gbBrainCarried){ _gbBrainQuiet=true; _gbBrainCarried=false; } } else if(_hreqAtIssue) _gbLive+=gbRecallKept(); var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false; var _gbHold=_gbHoldNext; _gbHoldNext=0; if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(_gw&&gbWarmFits(_gw,{sys:sys,bl:buildSystem.live||"",mg:moveGuideText.live||"",ss:_gbSS,vm:_gbVm,blind:parts.length-1!==frames.length*2})){ msgs=gbWarmMsgs(_gw,_gbLive,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
   else if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
   var slug=brainOverride((kind==="tick")?orCfg.fast:(orCfg.active||orCfg.fast),false);   // [credit screen] honor the chosen brain: free mode or an explicit dial pick
   var _decisionTokens=typeof vmHeadroomTokens==="function"?vmHeadroomTokens(_vmTurn,kind,slug):512;
@@ -8660,7 +8660,7 @@ function think(event,kind,extra){
   _visStripped=false;                                    // 0812: cleared per flight; callModel raises it if this turn's images are stripped (404 blind retry, or a local brain without vision). v3 runs one think at a time, so a single flag is sufficient here.
   var _u0=(typeof _sessUsd==="number")?_sessUsd:0;   /* 0914 F-75 (MGR): session spend before this flight; the think event logs the delta beside the slug. model_usage already logs every call, but F-71 took seven files to prove "never on Grok" — the THOUGHT should name its brain and its cost in one line. */
   var _p = (_STREAM && kind!=="tick")                                                     /* THE DEFAULT LANE: _STREAM (:339) is true unless someone passes ?stream=0, so every non-tick think — every turn the creature SPEAKS — goes streaming, and only idle ticks go buffered. The old wording here ("?stream=1: speak sentences as they arrive") read as an opt-in and is the same stale phrase that cost three authors three bugs; see the callModelStream header. Change payload/error/telemetry in BOTH lanes. */
-    ? callModelStream(sys,msgs,slug,_decisionTokens,90000,function(full,complete){ if(_gen!==_flightGen) return; if(_agen!==actGen) return; if(typeof complete==="boolean"){ _burstComplete=complete; return; } if(typeof vmStreamSpeech!=="function"||vmStreamSpeech(full,_vmTurn))onSayStream(full,_replyLang); },undefined,_replyMeta).catch(function(e){ if(_gen!==_flightGen) throw e;
+    ? callModelStream(sys,msgs,slug,_decisionTokens,90000,function(full,complete){ if(_gen!==_flightGen) return; if(_agen!==actGen) return; if(typeof complete==="boolean"){ _burstComplete=complete; return; } if(Date.now()>=_gbHold&&(typeof vmStreamSpeech!=="function"||vmStreamSpeech(full,_vmTurn)))onSayStream(full,_replyLang); },undefined,_replyMeta).catch(function(e){ if(_gen!==_flightGen) throw e;
         if(_imitationAtIssue&&(!_imitationCtl||!_imitationCtl.valid(_imitationAtIssue)))throw e;
         if(_agen!==actGen) throw e;   // 0908: the activity this turn was for has ENDED — a failed stream must not buy a second, buffered call for it. Rethrowing keeps the outer .catch, which is where inFlight and the flight timer are cleared, so cancelling still tidies the request up   // K3 0808: a stream that outlives the watchdog must NOT buy a buffered retry whose answer the stale-bailing .then would discard — throw instead; the outer .catch bails on the same stale check, so the orphan costs nothing
         if(_streamSaid||e.charged||e.gateFail||(e&&e.name==="AbortError")||e.status===401||e.status===402||e.status===429) throw e;   // 0920 log read #3: a dead BYOK key (401) looped every 14s and each try hit the server TWICE (stream, then this fallback) — a refused key is not "cost nothing", it is refused
@@ -8776,7 +8776,7 @@ function think(event,kind,extra){
       var _sang=_imitated||((Array.isArray(o.sing)&&o.sing.length)?playSing(o.sing):0);   // she SINGS first — the song IS the sound (words ride after via the existing path)
       var _replyAudio=_sang;
       if(o.sound&&o.sound!=="none"&&!_sang) _replyAudio=blip(o.sound)||0;
-      if(phoneDir){ var _ph=_streamSaid?false:_yieldNow();   /* 0821b: spoken movement directions ("turn left", "come closer") were the one speech lane still testing raw vadOn, so they could be muted FOREVER — measured 21% muted across 16 devices, a HIGHER rate than ordinary replies. A muted direction is worse than a muted hello: it is an instruction, so the creature ends up waiting on a person who never heard the ask, and it reads as "it just stopped moving". Asked only when streaming has not already spoken, so an already-voiced reply never burns a yield decision. */
+      if(_gbHold&&_streamSaid) gbHoldSay("",o.emotion,_replyLang,_gbHold); if(_gbHold&&!_streamSaid){ gbHoldSay(said,o.emotion,_replyLang,_gbHold); } else if(phoneDir){ var _ph=_streamSaid?false:_yieldNow();   /* 0821b: spoken movement directions ("turn left", "come closer") were the one speech lane still testing raw vadOn, so they could be muted FOREVER — measured 21% muted across 16 devices, a HIGHER rate than ordinary replies. A muted direction is worse than a muted hello: it is an instruction, so the creature ends up waiting on a person who never heard the ask, and it reads as "it just stopped moving". Asked only when streaming has not already spoken, so an already-voiced reply never burns a yield decision. */
         if(_ph&&said) $("say").textContent=said; phoneMove(o.walk,(_streamSaid||_ph)?"":said,_replyLang,!!((typeof _expressionBench!=="undefined"&&_expressionBench||_imitated)&&_replyAudio)); lastSpokeT=Date.now(); }   // K3 0808: this branch ran BEFORE the yield and phoneMove voices unconditionally — in phone mode a movement reply still talked over a mid-utterance. The MOVE itself proceeds (motion is not noise); only the voice waits, caption lands
       else if(_streamSaid){ if(said){ $("say").textContent=said; lastSpokeT=Date.now(); } }   // streaming already spoke — settle caption ONLY if there were words (no "(quiet)" dead-air flash — 0708 field)
       else if(said&&_yieldNow()){ $("say").textContent=said; if(window.gbTalk) gbTalk.held(); lastSpokeT=Date.now(); }   // 0808 YIELD: they are mid-sentence — caption + burst land, the voice holds its tongue. The queued turn answers the whole thought; a listener that talks over you is the least natural thing a listener can do
@@ -8987,24 +8987,29 @@ function gbRecallAsk(q,kind,extra){
 }
 /* What a tool found is answered by one follow-up thought. Two tools asked in one reply (a search
    and the clock) share that thought rather than queue a second one behind it. */
-var _gbFollow=null, _gbFollowN=0;
+var _gbFollow=null, _gbFollowN=0, _gbHoldNext=0;
 /* True when this call started the follow-up (so its line is the one said while it works); a
    call that joins one already waiting says nothing of its own. Every call counts in
    _gbFollowN, so a reply handler can tell a follow-up of its own from one left waiting. */
-function gbToolFollow(tag,found,ev){
+/* hold: an instant the follow-up's voice waits for (a timer's own second); see gbHoldSay. */
+function gbToolFollow(tag,found,ev,hold){
   gbToolPill(tag); _gbFollowN++;
   if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); _gbFollow.pills.push(_gbToolPills[tag]); return false; }
-  var f=_gbFollow={found:found,ev:ev,tags:[tag],pills:[_gbToolPills[tag]]}, tries=0;
+  var f=_gbFollow={found:found,ev:ev,tags:[tag],pills:[_gbToolPills[tag]],hold:hold||0}, tries=0;
   function done(){ if(_gbFollow===f) _gbFollow=null; f.tags.forEach(function(k,i){ gbToolPillEnd(k,f.pills[i]); }); }
   /* Appended, never overwritten: a note that did not save, or another find, may be waiting. */
-  function carry(why){ if(_gbRecallCarry.indexOf(f.found)<0) _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found; if(f.tags.indexOf("brain")>=0) _gbBrainCarried=true; logEv(f.tags[0]+"_carry",{why:why}); done(); }
+  function carry(why){
+    /* A timer told early that cannot be thought about now is handed back, not said 12 s early. */
+    if(f.hold&&Date.now()>=f.hold) gbTimerDone(f.hold);
+    else if(f.hold&&f.tags.every(function(k){ return k==="timer"; })){ _gbRecallCarry=_gbRecallCarry.split("\n"+f.found).join("").split(f.found).join(""); gbTimerUntell(f.hold); logEv("timer_carry",{why:why}); return done(); }
+    if(_gbRecallCarry.indexOf(f.found)<0) _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found; if(f.tags.indexOf("brain")>=0) _gbBrainCarried=true; logEv(f.tags[0]+"_carry",{why:why}); done(); }
   function go(){
     if(pendingUser) return carry("person");
     var busy=inFlight||paused||document.hidden||Date.now()<coolUntil||(typeof vmBusy==="function"&&vmBusy())||energyState==="asleep";
     if(busy){ if(++tries<120) setTimeout(go,250); else carry("timeout"); return; }
     _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found;
     if(f.tags.indexOf("brain")>=0) _gbBrainQuiet=true;
-    think(f.ev,"event",{recallFollow:true});
+    _gbHoldNext=f.hold; think(f.ev,"event",{recallFollow:true}); _gbHoldNext=0;
     if(!inFlight) carry("refused"); else done();
   }
   setTimeout(go,0);
@@ -9139,7 +9144,8 @@ function gbCalcAsk(v,kind,extra){
    ride the soul (scratch.timers), so a reload keeps them; the page checks every 5 s and a due one
    is told in a thought of its own, through the same follow-up a search uses. A phone that was
    locked or closed past the time tells it late, and says so. */
-var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=5000, GB_TIMER_LATE_MS=120000,
+var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=1000, GB_TIMER_LATE_MS=120000,
+  GB_TIMER_LEAD_MS=12000, GB_TIMER_LOST_MS=60000, GB_TIMER_WAIT_MS=20000, _gbTimerTold=[],
   GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,time:1,one:1,about:1,all:1};
 function gbTimers(){ var sc=_live&&_live.scratch; if(!sc) return []; return Array.isArray(sc.timers)?sc.timers:(sc.timers=[]); }
 function gbTimerAbout(v){ return String(v||"").replace(/\s+/g," ").trim().slice(0,80); }
@@ -9204,24 +9210,61 @@ function gbTimersLine(){
   var list=gbTimers(), now=Date.now();
   if(!list.length) return "";
   /* The time now rides with them, so "how long until" is read off, not remembered or guessed. */
-  return "\n\n== YOUR TIMERS (you set these for your person; it is "+gbClockShort(now)+" now) ==\n"+list.map(function(x){ return "- "+x.about+": "+(x.at>now?"at "+gbClockShort(x.at)+", in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
+  return "\n\n== YOUR TIMERS (you set these for your person; it is "+gbClockShort(now)+" now) ==\n"+list.map(function(x){ return "- "+x.about+": "+(_gbTimerTold.indexOf(x)>=0?"going off at "+gbClockShort(x.at)+"; you will tell them at that second":x.at>now?"at "+gbClockShort(x.at)+", in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
 }
 function gbTimerTick(){ try{
-  var list=gbTimers(), now=Date.now(), due=[];
-  if(!list.length||_gbFollow) return;
+  var list=gbTimers(), now=Date.now(), due=[], gone=0;
+  if(!list.length) return;
+  /* A told timer leaves the list when its line is said (gbHoldSay); one whose reply never came
+     (a failed turn) is handed back after a minute and told late like any missed timer. */
+  _gbTimerTold=_gbTimerTold.filter(function(x){ return list.indexOf(x)>=0&&x.at+GB_TIMER_LOST_MS>now; });
+  if(_gbFollow) return;
   /* Only the tab that holds the creature, and only when it can speak: a stale tab or a locked
      phone leaves the timer pending, so it is told (late, saying so) once it can be. */
   if((typeof soulOwned==="function"&&!soulOwned())||paused||document.hidden||energyState==="asleep") return;
-  for(var i=list.length-1;i>=0;i--) if(list[i].at<=now) due.unshift(list.splice(i,1)[0]);
+  /* A turn under way (a person's) goes first; the timer is started after it, not handed back each second. */
+  if(pendingUser||inFlight) return;
+  /* Owner, 2026-11-13: the thought that tells a timer takes seconds, so it starts GB_TIMER_LEAD_MS
+     early and its voice is held for the timer's own second (gbHoldSay). The timer stays listed,
+     marked told in this tab only, so a reload in that window tells it again rather than never. */
+  for(var i=0;i<list.length;i++) if(_gbTimerTold.indexOf(list[i])<0&&list[i].at-GB_TIMER_LEAD_MS<=now) due.push(list[i]);
+  var hold=due.reduce(function(h,x){ return Math.max(h,x.at); },0);
   due.forEach(function(x){
     var late=now-x.at>GB_TIMER_LATE_MS?" (it was due "+gbTimerLeft(now-x.at)+" ago, while you were away)":"";
-    logEv("timer_due",{late:late?1:0});
+    if(x.at<=now){ list.splice(list.indexOf(x),1); gone++; } else _gbTimerTold.push(x);
+    logEv("timer_due",{late:late?1:0,lead:Math.max(0,x.at-now)});
     gbToolFollow("timer","your timer went off: "+x.about+late,
-      "your timer for \""+x.about+"\" just went off (it is under WHAT YOU JUST LOOKED UP). tell your person now, plainly, in your own voice.");
+      "your timer for \""+x.about+"\" just went off (it is under WHAT YOU JUST LOOKED UP). tell your person now, plainly, in your own voice.",hold);
   });
-  if(due.length&&typeof saveSoul==="function") saveSoul(_live);
+  if(gone&&typeof saveSoul==="function") saveSoul(_live);
 }catch(e){} }
 if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
+function gbTimerUntell(at){ _gbTimerTold=_gbTimerTold.filter(function(x){ return x.at>at; }); }
+/* Told timers due by `at` leave the list for good: their line is said, or carried into a turn. */
+function gbTimerDone(at){
+  var list=gbTimers(), xs=_gbTimerTold.filter(function(x){ return x.at<=at&&list.indexOf(x)>=0; });
+  xs.forEach(function(x){ list.splice(list.indexOf(x),1); });
+  gbTimerUntell(at); if(xs.length&&typeof saveSoul==="function") saveSoul(_live);
+  return xs;
+}
+/* The voice of a reply started early for a timer waits for the timer's second. Then: a timer
+   cancelled or moved meanwhile is not said; a creature that cannot speak now (paused, hidden,
+   asleep, another tab) hands it back to be told late; and it never talks over a line under way
+   or a turn in flight (a person who spoke meanwhile), waiting up to GB_TIMER_WAIT_MS for quiet. */
+function gbHoldSay(said,emo,lang,at){
+  var waited=0;
+  function live(){ return _gbTimerTold.filter(function(x){ return x.at<=at&&gbTimers().indexOf(x)>=0; }); }
+  function go(){ try{
+    var xs=live(), now=Date.now();
+    if(!xs.length){ gbTimerUntell(at); logEv("timer_said",{gone:1}); return; }
+    if((typeof soulOwned==="function"&&!soulOwned())||paused||document.hidden||energyState==="asleep"){ gbTimerUntell(at); logEv("timer_said",{handed:1}); return; }
+    if(((typeof speakingUntil==="number"&&now<speakingUntil)||inFlight||(typeof vadOn!=="undefined"&&vadOn))&&said&&waited<GB_TIMER_WAIT_MS){ waited+=250; setTimeout(go,250); return; }
+    if(said){ $("say").textContent=said; speak(said,emo,lang); lastSpokeT=now; }
+    gbTimerDone(at);
+    logEv("timer_said",{late:now-at});
+  }catch(e){} }
+  setTimeout(go,Math.max(0,at-Date.now()));
+}
 /* The status strip draws a pill for each pending timer (growbot-status.js) and reads them here. */
 try{ window.gbTimers=gbTimers; window.gbClockShort=gbClockShort; }catch(e){}
 /* The owner's notes (owner, 2026-11-13): a persona the owner turned brain access on for, on his
