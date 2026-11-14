@@ -215,7 +215,10 @@ async def start(request: Request, spec: str, ctx: SessionContext) -> dict[str, A
         job = await client.start_job(spec)
     except JlaunchError as exc:
         if exc.status == 409:
-            raise HTTPException(status_code=409, detail="a job is already running") from exc
+            # jlaunch says which limit it hit (a whole-machine job, this job already
+            # running, the run cap); a generic line left a debug caller guessing.
+            why = exc.detail or "another job is running"
+            raise HTTPException(status_code=409, detail=f"no room to start: {why}") from exc
         if exc.status == 404:
             raise HTTPException(status_code=404, detail="unknown job spec") from exc
         raise HTTPException(status_code=502, detail=str(exc)) from exc

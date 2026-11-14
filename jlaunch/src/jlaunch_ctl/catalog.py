@@ -129,6 +129,7 @@ def build_spec(entry: dict[str, object], commit: str) -> JobSpec:
             commit=commit,
             config=config,
             category=CATEGORY,
+            shares_box=True,
         )
     )
 

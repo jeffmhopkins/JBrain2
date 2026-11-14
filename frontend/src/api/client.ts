@@ -7336,7 +7336,7 @@ export const api = {
     return (await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}`)).json();
   },
 
-  /** Start a job for a spec. 409 (ApiError) if one is already running. */
+  /** Start a job for a spec. 409 (ApiError) when there is no room for it. */
   async jlaunchStart(spec: string): Promise<JlaunchJob> {
     return (await request("/api/jlaunch/jobs", jsonInit("POST", { spec }))).json();
   },

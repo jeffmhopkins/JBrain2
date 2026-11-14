@@ -160,7 +160,7 @@ class JlaunchRunRepo:
         # Numbered once, at insert, one past the job's highest; the conflict update below
         # leaves it alone so a run keeps its number. Deleting the newest run frees its
         # number for the next one, which is fine: the deleted run is gone from every list.
-        # One job runs at a time, so two inserts never race for the same number.
+        # jlaunch runs one live run per job, so two inserts never race for its number.
         next_revision = (
             select(func.coalesce(func.max(JlaunchRun.revision), 0) + 1)
             .where(JlaunchRun.spec_name == values["spec_name"])

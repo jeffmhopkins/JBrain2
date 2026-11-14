@@ -164,7 +164,9 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
       setOpenId(job.id);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        alert("A job is already running — only one at a time. Open it to watch or stop it.");
+        alert(
+          "No room for this run yet: a math job runs alone, up to three training runs share the box, and each job runs once at a time. Open the Runs tab to watch or stop one.",
+        );
       } else {
         alert("Couldn't start the job.");
       }

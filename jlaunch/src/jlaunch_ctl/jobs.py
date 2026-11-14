@@ -63,8 +63,7 @@ LIVE_TYPES = {
 }
 LIVE_MAX_BYTES = 32 * 1024 * 1024
 
-# States: queued (never used at max_concurrent_jobs=1 unless busy), cloning/running are
-# live; succeeded/failed/killed are terminal.
+# States: cloning/running are live; succeeded/failed/killed are terminal.
 LIVE_STATES = ("cloning", "running")
 # How long a Start waits on re-reading the training repo before using the list it has.
 START_REFRESH_S = 15.0
@@ -82,7 +81,8 @@ class JobError(RuntimeError):
 
 
 class BusyError(JobError):
-    """A job is already running and max_concurrent_jobs is reached."""
+    """No room for this run: one that needs the whole box is live, this one needs it, or
+    max_concurrent_jobs runs are already going."""
 
 
 def _now() -> str:
@@ -142,11 +142,17 @@ class Job:
     # finished run still serves them after its spec has changed or left the list.
     live_dir: str = ""
     artifact_path: str = ""
+    # Copied from the spec at start, so a live run's claim on the box holds after its
+    # spec leaves the list.
+    shares_box: bool = False
+    # The core share a shared run is pinned to (its index among max_concurrent_jobs);
+    # -1 for an unpinned run.
+    cpu_slot: int = -1
 
     def public(self) -> dict[str, object]:
         data = asdict(self)
-        # Internal paths, not part of the control API.
-        for key in ("workspace", "live_dir", "artifact_path"):
+        # Internal, not part of the control API.
+        for key in ("workspace", "live_dir", "artifact_path", "shares_box", "cpu_slot"):
             data.pop(key, None)
         return data
 
@@ -161,14 +167,15 @@ class JobManager:
         artifact_root: str,
         registry: TerminalRegistry,
         *,
-        max_concurrent_jobs: int = 1,
+        max_concurrent_jobs: int = 3,
         catalog: Catalog | None = None,
     ) -> None:
         self._workspace_root = Path(workspace_root)
         self._state_root = Path(state_root)
         self._artifact_root = Path(artifact_root)
         self._registry = registry
-        self._max = max_concurrent_jobs
+        # At least one: the slots and the core shares are counted from it.
+        self._max = max(1, max_concurrent_jobs)
         self._catalog = catalog
         self._jobs: dict[str, Job] = {}
         # Job ids whose stop/kill was owner-requested, so finalize records `killed`
@@ -274,17 +281,38 @@ class JobManager:
     def _listed(self, name: str) -> bool:
         return self._catalog is not None and self._catalog.owns(name)
 
-    def _live_count(self) -> int:
-        # Reaped first: a stuck orphan must not hold the one-job slot, refusing Start.
+    def _check_room(self, spec: JobSpec) -> None:
+        # Reaped first: a stuck orphan must not hold a slot, refusing Start.
         for job in self._jobs.values():
             self._reap(job)
-        return sum(1 for j in self._jobs.values() if j.state in LIVE_STATES)
+        live = [j for j in self._jobs.values() if j.state in LIVE_STATES]
+        if not live:
+            return
+        if not spec.shares_box or not all(j.shares_box for j in live):
+            raise BusyError(
+                "a job that needs the whole machine is running or asked for"
+            )
+        # Two live runs of one spec would race for the same run number in the api's
+        # mirror, and never help: a variant to compare is its own job in jobs.toml.
+        if any(j.spec_name == spec.name for j in live):
+            raise BusyError(f"{spec.name} is already running")
+        if len(live) >= self._max:
+            raise BusyError(f"{len(live)} jobs are already running")
+
+    def _free_slot(self) -> int:
+        taken = {
+            j.cpu_slot
+            for j in self._jobs.values()
+            if j.state in LIVE_STATES and j.cpu_slot >= 0
+        }
+        return next(i for i in range(self._max) if i not in taken)
 
     # -- lifecycle ---------------------------------------------------------------
 
     async def start(self, spec_name: str) -> Job:
-        if self._max > 0 and self._live_count() >= self._max:
-            raise BusyError("a job is already running")
+        known = get_spec(spec_name)
+        if known is not None:
+            self._check_room(known)
         if self._catalog is not None and self._catalog.owns(spec_name):
             # A config fix pushed a minute ago is what should train; an unreachable repo
             # falls back to the commit the list already shows.
@@ -298,8 +326,7 @@ class JobManager:
         if spec is None or (spec.commit and not self._listed(spec_name)):
             raise JobError(f"unknown spec: {spec_name}")
         # The refresh above awaited: a second Start may have got in meanwhile.
-        if self._max > 0 and self._live_count() >= self._max:
-            raise BusyError("a job is already running")
+        self._check_room(spec)
 
         jid = secrets.token_hex(4)
         workspace = self._workspace_root / jid
@@ -321,6 +348,8 @@ class JobManager:
             commit=spec.commit,
             live_dir=spec.live_dir or "",
             artifact_path=spec.artifact_path,
+            shares_box=spec.shares_box,
+            cpu_slot=self._free_slot() if spec.shares_box else -1,
         )
         self._jobs[jid] = job
         self._save(job)
@@ -331,6 +360,15 @@ class JobManager:
         # unchanged (kill-by-group still works) and the PTY EOFs — firing on_exit — the
         # moment the job finishes.
         term = PtyTerminal(str(workspace))
+        if job.cpu_slot >= 0 and not self._pin(job, term.pid):
+            # Unpinned, it would take every core from the runs that are pinned: never
+            # start it, and say why on the run.
+            term.close()
+            job.state = "failed"
+            job.error = "couldn't pin the run to its own cores"
+            job.finished_at = _now()
+            self._save(job)
+            return job
         self._registry.remove(jid)
         self._registry._terms[jid] = term  # we own this registry (same package)
         term.on_exit = self._on_exit(jid, spec)
@@ -338,6 +376,21 @@ class JobManager:
         await term.write(f"exec bash {shlex.quote(str(state / 'job.sh'))}\n".encode())
         _log.info("job start id=%s spec=%s pid=%d", jid, spec.name, term.pid)
         return job
+
+    def _pin(self, job: Job, pid: int) -> bool:
+        """Pin a shared run to its own cores, before it starts: every process the job
+        forks inherits them, so side-by-side runs never contend for a core, and a run
+        that sizes itself to the cores it may use sizes itself to its share."""
+        cpus = cpu_share(job.cpu_slot, self._max)
+        try:
+            os.sched_setaffinity(pid, cpus)
+        except OSError:
+            _log.warning("job not pinned id=%s", job.id, exc_info=True)
+            return False
+        job.machine["pinned_cpus"] = cpu_list(cpus)
+        job.machine["pinned_cores"] = len(cpus)
+        self._save(job)
+        return True
 
     def _on_exit(self, jid: str, spec: JobSpec):
         def hook() -> None:
@@ -685,6 +738,8 @@ def _job_from_record(
         phase_times=rows("phase_times"),
         error=opt_text("error"),
         artifact_present=data.get("artifact_present") is True,
+        shares_box=data.get("shares_box") is True,
+        cpu_slot=_slot(data.get("cpu_slot")),
         artifact_bytes=size
         if isinstance(size, int) and not isinstance(size, bool)
         else None,
@@ -757,3 +812,49 @@ def _failure_reason(rc: object, job: Job) -> str:
     if job.verify_ok is False:
         return f"verification did not pass (rc={rc})"
     return f"job exited with rc={rc}"
+
+
+def _slot(value: object) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 64:
+        return value
+    return -1
+
+
+def _sibling_groups(cpus: set[int]) -> list[list[int]]:
+    """The usable CPUs grouped by physical core (a core's SMT threads together), in
+    order, so a share never splits a core with another run."""
+    groups: dict[str, list[int]] = {}
+    for cpu in sorted(cpus):
+        path = f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
+        try:
+            with open(path) as fh:
+                key = fh.read().strip()
+        except OSError:
+            # Unknown topology: one CPU per group, so shares stay disjoint by CPU even
+            # if they might then split a core's two threads.
+            _log.warning("no CPU topology for cpu%d; splitting by thread", cpu)
+            key = str(cpu)
+        groups.setdefault(key, []).append(cpu)
+    return sorted(groups.values(), key=lambda g: g[0])
+
+
+def cpu_share(slot: int, slots: int) -> set[int]:
+    """Slot ``slot`` of ``slots`` equal, disjoint shares of this process's CPUs, split
+    on whole cores. A machine with fewer cores than slots gives every slot one core."""
+    groups = _sibling_groups(os.sched_getaffinity(0))
+    n = len(groups)
+    if n < slots:
+        return set(groups[slot % n])
+    lo, hi = slot * n // slots, (slot + 1) * n // slots
+    return {cpu for group in groups[lo:hi] for cpu in group}
+
+
+def cpu_list(cpus: set[int]) -> str:
+    """``{0,1,2,16,17}`` as ``0-2,16-17``, the form taskset and cpuset read."""
+    out: list[str] = []
+    for cpu in sorted(cpus):
+        if out and int(out[-1].split("-")[-1]) == cpu - 1:
+            out[-1] = f"{out[-1].split('-')[0]}-{cpu}"
+        else:
+            out.append(str(cpu))
+    return ",".join(out)
