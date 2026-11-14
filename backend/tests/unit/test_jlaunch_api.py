@@ -70,6 +70,7 @@ def test_specs_are_listed(_no_db: None) -> None:
     client = TestClient(_app(OWNER, jlaunch_client=FakeJlaunchClient()))
     specs = client.get("/api/jlaunch/specs").json()
     assert {s["name"] for s in specs} == {"erdos_straus_1e12"}
+    assert specs[0]["category"] == "Math"
 
 
 def test_start_forwards_spec(_no_db: None) -> None:
@@ -295,3 +296,112 @@ async def test_real_client_live_calls_pass_the_upstream_status_through() -> None
     with pytest.raises(JlaunchError) as down:
         await client.get_live("j1", "down.json")
     assert down.value.status is None
+
+
+class _Row:
+    """A mirror row as the routes read it (a `__dict__` they return)."""
+
+    def __init__(self, jid: str, state: str) -> None:
+        self.id = jid
+        self.state = state
+        self.note = ""
+
+
+@pytest.fixture
+def _rows(_no_db: None, monkeypatch: pytest.MonkeyPatch) -> dict[str, _Row]:
+    """An in-memory mirror behind the repo calls the reconcile and note paths make."""
+    rows: dict[str, _Row] = {}
+
+    async def _list(*_a: object) -> list[_Row]:
+        return list(rows.values())
+
+    async def _get(_db: object, jid: str) -> _Row | None:
+        return rows.get(jid)
+
+    async def _lost(_db: object, jid: str) -> None:
+        rows[jid].state = "failed"
+
+    async def _note(_db: object, jid: str, note: str) -> bool:
+        if jid not in rows:
+            return False
+        rows[jid].note = note
+        return True
+
+    monkeypatch.setattr(jlaunch._REPO, "list", _list)
+    monkeypatch.setattr(jlaunch._REPO, "get", _get)
+    monkeypatch.setattr(jlaunch._REPO, "mark_lost", _lost)
+    monkeypatch.setattr(jlaunch._REPO, "set_note", _note)
+    return rows
+
+
+def test_a_run_the_launcher_forgot_is_marked_lost(_rows: dict[str, _Row]) -> None:
+    import asyncio
+
+    fake = FakeJlaunchClient()
+    live = asyncio.run(fake.start_job("erdos_straus_1e12"))["id"]
+    _rows[live] = _Row(live, "running")
+    _rows["ghost1"] = _Row("ghost1", "running")
+    _rows["old1"] = _Row("old1", "succeeded")
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    states = {r["id"]: r["state"] for r in client.get("/api/jlaunch/jobs").json()}
+    # The run the launcher still has is left alone; only the ghost is failed.
+    assert states == {live: "running", "ghost1": "failed", "old1": "succeeded"}
+
+
+def test_a_restarted_launcher_with_no_jobs_fails_the_live_row(_rows: dict[str, _Row]) -> None:
+    _rows["ghost3"] = _Row("ghost3", "running")
+    client = TestClient(_app(OWNER, jlaunch_client=FakeJlaunchClient()))
+    assert client.get("/api/jlaunch/jobs").json()[0]["state"] == "failed"
+
+
+def test_a_run_started_after_the_snapshot_is_not_lost(_rows: dict[str, _Row]) -> None:
+    import asyncio
+
+    fake = FakeJlaunchClient()
+    jid = asyncio.run(fake.start_job("erdos_straus_1e12"))["id"]
+    _rows[jid] = _Row(jid, "cloning")
+
+    async def stale() -> list[dict[str, object]]:
+        return []  # the snapshot taken just before this run started
+
+    fake.list_jobs = stale  # type: ignore[method-assign]
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    assert client.get("/api/jlaunch/jobs").json()[0]["state"] == "cloning"
+
+
+def test_an_unreachable_launcher_marks_nothing_lost(_rows: dict[str, _Row]) -> None:
+    fake = FakeJlaunchClient()
+
+    async def down() -> list[dict[str, object]]:
+        raise JlaunchError("connection refused")
+
+    fake.list_jobs = down  # type: ignore[method-assign]
+    _rows["run1"] = _Row("run1", "running")
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    assert client.get("/api/jlaunch/jobs").json()[0]["state"] == "running"
+
+
+def test_opening_a_forgotten_run_marks_it_lost(_rows: dict[str, _Row]) -> None:
+    _rows["ghost2"] = _Row("ghost2", "cloning")
+    client = TestClient(_app(OWNER, jlaunch_client=FakeJlaunchClient()))
+    assert client.get("/api/jlaunch/jobs/ghost2").json()["state"] == "failed"
+
+
+def test_note_a_run(_rows: dict[str, _Row]) -> None:
+    _rows["run2"] = _Row("run2", "succeeded")
+    client = TestClient(_app(OWNER, jlaunch_client=FakeJlaunchClient()))
+    got = client.patch("/api/jlaunch/jobs/run2", json={"note": "  lower lr "})
+    assert got.status_code == 200 and got.json()["note"] == "lower lr"
+    assert client.patch("/api/jlaunch/jobs/nosuch", json={"note": "x"}).status_code == 404
+    assert client.patch("/api/jlaunch/jobs/run2", json={"note": "x" * 281}).status_code == 422
+    assert client.patch("/api/jlaunch/jobs/bad.id", json={"note": "x"}).status_code == 404
+    nobody = TestClient(_app(NON_OWNER, jlaunch_client=FakeJlaunchClient()))
+    assert nobody.patch("/api/jlaunch/jobs/run2", json={"note": "x"}).status_code == 403
+
+
+def test_specs_carry_a_category() -> None:
+    assert jlaunch._category({"name": "growbot_look"}) == "Robot"
+    assert jlaunch._category({"name": "erdos_straus_1e12"}) == "Math"
+    assert jlaunch._category({"name": "es_census_1e13"}) == "Math"
+    assert jlaunch._category({"name": "other"}) == "Other"
+    assert jlaunch._category({"name": "growbot_x", "category": "Lab"}) == "Lab"

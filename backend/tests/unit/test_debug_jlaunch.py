@@ -8,9 +8,12 @@ a live one."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
+from jbrain.api import jlaunch
 from jbrain.api.jshare_public import SANDBOX
 from jbrain.jlaunch import FakeJlaunchClient, JlaunchError
 from tests.unit.test_debug_api import _auth, _state, debug_client  # noqa: F401 - fixture
@@ -95,6 +98,33 @@ def test_deletes_a_finished_run_but_never_a_live_one(
     assert client.delete(url, headers=_auth(key)).status_code == 204
     assert client.delete("/api/debug/jlaunch/jobs/bad.id", headers=_auth(key)).status_code == 404
     assert "jlaunch.delete" in client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
+
+
+def test_notes_a_run(
+    debug_client: tuple[TestClient, str],  # noqa: F811
+    _no_db: None,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, key = debug_client
+    _launcher(client)
+    notes: dict[str, str] = {}
+
+    async def _note(_db: object, jid: str, note: str) -> bool:
+        notes[jid] = note
+        return True
+
+    async def _get(_db: object, jid: str) -> object:
+        return SimpleNamespace(id=jid, note=notes[jid])
+
+    monkeypatch.setattr(jlaunch._REPO, "set_note", _note)
+    monkeypatch.setattr(jlaunch._REPO, "get", _get)
+    url = "/api/debug/jlaunch/jobs/run9"
+    assert client.patch(url, json={"note": "x"}).status_code == 401
+    got = client.patch(url, json={"note": "after the hip fix"}, headers=_auth(key))
+    assert got.status_code == 200 and got.json()["note"] == "after the hip fix"
+    bad = client.patch("/api/debug/jlaunch/jobs/bad.id", json={"note": "x"}, headers=_auth(key))
+    assert bad.status_code == 404
+    assert "jlaunch.note" in client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
 
 
 def test_starts_a_registered_spec_and_nothing_else(

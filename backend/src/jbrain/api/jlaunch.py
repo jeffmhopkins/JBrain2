@@ -94,22 +94,50 @@ def _valid_id(jid: str) -> None:
         raise HTTPException(status_code=404, detail="unknown job")
 
 
-async def _live_jobs(request: Request) -> dict[str, dict[str, Any]]:
-    """The control server's live jobs keyed by id, or {} when it's off/unreachable — the
-    reconcile source of truth for state/phase/snapshots."""
+async def _live_jobs(request: Request) -> dict[str, dict[str, Any]] | None:
+    """The control server's jobs keyed by id — the reconcile source of truth for
+    state/phase/snapshots — or None when it's off/unreachable (then nothing is reconciled:
+    an unreachable server says nothing about which runs are gone)."""
     try:
         jobs = await _client(request).list_jobs()
     except JlaunchError:
-        return {}
+        return None
     return {job["id"]: job for job in jobs}
+
+
+async def _forgotten(request: Request, jid: str) -> bool:
+    """True only when the control server answers that it has no such job."""
+    try:
+        await _client(request).get_job(jid)
+    except JlaunchError as exc:
+        return exc.status == 404
+    return False
+
+
+# A job in one of these still owns its checkout and live folder.
+_LIVE_STATES = frozenset({"queued", "cloning", "running"})
+
+# The Jobs screen groups specs by category. The control server's specs carry none (they
+# are the launcher's, and the launcher image is left alone while a run trains), so the
+# api names it from the spec's name; a spec that one day declares its own wins.
+_CATEGORY_PREFIXES = (("growbot", "Robot"), ("erdos", "Math"), ("es_", "Math"))
+
+
+def _category(spec: dict[str, Any]) -> str:
+    declared = spec.get("category")
+    if isinstance(declared, str) and declared:
+        return declared
+    name = str(spec.get("name", ""))
+    return next((cat for prefix, cat in _CATEGORY_PREFIXES if name.startswith(prefix)), "Other")
 
 
 @router.get("/jlaunch/specs")
 async def list_specs(_owner: OwnerDep, request: Request) -> list[dict[str, Any]]:
     try:
-        return await _client(request).list_specs()
+        specs = await _client(request).list_specs()
     except JlaunchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return [{**spec, "category": _category(spec)} for spec in specs]
 
 
 @router.post("/jlaunch/jobs", status_code=201)
@@ -137,8 +165,18 @@ async def start(request: Request, spec: str, ctx: SessionContext) -> dict[str, A
 async def list_jobs(owner: OwnerDep, request: Request) -> list[dict[str, Any]]:
     live = await _live_jobs(request)
     async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
-        for job in live.values():
-            await _REPO.upsert(db, job)
+        if live is not None:
+            for job in live.values():
+                await _REPO.upsert(db, job)
+            # The control server keeps its jobs in memory, so a restart mid-run leaves the
+            # mirror showing a run "running" forever, with no delete (a ghost camera walk
+            # stuck at "clone", 2026-11-14). A live row missing from the snapshot is asked
+            # about by id before it is failed: a run started after the snapshot was taken
+            # is in the mirror but not the snapshot, and only a 404 means it's truly gone.
+            for row in await _REPO.list(db):
+                stale = row.state in _LIVE_STATES and row.id not in live
+                if stale and await _forgotten(request, row.id):
+                    await _REPO.mark_lost(db, row.id)
         rows = await _REPO.list(db)
     return [row.__dict__ for row in rows]
 
@@ -147,13 +185,41 @@ async def list_jobs(owner: OwnerDep, request: Request) -> list[dict[str, Any]]:
 async def get_job(jid: str, owner: OwnerDep, request: Request) -> dict[str, Any]:
     _valid_id(jid)
     live: dict[str, Any] | None = None
+    gone = False
     try:
         live = await _client(request).get_job(jid)
-    except JlaunchError:
-        live = None
+    except JlaunchError as exc:
+        gone = exc.status == 404
     async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
         if live is not None:
             await _REPO.upsert(db, live)
+        row = await _REPO.get(db, jid)
+        if row is not None and gone and row.state in _LIVE_STATES:
+            await _REPO.mark_lost(db, jid)
+            row = await _REPO.get(db, jid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown job")
+    return row.__dict__
+
+
+class RunNoteRequest(BaseModel):
+    note: str = Field(max_length=280)
+
+
+@router.patch("/jlaunch/jobs/{jid}")
+async def set_run_note(
+    jid: str, body: RunNoteRequest, owner: OwnerDep, request: Request
+) -> dict[str, Any]:
+    return await set_note(request, jid, body.note, _owner_ctx(owner.id))
+
+
+async def set_note(request: Request, jid: str, note: str, ctx: SessionContext) -> dict[str, Any]:
+    """The owner's note on a run (the owner's, or a debug token's): what it was for."""
+    _valid_id(jid)
+    _client(request)  # 404 when the launcher is off, as every route here
+    async with scoped_session(_maker(request), ctx) as db:
+        if not await _REPO.set_note(db, jid, note.strip()):
+            raise HTTPException(status_code=404, detail="unknown job")
         row = await _REPO.get(db, jid)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown job")
@@ -187,10 +253,6 @@ async def _control_then_mirror(
 @router.delete("/jlaunch/jobs/{jid}", status_code=204)
 async def delete_job(jid: str, owner: OwnerDep, request: Request) -> None:
     await delete(request, jid, _owner_ctx(owner.id))
-
-
-# A job in one of these still owns its checkout and live folder.
-_LIVE_STATES = frozenset({"queued", "cloning", "running"})
 
 
 async def delete(request: Request, jid: str, ctx: SessionContext) -> None:

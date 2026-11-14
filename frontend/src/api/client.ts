@@ -7311,7 +7311,18 @@ export const api = {
     ).json();
   },
 
-  /** Delete a job: kills it if live, then removes the checkout, scratch, and mirror row. */
+  /** Set the owner's note on a run (what it was for); returns the run with it. */
+  async jlaunchSetNote(id: string, note: string): Promise<JlaunchJob> {
+    return (
+      await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note }),
+      })
+    ).json();
+  },
+
+  /** Delete a finished run: its checkout, scratch, and mirror row (409 while it's live). */
   async jlaunchDelete(id: string): Promise<void> {
     await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
