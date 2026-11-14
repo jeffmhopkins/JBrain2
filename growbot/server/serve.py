@@ -135,7 +135,7 @@ MAX_PEERS_PER_CHANNEL = 8
 # What the PWA's Body tab may ask the creature on the robot to do, and for how long a walk or
 # spin runs. The creature runs its own policies with its phone's IMU (growbot-box.js).
 # The escape spins and the tall stand are the live app's tricks the creature already runs for its
-# brain; `gesture` plays one of its body's named gestures (a soul's own saved ones too) by `name`;
+# brain; get_up is upstream's tested get-up from lying on its back; `gesture` plays one of its body's named gestures (a soul's own saved ones too) by `name`;
 # `look` runs a library policy (the Body tab's trick ones) facing ahead, in place when it takes
 # a speed.
 MOVES = frozenset(
@@ -147,6 +147,7 @@ MOVES = frozenset(
         "spin_escape_left",
         "spin_escape_right",
         "stand_tall",
+        "get_up",
         "wiggle",
         "bow",
         "sway",

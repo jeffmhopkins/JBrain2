@@ -279,7 +279,7 @@ them: `growbot-box.js` joins `/d/<code>-agent` with `hello` while the page wears
 visible (the rider check keeps it to the rider), and leaves when hidden, since a hidden page
 stops every move. `POST /internal/robots/move` `{code, move, secs, name?}` (`move` one of
 `forward`, `back`, `spin_left`, `spin_right`, the escape spins `spin_escape_left` and
-`spin_escape_right`, `stand_tall`, `look`, `wiggle`, `bow`, `sway`, `gesture`, `stop`; `secs` 0 or
+`spin_escape_right`, `stand_tall`, `get_up` (upstream's tested get-up from lying on its back), `look`, `wiggle`, `bow`, `sway`, `gesture`, `stop`; `secs` 0 or
 1-15; `name`, for `gesture` only, a gesture name in upstream's `_gestName` shape) sends
 `{"t":"box_move", rid, move, secs, name?}` to that page, which runs it through its own
 `runGait` or `moveLegs` with this phone's walk calibration and answers `{"t":"box_ack", rid, ok,

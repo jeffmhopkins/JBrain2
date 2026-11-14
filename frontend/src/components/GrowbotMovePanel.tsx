@@ -57,6 +57,8 @@ const TRICKS: { id: GrowbotMove; label: string }[] = [
   { id: "bow", label: "Bow" },
   { id: "sway", label: "Sway" },
   { id: "stand_tall", label: "Stand tall" },
+  // Upstream's tested get-up, from lying on its back; the creature says why when it can't.
+  { id: "get_up", label: "Get up" },
 ];
 const STOCK_GESTURES = new Set<string>(["wiggle", "bow", "sway"]);
 
@@ -79,6 +81,7 @@ const DOING: Record<GrowbotMove, string> = {
   spin_escape_right: "Escape-spinning right",
   spin_escape_left: "Escape-spinning left",
   stand_tall: "Standing tall",
+  get_up: "Getting up",
   wiggle: "Wiggling",
   bow: "Bowing",
   sway: "Swaying",

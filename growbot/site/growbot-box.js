@@ -1282,8 +1282,8 @@
 /* Moves from JBrain (the PWA's Body tab). Walks and spins run on this phone's motion sensors,
    so the box cannot run them itself: while this page wears a robot it joins that robot's side
    channel (/d/<code>-agent, the relay's rider check keeps it to the rider) as `hello`, and each
-   {"t":"box_move", rid, move, secs} runs through the creature's own runGait or moveLegs, as if
-   its brain had asked, with the walk calibration this phone already has. It answers at once
+   {"t":"box_move", rid, move, secs} runs through the creature's own runGait or moveLegs (or,
+   for get_up, its tested get-up) as if its brain had asked, with the walk calibration this phone already has. It answers at once
    with {"t":"box_ack", rid, ok, state, why}: what it started, or the creature's own words for
    why not. It also tells the box which named gestures its body has ({"t":"box_info", gestures}),
    whenever that list changes, so the Body tab can offer a soul's own saved ones as tricks. And
@@ -1351,6 +1351,10 @@
       if (typeof window.moveLegs !== "function") throw new Error("the creature has not loaded its legs yet");
       var t = typeof STAND_TALL !== "undefined" && STAND_TALL ? STAND_TALL : TALL;
       window.moveLegs({ body: { steps: [{ l: t.l, r: t.r, ms: t.ms }] } });
+    } else if (move === "get_up") {
+      // Upstream's tested get-up, from lying screen-up; the page says why when it can't.
+      if (typeof window.gbGetUp !== "function") throw new Error("this page can't get up yet");
+      window.gbGetUp();
     } else {
       throw new Error("not a move this creature knows");
     }

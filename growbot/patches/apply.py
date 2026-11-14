@@ -3277,6 +3277,60 @@ PHONE_SWITCH_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += PHONE_SWITCH_PATCHES
 
+# The Body tab's Get up (growbot-box.js, box_move "get_up"): upstream's tested recovery from
+# lying screen-up, started as a person's own explicit ask, because whoever presses it is
+# watching the robot. Upstream keeps its spoken and model-chosen get-ups behind ?getupnamed
+# pending a supervised-behaviour decision, and those stay off here; only this button turns the
+# runner on, for the one run it starts. The sensor feed it needs runs on every legs page.
+_GB_GETUP_JS = (
+    "/* GrowBot on the box: the Body tab's Get up (growbot-box.js box_move get_up). The runner\n"
+    "   only takes it while _gbGetupOK is set or its own run lasts, so the model's and speech's\n"
+    "   get-ups stay behind upstream's ?getupnamed. */\n"
+    "var _gbGetupAsk=0, _gbGetupOK=false;\n"
+    'function gbBoxGetupOn(){ return typeof MODE!=="undefined"&&MODE==="legs"'
+    '&&!(typeof _wheels!=="undefined"&&_wheels); }\n'
+    "window.gbGetUp=function(){ var a=_moveRequest('recover_screen_up'), r; a.nr=1;"
+    " _wireAttempt=a;\n"
+    "  try{ if(!gbBoxGetupOn()) throw Error('stock_two_leg_body_only'); r=_wireGet();"
+    " if(r.active) throw Error('already_running');\n"
+    "    _gbGetupOK=true; r.start({explicit:true,id:-(++_gbGetupAsk),age:0});\n"
+    "    if(a.state==='cancelled') a.reason=_namedSay(a.reason,1); }\n"
+    "  catch(e){ var why=String((e&&e.message)||e); _wireReadiness(why,true);"
+    " _moveReport(a,'blocked',why); a.reason=_namedSay(why); }\n"
+    "  finally{ _gbGetupOK=false; } };\n"
+)
+GETUP_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "function _wireGet(){if(_wireRunner)return _wireRunner;",
+        _GB_GETUP_JS + "function _wireGet(){if(_wireRunner)return _wireRunner;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "enabled:getupNamedOn(),",
+        "enabled:getupNamedOn()||(gbBoxGetupOn()&&(_gbGetupOK||!!(_wireRunner&&_wireRunner.active))),",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function _wireCapture(){\n  if(!getupNamedOn())return;",
+        "function _wireCapture(){\n  if(!getupNamedOn()&&!gbBoxGetupOn())return;",
+        1,
+    ),
+    # A model reply during the button's run must not supersede it mid-sweep: upstream drops
+    # such a move only for its own named get-ups, so the guard learns ours too.
+    (
+        "v3/next.html",
+        'if(typeof getupNamedOn==="function"&&getupNamedOn()&&_wireRunner&&_wireRunner.active'
+        "&&!_namedStopReply(o)",
+        'if(typeof getupNamedOn==="function"&&(getupNamedOn()||gbBoxGetupOn())&&_wireRunner'
+        "&&_wireRunner.active&&!_namedStopReply(o)",
+        1,
+    ),
+]
+PATCHES += GETUP_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

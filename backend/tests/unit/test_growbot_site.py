@@ -3910,3 +3910,70 @@ def test_the_trained_walk_keeps_upstreams_stops() -> None:
     assert "tipN >= 5 || jerkN >= 6" in walk
     # It owns the legs only through _motion, which Stop and every newer move clear.
     assert "_motion = M" in walk and "_motion !== M" in walk
+
+
+_GETUP_HARNESS = r"""
+var window={}, MODE="legs", _wheels=false, moves=[], starts=[], seenOK=[], fail="";
+function _moveRequest(n){ var a={action:n,state:"requested"}; moves.push(a); return a; }
+function _moveReport(a,s,r){ a.state=s; a.reason=r; }
+function _wireReadiness(){}
+function _namedSay(w){ return w==="start_screen_up_up"?"I'm already upright":"words for "+w; }
+var _wireAttempt=null, _wireRunner={active:false,start:function(q){
+  seenOK.push(_gbGetupOK); starts.push(q); if(fail) throw Error(fail);
+  _moveReport(_wireAttempt,tick?"cancelled":"started",tick||"commands_sent_unverified"); }};
+var tick="";
+function _wireGet(){ return _wireRunner; }
+"""
+
+
+def test_the_body_tabs_get_up_is_an_explicit_ask_that_opens_the_runner_only_for_it() -> None:
+    """The button is a person watching the robot, so it starts upstream's tested get-up as
+    their own explicit ask; the runner is enabled only while that start (and its run) lasts,
+    and a refusal comes back in the creature's own words."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    head = "/* GrowBot on the box: the Body tab's Get up"
+    block = page[page.index(head) : page.index("function _wireGet(){")]
+    script = (
+        _GETUP_HARNESS
+        + block
+        + "window.gbGetUp(); var ok=moves[0].state; tick='timer_gap'; window.gbGetUp(); tick='';"
+        + "fail='start_screen_up_up'; window.gbGetUp();"
+        + "_wheels=true; window.gbGetUp();"
+        + "console.log(JSON.stringify({ok:ok,moves:moves,starts:starts,seen:seenOK,"
+        + "after:_gbGetupOK}));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    got = json.loads(out.stdout)
+    assert got["ok"] == "started" and got["seen"] == [True, True, True]
+    assert got["after"] is False
+    assert [s["explicit"] for s in got["starts"]] == [True, True, True]
+    # Its own id space, so a spoken ask's one-try rule never refuses a press.
+    assert [s["id"] for s in got["starts"]] == [-1, -2, -3] and got["starts"][0]["age"] == 0
+    # A first tick that ends the run, and a start it refuses, both come back in its words.
+    assert got["moves"][1]["state"] == "cancelled"
+    assert got["moves"][1]["reason"] == "words for timer_gap"
+    assert got["moves"][2] == {
+        "action": "recover_screen_up",
+        "state": "blocked",
+        "reason": "I'm already upright",
+        "nr": 1,
+    }
+    # A wheeled body never starts it.
+    assert got["moves"][3]["state"] == "blocked" and len(got["starts"]) == 3
+    # The spoken and model-chosen get-ups stay behind upstream's ?getupnamed.
+    assert "var GETUP_NAMED_DEFAULT=false;" in page
+    assert (
+        "enabled:getupNamedOn()||(gbBoxGetupOn()&&(_gbGetupOK||!!(_wireRunner&&_wireRunner.active))),"
+        in page
+    )
+    assert "function _wireCapture(){\n  if(!getupNamedOn()&&!gbBoxGetupOn())return;" in page
+    # A model reply while it runs is dropped, not played over the get-up.
+    assert (
+        "(getupNamedOn()||gbBoxGetupOn())&&_wireRunner&&_wireRunner.active&&!_namedStopReply(o)"
+        in page
+    )
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert 'move === "get_up"' in shim and "window.gbGetUp();" in shim

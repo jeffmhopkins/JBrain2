@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=8bc2168c154a"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=5c8d5a3e9619"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=31de6bd361de"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -4117,7 +4117,7 @@ function _wireEvidence(){ var p=window.GBGetupWire.posture(_wireSamples,performa
 function _wireReadiness(why,force){try{var d=_wireEvidence(),k=why+"|"+d.reason+"|"+d.reset,now=Date.now();if(!force&&k===_wireDiagKey&&now-_wireDiagAt<10000)return;_wireDiagKey=k;_wireDiagAt=now;
   d.why=why;logEv("getup_readiness",d);}catch(e){}}
 function _wireCapture(){
-  if(!getupNamedOn())return;
+  if(!getupNamedOn()&&!gbBoxGetupOn())return;
   var s=typeof _forwardSample==='object'?_forwardSample:null, g=typeof _forwardGravitySample==='object'?_forwardGravitySample:null;
   if(_gSignHow!=='orient'){_wireReset('unmeasured_sign');return;}
   if(!s){_wireReset(g?'missing_gyro':'missing_gravity');return;}
@@ -4420,7 +4420,7 @@ function _getupAutoLoud(){if(_getupBrainOn()||!_getupOwnsFall())return false;if(
     if(Date.now()<q.until||_getupAutoAudioBusy()||q.audio&&!q.nonSpeech){q.timer=setTimeout(check,100);return;}_autoRec.loud=null;_getupAutoState('eligible','external_loud');var admitted=_getupAutoTry();if(admitted)_autoRec.lastLoud=Date.now();else _getupAutoRest('loud_not_ready');logEv('recover_loud',{state:admitted?'admitted':'refused',reason:admitted?'commands_sent':_autoRec.why,input:q.input});}
   q.timer=setTimeout(check,100);return true;
 }
-function _wireContext(){var b=window._body;return {enabled:getupNamedOn(),paused:paused,hidden:document.hidden,dreaming:dreaming,asleep:_restAsleep(),
+function _wireContext(){var b=window._body;return {enabled:getupNamedOn()||(gbBoxGetupOn()&&(_gbGetupOK||!!(_wireRunner&&_wireRunner.active))),paused:paused,hidden:document.hidden,dreaming:dreaming,asleep:_restAsleep(),
   busy:!!(_motion&&_motion!==_wireMotion),transport:b,ready:!!(b&&b.ready&&_bodyAlive(1)),awake:b&&b.awake,
   ws:b&&b.ws,buffer:b&&b.ws?b.ws.bufferedAmount:null,generation:b&&b._gen,robotId:b&&b.id,epoch:_bodyUpT,owner:_motion};}
 function _namedEnd(why){ why=String(why||"stopped");
@@ -4428,6 +4428,17 @@ function _namedEnd(why){ why=String(why||"stopped");
   if(/^upright_not_confirmed_/.test(why)) return {state:"cancelled",r:"not_upright",failed:1};
   if(/^hold_posture_/.test(why)) return {state:"cancelled",r:"tipped_after_up",failed:1};
   return {state:"cancelled",r:why}; }
+/* GrowBot on the box: the Body tab's Get up (growbot-box.js box_move get_up). The runner
+   only takes it while _gbGetupOK is set or its own run lasts, so the model's and speech's
+   get-ups stay behind upstream's ?getupnamed. */
+var _gbGetupAsk=0, _gbGetupOK=false;
+function gbBoxGetupOn(){ return typeof MODE!=="undefined"&&MODE==="legs"&&!(typeof _wheels!=="undefined"&&_wheels); }
+window.gbGetUp=function(){ var a=_moveRequest('recover_screen_up'), r; a.nr=1; _wireAttempt=a;
+  try{ if(!gbBoxGetupOn()) throw Error('stock_two_leg_body_only'); r=_wireGet(); if(r.active) throw Error('already_running');
+    _gbGetupOK=true; r.start({explicit:true,id:-(++_gbGetupAsk),age:0});
+    if(a.state==='cancelled') a.reason=_namedSay(a.reason,1); }
+  catch(e){ var why=String((e&&e.message)||e); _wireReadiness(why,true); _moveReport(a,'blocked',why); a.reason=_namedSay(why); }
+  finally{ _gbGetupOK=false; } };
 function _wireGet(){if(_wireRunner)return _wireRunner;if(!window.GBGetupAgent||!window.GBGetupWire)throw Error('adapter_not_loaded');
   _wireRunner=new window.GBGetupAgent.Runner({now:function(){return performance.now();},later:function(f,ms){return setTimeout(f,ms);},clear:function(id){clearTimeout(id);},
     automatic:function(q){return !_getupBrainOn()&&_getupAutoOn()&&q.id===_autoPermit&&_autoPermit>0&&!_autoRec.latched;},
@@ -11303,7 +11314,7 @@ function think(event,kind,extra){
     if(typeof _autoRestAtIssue!=='undefined'&&_autoRestAtIssue&&_autoRestAtIssue.recovery&&!_namedStopReply(o))_mCancelled=true; // An early answer never acquires a new move, even if readiness changed while thinking.
     var _nmA=typeof _namedAsked==="function"&&_namedAsked(o); try{ if(typeof _namedNote==="function") _namedNote(); }catch(_nn){}   /* 1006 named get-up: does this reply claim it (ready only, see _namedState); the state the prompt showed, logged once per change */
     var _wireFallback=typeof _namedBlocks==="function"&&_namedBlocks(_nmA,o)&&(walkIntent||_legInt);
-    if(_wireFallback){ if(!_mCancelled&&!paused&&!(_wireRunner&&_wireRunner.active)) _namedSubRefuse(o,walkIntent); _mCancelled=true; }   /* a substitute for the ask: refused for its own reason (while it runs, D4 below refuses it with no row) */ if(typeof getupNamedOn==="function"&&getupNamedOn()&&_wireRunner&&_wireRunner.active&&!_namedStopReply(o)&&!_wireNewMoveAllowed())_mCancelled=true;   /* D4: during the run only the model's own stop gets through */
+    if(_wireFallback){ if(!_mCancelled&&!paused&&!(_wireRunner&&_wireRunner.active)) _namedSubRefuse(o,walkIntent); _mCancelled=true; }   /* a substitute for the ask: refused for its own reason (while it runs, D4 below refuses it with no row) */ if(typeof getupNamedOn==="function"&&(getupNamedOn()||gbBoxGetupOn())&&_wireRunner&&_wireRunner.active&&!_namedStopReply(o)&&!_wireNewMoveAllowed())_mCancelled=true;   /* D4: during the run only the model's own stop gets through */
     if(!paused&&!_mCancelled&&MODE==="legs"&&!_nmA&&typeof _namedRefuse==="function"){ _namedRefuse(o); if(walkIntent) _namedStopNote(o); }   /* a recover key it does not claim: once the get-up was offered, a refusal row in plain words (never offered: ignored, as main), and the rest of the reply runs as main; a walk stop in it ends a run as agent_stop */
     var _beforeMove=_moveSeq;/*WORLD-EYE{*/if(typeof _worldEye!=="undefined"&&_worldEye)_worldOrigin=_hreqAtIssue?"asked":"self";try{/*}WORLD-EYE*/
     // Stop needs no permission to start a new movement. Keep it tied to this complete
