@@ -1288,8 +1288,8 @@ def test_a_sound_to_name_is_named_by_the_tagger_never_the_brain(run: _Running) -
     before = _brain_calls()
     clip = _wav(1.0)
     _Fake.tag_reply = _tagged(("Bark", 0.37), ("Dog", 0.36), ("Animal", 0.34))
-    assert _ear(run, _clip_part(clip)) == "bark, dog"
-    assert _ear(run, _clip_part(clip), stream=True) == "bark, dog"
+    assert _ear(run, _clip_part(clip)) == "a noise that might be bark or dog"
+    assert _ear(run, _clip_part(clip), stream=True) == "a noise that might be bark or dog"
     tag = [s for s in _Fake.seen if s["path"] == "/tag"][-1]
     assert tag["body"] == clip and tag["ctype"] == "audio/wav"
     # A person talking is handed back to whisper by the page's own SPEECH: rescue.
@@ -1327,20 +1327,37 @@ def test_an_unnamed_sound_is_heard_as_nothing(run: _Running) -> None:
 
 def test_the_ear_names_the_clearest_sounds_in_plain_words(gb: types.ModuleType) -> None:
     name = gb.sound_name
+    # A tag is a likelihood (owner, 2026-11-13: "a noise that might sound like laughter"),
+    # said more surely only when the tagger is.
+    assert name([("Laughter", 0.5)]) == "a noise that might be laughter"
+    assert name([("Laughter", 0.7)]) == "what sounds like laughter"
     # Family and place labels say nothing; a label inside one already said is not repeated.
-    assert name([("Animal", 0.9), ("Cat", 0.86), ("Domestic animals", 0.83)]) == "cat"
-    assert name([("Church bell", 0.7), ("Bell", 0.48)]) == "church bell"
-    assert name([("Alarm clock", 0.85), ("Clock", 0.69), ("Alarm", 0.52)]) == "alarm clock"
-    assert name([("Vehicle horn", 0.93), ("Vehicle", 0.74), ("Car", 0.43)]) == "vehicle horn, car"
+    assert name([("Animal", 0.9), ("Cat", 0.86), ("Domestic animals", 0.83)]) == (
+        "what sounds like cat"
+    )
+    assert name([("Church bell", 0.7), ("Bell", 0.48)]) == "what sounds like church bell"
+    assert name([("Alarm clock", 0.85), ("Clock", 0.69), ("Alarm", 0.52)]) == (
+        "what sounds like alarm clock"
+    )
+    assert name([("Vehicle horn", 0.93), ("Vehicle", 0.74), ("Car", 0.43)]) == (
+        "what sounds like vehicle horn or car"
+    )
     # Two sounds at most, and nothing under the naming bar.
-    assert name([("Knock", 0.9), ("Door", 0.8), ("Wood", 0.7)]) == "knock, door"
+    assert name([("Knock", 0.6), ("Door", 0.5), ("Wood", 0.4)]) == (
+        "a noise that might be knock or door"
+    )
     assert name([("Knock", 0.29)]) == ""
+    # Folding is by whole words: a train does not hide the rain.
+    assert name([("Train", 0.6), ("Rain", 0.5)]) == "a noise that might be train or rain"
+    # A whisper stays a sound, never SPEECH: (the page's 0830 whisper policy: whispered clips
+    # the judge refused are named, because whisper garbles them).
+    assert name([("Whispering", 0.6), ("Speech", 0.2)]) == "a noise that might be whispering"
     assert name([]) == ""
     # Speech only when it is the clearest sound, and clear enough not to trip the page's
     # blind-judge latch on a laugh or a hum.
     assert name([("Speech", 0.41), ("Laughter", 0.3)]) == "SPEECH: someone is talking"
-    assert name([("Speech", 0.35), ("Laughter", 0.3)]) == "laughter"
-    assert name([("Laughter", 0.51), ("Speech", 0.5)]) == "laughter"
+    assert name([("Speech", 0.35), ("Laughter", 0.3)]) == "a noise that might be laughter"
+    assert name([("Laughter", 0.51), ("Speech", 0.5)]) == "a noise that might be laughter"
 
 
 def test_a_sound_behind_words_rides_the_transcript(run: _Running) -> None:
@@ -1354,10 +1371,11 @@ def test_a_sound_behind_words_rides_the_transcript(run: _Running) -> None:
     body, ctype = _multipart({"model": "w"}, clip)
     resp = run.request("POST", "/api/llm?target=groq-audio", body, {"Content-Type": ctype})
     got = json.loads(resp.read())
-    assert got["text"] == "play it again" and got["gb_sounds"] == "piano"
+    assert got["text"] == "play it again"
+    assert got["gb_sounds"] == "a noise that might be piano"
     assert [s for s in _Fake.seen if s["path"] == "/tag"][-1]["body"] == clip
     (row,) = _logged("stt")
-    assert row["detail"]["sounds"] == "piano"
+    assert row["detail"]["sounds"] == "a noise that might be piano"
 
     # His own voice is not news, a faint sound is not said, and no words means no turn to ride.
     for reply, tags in (
@@ -1381,6 +1399,24 @@ def test_a_sound_behind_words_rides_the_transcript(run: _Running) -> None:
     _Fake.tag_reply = (503, b"tagger unavailable")
     resp = run.request("POST", "/api/llm?target=groq-audio", body, {"Content-Type": ctype})
     assert json.loads(resp.read())["text"] == "hello"
+
+
+def test_a_failed_transcription_does_not_wait_on_the_tagger(
+    run: _Running, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no words there is nothing for a sound to ride, so a slow tagger must not hold
+    whisper's failure back."""
+    run.app.config.stt_url = "http://127.0.0.1:9/v1"
+
+    def slow(clip: bytes) -> None:
+        time.sleep(3)
+
+    monkeypatch.setattr(run.app, "tag", slow)
+    body, ctype = _multipart({"model": "w"}, _wav(1.0))
+    started = time.monotonic()
+    resp = run.request("POST", "/api/llm?target=groq-audio", body, {"Content-Type": ctype})
+    assert resp.status == 503
+    assert time.monotonic() - started < 2
 
 
 def test_llm_refuses_a_body_that_is_not_a_chat(run: _Running) -> None:

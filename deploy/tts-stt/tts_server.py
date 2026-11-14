@@ -717,7 +717,8 @@ def _wav_samples(raw: bytes) -> list[float] | None:
                 return None
             channels, rate = w.getnchannels(), w.getframerate()
             pcm = w.readframes(min(w.getnframes(), TAG_MAX_S * rate))
-    except (wave.Error, EOFError, ValueError):
+    except (wave.Error, EOFError, ValueError, RuntimeError):
+        # RuntimeError: a hostile chunk size trips the stdlib chunk reader itself.
         return None
     if rate <= 0:
         return None

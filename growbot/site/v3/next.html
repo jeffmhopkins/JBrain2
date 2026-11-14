@@ -5465,7 +5465,7 @@ function _listenB64(u8){ var out="",CH=8192;                                    
   for(var i=0;i<u8.length;i+=CH){ var sub=u8.subarray(i,Math.min(u8.length,i+CH)), st="";
     for(var j=0;j<sub.length;j++) st+=String.fromCharCode(sub[j]); out+=st; }
   return btoa(out); }
-function gbAlsoHeard(d){ try{ var s=(d&&typeof d.gb_sounds==="string")?d.gb_sounds.trim().slice(0,80):"", t=Date.now(); if(!s||(_earHeard&&t<_earHeard.t)) return; _earHeard={t:t,src:"behind-words",rid:0,txt:"behind your person's words: "+s}; logEv("listen",{trig:"words",n:s}); }catch(e){} }
+function gbAlsoHeard(d){ try{ var s=(d&&typeof d.gb_sounds==="string")?d.gb_sounds.trim().slice(0,80):"", end=0; ((d&&d.segments)||[]).forEach(function(g){ if(g&&typeof g.end==="number"&&g.end>end) end=g.end; }); var t=Date.now()-Math.min(end,120)*1000; if(!s||(_earHeard&&t<_earHeard.t)) return; _earHeard={t:t,src:"behind-words",rid:0,txt:"behind your person's words: "+s}; logEv("listen",{trig:"words",n:s}); }catch(e){} }
 function _listenFire(){ if(!_listenStash) return; var st=_listenStash; _listenStash=null;
   if(Date.now()-st.t>20000){ try{ logEv("listen",{trig:"nospeech",skip:"stale"}); }catch(e){} return; }   // REVIEW FIX (stash pairing): with 8-12s STT leases, clip A's empty settle can arrive after clip B stomped the slot — an aged stash is provably not the clip that just settled, so naming it would misattribute audio AND burn the 30s window
   if(!st.wav._earTime) st.wav._earTime={t:st.t,src:"queued"};   // legacy/no-capture fallback: preserve the earliest known time, not the later naming start

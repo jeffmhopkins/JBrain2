@@ -3606,15 +3606,19 @@ def test_a_sound_behind_the_words_becomes_the_ears_newest_hearing() -> None:
         "var _earHeard=null, logs=[]; function logEv(k,v){ logs.push([k,v]); }"
         f"{code}\n"
         "gbAlsoHeard({text:'hi'}); var none=_earHeard;"
-        "gbAlsoHeard({gb_sounds:' piano, dog '}); var got=_earHeard;"
+        "var t0=Date.now(); gbAlsoHeard({gb_sounds:' piano, dog ',segments:[{end:1.5},{end:4}]});"
+        "var got=_earHeard, back=t0-got.t;"
         "_earHeard={t:Date.now()+60000,txt:'newer'}; gbAlsoHeard({gb_sounds:'whistling'});"
-        "console.log(JSON.stringify({none:none,got:got,kept:_earHeard.txt,logs:logs}));"
+        "console.log(JSON.stringify({none:none,got:got,back:back,kept:_earHeard.txt,logs:logs}));"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
     got = json.loads(out.stdout)
     assert got["none"] is None
     assert got["got"]["txt"] == "behind your person's words: piano, dog"
     assert got["got"]["src"] == "behind-words"
+    # Stamped when the words began, so an ear clip captured while they were being transcribed
+    # still counts as newer.
+    assert 3900 <= got["back"] <= 4100
     # An older clip never replaces newer hearing, the namer's own rule.
     assert got["kept"] == "newer"
     assert got["logs"] == [["listen", {"trig": "words", "n": "piano, dog"}]]

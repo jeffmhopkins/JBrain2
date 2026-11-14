@@ -2156,6 +2156,10 @@ class GrowBot:
             STT_TIMEOUT_S,
             pool=self._streams,
         )
+        if tagging is not None and up.status != 200:
+            # No words to ride, so a slow tagger must not hold the failure back.
+            tagging.cancel()
+            tagging = None
         tags = await tagging if tagging is not None else None
         took = round((time.monotonic() - started) * 1000)
         clip = wav_seconds(audio.data)
@@ -2814,6 +2818,8 @@ TAG_TIMEOUT_S = 5.0
 TAG_SPEECH_AT = 0.4
 TAG_NAME_AT = 0.3
 TAG_ALSO_AT = 0.4
+# Over this a sound is said as "what sounds like", under it as "a noise that might be".
+TAG_SURE_AT = 0.7
 # AudioSet parents that say where or what family, not what: "Animal" over "Dog", "Inside".
 TAG_VAGUE = frozenset(
     {
@@ -2906,19 +2912,32 @@ def _tags(raw: bytes) -> list[tuple[str, float]] | None:
 def _sound_words(
     tags: list[tuple[str, float]], skip: frozenset[str], floor: float
 ) -> str:
-    """Up to two clear sounds, lowercased, a label folded into one already said ("Church bell"
-    keeps out "Bell", "Alarm clock" keeps out "Clock")."""
+    """Up to two clear sounds, lowercased, a label whose words sit inside one already said folded
+    into it ("Church bell" keeps out "Bell", "Alarm clock" keeps out "Clock"; "Train" does not
+    keep out "Rain"), said as a likelihood: "a noise that might be bark or dog"."""
     said: list[str] = []
+    top = 0.0
     for label, score in tags:
         if score < floor or len(said) == 2:
             break
         if label in skip or label in TAG_VAGUE:
             continue
         word = label.lower()
-        if any(word in s or s in word for s in said):
+        words = _words(word)
+        if any(words <= _words(s) or _words(s) <= words for s in said):
             continue
         said.append(word)
-    return ", ".join(said)
+        top = max(top, score)
+    if not said:
+        return ""
+    # A tag is a likelihood, not a fact (owner, 2026-11-13: "a noise that might sound like
+    # laughter"), so the creature is told it as one, more sure only when the tagger is.
+    lead = "what sounds like" if top >= TAG_SURE_AT else "a noise that might be"
+    return f"{lead} {' or '.join(said)}"
+
+
+def _words(label: str) -> set[str]:
+    return set(re.findall(r"[a-z]+", label))
 
 
 def sound_name(tags: list[tuple[str, float]]) -> str:
