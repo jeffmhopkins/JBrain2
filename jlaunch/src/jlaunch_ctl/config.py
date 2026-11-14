@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # like 20%"), so a few side by side finish sooner overall. Each is pinned to its
     # own 1/N of the cores, which it sizes its simulators to. A built-in census still
     # runs alone, since it sizes its worker pool to the whole machine's RAM.
-    max_concurrent_jobs: int = 3
+    max_concurrent_jobs: int = Field(3, ge=1)
 
     # Log verbosity for the control server (standard level names). DEBUG surfaces the
     # per-job lifecycle detail the owner debug console pulls.

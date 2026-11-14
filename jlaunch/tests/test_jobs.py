@@ -166,6 +166,34 @@ async def test_runs_that_share_go_side_by_side_on_their_own_cores(
     await _kill_all(manager, [started[0], started[2], fourth.id])
 
 
+async def test_a_run_that_cant_be_pinned_never_starts(
+    manager, sharing_spec, monkeypatch
+) -> None:
+    sharing_spec("test_share_nopin")
+
+    def refuse(_pid: int, _cpus: object) -> None:
+        raise OSError("not allowed")
+
+    monkeypatch.setattr(jobs_mod.os, "sched_setaffinity", refuse)
+    job = await manager.start("test_share_nopin")
+    assert job.state == "failed" and "pin" in (job.error or "")
+    assert job.id not in manager._registry._terms
+    # It holds no slot: the next run starts.
+    monkeypatch.undo()
+    sharing_spec("test_share_after")
+    after = await manager.start("test_share_after")
+    assert after.cpu_slot == 0
+    await _kill_all(manager, [after.id])
+
+
+def test_no_fewer_than_one_slot(tmp_path) -> None:
+    roots = [str(tmp_path / d) for d in ("work", "state", "artifacts")]
+    manager = JobManager(
+        roots[0], roots[1], roots[2], TerminalRegistry(), max_concurrent_jobs=0
+    )
+    assert manager._free_slot() == 0
+
+
 async def test_one_live_run_per_job(manager, sharing_spec) -> None:
     sharing_spec("test_share_once")
     first = await manager.start("test_share_once")

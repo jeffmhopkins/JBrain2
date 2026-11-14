@@ -174,7 +174,8 @@ class JobManager:
         self._state_root = Path(state_root)
         self._artifact_root = Path(artifact_root)
         self._registry = registry
-        self._max = max_concurrent_jobs
+        # At least one: the slots and the core shares are counted from it.
+        self._max = max(1, max_concurrent_jobs)
         self._catalog = catalog
         self._jobs: dict[str, Job] = {}
         # Job ids whose stop/kill was owner-requested, so finalize records `killed`
@@ -295,7 +296,7 @@ class JobManager:
         # mirror, and never help: a variant to compare is its own job in jobs.toml.
         if any(j.spec_name == spec.name for j in live):
             raise BusyError(f"{spec.name} is already running")
-        if self._max > 0 and len(live) >= self._max:
+        if len(live) >= self._max:
             raise BusyError(f"{len(live)} jobs are already running")
 
     def _free_slot(self) -> int:
@@ -304,7 +305,7 @@ class JobManager:
             for j in self._jobs.values()
             if j.state in LIVE_STATES and j.cpu_slot >= 0
         }
-        return next(i for i in range(max(1, self._max)) if i not in taken)
+        return next(i for i in range(self._max) if i not in taken)
 
     # -- lifecycle ---------------------------------------------------------------
 
@@ -359,8 +360,15 @@ class JobManager:
         # unchanged (kill-by-group still works) and the PTY EOFs — firing on_exit — the
         # moment the job finishes.
         term = PtyTerminal(str(workspace))
-        if job.cpu_slot >= 0:
-            self._pin(job, term.pid)
+        if job.cpu_slot >= 0 and not self._pin(job, term.pid):
+            # Unpinned, it would take every core from the runs that are pinned: never
+            # start it, and say why on the run.
+            term.close()
+            job.state = "failed"
+            job.error = "couldn't pin the run to its own cores"
+            job.finished_at = _now()
+            self._save(job)
+            return job
         self._registry.remove(jid)
         self._registry._terms[jid] = term  # we own this registry (same package)
         term.on_exit = self._on_exit(jid, spec)
@@ -369,19 +377,20 @@ class JobManager:
         _log.info("job start id=%s spec=%s pid=%d", jid, spec.name, term.pid)
         return job
 
-    def _pin(self, job: Job, pid: int) -> None:
+    def _pin(self, job: Job, pid: int) -> bool:
         """Pin a shared run to its own cores, before it starts: every process the job
         forks inherits them, so side-by-side runs never contend for a core, and a run
         that sizes itself to the cores it may use sizes itself to its share."""
-        cpus = cpu_share(job.cpu_slot, max(1, self._max))
+        cpus = cpu_share(job.cpu_slot, self._max)
         try:
             os.sched_setaffinity(pid, cpus)
         except OSError:
             _log.warning("job not pinned id=%s", job.id, exc_info=True)
-            return
+            return False
         job.machine["pinned_cpus"] = cpu_list(cpus)
         job.machine["pinned_cores"] = len(cpus)
         self._save(job)
+        return True
 
     def _on_exit(self, jid: str, spec: JobSpec):
         def hook() -> None:
@@ -821,6 +830,9 @@ def _sibling_groups(cpus: set[int]) -> list[list[int]]:
             with open(path) as fh:
                 key = fh.read().strip()
         except OSError:
+            # Unknown topology: one CPU per group, so shares stay disjoint by CPU even
+            # if they might then split a core's two threads.
+            _log.warning("no CPU topology for cpu%d; splitting by thread", cpu)
             key = str(cpu)
         groups.setdefault(key, []).append(cpu)
     return sorted(groups.values(), key=lambda g: g[0])
