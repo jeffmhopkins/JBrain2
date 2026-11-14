@@ -20,14 +20,23 @@ RC_VERIFY_FAILED = 91
 RC_ARTIFACT_MISSING = 92
 
 
+_GIT = "git -c protocol.ext.allow=never -c protocol.file.allow=never"
+
+
 def _clone_command(spec: JobSpec) -> str:
     # Clone into the (empty) checkout dir as phase 0 so it streams live like every other
     # phase. ext/file transports denied at the git layer; ``--`` so the URL can't be
     # read as an option; ``--depth 1`` — we never push, only read the tree.
-    return (
-        "git -c protocol.ext.allow=never -c protocol.file.allow=never clone "
-        f"--depth 1 --branch {shlex.quote(spec.branch)} -- {shlex.quote(spec.repo_url)} ."  # noqa: E501
-    )
+    url = shlex.quote(spec.repo_url)
+    if spec.commit:
+        # A repo-manifest job runs the exact commit its catalog was read at, so the run
+        # is what the Jobs list showed and records what it trained on.
+        return (
+            f"git init -q . && {_GIT} fetch -q --depth 1 -- {url} "
+            f"{shlex.quote(spec.commit)} && git checkout -q --detach FETCH_HEAD && "
+            'echo "== commit $(git rev-parse HEAD) =="'
+        )
+    return f"{_GIT} clone --depth 1 --branch {shlex.quote(spec.branch)} -- {url} ."
 
 
 def build_script(spec: JobSpec, state_dir: str) -> str:

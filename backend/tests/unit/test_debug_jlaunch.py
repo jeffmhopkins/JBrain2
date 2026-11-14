@@ -174,3 +174,25 @@ def test_archives_a_job_type(
     assert bad.status_code == 404
     scopes = client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
     assert "jlaunch.archive" in scopes
+
+
+def test_refreshes_the_job_types(
+    debug_client: tuple[TestClient, str],  # noqa: F811
+    _no_db: None,  # noqa: F811
+) -> None:
+    client, key = debug_client
+    fake, _ = _launcher(client)
+    url = "/api/debug/jlaunch/specs/refresh"
+    assert client.post(url).status_code == 401
+    fake.refresh_result = {"commit": "b" * 40, "added": ["growbot_new"], "removed": []}
+    got = client.post(url, headers=_auth(key))
+    assert got.status_code == 200 and got.json()["added"] == ["growbot_new"]
+    fake.refresh_result = JlaunchError("jobs.toml job 1: unknown key run", status=422)
+    bad = client.post(url, headers=_auth(key))
+    assert bad.status_code == 422 and "unknown key run" in bad.json()["detail"]
+    fake.refresh_result = JlaunchError("fetching the training repo failed", status=502)
+    assert client.post(url, headers=_auth(key)).status_code == 502
+    fake.refresh_result = JlaunchError("connect refused")
+    assert client.post(url, headers=_auth(key)).status_code == 502
+    scopes = client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
+    assert "jlaunch.refresh" in scopes

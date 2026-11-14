@@ -26,8 +26,9 @@ from fastapi import (
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
+from jlaunch_ctl.catalog import Catalog, CatalogError
 from jlaunch_ctl.jobs import BusyError, JobError, JobManager
-from jlaunch_ctl.specs import SPECS
+from jlaunch_ctl.specs import get_spec, listed_specs
 from jlaunch_ctl.terminal import PtyTerminal, TerminalRegistry, _recv_loop
 
 if TYPE_CHECKING:
@@ -70,9 +71,25 @@ async def _attach(websocket: WebSocket, term: PtyTerminal) -> None:  # pragma: n
 
 
 def create_app(
-    settings: Settings, jobs: JobManager, registry: TerminalRegistry
+    settings: Settings,
+    jobs: JobManager,
+    registry: TerminalRegistry,
+    catalog: Catalog | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="jbrain-jlaunch")
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # The box has just started (often after an update): pick up any job pushed to
+        # the training repo meanwhile, without holding up the health check for it.
+        task = (
+            asyncio.ensure_future(catalog.refresh_quietly())
+            if catalog is not None
+            else None
+        )
+        yield
+        if task is not None and not task.done():
+            task.cancel()
+
+    app = FastAPI(title="jbrain-jlaunch", lifespan=lifespan)
     expected = f"Bearer {settings.token}".encode()
 
     def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -88,7 +105,25 @@ def create_app(
 
     @authed.get("/specs")
     def list_specs() -> list[dict[str, object]]:
-        return [spec.public() for spec in SPECS.values()]
+        return [spec.public() for spec in listed_specs()]
+
+    @authed.get("/catalog")
+    def catalog_status() -> dict[str, object]:
+        if catalog is None:
+            raise HTTPException(status_code=404, detail="no job catalog")
+        return catalog.status()
+
+    @authed.post("/catalog/refresh")
+    async def catalog_refresh() -> dict[str, object]:
+        if catalog is None:
+            raise HTTPException(status_code=404, detail="no job catalog")
+        try:
+            return await catalog.refresh()
+        except CatalogError as exc:
+            # 422: the manifest is wrong (fix the repo); 502: the repo couldn't be read.
+            raise HTTPException(
+                status_code=422 if exc.invalid else 502, detail=str(exc)
+            ) from exc
 
     @authed.post("/jobs", status_code=201)
     async def start_job(body: StartJobRequest) -> dict[str, object]:
@@ -131,7 +166,7 @@ def create_app(
             path = jobs.artifact_path(jid)
         except JobError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        spec = SPECS.get(job.spec_name)
+        spec = get_spec(job.spec_name)
         media = spec.artifact_media_type if spec else "application/octet-stream"
         return FileResponse(path, media_type=media, filename=jobs.artifact_name(jid))
 

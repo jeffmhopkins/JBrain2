@@ -53,6 +53,7 @@ import type {
   JlaunchJob,
   JlaunchLiveFile,
   JlaunchProgress,
+  JlaunchRefresh,
   JlaunchShare,
   JlaunchShareToken,
   JlaunchSpec,
@@ -7309,6 +7310,12 @@ export const api = {
     return (
       await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}/kill`, { method: "POST" })
     ).json();
+  },
+
+  /** Re-read the training repo's jobs.toml so a job pushed there is startable with no
+   * box update. ApiError 422 carries what's wrong with the file; 502 = repo unreachable. */
+  async jlaunchRefreshSpecs(): Promise<JlaunchRefresh> {
+    return (await request("/api/jlaunch/specs/refresh", { method: "POST" })).json();
   },
 
   /** Archive a job type (it moves to the Archived tab) or restore it. Its runs stay. */

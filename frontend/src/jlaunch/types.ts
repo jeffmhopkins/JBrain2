@@ -19,6 +19,20 @@ export interface JlaunchSpec {
   category?: string;
   /** The owner archived this job type: it lists on the Archived tab, not Jobs. */
   archived?: boolean;
+  /** "repo": read from the training repo's jobs.toml (Refresh re-reads it); "builtin":
+   * defined in the launcher itself. */
+  source?: "repo" | "builtin";
+  /** For a repo job: the training repo commit its next run clones, and its config. */
+  commit?: string;
+  config?: string;
+}
+
+/** What a Refresh of the training repo's jobs.toml read (POST /jlaunch/specs/refresh). */
+export interface JlaunchRefresh {
+  commit: string;
+  jobs: string[];
+  added: string[];
+  removed: string[];
 }
 
 /** One file in a running job's live folder (GET /jlaunch/jobs/{id}/live). */
@@ -67,6 +81,8 @@ export interface JlaunchJob {
   artifact_present: boolean;
   artifact_bytes: number | null;
   console_tail: string;
+  /** The training repo commit a repo job cloned; empty for a built-in one. */
+  commit?: string;
   /** This run's number among its job's runs (v1, v2, …), from the run mirror. */
   revision?: number | null;
   /** The owner's own note on what the run was for. */
