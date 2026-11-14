@@ -13,6 +13,27 @@ export interface JlaunchSpec {
   disk_gb: number;
   all_cores: boolean;
   notes: string;
+  /** The spec keeps a live folder (progress, replay, latest weights) while it runs. */
+  live?: boolean;
+}
+
+/** One file in a running job's live folder (GET /jlaunch/jobs/{id}/live). */
+export interface JlaunchLiveFile {
+  name: string;
+  bytes: number;
+  modified_at: string;
+}
+
+/** The live folder's progress.json, as a trainer writes it. Every field is optional:
+ * the job wrote it, so the card shows what is there and skips what isn't. */
+export interface JlaunchProgress {
+  title?: string;
+  state?: string;
+  percent?: number;
+  eta_s?: number | null;
+  elapsed_s?: number;
+  updated_at?: string;
+  summary?: { label: string; value: string }[];
 }
 
 /** One phase's wall-clock (parsed from the run's timing file). */

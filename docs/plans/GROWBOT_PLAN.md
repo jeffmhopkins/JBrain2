@@ -664,9 +664,12 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   tarball with the policy JSON and a browser 3D `replay.html`. ◻️ Not yet done: the creature
   has no heading source or gait entry for it (the training README's "Getting a policy onto the
   robot" lists what the app needs), and bringing a trained policy into `growbot/site` is a sync
-  PR. That last step and opening the replay from a phone both need the tarball unpacked, a
-  terminal step to design out (CLAUDE.md #10): the job should also offer the replay and the
-  policy as their own downloads.
+  PR. ✅ Watching it from the phone (owner, 2026-11-14: *"viewed on my phone in real time as
+  it's training … the result needs to be able to be downloaded or at least in a location that a
+  debug token can be handed to Claude"*): the spec's `live_dir` is the run's `live/` folder,
+  which the job screen's Live card shows while it trains (progress, time left, the walk's
+  numbers, a 3D replay of the latest checkpoint, its weights), and the finished tarball
+  downloads from the Result tab; a debug token reads the same through `/debug/jlaunch`.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic. Its store
   landed early with the brain log (§2 "Brain log", migration 0262); reading it in the PWA and

@@ -4,7 +4,8 @@ Every route is owner-gated (`OwnerDep`) and 404s when the launcher isn't configu
 (`app.state.jlaunch_client is None`) — the same fail-closed graceful degrade as jcode. The
 api proxies the control surface (specs / start / stop / kill / delete), reconciles the live
 job state into the durable `jlaunch_runs` mirror (which survives a control-server restart),
-and mints/lists/revokes the public results-share links. The live terminal is a separate
+mints/lists/revokes the public results-share links, and serves a job's live folder (progress
+and a replay while it runs) and its finished result as a download. The live terminal is a separate
 WebSocket router (`jlaunch_terminal.py`); the public results page is `jlaunch_share.py`.
 """
 
@@ -12,12 +13,14 @@ from __future__ import annotations
 
 import re
 from datetime import datetime  # noqa: TC003 - Pydantic needs the runtime symbol
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from jbrain.api.deps import OwnerDep
+from jbrain.api.jshare_public import SANDBOX
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.external import jlaunch_shares
 from jbrain.jlaunch import JlaunchApi, JlaunchError
@@ -35,6 +38,12 @@ _REPO = JlaunchRunRepo()
 # Job ids are the control server's hex tokens; mirror its gate so a malformed id can never
 # be interpolated into a proxied URL.
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+# A live file's name, as the control server allowlists it; checked here too so a name is
+# never interpolated into the proxied URL unvetted.
+_LIVE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
 class StartJobRequest(BaseModel):
@@ -241,3 +250,92 @@ async def revoke_share(jid: str, share_id: str, owner: OwnerDep, request: Reques
     _valid_id(jid)
     if not await jlaunch_shares.revoke_share(_maker(request), _owner_ctx(owner.id), share_id):
         raise HTTPException(status_code=404, detail="unknown share link")
+
+
+# -- live folder + result download ----------------------------------------------------
+#
+# A job may keep a "live" folder current while it runs (progress.json, a 3D replay page,
+# the latest weights). These helpers are shared with the debug-token routes
+# (`debug_jlaunch.py`), which serve the same bytes the same way.
+
+
+def _upstream_404(exc: JlaunchError, what: str) -> HTTPException:
+    if exc.status == 404:
+        return HTTPException(status_code=404, detail=what)
+    return HTTPException(status_code=502, detail=str(exc))
+
+
+async def live_listing(client: JlaunchApi, jid: str) -> list[dict[str, Any]]:
+    _valid_id(jid)
+    try:
+        return await client.list_live(jid)
+    except JlaunchError as exc:
+        raise _upstream_404(exc, "this job has no live folder") from exc
+
+
+async def live_file(client: JlaunchApi, jid: str, name: str, *, download: bool) -> Response:
+    """Serve one live file. The bytes were written by the job — untrusted code — and go out
+    on the app's own origin, so every response carries the same `sandbox` CSP JShare uses:
+    a replay page runs its script with an opaque origin and can never reach the owner's
+    session. `download` turns it into an attachment instead of a page."""
+    _valid_id(jid)
+    if not _LIVE_NAME_RE.match(name):
+        raise HTTPException(status_code=404, detail="no such live file")
+    try:
+        data, media = await client.get_live(jid, name)
+    except JlaunchError as exc:
+        raise _upstream_404(exc, "no such live file") from exc
+    headers = {
+        "Content-Security-Policy": SANDBOX,
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Cache-Control": "no-store",
+    }
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{name}"'
+    return Response(data, media_type=media or "application/octet-stream", headers=headers)
+
+
+async def artifact_download(client: JlaunchApi, jid: str) -> StreamingResponse:
+    """Stream a finished job's result straight from the control server as an attachment.
+    404 until the job has succeeded and produced it."""
+    _valid_id(jid)
+    try:
+        job = await client.get_job(jid)
+    except JlaunchError as exc:
+        raise _upstream_404(exc, "unknown job") from exc
+    if job.get("state") != "succeeded" or not job.get("artifact_present"):
+        raise HTTPException(status_code=404, detail="this job has no result to download yet")
+    name = _SAFE_FILENAME_RE.sub("_", str(job.get("artifact_name") or "artifact"))[:128]
+    headers = {
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+    }
+    size = job.get("artifact_bytes")
+    if isinstance(size, int) and size >= 0:
+        headers["Content-Length"] = str(size)
+    return StreamingResponse(
+        client.stream_artifact(jid), media_type="application/octet-stream", headers=headers
+    )
+
+
+@router.get("/jlaunch/jobs/{jid}/live")
+async def list_live(jid: str, _owner: OwnerDep, request: Request) -> list[dict[str, Any]]:
+    return await live_listing(_client(request), jid)
+
+
+@router.get("/jlaunch/jobs/{jid}/live/{name}")
+async def get_live(
+    jid: str,
+    name: str,
+    _owner: OwnerDep,
+    request: Request,
+    download: Annotated[bool, Query()] = False,
+) -> Response:
+    return await live_file(_client(request), jid, name, download=download)
+
+
+@router.get("/jlaunch/jobs/{jid}/artifact")
+async def download_artifact(jid: str, _owner: OwnerDep, request: Request) -> StreamingResponse:
+    return await artifact_download(_client(request), jid)

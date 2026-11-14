@@ -1,20 +1,31 @@
 // The Math launcher (jlaunch) — the self-contained full-screen overlay the "Math" tile
 // opens (like JcodeScreen/Tasks). It lists the registered computations + past runs; picking
 // one opens the tabbed job screen (Overview · Terminal · Result) with start/stop/kill, a live
-// xterm, and — once a run finishes — a public results sharelink. Variant C from the GUI gate
-// (docs/mocks/jlaunch/). Owner-only; the tile is hidden unless the launcher is enabled.
+// xterm, a Live card for a job that keeps a live folder, and — once a run finishes — a
+// download and a public results sharelink. Variant C from the GUI gate (docs/mocks/jlaunch/);
+// the Live card is variant A of docs/mocks/jlaunch-live/. Owner-only; the tile is hidden
+// unless the launcher is enabled.
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import { EngineBanner } from "../components/EngineBanner";
 import { ChevronLeftIcon, ChevronRightIcon } from "../components/icons";
+import { fmtEta, jlaunchLiveUrl, jlaunchResultUrl } from "../jlaunch/live";
 import { jlaunchShareUrl } from "../jlaunch/share";
 import { attachTerminal, jlaunchTerminalWsUrl } from "../jlaunch/terminal";
-import type { JlaunchJob, JlaunchShare, JlaunchSpec } from "../jlaunch/types";
+import type {
+  JlaunchJob,
+  JlaunchLiveFile,
+  JlaunchProgress,
+  JlaunchShare,
+  JlaunchSpec,
+} from "../jlaunch/types";
 import { useForeground } from "../visibility";
 
 const LIVE = new Set(["queued", "cloning", "running"]);
 const POLL_MS = 3000;
+// The live folder changes once per training batch at most; no need to chase it faster.
+const LIVE_POLL_MS = 10000;
 
 function isLive(job: JlaunchJob): boolean {
   return LIVE.has(job.state);
@@ -299,6 +310,8 @@ function OverviewPane({
         )}
       </div>
 
+      <LiveCard job={job} />
+
       <div className="jl-card">
         <h3 className="jl-h3">Job</h3>
         <div className="jl-meta">
@@ -328,6 +341,113 @@ function OverviewPane({
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A running job's live folder: how far along it is, how it's doing, and its files (a
+ * replay page opens in a new tab; the rest download). Hidden when the job keeps none. */
+export function LiveCard({ job }: { job: JlaunchJob }): ReactNode {
+  const [files, setFiles] = useState<JlaunchLiveFile[] | null>(null);
+  const [progress, setProgress] = useState<JlaunchProgress | null>(null);
+  const foreground = useForeground();
+  const live = isLive(job);
+
+  const load = useCallback(async () => {
+    let listed: JlaunchLiveFile[];
+    try {
+      listed = await api.jlaunchLiveFiles(job.id);
+    } catch {
+      setFiles(null); // no live folder (or the launcher is unreachable): no card
+      return;
+    }
+    setFiles(listed);
+    if (listed.some((f) => f.name === "progress.json")) {
+      try {
+        setProgress(await api.jlaunchProgress(job.id));
+      } catch {
+        /* mid-rewrite or malformed — keep the last good one */
+      }
+    }
+  }, [job.id]);
+
+  // Once more when the job settles, so the card flips to the final files.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: job.state is the trigger
+  useEffect(() => {
+    void load();
+  }, [load, job.state]);
+
+  useEffect(() => {
+    if (!live || !foreground) return;
+    const t = setInterval(() => void load(), LIVE_POLL_MS);
+    return () => clearInterval(t);
+  }, [live, foreground, load]);
+
+  if (!files) return null;
+  const pct = typeof progress?.percent === "number" ? progress.percent : null;
+  const pages = files.filter((f) => f.name.endsWith(".html"));
+  const others = files.filter((f) => !f.name.endsWith(".html") && f.name !== "progress.json");
+  return (
+    <div className="jl-card">
+      <h3 className="jl-h3">
+        Live{progress?.title ? ` · ${progress.title}` : ""}
+        {live && <span className="jl-tab-live" aria-hidden="true" />}
+      </h3>
+      {pct != null && (
+        <>
+          <div className="jl-progress" aria-hidden="true">
+            <div className="jl-progress-fill" style={{ width: `${Math.min(100, pct)}%` }} />
+          </div>
+          <div className="jl-progress-meta">
+            <span>{pct.toFixed(0)}%</span>
+            <span>
+              {live && typeof progress?.eta_s === "number"
+                ? fmtEta(progress.eta_s)
+                : progress?.updated_at
+                  ? `updated ${relative(progress.updated_at)}`
+                  : ""}
+            </span>
+          </div>
+        </>
+      )}
+      {progress?.summary && progress.summary.length > 0 && (
+        <div className="jl-times">
+          {progress.summary.map((row) => (
+            <div key={row.label} className="jl-time">
+              <span>{row.label}</span>
+              <span>{row.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {files.length === 0 && (
+        <p className="jl-sharenote">Nothing written yet. It fills in as the run gets going.</p>
+      )}
+      {pages.map((f) => (
+        <a
+          key={f.name}
+          className="jl-btn share jl-linkbtn"
+          href={jlaunchLiveUrl(job.id, f.name)}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {f.name === "replay.html" ? "Watch the latest walk in 3D" : `Open ${f.name}`} ↗
+        </a>
+      ))}
+      {others.length > 0 && (
+        <div className="jl-sharelist">
+          {others.map((f) => (
+            <div key={f.name} className="jl-shareitem">
+              <span className="jl-file">
+                {f.name} · {fmtBytes(f.bytes)}
+              </span>
+              <a className="jl-dl" href={jlaunchLiveUrl(job.id, f.name, true)} download>
+                Download
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -413,7 +533,8 @@ function ResultPane({ job }: { job: JlaunchJob }): ReactNode {
     return (
       <div className="jl-body">
         <p className="jl-empty">
-          The headline + sharelink appear here once the run finishes and passes verification.
+          The headline, download and sharelink appear here once the run finishes and passes
+          verification.
         </p>
       </div>
     );
@@ -447,6 +568,14 @@ function ResultPane({ job }: { job: JlaunchJob }): ReactNode {
             <span className="jl-chip">{fmtBytes(job.artifact_bytes)}</span>
           )}
         </div>
+      </div>
+
+      <div className="jl-card">
+        <h3 className="jl-h3">Download</h3>
+        <a className="jl-btn share jl-linkbtn" href={jlaunchResultUrl(job.id)} download>
+          Download {job.artifact_name}
+          {job.artifact_bytes != null ? ` · ${fmtBytes(job.artifact_bytes)}` : ""}
+        </a>
       </div>
 
       <div className="jl-card">
