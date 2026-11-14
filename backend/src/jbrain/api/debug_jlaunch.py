@@ -3,11 +3,12 @@
 The owner has no terminal, so a long run on the box (a GrowBot training run, a census)
 is followed from a debug token: the runs and their state, the console tail, a running
 job's live folder (progress, the latest replay, the latest weights) and the finished
-result. One write: starting a registered spec (owner, 2026-11-14: the owner went to bed
-handing the assistant "start the camera walk and look training"). It runs only what the
-code-defined spec registry holds, one job at a time, exactly as the PWA's Start; stopping
-and deleting a run stay with the owner. The bytes come back exactly as the owner's routes
-serve them (`jlaunch.py`).
+result. Two writes: starting a registered spec (owner, 2026-11-14: the owner went to bed
+handing the assistant "start the camera walk and look training"), which runs only what
+the code-defined spec registry holds, one job at a time, exactly as the PWA's Start; and
+deleting a finished run (owner, 2026-11-14: "delete bad runs ... via debug token"), which
+refuses a live one. Stopping a run stays with the owner. The bytes come back exactly as
+the owner's routes serve them (`jlaunch.py`).
 """
 
 from __future__ import annotations
@@ -36,6 +37,14 @@ async def jlaunch_start(
     Start does. 404 for an unknown spec, 409 while another job is running."""
     request.state.debug_detail = f"jlaunch start {body.spec}"
     return await jlaunch.start(request, body.spec, _OWNER_CTX)
+
+
+@router.delete("/jobs/{jid}", status_code=204)
+async def jlaunch_delete(jid: str, request: Request, _p: DebugDep) -> None:
+    """**Delete a finished run**: its checkout, scratch, result and share links, as the
+    PWA's Delete run does. 409 while the job is still live (stop it first, from the PWA)."""
+    request.state.debug_detail = f"jlaunch delete {jid}"
+    await jlaunch.delete(request, jid, _OWNER_CTX)
 
 
 @router.get("")

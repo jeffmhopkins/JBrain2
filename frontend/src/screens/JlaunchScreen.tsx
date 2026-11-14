@@ -1,6 +1,7 @@
 // The Jobs launcher (jlaunch) — the self-contained full-screen overlay the "Jobs" tile
-// opens (like JcodeScreen/Tasks). It lists the registered computations + past runs; picking
-// one opens the tabbed job screen (Overview · Terminal · Result) with start/stop/kill, a live
+// opens (like JcodeScreen/Tasks). Two tabs: Jobs (the registered computations as compact
+// rows that expand to their notes and a Start button) and Runs (past and current runs, a
+// finished one deletable in place). Picking a run opens the tabbed job screen (Overview · Terminal · Result) with start/stop/kill, a live
 // xterm, a Live card for a job that keeps a live folder, and — once a run finishes — a
 // download and a public results sharelink. Variant C from the GUI gate (docs/mocks/jlaunch/);
 // the Live card is variant A of docs/mocks/jlaunch-live/. Owner-only; the tile is hidden
@@ -9,7 +10,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import { EngineBanner } from "../components/EngineBanner";
-import { ChevronLeftIcon, ChevronRightIcon } from "../components/icons";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, TrashIcon } from "../components/icons";
 import { fmtEta, jlaunchLiveUrl, jlaunchResultUrl } from "../jlaunch/live";
 import { jlaunchShareUrl } from "../jlaunch/share";
 import { attachTerminal, jlaunchTerminalWsUrl } from "../jlaunch/terminal";
@@ -37,9 +38,15 @@ type LoadState =
   | { kind: "disabled" }
   | { kind: "error" };
 
+type ListTab = "jobs" | "runs";
+
 export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [openId, setOpenId] = useState<string | null>(null);
+  const [tab, setTab] = useState<ListTab>("jobs");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const foreground = useForeground();
 
   const refresh = useCallback(async () => {
     try {
@@ -55,6 +62,17 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
     void refresh();
   }, [refresh]);
 
+  const specs = state.kind === "ready" ? state.specs : [];
+  const jobs = state.kind === "ready" ? state.jobs : [];
+  const anyLive = jobs.some(isLive);
+
+  // Keep a running job's phase and pill current on the Runs list, as the job screen does.
+  useEffect(() => {
+    if (openId || !anyLive || !foreground) return;
+    const t = setInterval(() => void refresh(), POLL_MS);
+    return () => clearInterval(t);
+  }, [openId, anyLive, foreground, refresh]);
+
   if (openId) {
     return (
       <JlaunchJobScreen
@@ -67,9 +85,6 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
     );
   }
 
-  const specs = state.kind === "ready" ? state.specs : [];
-  const jobs = state.kind === "ready" ? state.jobs : [];
-
   async function start(spec: string) {
     try {
       const job = await api.jlaunchStart(spec);
@@ -80,6 +95,28 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
       } else {
         alert("Couldn't start the job.");
       }
+    }
+  }
+
+  async function remove(job: JlaunchJob) {
+    if (
+      !confirm(
+        `Delete this ${job.state} run of “${job.title}”? Its files and any sharelink go too.`,
+      )
+    )
+      return;
+    setDeleting(job.id);
+    try {
+      await api.jlaunchDelete(job.id);
+    } catch (err) {
+      alert(
+        err instanceof ApiError && err.status === 409
+          ? "That run is still going — stop it first."
+          : "Couldn't delete the run.",
+      );
+    } finally {
+      setDeleting(null);
+      void refresh();
     }
   }
 
@@ -103,53 +140,101 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
         <p className="jl-empty">Loading…</p>
       ) : (
         <div className="jl-body">
-          <div className="jl-lab">Computations</div>
-          {specs.map((spec) => (
-            // Only the Start button starts a run: a stray tap on the card while scrolling
-            // must not launch hours of work (owner, 2026-11-14).
-            <div key={spec.name} className="jl-spec">
-              <span className="jl-spec-main">
-                <span className="jl-spec-title">{spec.title}</span>
-                <span className="jl-spec-meta">
-                  {spec.est_hours} · {spec.all_cores ? "all cores" : "single core"} · {spec.disk_gb}{" "}
-                  GB · one-shot
-                </span>
-                <span className="jl-spec-note">{spec.notes}</span>
-              </span>
+          <div className="jl-tabs" role="tablist" aria-label="Jobs and runs">
+            {(["jobs", "runs"] as const).map((t) => (
               <button
+                key={t}
                 type="button"
-                className="jl-spec-start"
-                onClick={() => void start(spec.name)}
-                aria-label={`Start ${spec.title}`}
+                role="tab"
+                aria-selected={tab === t}
+                className={`jl-tab${tab === t ? " on" : ""}`}
+                onClick={() => setTab(t)}
               >
-                Start →
+                {t === "jobs" ? "Jobs" : "Runs"}
+                <span className="jl-tab-n">{t === "jobs" ? specs.length : jobs.length}</span>
+                {t === "runs" && anyLive && <span className="jl-tab-live" aria-hidden="true" />}
               </button>
-            </div>
-          ))}
+            ))}
+          </div>
 
-          <div className="jl-lab jl-lab-mt">Runs</div>
-          {jobs.length === 0 ? (
-            <p className="jl-empty">No runs yet — start a computation above.</p>
+          {tab === "jobs" ? (
+            <div className="jl-rows">
+              {specs.map((spec) => {
+                const open = expanded === spec.name;
+                return (
+                  <div key={spec.name} className={`jl-spec${open ? " open" : ""}`}>
+                    <button
+                      type="button"
+                      className="jl-spec-head"
+                      aria-expanded={open}
+                      onClick={() => setExpanded(open ? null : spec.name)}
+                    >
+                      <span className="jl-row-main">
+                        <span className="jl-spec-title">{spec.title}</span>
+                        <span className="jl-row-sub">
+                          {spec.est_hours} · {spec.all_cores ? "all cores" : "single core"} ·{" "}
+                          {spec.disk_gb} GB
+                        </span>
+                      </span>
+                      <span className="jl-spec-chev" aria-hidden="true">
+                        <ChevronDownIcon size={16} />
+                      </span>
+                    </button>
+                    {open && (
+                      // Only the Start button starts a run: a stray tap while scrolling must
+                      // not launch hours of work (owner, 2026-11-14).
+                      <div className="jl-spec-detail">
+                        <p className="jl-spec-note">{spec.notes}</p>
+                        <button
+                          type="button"
+                          className="jl-spec-start"
+                          onClick={() => void start(spec.name)}
+                          aria-label={`Start ${spec.title}`}
+                        >
+                          Start run →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : jobs.length === 0 ? (
+            <p className="jl-empty">No runs yet — start one from the Jobs tab.</p>
           ) : (
             <div className="jl-rows">
               {jobs.map((job) => (
-                <button
-                  key={job.id}
-                  type="button"
-                  className="jl-row"
-                  onClick={() => setOpenId(job.id)}
-                >
-                  <StatePill state={job.state} />
-                  <span className="jl-row-main">
-                    <span className="jl-row-title">{job.title}</span>
-                    <span className="jl-row-sub">
-                      {job.state === "running" || job.state === "cloning"
-                        ? `${job.phase}…`
-                        : relative(job.finished_at || job.started_at)}
+                <div key={job.id} className="jl-run">
+                  <button type="button" className="jl-row" onClick={() => setOpenId(job.id)}>
+                    <StatePill state={job.state} />
+                    <span className="jl-row-main">
+                      <span className="jl-row-title">{job.title}</span>
+                      <span className="jl-row-sub">
+                        {job.state === "running" || job.state === "cloning"
+                          ? `${job.phase}…`
+                          : relative(job.finished_at || job.started_at)}
+                      </span>
                     </span>
-                  </span>
-                  <ChevronRightIcon size={16} />
-                </button>
+                    <ChevronRightIcon size={16} />
+                  </button>
+                  {/* A live run has no delete here: stop it from its screen first. The
+                      placeholder keeps every row's chevron in one column. */}
+                  {isLive(job) ? (
+                    <span className="jl-run-del none" aria-hidden="true">
+                      <TrashIcon size={16} />
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="jl-run-del"
+                      disabled={deleting === job.id}
+                      onClick={() => void remove(job)}
+                      aria-label={`Delete run ${job.title}`}
+                    >
+                      <TrashIcon size={16} />
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           )}

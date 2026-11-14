@@ -25971,69 +25971,126 @@ button.task-band:active {
 .jl-body {
   padding-bottom: 8px;
 }
-.jl-lab {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-3);
-  margin: 4px 2px 9px;
-}
-.jl-lab-mt {
-  margin-top: 20px;
-}
 
-/* spec cards (start a computation) */
+/* job list (Jobs tab): compact rows that expand to the notes + Start */
 .jl-spec {
+  border-top: 1px solid var(--border);
+}
+.jl-spec:first-child {
+  border-top: 0;
+}
+.jl-spec-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
   width: 100%;
   text-align: left;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 14px;
-  margin-bottom: 10px;
+  padding: 12px 13px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   color: var(--text);
   font: inherit;
+  cursor: pointer;
 }
-.jl-spec-main {
-  flex: 1;
-  min-width: 0;
+.jl-spec-head:hover {
+  background: var(--surface-2);
 }
 .jl-spec-title {
   display: block;
   font-weight: 600;
-  font-size: 14.5px;
+  font-size: 13.5px;
 }
-.jl-spec-meta {
-  display: block;
-  font-size: 11.5px;
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  margin-top: 3px;
+.jl-spec-chev {
+  display: flex;
+  flex: none;
+  color: var(--text-3);
+  transition: transform 0.15s;
+}
+.jl-spec.open .jl-spec-chev {
+  transform: rotate(180deg);
+}
+.jl-spec-detail {
+  padding: 0 13px 13px;
 }
 .jl-spec-note {
-  display: block;
-  font-size: 12px;
-  color: var(--text-3);
-  margin-top: 5px;
-  line-height: 1.5;
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.55;
+  margin: 0 0 11px;
 }
 .jl-spec-start {
-  flex: none;
+  display: block;
+  width: 100%;
   font: inherit;
   font-size: 13px;
   font-weight: 600;
   color: var(--amber);
-  background: none;
-  border: 1px solid transparent;
+  background: var(--amber-tint);
+  border: 1px solid color-mix(in srgb, var(--amber) 34%, var(--border));
   border-radius: 10px;
   padding: 10px 8px;
   cursor: pointer;
 }
 .jl-spec-start:hover {
-  border-color: color-mix(in srgb, var(--amber) 40%, var(--border));
+  border-color: var(--amber);
+}
+
+/* tab counts */
+.jl-tab-n {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-left: 6px;
+  font-family: var(--font-mono);
+}
+
+/* a run row with its delete beside it */
+.jl-run {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--border);
+}
+.jl-run:first-child {
+  border-top: 0;
+}
+.jl-run .jl-row {
+  border: 0;
+  border-radius: 0;
+  flex: 1;
+  min-width: 0;
+}
+.jl-run-del {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.jl-run-del:hover {
+  color: var(--rose);
+}
+.jl-run-del:disabled {
+  opacity: 0.4;
+}
+.jl-run-del.none {
+  cursor: default;
+  visibility: hidden;
+}
+/* one pill width, so every run's title starts in the same column */
+.jl-run .jl-pill {
+  min-width: 76px;
+  text-align: center;
+}
+.jl-run .jl-row-title {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 /* run list */
