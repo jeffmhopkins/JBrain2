@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../api/client";
+import { closeTopModalLayer } from "../backLayers";
 import type { JlaunchJob, JlaunchSpec } from "../jlaunch/types";
 import { JlaunchScreen } from "./JlaunchScreen";
 
@@ -206,5 +207,28 @@ describe("JlaunchScreen", () => {
     ).toBeTruthy();
     expect(pull).toHaveBeenCalledTimes(2);
     expect(screen.getByText("GrowBot look")).toBeTruthy();
+  });
+
+  it("opens on Runs with the running run first, and back from a run returns to the list", async () => {
+    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC]);
+    const live = { ...job("z9", "running"), spec_name: "erdos", title: "Census" } as JlaunchJob;
+    vi.spyOn(api, "jlaunchJobs").mockResolvedValue([job("b2", "succeeded"), live]);
+    vi.spyOn(api, "jlaunchGetJob").mockResolvedValue({
+      ...live,
+      repo: "r",
+      phase_times: [],
+    } as unknown as JlaunchJob);
+    vi.spyOn(api, "jlaunchLiveFiles").mockRejectedValue(new ApiError(404, "none"));
+    const onClose = vi.fn();
+    render(<JlaunchScreen onClose={onClose} />);
+    const runs = await screen.findByRole("tab", { name: /Runs/ });
+    await waitFor(() => expect(runs.getAttribute("aria-selected")).toBe("true"));
+    const opens = screen.getAllByRole("button", { name: /^Open / });
+    expect(opens[0]?.getAttribute("aria-label")).toBe("Open v2 of Census");
+    fireEvent.click(opens[0] as HTMLElement);
+    await screen.findByRole("tab", { name: "Overview" });
+    expect(closeTopModalLayer()).toBe(true);
+    await screen.findByRole("tab", { name: /Runs/ });
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

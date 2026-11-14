@@ -30036,6 +30036,7 @@ button.wf-sigpill {
   .fb-shell .fb-genprev-img.fb-genprev-fade,
   .fb-shell .fb-genprev-bar i.fb-genprev-indet,
   .jl-tab-live,
+  .mc-tile-dot.run,
   .loc-digest-recompute.spin span,
   .presence-toast,
   .task-dot.running,
@@ -32467,6 +32468,12 @@ button.wf-sigpill {
 
 .mc-tile-dot.bad {
   background: var(--danger);
+}
+
+/* The Jobs tile while a launcher run is live: the Jobs screen's own amber blink. */
+.mc-tile-dot.run {
+  background: var(--amber);
+  animation: jl-blink 1.2s infinite;
 }
 
 .mc-tile-sub {

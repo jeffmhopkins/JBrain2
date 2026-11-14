@@ -191,6 +191,9 @@ function fetchImageEnabled(): Promise<boolean> {
   return imageEnabledPromise;
 }
 
+// A launcher run in one of these is live: the Jobs tile dots while one is.
+const JOB_LIVE = new Set(["queued", "cloning", "running"]);
+
 // The Jobs (jlaunch) tile is configuration-gated exactly like Image: the /jlaunch routes
 // 404 on a box without the launcher enabled, so probe /jlaunch/specs once per session and
 // hide the tile unless it resolves. Same session-cached promise + device-local hydration so
@@ -314,6 +317,9 @@ export function Launcher({
     status: GrowbotStatus;
     overview: GrowbotOverview | null;
   } | null>(null);
+  // The Jobs tile's dot: how many launcher runs are live. Unknown (no dot) until read,
+  // and on any failure; only asked for where the launcher is enabled.
+  const [jobsLive, setJobsLive] = useState<number | null>(null);
   // Config gate for the Image tile. Hydrated synchronously from the last-known
   // device-local value so the tile set is stable from the first paint (no N→N+1
   // count jump on open); null only on a device that has never resolved it, where
@@ -464,19 +470,32 @@ export function Launcher({
         .catch(() => {
           if (!stale) setGrowbot(null);
         });
+    const refreshJobs = () => {
+      if (jlaunchEnabled !== true) return;
+      api
+        .jlaunchJobs()
+        .then((jobs) => {
+          if (!stale) setJobsLive(jobs.filter((j) => JOB_LIVE.has(j.state)).length);
+        })
+        .catch(() => {
+          if (!stale) setJobsLive(null);
+        });
+    };
     refresh();
     void refreshMc();
     void refreshGrowbot();
+    refreshJobs();
     const interval = setInterval(() => {
       refresh();
       void refreshMc();
       void refreshGrowbot();
+      refreshJobs();
     }, REVIEW_POLL_MS);
     return () => {
       stale = true;
       clearInterval(interval);
     };
-  }, [open, active, foreground]);
+  }, [open, active, foreground, jlaunchEnabled]);
 
   // The retreat is driven by `open` going false — from the X/grab, swipe-down,
   // Escape, OR the platform back gesture (App clears launcherOpen). Closing this
@@ -673,6 +692,14 @@ export function Launcher({
             <>
               <span className={`mc-tile-dot ${mcTile.level}`} aria-hidden="true" />
               <span className="mc-tile-sub">{mcTile.word}</span>
+            </>
+          )}
+          {target === "jlaunch" && jobsLive !== null && jobsLive > 0 && (
+            <>
+              <span className="mc-tile-dot run" aria-hidden="true" />
+              <span className="mc-tile-sub">
+                {jobsLive > 1 ? `${jobsLive} running` : "running"}
+              </span>
             </>
           )}
           {target === "growbot" && gbTile && (
