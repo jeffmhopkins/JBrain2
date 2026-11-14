@@ -274,7 +274,8 @@
     "body.editing #gbTrail,body.editing #gbLog{display:none!important}",
     "#gbTrail .gbtL{pointer-events:auto;cursor:pointer;font-size:.8em;line-height:1.4;",
     " color:#fff;text-shadow:2px 2px 0 #000,0 0 8px rgba(0,0,0,.8);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;transition:opacity .4s}",
-    "#gbTrail .gbtL.you{align-self:flex-end;text-align:right;max-width:82%;color:#9fd;font-size:.62em}",
+    // The person's own words show whole (owner, 2026-11-14): only Dave's lines are clamped.
+    "#gbTrail .gbtL.you{align-self:flex-end;text-align:right;max-width:82%;color:#9fd;font-size:.62em;display:block;-webkit-line-clamp:none}",
     "#gbTrail .gbtCut{color:#ff8a73;margin-right:6px}",
     "#gbkCells.gbt5{grid-template-columns:repeat(5,1fr)}",
     "#gbkCells.gbt5 .gbkCell{font-size:10px;letter-spacing:.02em}",
