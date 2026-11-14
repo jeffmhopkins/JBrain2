@@ -17,7 +17,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotMove, type GrowbotPolicy, type GrowbotRobot, api } from "../api/client";
-import { GrowbotPoliciesSheet, offered, walkKind } from "./GrowbotPoliciesSheet";
+import { GrowbotPoliciesSheet, offered, offeredFor, walkKind } from "./GrowbotPoliciesSheet";
 import { ChevronDownIcon, ChevronUpIcon, RotateCcwIcon, RotateCwIcon, StopIcon } from "./icons";
 
 type Policy = "forward" | "back" | "spin_right" | "spin_left";
@@ -179,8 +179,8 @@ export function GrowbotMovePanel({
   const walks = offered(policies, "walk");
   const turns = offered(policies, "turn");
   const tricks = offered(policies, "trick");
-  const trained = walks.find((p) => p.id === walkWith) ?? null;
-  const turner = turns.find((p) => p.id === turnWith) ?? null;
+  const trained = offeredFor(policies, walks, walkWith);
+  const turner = offeredFor(policies, turns, turnWith);
   const pad = trained ? trainedPad(trained) : null;
   const turnPad = turner ? trainedPad(turner) : null;
   // The policy each pad key runs: a picked turn takes the left and right keys from the walk.

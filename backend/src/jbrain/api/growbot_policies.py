@@ -218,16 +218,15 @@ async def add_policy(request: Request, owner: OwnerDep, body: AddIn) -> PolicyOu
 
 async def _update(request: Request, ctx: SessionContext, pid: str, body: UpdateIn) -> PolicyOut:
     repo = _repo(request)
-    row: PolicyRow | None = None
     try:
-        if body.name is not None:
-            row = await repo.rename(ctx, pid, body.name)
-            if row is None:
-                raise HTTPException(status_code=404, detail="no such policy")
-        if body.enabled is not None or body.motion is not None or body.active:
-            row = await repo.update(
-                ctx, pid, enabled=body.enabled, motion=body.motion, active=body.active
-            )
+        row = await repo.update(
+            ctx,
+            pid,
+            name=body.name,
+            enabled=body.enabled,
+            motion=body.motion,
+            active=body.active,
+        )
     except PolicyError as exc:
         raise HTTPException(status_code=409, detail=f"that walk can't be driven: {exc}") from exc
     if row is None:

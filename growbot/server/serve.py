@@ -136,7 +136,8 @@ MAX_PEERS_PER_CHANNEL = 8
 # spin runs. The creature runs its own policies with its phone's IMU (growbot-box.js).
 # The escape spins and the tall stand are the live app's tricks the creature already runs for its
 # brain; `gesture` plays one of its body's named gestures (a soul's own saved ones too) by `name`;
-# `look` runs a library policy (the Body tab's trick ones) facing ahead where it stands.
+# `look` runs a library policy (the Body tab's trick ones) facing ahead, in place when it takes
+# a speed.
 MOVES = frozenset(
     {
         "forward",
@@ -1447,6 +1448,8 @@ class GrowBot:
         if not isinstance(policy, str) or (
             policy and (what not in WALKS or not POLICY_ID_RE.fullmatch(policy))
         ):
+            return json_response(400, {"error": "policy"})
+        if what == "look" and not policy:
             return json_response(400, {"error": "policy"})
         name = msg.get("name", "") if msg else ""
         if (what == "gesture") != bool(name) or (name and not _gesture_name(name)):

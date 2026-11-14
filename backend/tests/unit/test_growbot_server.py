@@ -2636,6 +2636,8 @@ def test_a_trick_names_a_library_policy_for_the_creature(run: _Running) -> None:
     page.text({"t": "hello"})
     time.sleep(0.2)
     t = _answering(page, {"ok": True, "state": "accepted"})
+    # A trick with no policy is nothing the creature could run.
+    assert _move(run, {"code": "gb-abc123", "move": "look", "secs": 4})[0] == 400
     got = _move(run, {"code": "gb-abc123", "move": "look", "secs": 4, "policy": _PID})
     t.join(5)
     assert got[0] == 200

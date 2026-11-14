@@ -7,9 +7,10 @@ a family the pad uses.
 - `enabled` — offered on the Body tab's pad; off keeps it in the library, unused.
 - `motion` — what the pad does with it: `walk` drives the pad's four keys, `turn` its left
   and right keys, `trick` is a trick button that holds it facing ahead.
-- `active` — the one of its family (`source_spec`, the training job it came from) the pad
-  offers; at most one per family, which the partial unique index holds. With none active the
-  pad offers the family's newest enabled one.
+- `active` — the one of its family (`source_spec`, the training job it came from) and motion
+  the pad offers; at most one per family and motion, which the partial unique index holds, so
+  picking a family's turn keeps its walk's pick. With none active the pad offers the newest
+  enabled one.
 
 The table's owner-only RLS (0268) is unchanged.
 
@@ -38,7 +39,7 @@ def upgrade() -> None:
     )
     op.execute(
         "CREATE UNIQUE INDEX growbot_policies_one_active"
-        " ON app.growbot_policies (source_spec) WHERE active"
+        " ON app.growbot_policies (source_spec, motion) WHERE active"
     )
 
 

@@ -1555,7 +1555,7 @@
   // What the pad's move asks of a heading policy: a target (deg, counter-clockwise from where
   // the facing end points at the start) and a speed.
   function command(move, hasSpeed) {
-    // A trick: hold it facing ahead, standing still when it takes a speed.
+    // A trick: hold it facing ahead, in place when it takes a speed; a heading-only one walks.
     if (move === "look") return { target: 0, fwd: hasSpeed ? 0 : 1 };
     if (move === "spin_left") return { target: 90, fwd: hasSpeed ? 0 : 1 };
     if (move === "spin_right") return { target: -90, fwd: hasSpeed ? 0 : 1 };

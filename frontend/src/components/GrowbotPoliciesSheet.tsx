@@ -44,6 +44,20 @@ const MOTIONS: { id: GrowbotMotion; label: string }[] = [
 export const motionOf = (p: GrowbotPolicy): GrowbotMotion => p.motion ?? "walk";
 const enabledOf = (p: GrowbotPolicy): boolean => p.enabled !== false;
 
+/** The offered policy standing for `id`: itself, else the one its family now offers for the
+ *  same motion (the owner picked another, or switched it off), so a pick follows Manage. */
+export function offeredFor(
+  all: GrowbotPolicy[],
+  shown: GrowbotPolicy[],
+  id: string,
+): GrowbotPolicy | null {
+  const was = all.find((p) => p.id === id);
+  if (!was) return null;
+  return (
+    shown.find((p) => p.id === id) ?? shown.find((p) => p.source_spec === was.source_spec) ?? null
+  );
+}
+
 /** The policies the pad offers for `motion`: the enabled ones, one per family (source_spec),
  *  the family's picked one, else its newest. In the library's order. */
 export function offered(all: GrowbotPolicy[], motion: GrowbotMotion): GrowbotPolicy[] {
@@ -281,7 +295,7 @@ export function GrowbotPoliciesSheet({ policies, onChange, onClose }: Props) {
                   all.map((x) =>
                     x.id === n.id
                       ? n
-                      : x.source_spec === n.source_spec
+                      : x.source_spec === n.source_spec && motionOf(x) === motionOf(n)
                         ? { ...x, active: false }
                         : x,
                   ),

@@ -179,6 +179,7 @@ class PolicyRepo(Protocol):
         ctx: SessionContext,
         pid: str,
         *,
+        name: str | None = None,
         enabled: bool | None = None,
         motion: str | None = None,
         active: bool | None = None,
@@ -282,36 +283,55 @@ class SqlPolicyRepo:
         ctx: SessionContext,
         pid: str,
         *,
+        name: str | None = None,
         enabled: bool | None = None,
         motion: str | None = None,
         active: bool | None = None,
     ) -> PolicyRow | None:
-        """None when there is no such policy; PolicyError as rename()."""
+        """None when there is no such policy; PolicyError as rename(). One transaction, so a
+        rename with switches lands whole or not at all."""
         if motion is not None and motion not in MOTIONS:
             raise ValueError(f"not a motion: {motion!r}")
         async with scoped_session(self._maker, ctx) as session:
             if active:
-                # Before the row's own update, so the one-active index never sees two.
+                # Lock the family first: two picks at once then queue, and the second's clear
+                # sees the first's pick instead of tripping the one-active index.
                 await session.execute(
                     text(
-                        "UPDATE app.growbot_policies SET active = false WHERE active"
-                        " AND id <> CAST(:i AS uuid) AND source_spec = (SELECT source_spec"
-                        " FROM app.growbot_policies WHERE id = CAST(:i AS uuid))"
+                        "SELECT id FROM app.growbot_policies WHERE source_spec = (SELECT"
+                        " source_spec FROM app.growbot_policies WHERE id = CAST(:i AS uuid))"
+                        " FOR UPDATE"
                     ),
                     {"i": pid},
+                )
+                # Unpick the rest of the family's motion the row will have, before the row's
+                # own update, so the index never sees two.
+                await session.execute(
+                    text(
+                        "UPDATE app.growbot_policies o SET active = false FROM"
+                        " app.growbot_policies p WHERE p.id = CAST(:i AS uuid)"
+                        " AND o.active AND o.id <> p.id AND o.source_spec = p.source_spec"
+                        " AND o.motion = COALESCE(CAST(:m AS text), p.motion)"
+                    ),
+                    {"i": pid, "m": motion},
                 )
             r = (
                 await session.execute(
                     text(
                         "UPDATE app.growbot_policies SET"
-                        " enabled = COALESCE(:e, enabled),"
-                        " motion = COALESCE(:m, motion),"
-                        " active = COALESCE(:a, active)"
+                        " name = COALESCE(CAST(:n AS text), name),"
+                        " enabled = COALESCE(CAST(:e AS boolean), enabled),"
+                        # A row that changes motion leaves its old pick behind unless picked anew.
+                        " active = CASE WHEN CAST(:a AS boolean) THEN true"
+                        " WHEN CAST(:m AS text) IS NOT NULL AND CAST(:m AS text) <> motion"
+                        " THEN false ELSE active END,"
+                        " motion = COALESCE(CAST(:m AS text), motion)"
                         f" WHERE id = CAST(:i AS uuid) RETURNING {_COLS}"
                     ),
-                    {"e": enabled, "m": motion, "a": active, "i": pid},
+                    {"n": name, "e": enabled, "m": motion, "a": bool(active), "i": pid},
                 )
             ).first()
+            # Read inside the transaction, so a row summary() refuses rolls it all back.
             return _row(r) if r is not None else None
 
     async def delete(self, ctx: SessionContext, pid: str) -> bool:

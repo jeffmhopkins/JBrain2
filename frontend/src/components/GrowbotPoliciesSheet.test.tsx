@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GrowbotPolicy } from "../api/client";
-import { GrowbotPoliciesSheet, offered, walkKind } from "./GrowbotPoliciesSheet";
+import { GrowbotPoliciesSheet, offered, offeredFor, walkKind } from "./GrowbotPoliciesSheet";
 
 // The Trained walks sheet: the box's library, and the finished training jobs it adds from.
 
@@ -188,6 +188,23 @@ describe("offered", () => {
     expect(offered([{ ...a, active: true }, b], "walk").map((p) => p.id)).toEqual(["a"]);
     expect(offered([a, b, c, d], "turn").map((p) => p.id)).toEqual(["c"]);
     expect(offered([a, b, c, d], "trick")).toEqual([]);
+  });
+});
+
+describe("offeredFor", () => {
+  it("follows a pick to what its family now offers", () => {
+    const a = policy({ id: "a", active: true });
+    const b = policy({ id: "b", created_at: "2026-11-14T10:00:00Z" });
+    const t = policy({ id: "t", motion: "turn", active: true });
+    expect(offeredFor([a, b, t], offered([a, b, t], "walk"), "a")?.id).toBe("a");
+    // Picking b, or switching a off, moves the pad's pick to b.
+    const now = [{ ...a, active: false }, { ...b, active: true }, t];
+    expect(offeredFor(now, offered(now, "walk"), "a")?.id).toBe("b");
+    const off = [{ ...a, enabled: false }, b, t];
+    expect(offeredFor(off, offered(off, "walk"), "a")?.id).toBe("b");
+    // A walk pick that became a turn falls to its family's walk; a lost id is no pick.
+    expect(offeredFor([a, b, t], offered([a, b, t], "walk"), "t")?.id).toBe("a");
+    expect(offeredFor([a, b, t], offered([a, b, t], "walk"), "gone")).toBeNull();
   });
 });
 

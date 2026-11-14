@@ -1036,10 +1036,13 @@ async function mockGrowbot(
         p.name = patch.name.trim();
       }
       if (patch.enabled !== undefined) p.enabled = patch.enabled;
-      if (patch.motion !== undefined) p.motion = patch.motion;
+      if (patch.motion !== undefined && patch.motion !== p.motion) {
+        p.motion = patch.motion;
+        p.active = false;
+      }
       if (patch.active) {
         for (const q of mockGb.policies) {
-          if (q.source_spec === p.source_spec) q.active = q === p;
+          if (q.source_spec === p.source_spec && q.motion === p.motion) q.active = q === p;
         }
       }
       return json(p);

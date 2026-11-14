@@ -104,6 +104,7 @@ class FakePolicies:
         ctx: SessionContext,
         pid: str,
         *,
+        name: str | None = None,
         enabled: bool | None = None,
         motion: str | None = None,
         active: bool | None = None,
@@ -112,12 +113,23 @@ class FakePolicies:
         got = self.rows.get(pid)
         if got is None:
             return None
+        if pid in self.unreadable:
+            raise PolicyError("its control rate (obs_spec.control_hz) is missing or out of range")
+        then = motion or got[0].motion
         if active:
             for k, (r, p) in list(self.rows.items()):
-                if k != pid and r.source_spec == got[0].source_spec and r.active:
+                same = r.source_spec == got[0].source_spec and r.motion == then
+                if k != pid and same and r.active:
                     self.rows[k] = (PolicyRow(**{**r.__dict__, "active": False}), p)
         change: dict[str, Any] = {}
-        for key, value in (("enabled", enabled), ("motion", motion), ("active", active)):
+        if motion is not None and motion != got[0].motion:
+            change["active"] = False
+        for key, value in (
+            ("name", name),
+            ("enabled", enabled),
+            ("motion", motion),
+            ("active", active),
+        ):
             if value is not None:
                 change[key] = value
         row = PolicyRow(**{**got[0].__dict__, **change})
@@ -279,6 +291,10 @@ async def test_the_owner_switches_a_policy_off_sets_its_motion_and_picks_its_fam
     client.patch(f"/api/growbot/policies/{one['id']}", json={"active": True})
     client.patch(f"/api/growbot/policies/{two['id']}", json={"active": True})
     listed = {p["name"]: p["active"] for p in client.get("/api/growbot/policies").json()}
+    # One pick per family and motion: a's walk pick stands beside b's trick pick.
+    assert listed == {"a": True, "b": True}
+    client.patch(f"/api/growbot/policies/{two['id']}", json={"motion": "walk", "active": True})
+    listed = {p["name"]: p["active"] for p in client.get("/api/growbot/policies").json()}
     assert listed == {"a": False, "b": True}
     both = client.patch(f"/api/growbot/policies/{one['id']}", json={"name": "c", "motion": "turn"})
     assert (both.json()["name"], both.json()["motion"]) == ("c", "turn")
@@ -379,6 +395,7 @@ async def test_a_walk_names_a_library_policy_for_the_creature(
     # A trick holds a library policy facing ahead.
     assert client.post(move, json={"move": "look", "secs": 4, "policy": pid}).status_code == 200
     assert sent.pop() == {"code": "gb-a1", "move": "look", "secs": 4, "policy": pid}
+    assert client.post(move, json={"move": "look", "secs": 4}).status_code == 422
     # A gesture runs no policy, a missing one is never sent, and an id is a uuid.
     assert client.post(move, json={"move": "bow", "policy": pid}).status_code == 422
     missing = str(uuid.uuid4())
