@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 import secrets
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, cast
 from urllib.parse import quote, urlsplit
@@ -112,10 +113,22 @@ class RobotOut(BaseModel):
     connected: bool = False
     # Its rider's creature page is open and listening for the Body tab's moves.
     creature: bool = False
+    # The named gestures that creature's body has (a soul's saved ones too), for trick buttons.
+    gestures: list[str] = Field(default_factory=list)
 
 
-def robot_out(info: RobotInfo, connected: Mapping[str, bool]) -> RobotOut:
-    """`connected` maps each code on the relay to whether its creature listens for moves."""
+@dataclass(frozen=True)
+class Relay:
+    """What the sidecar says of one robot on the relay: whether its creature listens for moves,
+    and the gesture names it reported."""
+
+    creature: bool = False
+    gestures: tuple[str, ...] = ()
+
+
+def robot_out(info: RobotInfo, connected: Mapping[str, Relay]) -> RobotOut:
+    """`connected` maps each code on the relay to what its creature reported."""
+    relay = connected.get(info.code, Relay())
     return RobotOut(
         code=info.code,
         name=info.name,
@@ -124,7 +137,8 @@ def robot_out(info: RobotInfo, connected: Mapping[str, bool]) -> RobotOut:
         revoked_at=info.revoked_at,
         last_seen_at=info.last_seen_at,
         connected=info.code in connected,
-        creature=connected.get(info.code, False),
+        creature=relay.creature,
+        gestures=list(relay.gestures),
     )
 
 
@@ -156,9 +170,9 @@ async def _sidecar(
         return None
 
 
-async def relay_robots(request: Request) -> dict[str, bool] | None:
-    """The codes on the relay now, each with whether its creature listens for moves, or None
-    when the growbot sidecar is down or refuses."""
+async def relay_robots(request: Request) -> dict[str, Relay] | None:
+    """The codes on the relay now, each with what its creature reported, or None when the
+    growbot sidecar is down or refuses."""
     resp = await _sidecar(request, "GET", "/internal/robots")
     if resp is None or resp.status_code != 200:
         return None
@@ -169,10 +183,20 @@ async def relay_robots(request: Request) -> dict[str, bool] | None:
     if not isinstance(rows, list):
         return None
     return {
-        r["code"]: r.get("creature") is True
+        r["code"]: Relay(
+            creature=r.get("creature") is True,
+            gestures=_gesture_names(r.get("gestures")) if r.get("creature") is True else (),
+        )
         for r in rows
         if isinstance(r, dict) and isinstance(r.get("code"), str)
     }
+
+
+def _gesture_names(names: object) -> tuple[str, ...]:
+    # The sidecar already filters these; checked again since they reach the PWA's buttons.
+    if not isinstance(names, list):
+        return ()
+    return tuple(n for n in names[:GESTURES_MAX] if isinstance(n, str) and _GESTURE.fullmatch(n))
 
 
 async def drop_robot(request: Request, code: str) -> bool:
@@ -252,16 +276,38 @@ async def _list_robots(request: Request, ctx: SessionContext) -> list[RobotOut]:
 
 
 # What the Body tab can ask the creature wearing a robot to do (growbot/server/serve.py MOVES).
-# Walks and spins run the creature's own policies on its phone's motion sensors; the gestures
-# are body.json's named keyframes; stop halts whatever runs.
-Move = Literal["forward", "back", "spin_left", "spin_right", "wiggle", "bow", "sway", "stop"]
+# Walks and spins (escape spins too) run the creature's own policies on its phone's motion
+# sensors; stand_tall is its tall pose; the gestures are its body's named keyframes, `gesture`
+# any of them by `name`; stop halts whatever runs.
+Move = Literal[
+    "forward",
+    "back",
+    "spin_left",
+    "spin_right",
+    "spin_escape_left",
+    "spin_escape_right",
+    "stand_tall",
+    "wiggle",
+    "bow",
+    "sway",
+    "gesture",
+    "stop",
+]
 
 
 _WALKS = frozenset({"forward", "back", "spin_left", "spin_right"})
 
 
+# upstream's gesture-name shape (next.html _gestName): the only names its creature can play.
+_GESTURE_PATTERN = r"^[a-z0-9_-]+(?: [a-z0-9_-]+)*$"
+_GESTURE = re.compile(_GESTURE_PATTERN)
+GESTURES_MAX = 32
+
+
 class MoveIn(BaseModel):
     move: Move
+    # The gesture `gesture` plays, by its name in the creature's body; only that move takes one.
+    name: str | None = Field(default=None, max_length=16, pattern=_GESTURE_PATTERN)
     # How long a walk or spin runs; 0 lets the creature pick, as it does for its own brain.
     secs: int = Field(default=0, ge=0, le=15)
     # A trained walk from the policy library (growbot_policies.py) to run this walk or spin
@@ -289,7 +335,11 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
     robots = await _repo(request).list_robots(ctx)
     if not any(r.code == code and r.revoked_at is None for r in robots):
         raise HTTPException(status_code=404, detail="no such robot")
+    if (body.move == "gesture") != (body.name is not None):
+        raise HTTPException(status_code=422, detail="a gesture move, and only that, takes a name")
     sent: dict[str, object] = {"code": code, "move": body.move, "secs": body.secs}
+    if body.name is not None:
+        sent["name"] = body.name
     if body.policy is not None:
         if body.move not in _WALKS:
             raise HTTPException(status_code=422, detail="only a walk or a spin runs a policy")
@@ -315,6 +365,7 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
         "growbot.move",
         code=code,
         move=body.move,
+        gesture=body.name,
         policy=body.policy,
         ok=out.ok,
         state=out.state,

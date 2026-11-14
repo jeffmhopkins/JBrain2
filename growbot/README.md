@@ -277,13 +277,18 @@ ways. It never meets the robot's channel.
 and spin policies read the rider phone's motion sensors, so only the creature page can run
 them: `growbot-box.js` joins `/d/<code>-agent` with `hello` while the page wears a robot and is
 visible (the rider check keeps it to the rider), and leaves when hidden, since a hidden page
-stops every move. `POST /internal/robots/move` `{code, move, secs}` (`move` one of `forward`,
-`back`, `spin_left`, `spin_right`, `wiggle`, `bow`, `sway`, `stop`; `secs` 0 or 1-15) sends
-`{"t":"box_move", rid, move, secs}` to that page, which runs it through its own `runGait` or
-`moveLegs` with this phone's walk calibration and answers `{"t":"box_ack", rid, ok, state,
-why}` at once: what it started, or its own words for why not. The route answers `{ok, state,
-why}`, 409 `no_creature` when no page listens and 504 `no_answer` after 3 s; a `box_ack` that
-arrives while no move waits is bridged to the agents like any other frame.
+stops every move. `POST /internal/robots/move` `{code, move, secs, name?}` (`move` one of
+`forward`, `back`, `spin_left`, `spin_right`, the escape spins `spin_escape_left` and
+`spin_escape_right`, `stand_tall`, `wiggle`, `bow`, `sway`, `gesture`, `stop`; `secs` 0 or
+1-15; `name`, for `gesture` only, a gesture name in upstream's `_gestName` shape) sends
+`{"t":"box_move", rid, move, secs, name?}` to that page, which runs it through its own
+`runGait` or `moveLegs` with this phone's walk calibration and answers `{"t":"box_ack", rid, ok,
+state, why}` at once: what it started, or its own words for why not. The route answers `{ok,
+state, why}`, 409 `no_creature` when no page listens and 504 `no_answer` after 3 s; a `box_ack`
+that arrives while no move waits is bridged to the agents like any other frame. The page also
+sends `{"t":"box_info", gestures}`, its body's gesture names (a soul's saved ones included),
+whenever they change; `GET /internal/robots` passes them on as each robot's `gestures`, for the
+Body tab's trick buttons, and they go when the page does.
 
 **Trained walks.** A walk move may also carry `policy`, the id of a walk in the box's policy
 library (`app.growbot_policies`, added on the Body tab from a finished GrowBot training job).

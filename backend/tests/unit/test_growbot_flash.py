@@ -237,6 +237,7 @@ class Relay:
 
     connected: list[str] = field(default_factory=list)
     creatures: list[str] = field(default_factory=list)
+    gestures: list[Any] = field(default_factory=list)
     down: bool = False
     drops: list[str] = field(default_factory=list)
     auth: list[str] = field(default_factory=list)
@@ -250,7 +251,12 @@ class Relay:
                 200,
                 json={
                     "robots": [
-                        {"code": c, "since": "x", "creature": c in self.creatures}
+                        {
+                            "code": c,
+                            "since": "x",
+                            "creature": c in self.creatures,
+                            "gestures": self.gestures if c in self.creatures else [],
+                        }
                         for c in self.connected
                     ]
                 },
@@ -867,6 +873,8 @@ def test_status_reports_the_relay_and_each_robot(rig: Rig) -> None:
     rig.repo.add("gb-b2", "Tamsin")
     rig.relay.connected = ["gb-b2", "gb-stranger"]
     rig.relay.creatures = ["gb-b2"]
+    # A name the creature could never play is dropped on the way to the PWA's buttons.
+    rig.relay.gestures = ["wiggle", "happy dance", "<b>", 3]
     with TestClient(rig.app) as client:
         out = client.get("/api/growbot/status").json()
         robots = client.get("/api/growbot/robots").json()
@@ -875,9 +883,10 @@ def test_status_reports_the_relay_and_each_robot(rig: Rig) -> None:
         ("gb-a1", "Quorra", False, False),
         ("gb-b2", "Tamsin", True, True),
     ]
+    assert [r["gestures"] for r in out["robots"]] == [[], ["wiggle", "happy dance"]]
     assert set(out["robots"][0]) == {
         "code", "name", "created_at", "rotated_at", "revoked_at", "last_seen_at", "connected",
-        "creature",
+        "creature", "gestures",
     }  # fmt: skip
     assert robots == out["robots"]
     token = rig.app.state.growbot_secrets.read("growbot").decode()

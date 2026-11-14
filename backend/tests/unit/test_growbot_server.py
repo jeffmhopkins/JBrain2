@@ -3560,3 +3560,77 @@ def test_a_memory_bigger_than_three_views_is_refused_before_its_upload(
 
 def test_a_deeply_nested_frame_is_no_message(gb: types.ModuleType) -> None:
     assert gb._parse(b"[" * 100_000 + b"]" * 100_000) is None
+
+
+def test_the_robot_list_carries_the_creatures_gesture_names(run: _Running) -> None:
+    """A creature's box_info names its body's gestures for the Body tab; names it could never
+    play are dropped, and the list goes with the page."""
+    chip = _chip(run)
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    page.text(
+        {"t": "box_info", "gestures": ["wiggle", "happy dance", "Bad!", "x" * 17, 3, "wiggle"]}
+    )
+    time.sleep(0.2)
+    _, body = _internal(run, "GET", "/internal/robots")
+    assert body["robots"][0]["gestures"] == ["wiggle", "happy dance"]
+    page.shut()
+    time.sleep(0.2)
+    _, body = _internal(run, "GET", "/internal/robots")
+    assert body["robots"][0]["gestures"] == []
+    chip.shut()
+
+
+@pytest.mark.parametrize("move", ["spin_escape_left", "spin_escape_right", "stand_tall"])
+def test_the_live_apps_tricks_reach_the_creature(run: _Running, move: str) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    seen: list[dict[str, Any]] = []
+
+    def answer() -> None:
+        msg = page.message()
+        seen.append(msg)
+        page.text({"t": "box_ack", "rid": msg["rid"], "ok": True, "state": "accepted"})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    got = _move(run, {"code": "gb-abc123", "move": move, "secs": 4})
+    t.join(5)
+    assert got[0] == 200 and seen[0]["move"] == move and "name" not in seen[0]
+    page.shut()
+
+
+def test_a_named_gesture_carries_its_name(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    seen: list[dict[str, Any]] = []
+
+    def answer() -> None:
+        msg = page.message()
+        seen.append(msg)
+        page.text({"t": "box_ack", "rid": msg["rid"], "ok": True, "state": "accepted"})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    got = _move(run, {"code": "gb-abc123", "move": "gesture", "name": "happy dance"})
+    t.join(5)
+    assert got[0] == 200 and seen[0]["name"] == "happy dance"
+    page.shut()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"code": "gb-abc123", "move": "gesture"},
+        {"code": "gb-abc123", "move": "gesture", "name": "Happy"},
+        {"code": "gb-abc123", "move": "gesture", "name": "x" * 17},
+        {"code": "gb-abc123", "move": "gesture", "name": "two  spaces"},
+        {"code": "gb-abc123", "move": "gesture", "name": 3},
+        {"code": "gb-abc123", "move": "wiggle", "name": "wiggle"},
+        {"code": "gb-abc123", "move": "spin_escape_left", "policy": _PID},
+    ],
+)
+def test_a_bad_gesture_move_is_400(run: _Running, body: object) -> None:
+    assert _move(run, body)[0] == 400
