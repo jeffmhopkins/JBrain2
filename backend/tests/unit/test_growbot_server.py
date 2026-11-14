@@ -3634,3 +3634,19 @@ def test_a_named_gesture_carries_its_name(run: _Running) -> None:
 )
 def test_a_bad_gesture_move_is_400(run: _Running, body: object) -> None:
     assert _move(run, body)[0] == 400
+
+
+def test_a_replaced_creature_pages_gestures_go_with_it(run: _Running) -> None:
+    chip = _chip(run)
+    old = _phone(run, "/d/gb-abc123-agent")
+    old.text({"t": "hello"})
+    old.text({"t": "box_info", "gestures": ["happy dance"]})
+    time.sleep(0.2)
+    new = _phone(run, "/d/gb-abc123-agent")
+    new.text({"t": "hello"})
+    time.sleep(0.2)
+    _, body = _internal(run, "GET", "/internal/robots")
+    assert body["robots"][0]["gestures"] == []
+    new.shut()
+    old.shut()
+    chip.shut()

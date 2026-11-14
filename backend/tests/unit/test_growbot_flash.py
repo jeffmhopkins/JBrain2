@@ -874,7 +874,7 @@ def test_status_reports_the_relay_and_each_robot(rig: Rig) -> None:
     rig.relay.connected = ["gb-b2", "gb-stranger"]
     rig.relay.creatures = ["gb-b2"]
     # A name the creature could never play is dropped on the way to the PWA's buttons.
-    rig.relay.gestures = ["wiggle", "happy dance", "<b>", 3]
+    rig.relay.gestures = ["wiggle", "happy dance", "<b>", 3, "x" * 17, "wiggle"]
     with TestClient(rig.app) as client:
         out = client.get("/api/growbot/status").json()
         robots = client.get("/api/growbot/robots").json()

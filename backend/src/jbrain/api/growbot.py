@@ -196,7 +196,12 @@ def _gesture_names(names: object) -> tuple[str, ...]:
     # The sidecar already filters these; checked again since they reach the PWA's buttons.
     if not isinstance(names, list):
         return ()
-    return tuple(n for n in names[:GESTURES_MAX] if isinstance(n, str) and _GESTURE.fullmatch(n))
+    kept = dict.fromkeys(
+        n
+        for n in names[: GESTURES_MAX * 2]
+        if isinstance(n, str) and len(n) <= 16 and _GESTURE.fullmatch(n)
+    )
+    return tuple(kept)[:GESTURES_MAX]
 
 
 async def drop_robot(request: Request, code: str) -> bool:

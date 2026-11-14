@@ -2582,6 +2582,8 @@ class GrowBot:
     ) -> None:
         old = chan.body
         chan.body, chan.body_hb = ws, hb
+        # A new page reports its own gestures; a replaced one's must not linger.
+        chan.gestures = ()
         chan.body_since = time.time()
         if old is not None:
             old.close(1000, "replaced")
