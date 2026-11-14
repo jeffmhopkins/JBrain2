@@ -238,13 +238,16 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # was for (`PATCH /jlaunch/jobs/{id}`), and archiving a job type (`PUT
             # /jlaunch/specs/{name}/archive`), and re-reading the job types from the
             # training repo's jobs.toml (`POST /jlaunch/specs/refresh`), so a job pushed
-            # there runs with no box update. Stopping stays with them.
+            # there runs with no box update; and stopping a run (`POST
+            # /jlaunch/jobs/{id}/stop`, the graceful SIGTERM), so a bad run ends without
+            # the owner. The hard Kill stays with them.
             "jlaunch.read",
             "jlaunch.start",
             "jlaunch.delete",
             "jlaunch.note",
             "jlaunch.archive",
             "jlaunch.refresh",
+            "jlaunch.stop",
         ],
     )
 

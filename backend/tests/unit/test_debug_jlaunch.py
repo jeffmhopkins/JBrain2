@@ -2,8 +2,8 @@
 
 What an assistant relies on with no terminal: the runs are listed, a running job's live
 folder reads back exactly as the owner sees it (sandboxed), the finished result downloads,
-a registered spec starts, a finished run deletes, and nothing here can stop a run or delete
-a live one."""
+a registered spec starts, a running job stops gracefully, a finished run deletes, and
+nothing here can hard-kill a run or delete a live one."""
 
 from __future__ import annotations
 
@@ -75,12 +75,26 @@ def test_result_downloads_once_finished(debug_client: tuple[TestClient, str]) ->
     assert got.headers["content-disposition"].startswith("attachment;")
 
 
-def test_cannot_stop_a_run(debug_client: tuple[TestClient, str]) -> None:  # noqa: F811
+def test_stops_a_run_but_cannot_kill_one(
+    debug_client: tuple[TestClient, str],  # noqa: F811
+    _no_db: None,  # noqa: F811
+) -> None:
     client, key = debug_client
     fake, jid = _launcher(client)
-    got = client.post(f"/api/debug/jlaunch/jobs/{jid}/stop", headers=_auth(key))
-    assert got.status_code in (404, 405)
+    url = f"/api/debug/jlaunch/jobs/{jid}/stop"
+    assert client.post(url).status_code == 401
+    kill = client.post(f"/api/debug/jlaunch/jobs/{jid}/kill", headers=_auth(key))
+    assert kill.status_code in (404, 405)
     assert (asyncio.run(fake.get_job(jid)))["state"] == "running"
+    got = client.post(url, headers=_auth(key))
+    assert got.status_code == 200 and got.json()["state"] == "killed"
+    # The fake finishes the run at once; a real one exits after SIGTERM, then deletes.
+    assert client.delete(f"/api/debug/jlaunch/jobs/{jid}", headers=_auth(key)).status_code == 204
+    gone = client.post(url, headers=_auth(key))
+    assert gone.status_code == 404
+    bad = client.post("/api/debug/jlaunch/jobs/bad.id/stop", headers=_auth(key))
+    assert bad.status_code == 404
+    assert "jlaunch.stop" in client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
 
 
 def test_deletes_a_finished_run_but_never_a_live_one(
