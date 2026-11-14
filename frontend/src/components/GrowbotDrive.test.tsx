@@ -141,12 +141,12 @@ describe("GrowbotDrive", () => {
     expect(calls).toEqual(["/api/growbot/robots/gb-3fa91c/move"]);
   });
 
-  it("ends the drive when its walk has ended on the phone", async () => {
+  it("ends the drive, as news rather than a fault, when its walk has ended on the phone", async () => {
     serve(undefined, 410);
     const { props } = drive();
     fireEvent.click(screen.getByRole("button", { name: "Drive" }));
     await waitFor(() =>
-      expect(props.onSaid).toHaveBeenLastCalledWith({ text: "The walk ended.", bad: true }),
+      expect(props.onSaid).toHaveBeenLastCalledWith({ text: "The walk ended.", bad: false }),
     );
     expect(screen.getByRole("button", { name: "Drive" })).toBeInTheDocument();
   });
