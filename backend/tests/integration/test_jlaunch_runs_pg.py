@@ -77,6 +77,34 @@ async def test_a_share_visitor_cannot_note_a_run(maker: async_sessionmaker) -> N
     assert row is not None and row.note == ""
 
 
+async def test_a_run_archives_and_restores_and_a_poll_keeps_it(
+    maker: async_sessionmaker,
+) -> None:
+    async with scoped_session(maker, OWNER) as db:
+        await _REPO.upsert(db, _job("arc1", "walk"))
+        assert await _REPO.set_archived(db, "arc1", archived=True)
+        assert not await _REPO.set_archived(db, "nosuch", archived=True)
+        # Every poll re-upserts the run; that must not un-archive it.
+        await _REPO.upsert(db, _job("arc1", "walk"))
+        row = await _REPO.get(db, "arc1")
+        assert row is not None and row.archived
+        assert await _REPO.set_archived(db, "arc1", archived=False)
+        row = await _REPO.get(db, "arc1")
+    assert row is not None and not row.archived
+
+
+async def test_a_share_visitor_cannot_archive_a_run(maker: async_sessionmaker) -> None:
+    async with scoped_session(maker, OWNER) as db:
+        await _REPO.upsert(db, _job("shr2", "walk"))
+    async with scoped_session(
+        maker, jlaunch_share_context("00000000-0000-0000-0000-000000000000")
+    ) as db:
+        assert not await _REPO.set_archived(db, "shr2", archived=True)
+    async with scoped_session(maker, OWNER) as db:
+        row = await _REPO.get(db, "shr2")
+    assert row is not None and not row.archived
+
+
 async def test_archived_job_types_are_owner_only(maker: async_sessionmaker) -> None:
     """Migration 0270: the archive list is the owner's; any other session sees and writes
     nothing (the RLS isolation every new table carries)."""

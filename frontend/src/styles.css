@@ -26012,23 +26012,6 @@ button.task-band:active {
 .jl-spec:first-child {
   border-top: 0;
 }
-.jl-spec-head {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  text-align: left;
-  padding: 12px 13px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-.jl-spec-head:hover {
-  background: var(--surface-2);
-}
 .jl-spec-title {
   display: block;
   font-weight: 600;
@@ -26067,20 +26050,6 @@ button.task-band:active {
   border-radius: 10px;
   padding: 10px 8px;
   cursor: pointer;
-}
-.jl-spec-archive {
-  display: block;
-  margin: 10px auto 0;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-3);
-  background: none;
-  border: 0;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-.jl-spec-archive:hover {
-  color: var(--text-2);
 }
 .jl-spec-runs:disabled {
   opacity: 0.5;
@@ -26198,42 +26167,26 @@ button.task-band:active {
   font-family: var(--font-mono);
 }
 
-/* a run row with its delete beside it */
-.jl-run {
-  display: flex;
-  align-items: stretch;
-  border-top: 1px solid var(--border);
-}
-.jl-run:first-child {
-  border-top: 0;
-}
-.jl-run .jl-row {
-  border: 0;
-  border-radius: 0;
-  flex: 1;
-  min-width: 0;
-}
-.jl-run-del {
-  flex: none;
-  display: flex;
-  align-items: center;
-  padding: 0 14px;
-  background: transparent;
-  border: 0;
-  border-left: 1px solid var(--border);
-  border-radius: 0;
-  color: var(--text-3);
+/* job and run rows wear the Chats list's swipe menu (components/SwipeRow) */
+.jl-screen .swipe-tap {
+  padding: 12px 13px;
+  color: var(--text);
   cursor: pointer;
 }
-.jl-run-del:hover {
-  color: var(--rose);
+.jl-screen .swipe-tap:hover {
+  background: var(--surface-2);
 }
-.jl-run-del:disabled {
-  opacity: 0.4;
+.jl-screen .rail-archive {
+  background: var(--steel-tint);
+  color: var(--steel);
 }
-.jl-run-del.none {
-  cursor: default;
-  visibility: hidden;
+.jl-shelf-h {
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+  margin: 22px 2px 10px;
 }
 /* one pill width, so every run's title starts in the same column */
 .jl-run .jl-pill {
@@ -26253,25 +26206,6 @@ button.task-band:active {
   border: 1px solid var(--border);
   border-radius: 16px;
   overflow: hidden;
-}
-.jl-row {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  text-align: left;
-  padding: 12px 13px;
-  border-top: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-.jl-row:first-child {
-  border-top: 0;
-}
-.jl-row:hover {
-  background: var(--surface-2);
 }
 .jl-row-main {
   flex: 1;

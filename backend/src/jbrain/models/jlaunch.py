@@ -60,6 +60,8 @@ class JlaunchRun(Base):
     note: Mapped[str] = mapped_column(Text, default="")
     # The training repo commit a repo job cloned (0271); empty for a built-in job.
     commit: Mapped[str] = mapped_column(Text, default="")
+    # Archived on its own (0273), off the Runs list and onto the Archived tab.
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -101,6 +103,7 @@ class JlaunchRunRow:
     revision: int | None = None
     note: str = ""
     commit: str = ""
+    archived: bool = False
 
     @classmethod
     def of(cls, row: JlaunchRun) -> JlaunchRunRow:
@@ -122,6 +125,7 @@ class JlaunchRunRow:
             revision=row.revision,
             note=row.note,
             commit=row.commit,
+            archived=bool(row.archived),
             created_at=row.created_at.isoformat(),
             last_active_at=row.last_active_at.isoformat(),
         )
@@ -218,6 +222,13 @@ class JlaunchRunRepo:
         """Set the owner's note on a run; False when there is no such run."""
         result = await session.execute(
             update(JlaunchRun).where(JlaunchRun.id == run_id).values(note=note)
+        )
+        return (cast("CursorResult[Any]", result).rowcount or 0) > 0
+
+    async def set_archived(self, session: AsyncSession, run_id: str, *, archived: bool) -> bool:
+        """Archive or restore one run; False when there is no such run."""
+        result = await session.execute(
+            update(JlaunchRun).where(JlaunchRun.id == run_id).values(archived=archived)
         )
         return (cast("CursorResult[Any]", result).rowcount or 0) > 0
 

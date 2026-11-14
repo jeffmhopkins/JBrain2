@@ -144,6 +144,34 @@ def test_notes_a_run(
     assert "jlaunch.note" in client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
 
 
+def test_archives_a_run(
+    debug_client: tuple[TestClient, str],  # noqa: F811
+    _no_db: None,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, key = debug_client
+    _launcher(client)
+    flags: dict[str, bool] = {"run9": False}
+
+    async def _archive(_db: object, jid: str, *, archived: bool) -> bool:
+        flags[jid] = archived
+        return True
+
+    async def _get(_db: object, jid: str) -> object:
+        return SimpleNamespace(id=jid, state="succeeded", archived=flags[jid])
+
+    monkeypatch.setattr(jlaunch._REPO, "set_archived", _archive)
+    monkeypatch.setattr(jlaunch._REPO, "get", _get)
+    url = "/api/debug/jlaunch/jobs/run9/archive"
+    assert client.put(url, json={"archived": True}).status_code == 401
+    got = client.put(url, json={"archived": True}, headers=_auth(key))
+    assert got.status_code == 200 and got.json()["archived"] is True
+    bad = client.put(
+        "/api/debug/jlaunch/jobs/bad.id/archive", json={"archived": True}, headers=_auth(key)
+    )
+    assert bad.status_code == 404
+
+
 def test_starts_a_registered_spec_and_nothing_else(
     debug_client: tuple[TestClient, str],  # noqa: F811
     _no_db: None,  # noqa: F811

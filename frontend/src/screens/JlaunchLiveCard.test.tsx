@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../api/client";
 import type { JlaunchJob } from "../jlaunch/types";
@@ -54,6 +54,27 @@ describe("LiveCard", () => {
       "href",
       "/api/jlaunch/jobs/j1/live/policy_latest.json?download=1",
     );
+  });
+
+  it("keeps the numbers live every few seconds while the app is showing", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.spyOn(api, "jlaunchLiveFiles").mockResolvedValue(FILES);
+      let percent = 10;
+      vi.spyOn(api, "jlaunchProgress").mockImplementation(async () => ({
+        title: "Training look",
+        percent,
+        eta_s: 600,
+        summary: [],
+      }));
+      render(<LiveCard job={JOB} />);
+      await waitFor(() => expect(screen.getByText("10%")).toBeInTheDocument());
+      percent = 55;
+      await act(() => vi.advanceTimersByTimeAsync(5000));
+      await waitFor(() => expect(screen.getByText("55%")).toBeInTheDocument());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders nothing for a job without a live folder", async () => {

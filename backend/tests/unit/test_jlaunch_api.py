@@ -334,6 +334,7 @@ class _Row:
         self.id = jid
         self.state = state
         self.note = ""
+        self.archived = False
 
 
 @pytest.fixture
@@ -359,7 +360,15 @@ def _rows(_no_db: None, monkeypatch: pytest.MonkeyPatch) -> dict[str, _Row]:
     monkeypatch.setattr(jlaunch._REPO, "list", _list)
     monkeypatch.setattr(jlaunch._REPO, "get", _get)
     monkeypatch.setattr(jlaunch._REPO, "mark_lost", _lost)
+
+    async def _archive(_db: object, jid: str, *, archived: bool) -> bool:
+        if jid not in rows:
+            return False
+        rows[jid].archived = archived
+        return True
+
     monkeypatch.setattr(jlaunch._REPO, "set_note", _note)
+    monkeypatch.setattr(jlaunch._REPO, "set_archived", _archive)
     return rows
 
 
@@ -426,6 +435,28 @@ def test_note_a_run(_rows: dict[str, _Row]) -> None:
     assert client.patch("/api/jlaunch/jobs/bad.id", json={"note": "x"}).status_code == 404
     nobody = TestClient(_app(NON_OWNER, jlaunch_client=FakeJlaunchClient()))
     assert nobody.patch("/api/jlaunch/jobs/run2", json={"note": "x"}).status_code == 403
+
+
+def test_archive_a_run_but_never_a_live_one(_rows: dict[str, _Row]) -> None:
+    _rows["run3"] = _Row("run3", "succeeded")
+    _rows["run4"] = _Row("run4", "running")
+    client = TestClient(_app(OWNER, jlaunch_client=FakeJlaunchClient()))
+    url = "/api/jlaunch/jobs/run3/archive"
+    got = client.put(url, json={"archived": True})
+    assert got.status_code == 200 and got.json()["archived"] is True
+    assert client.put(url, json={"archived": False}).json()["archived"] is False
+    live = client.put("/api/jlaunch/jobs/run4/archive", json={"archived": True})
+    assert live.status_code == 409 and _rows["run4"].archived is False
+    # Restoring a live run is harmless, so it isn't refused.
+    assert client.put("/api/jlaunch/jobs/run4/archive", json={"archived": False}).status_code == 200
+    assert (
+        client.put("/api/jlaunch/jobs/nosuch/archive", json={"archived": True}).status_code == 404
+    )
+    assert (
+        client.put("/api/jlaunch/jobs/bad.id/archive", json={"archived": True}).status_code == 404
+    )
+    nobody = TestClient(_app(NON_OWNER, jlaunch_client=FakeJlaunchClient()))
+    assert nobody.put(url, json={"archived": True}).status_code == 403
 
 
 def test_specs_carry_a_category() -> None:
