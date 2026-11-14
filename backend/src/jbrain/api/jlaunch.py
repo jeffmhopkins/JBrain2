@@ -310,6 +310,8 @@ async def control(request: Request, jid: str, action: str, ctx: SessionContext) 
     control server returns. A finished run is a no-op there, so a retried stop is harmless."""
     _valid_id(jid)
     client = _client(request)
+    if action not in ("stop", "kill"):
+        raise ValueError(f"unknown jlaunch action: {action}")
     try:
         job = await (client.stop(jid) if action == "stop" else client.kill(jid))
     except JlaunchError as exc:

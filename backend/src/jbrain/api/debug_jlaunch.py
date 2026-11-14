@@ -48,6 +48,7 @@ async def jlaunch_stop(jid: str, request: Request, _p: DebugDep) -> dict[str, An
     """**Stop a run**, as the PWA's Stop does: SIGTERM to its process group, after which it
     finishes as `killed`. Returns the job; a finished one is left as it was. 404 for an
     unknown job."""
+    jlaunch._valid_id(jid)
     request.state.debug_detail = f"jlaunch stop {jid}"
     return await jlaunch.control(request, jid, "stop", _OWNER_CTX)
 

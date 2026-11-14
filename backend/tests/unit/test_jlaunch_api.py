@@ -123,6 +123,22 @@ def test_stop_and_kill_proxy(_no_db: None) -> None:
     assert client.post(f"/api/jlaunch/jobs/{job['id']}/kill").json()["state"] == "killed"
 
 
+def test_stop_and_kill_map_upstream_errors(_no_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeJlaunchClient()
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    # A job the control server doesn't know is the caller's 404, not a launcher fault.
+    assert client.post("/api/jlaunch/jobs/deadbeef/stop").status_code == 404
+    assert client.post("/api/jlaunch/jobs/deadbeef/kill").status_code == 404
+
+    async def _down(_jid: str) -> dict:
+        raise JlaunchError("boom", status=500)
+
+    monkeypatch.setattr(fake, "stop", _down)
+    monkeypatch.setattr(fake, "kill", _down)
+    assert client.post("/api/jlaunch/jobs/deadbeef/stop").status_code == 502
+    assert client.post("/api/jlaunch/jobs/deadbeef/kill").status_code == 502
+
+
 def test_delete_is_idempotent_204(_no_db: None) -> None:
     fake = FakeJlaunchClient()
     client = TestClient(_app(OWNER, jlaunch_client=fake))

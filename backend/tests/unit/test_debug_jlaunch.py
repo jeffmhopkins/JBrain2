@@ -88,7 +88,7 @@ def test_stops_a_run_but_cannot_kill_one(
     assert (asyncio.run(fake.get_job(jid)))["state"] == "running"
     got = client.post(url, headers=_auth(key))
     assert got.status_code == 200 and got.json()["state"] == "killed"
-    # Once stopped, the run deletes as any finished one does.
+    # The fake finishes the run at once; a real one exits after SIGTERM, then deletes.
     assert client.delete(f"/api/debug/jlaunch/jobs/{jid}", headers=_auth(key)).status_code == 204
     gone = client.post(url, headers=_auth(key))
     assert gone.status_code == 404
