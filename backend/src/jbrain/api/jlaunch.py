@@ -302,13 +302,21 @@ async def kill_job(jid: str, owner: OwnerDep, request: Request) -> dict[str, Any
 async def _control_then_mirror(
     request: Request, owner: OwnerDep, jid: str, action: str
 ) -> dict[str, Any]:
+    return await control(request, jid, action, _owner_ctx(owner.id))
+
+
+async def control(request: Request, jid: str, action: str, ctx: SessionContext) -> dict[str, Any]:
+    """Stop (SIGTERM) or kill a run, for the owner or a debug token, and mirror the job the
+    control server returns. A finished run is a no-op there, so a retried stop is harmless."""
     _valid_id(jid)
     client = _client(request)
+    if action not in ("stop", "kill"):
+        raise ValueError(f"unknown jlaunch action: {action}")
     try:
         job = await (client.stop(jid) if action == "stop" else client.kill(jid))
     except JlaunchError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
+        raise _upstream_404(exc, "unknown job") from exc
+    async with scoped_session(_maker(request), ctx) as db:
         await _REPO.upsert(db, job)
     return job
 
