@@ -1169,6 +1169,7 @@ class _Later:
 
     mark: str
     body: dict[str, Any]
+    phone: str = ""
     state: str = "waiting"
     raw: str = ""
     task: asyncio.Task[None] | None = None
@@ -2136,9 +2137,22 @@ class GrowBot:
             return json_response(400, {"error": "a dream to keep or a visit opening"}, headers)
         if msg.get("persona") != claims.persona:
             return json_response(409, {"error": "other"}, headers)
-        persona = claims.persona
+        persona, phone = claims.persona, claims.phone
+        # A session outlives a hand-over: only the phone that holds the persona now may plant,
+        # call off or read its dream, the same hold the api keeps for the soul.
+        held = await self._call(
+            self._api_post,
+            "/internal/growbot/soul/state",
+            {"persona": persona, "phone": phone},
+            pool=self._soul_pool,
+        )
+        if held.status != 200:
+            why = "moved" if held.status == 409 else "gone" if held.status == 404 else ""
+            if why:
+                return json_response(held.status, {"error": why}, headers)
+            return json_response(503, {"error": "the box is busy"}, headers)
         if msg["op"] == "open":
-            return json_response(200, await self._dream_open(persona), headers)
+            return json_response(200, await self._dream_open(persona, phone), headers)
         body, mark = msg.get("body"), msg.get("print")
         if (
             not isinstance(body, dict)
@@ -2150,7 +2164,7 @@ class GrowBot:
         self._dream_drop(persona)
         if len(self._dreams) >= DREAMS_MAX:
             return json_response(503, {"error": "the box is busy"}, headers)
-        later = _Later(mark, body)
+        later = _Later(mark, body, phone)
         later.task = asyncio.create_task(self._dream_later(persona, later))
         self._dreams[persona] = later
         return json_response(200, {"ok": True}, headers)
@@ -2160,9 +2174,13 @@ class GrowBot:
         if old is not None and old.task is not None and old.state == "waiting":
             old.task.cancel()
 
-    async def _dream_open(self, persona: str) -> dict[str, object]:
+    async def _dream_open(self, persona: str, phone: str) -> dict[str, object]:
         later = self._dreams.get(persona)
         if later is None:
+            return {"ok": True}
+        if later.phone != phone:
+            # Planted by a phone that has since handed the persona over: its soul moved on.
+            self._dream_drop(persona)
             return {"ok": True}
         if later.state == "dreaming" and later.task is not None:
             # A phone opening as the box dreams waits for it, rather than dreaming twice.

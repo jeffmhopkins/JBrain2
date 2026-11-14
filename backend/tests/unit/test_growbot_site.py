@@ -2574,7 +2574,7 @@ def test_sleep_replaces_the_every_twelve_replies_dream() -> None:
     assert "brainOverride(orCfg.dream,true),1000,90000" in page
     assert "_gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){" in page
     assert "_gbSess.push({t:Date.now(),txt:got}); gbVisitKeep(" in page
-    assert "Date.now()-(+_gbLastV.t||0)>GB_OPEN_GAP_MS) _gbDreamOnOpen=true;" in page
+    assert "Date.now()-(+_gbLastV.t||0)>gbOpenGap()) _gbDreamOnOpen=true;" in page
     assert '(o.sleep===true||o.sleep==="true")&&kind==="event") gbSleepGrant();' in page
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert '\'"sleep":"OMIT unless your person just said you may sleep' in prompts
@@ -3116,11 +3116,13 @@ def test_the_dream_a_visit_owes_waits_past_the_hello() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     code = page[page.index("var _gbWokeT=0") : page.index("var _gbWarm=null")]
     script = (
-        "var window={_wakeGateUp:true}, _gbDreamOnOpen=true, _gbBoxAsk=false, r={};"
+        "var window={_wakeGateUp:true}, _gbDreamOnOpen=true, _gbBoxAsk=false, _gbCanned=null;"
+        "var r={};"
         f"{code}"
         "r.gate=gbOpenDreamDue(); window._wakeGateUp=false; _gbWokeT=Date.now();"
         "r.hello=gbOpenDreamDue(); _gbWokeT-=GB_WOKE_HOLD_MS; r.later=gbOpenDreamDue();"
         "_gbBoxAsk=true; r.asking=gbOpenDreamDue(); _gbBoxAsk=false;"
+        "_gbCanned={raw:'x'}; r.landing=gbOpenDreamDue(); _gbCanned=null;"
         "_gbDreamOnOpen=false; r.none=gbOpenDreamDue(); console.log(JSON.stringify(r));"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
@@ -3130,16 +3132,18 @@ def test_the_dream_a_visit_owes_waits_past_the_hello() -> None:
         "hello": False,
         "later": True,
         "asking": False,
+        "landing": False,
         "none": False,
     }
 
 
 _DREAM_LATER_HARNESS = r"""
-var logs=[], sent=[], dreams=[], called=[], document={hidden:true,addEventListener:function(){}},
-  window={__gbBoxSoul:{persona:"p-1"}},
+var logs=[], sent=[], dreams=[], called=[], document={hidden:true},
+  window={__gbBoxSoul:{persona:"p-1"},addEventListener:function(){}},
+  _gbSleepOK=true, _gbSleepAt=7,
   _live={scratch:{pt:3,visit:[{t:5,txt:"we baked"}]},identityAt:9},
   inFlight=false, dreaming=false, _flightT=0, dreamScene=true, _skyHue=265, _gbSleepWhy="x",
-  _gbDreamOnOpen=true, owned=true, refuse=false, local=null,
+  _gbDreamOnOpen=true, owned=true, refuse=false, local=null, full=false,
   el={classList:{remove:function(){}},style:{}};
 function logEv(k,d){ logs.push([k,d]); }
 function h8(s){ return "h"+s.length; }
@@ -3151,10 +3155,12 @@ function _mkBody(slug,maxTok,oai){
   return {model:slug,max_tokens:maxTok,messages:oai,provider:{x:1}}; }
 function callModel(){ called.push([].slice.call(arguments)); return Promise.resolve("model"); }
 function fetch(url,opt){ sent.push([url,JSON.parse(opt.body),!!opt.keepalive]);
+  if(opt.keepalive&&full) return Promise.reject(new TypeError("quota"));
   return Promise.resolve({status:200,json:function(){ return Promise.resolve(reply); }}); }
 function setTimeout(f){ return 0; } function clearTimeout(){}
 var reply={ok:true};
 function dream(force){ dreams.push([force,_gbPackGo,_gbCannedGo]); if(refuse) return;
+  _gbSleepOK=false; _gbDreamOnOpen=false;
   if(_gbPackGo||_gbCannedGo){ inFlight=true; dreaming=true;
     return gbDreamCall("SYS",[{role:"user",content:"U"}],"dreamer",1000,90000)
       .then(function(raw){ dreams.push(["landed",raw]); inFlight=false; dreaming=false; },
@@ -3186,7 +3192,7 @@ def test_a_page_going_away_hands_its_dream_to_the_box() -> None:
         "gbDreamPack(0);"
         "setImmediate(function(){ console.log(JSON.stringify({sent:sent,dreams:dreams,"
         "logs:logs,inFlight:inFlight,dreaming:dreaming,sky:_skyHue,why:_gbSleepWhy,"
-        "go:_gbPackGo})); });"
+        "go:_gbPackGo,leave:[_gbSleepOK,_gbSleepAt,_gbDreamOnOpen]})); });"
     )
     assert got["dreams"] == [[False, True, False]]
     [(url, msg, keepalive)] = got["sent"]
@@ -3201,6 +3207,19 @@ def test_a_page_going_away_hands_its_dream_to_the_box() -> None:
     # Nothing landed: the page is as it was before the dream began, and no model was called.
     assert got["inFlight"] is False and got["dreaming"] is False and got["sky"] == 11
     assert got["why"] == "" and got["go"] is False
+    # The leave to sleep and the dream the visit owed, which dream() spent as it began, are
+    # handed back: nothing landed, and a quick return calls the box's dream off.
+    assert got["leave"] == [True, 7, True]
+
+
+def test_a_hand_over_the_browser_will_not_keep_alive_goes_plain() -> None:
+    got = _dream_later(
+        "full=true;gbDreamPack(0);"
+        "setTimeout=global.setTimeout;setImmediate(function(){ setImmediate(function(){"
+        " console.log(JSON.stringify({sent:sent.map(function(x){ return [x[1].op,x[2]]; })}));"
+        " }); });"
+    )
+    assert got == {"sent": [["later", True], ["later", False]]}
 
 
 @pytest.mark.parametrize(
@@ -3247,7 +3266,8 @@ def test_an_open_takes_the_box_dream_and_lands_it_without_a_model_call() -> None
         " r.logs=logs; console.log(JSON.stringify(r)); }); });"
     )
     assert got["first"] is False and got["ask"] is True
-    assert got["asked"] is False and got["onOpen"] is False
+    # The owed open-time dream stays owed until the answer lands (dream() spends it then).
+    assert got["asked"] is False and got["onOpen"] is True
     assert got["sent"] == [["/api/box/dream", {"op": "open", "persona": "p-1"}, False]]
     assert got["landing"] is True and got["again"] is False
     assert got["dreams"] == [[False, False, True], ["landed", '{"dream_say":"hi"}']]
@@ -3267,6 +3287,22 @@ def test_a_box_dream_for_a_soul_that_moved_on_is_dropped() -> None:
     assert got["asks"] == 1 and got["logs"][-1] == ["dream_box_stale", {}]
 
 
+def test_only_the_newest_ask_lifts_the_hold_and_an_unowned_tab_asks_again() -> None:
+    got = _dream_later(
+        "document.hidden=false;var held=[];"
+        "fetch=function(u,o){ sent.push(o.body);"
+        " return new Promise(function(ok){ held.push(ok); }); };"
+        "gbBoxDreamOpen();gbBoxDreamOpen();"
+        "var res={status:200,json:function(){ return Promise.resolve({ok:true}); }};"
+        "held[0](res);"
+        "setImmediate(function(){ var r={old:_gbBoxAsk}; held[1](res);"
+        " setImmediate(function(){ r.newest=_gbBoxAsk; owned=false; _gbAsked=true;"
+        " gbBoxDreamOpen(); r.unowned=[_gbBoxAsk,_gbAsked,sent.length];"
+        " console.log(JSON.stringify(r)); }); });"
+    )
+    assert got == {"old": True, "newest": False, "unowned": [False, False, 2]}
+
+
 def test_the_dream_later_is_wired_through_dream_itself() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     body = page[page.index("function dream(force){") :]
@@ -3282,7 +3318,10 @@ def test_the_dream_later_is_wired_through_dream_itself() -> None:
     tick = page[page.index("if(paused||document.hidden) return;") :]
     assert tick.index("    if(gbCannedDream()) return;\n") < tick.index("_dreamOverdue(now)")
     # The open-time dream is the fallback, for a gap past the box's hour.
-    assert "GB_OPEN_GAP_MS=3900000" in page
+    assert "GB_OPEN_GAP_MS=600000, GB_LATER_GAP_MS=3900000" in page
+    assert "Date.now()-(+_gbLastV.t||0)>gbOpenGap()) _gbDreamOnOpen=true;" in page
+    # A hand-over or a collected answer arms no flex tier (it would spend the dream's stock).
+    assert 'var _fxD=(typeof _flexArm==="function"&&!_gbPackGo&&!_gbCannedGo)?_flexArm(' in body
     assert "function gbOpenDreamDue(){ return _gbDreamOnOpen&&!_gbBoxAsk&&" in page
 
 
@@ -4142,3 +4181,23 @@ def test_the_body_tabs_get_up_is_an_explicit_ask_that_opens_the_runner_only_for_
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert 'move === "get_up"' in shim and "window.gbGetUp();" in shim
+
+
+@pytest.mark.parametrize(
+    ("soul", "local", "gap"),
+    [
+        ("{persona:'p'}", "null", 3900000),
+        ("{persona:'p'}", "{url:'http://rig'}", 600000),
+        ("{g2:true}", "null", 600000),
+    ],
+)
+def test_the_open_time_dream_waits_out_the_hour_only_where_the_box_dreams(
+    soul: str, local: str, gap: int
+) -> None:
+    """A soul on the phone or a local brain lane never hands its dream over, so a new visit
+    still dreams the last one after ten minutes."""
+    got = _sleep_page(
+        f"var window={{__gbBoxSoul:{soul}}};function llmCfg(){{ return {local}; }}"
+        "console.log(JSON.stringify({gap:gbOpenGap()}));"
+    )
+    assert got == {"gap": gap}

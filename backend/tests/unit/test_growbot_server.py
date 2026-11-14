@@ -3849,3 +3849,26 @@ def test_the_dream_route_refuses_what_is_not_theirs(
     for n in range(gb.DREAMS_MAX):
         run.app._dreams[f"p{n}"] = gb._Later("m", {})
     assert _later(run) == (503, {"error": "the box is busy"})
+
+
+def test_only_the_phone_holding_the_persona_reaches_its_dream(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session outlives a hand-over: the old phone can neither read the new one's dream nor
+    plant or call one off, and a dream an old phone planted never lands on the new one."""
+    monkeypatch.setattr(gb, "DREAM_LATER_S", 0.0)
+    _later(run)
+    _until(lambda: _PERSONA in run.app._dreams and run.app._dreams[_PERSONA].state == "ready")
+    state = [s for s in _Fake.seen if s["path"] == "/internal/growbot/soul/state"][-1]
+    assert json.loads(state["body"]) == {"persona": _PERSONA, "phone": _PHONE}
+    for status, why in ((409, "moved"), (404, "gone"), (500, None)):
+        _Fake.soul = {"/internal/growbot/soul/state": (status, {"detail": "x"})}
+        expect = (status, {"error": why}) if why else (503, {"error": "the box is busy"})
+        assert _open(run) == expect
+        assert _later(run, "other") == expect
+    _Fake.soul = {}
+    assert run.app._dreams[_PERSONA].mark == "h1234"
+    other = _persona_cookie(run, phone=_NEW_PHONE)
+    opened = {"op": "open", "persona": _PERSONA}
+    assert _soul_call(run, "POST", "/api/box/dream", opened, cookie=other) == (200, {"ok": True})
+    assert run.app._dreams == {}

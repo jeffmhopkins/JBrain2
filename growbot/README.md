@@ -433,14 +433,17 @@ quick return is the same visit. The next open collects the answer and lands it t
 An answer lands only on the soul it was dreamed from (the visit and the identity stamp
 unchanged, `gbDreamPrint`). The dream a new visit owes on open is now the fallback, for a gap
 of more than 65 minutes: a box that restarted, a page killed before it could hand its dream
-over, a failed call, or a local brain lane the box cannot reach (`DREAM_LATER_PATCHES`).
+over, or a failed call. A creature on a local brain lane, which the box cannot reach, or with
+its soul on the phone hands nothing over and still dreams on open after 10 minutes
+(`gbOpenGap`, `DREAM_LATER_PATCHES`). A hand-over gives back the leave to sleep and any dream
+the visit owed, so a quick return still has them.
 
 | Route | Answer |
 | --- | --- |
 | `POST /api/box/dream` `{op: "later", persona, print, body}` | `{ok}`. The dream call to make in an hour, replacing one already waiting; capped at 256 KB, 400 for a body that is not a chat request, 409 `other` as the soul's, 503 past 64 waiting personas. |
 | `POST /api/box/dream` `{op: "open", persona}` | `{ok}`, or `{ok, raw, print}` once for a dream the box finished. A waiting dream is called off; one under way is waited for (up to 120 s). |
 
-Both are 204 for a G2 session, whose creature keeps its soul on the phone and dreams there.
+Both are 204 for a G2 session, whose creature keeps its soul on the phone and dreams there. Each first asks the api whether this phone still holds the persona (`/internal/growbot/soul/state`), and passes on its 409 `moved` or 404 `gone`, since a session outlives a hand-over; a dream planted by another phone is dropped, never handed over.
 
 ### Fast turns
 

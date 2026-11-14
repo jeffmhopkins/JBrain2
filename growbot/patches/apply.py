@@ -1794,13 +1794,16 @@ PATCHES += NAME_PATCHES
 # that follows a conversation sees that conversation and writes what mattered to the diary and
 # its facts to the fact book, so the dream is the visit's long-term memory.
 _GB_SLEEP_PAGE_JS = r"""var _gbSleepOK=false, _gbSleepAt=0, _gbDreamOnOpen=false, _gbSleepWhy="", _gbBootT=Date.now(),
-  GB_SLEEP_IDLE_MS=300000, GB_OPEN_GAP_MS=3900000, GB_TIRED_REPLIES=60, GB_TIRED_MIN=20,
+  GB_SLEEP_IDLE_MS=300000, GB_OPEN_GAP_MS=600000, GB_LATER_GAP_MS=3900000, GB_TIRED_REPLIES=60, GB_TIRED_MIN=20,
   GB_TIRED_MS=1800000, GB_DREAM_SESS=80, GB_SLEEP_HOLD_MS=180000;
 /* Permission to sleep lasts a few minutes: a dream that cannot start by then (energy, a busy
    body) must not leave the person's quiet guard off and a goodnight hanging over a live chat. */
 function gbSleepDue(){
   return gbSleepAllowed() || _gbDreamOnOpen || (Date.now()-lastActT>GB_SLEEP_IDLE_MS && callsSinceDream>=3);
 }
+/* The gap that makes a new visit owe the last one's dream: past the box's hour where the box
+   dreams it (DREAM_LATER_PATCHES: a box soul on the box's own brain), ten minutes elsewhere. */
+function gbOpenGap(){ try{ if(window.__gbBoxSoul&&window.__gbBoxSoul.persona&&!llmCfg()) return GB_LATER_GAP_MS; }catch(e){} return GB_OPEN_GAP_MS; }
 function gbSleepAllowed(){
   if(_gbSleepOK&&Date.now()-_gbSleepAt>GB_SLEEP_HOLD_MS){ _gbSleepOK=false; try{ logEv("sleep_expired",{}); }catch(e){} }
   return _gbSleepOK;
@@ -1951,7 +1954,7 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
         "if(_csd0>0&&isFinite(_csd0)) callsSinceDream=Math.min(Math.floor(_csd0),60);",
         "if(_csd0>0&&isFinite(_csd0)) callsSinceDream=Math.min(Math.floor(_csd0),60);"
         " var _gbLastV=gbVisit().slice(-1)[0];"
-        " if(_gbLastV&&Date.now()-(+_gbLastV.t||0)>GB_OPEN_GAP_MS) _gbDreamOnOpen=true;",
+        " if(_gbLastV&&Date.now()-(+_gbLastV.t||0)>gbOpenGap()) _gbDreamOnOpen=true;",
         1,
     ),
     (
@@ -2390,7 +2393,7 @@ PATCHES += [
 # since the last one) or the warm-up is
 # half its life old: a still room would only send the model the same picture again.
 _GB_WARM_JS = r"""var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
-function gbOpenDreamDue(){ return _gbDreamOnOpen&&!_gbBoxAsk&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
+function gbOpenDreamDue(){ return _gbDreamOnOpen&&!_gbBoxAsk&&!_gbCanned&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
 var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000, GB_WARM_LOOK_MS=3000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 /* The box resumes a turn from the longest prefix it read before, so the history ahead of the new
@@ -3346,7 +3349,7 @@ PATCHES += GETUP_PATCHES
 # soul it was dreamed from (gbDreamPrint: the visit and the identity stamp unchanged); any
 # other is dropped and the ordinary rules dream again. A local brain lane, which the box cannot
 # reach, keeps dreaming on open.
-_GB_DREAM_LATER_JS = r"""var _gbPackGo=false, _gbCannedGo=false, _gbCanned=null, _gbBoxAsk=true, _gbAsked=false,
+_GB_DREAM_LATER_JS = r"""var _gbPackGo=false, _gbCannedGo=false, _gbCanned=null, _gbBoxAsk=true, _gbAsked=false, _gbAskN=0, _gbPackKeep=null,
   GB_DREAM_LATER_PATH="/api/box/dream", GB_BOX_ASK_MS=150000;
 function _gbPersona(){ try{ return (window.__gbBoxSoul&&window.__gbBoxSoul.persona)||""; }catch(e){ return ""; } }
 /* What the box's answer must still match when it lands: the visit it summarises, the turns
@@ -3362,34 +3365,41 @@ function gbDreamCall(sys,msgs,slug,maxTok){
   if(_gbPackGo){ _gbPackGo=false; var P=_gbPersona(), e=new Error("dream handed to the box"); e.gbPacked=true;
     try{ var msg=JSON.stringify({op:"later",persona:P,print:gbDreamPrint(),
         body:_mkBody(slug,maxTok,[{role:"system",content:sys}].concat(msgs))});
-      // keepalive lets the call outlive a closing page, up to about 64 KB of bodies in flight.
-      fetch(GB_DREAM_LATER_PATH,{method:"POST",headers:{"content-type":"application/json"},body:msg,keepalive:msg.length<48000}).catch(function(){});
-      logEv("dream_later",{n:msg.length});
+      // keepalive lets the call outlive a closing page, but browsers allow 64 KiB of such bodies
+      // in flight in all (the diary's hide beacon among them); one it refuses goes plain, which
+      // a page that is only hidden still finishes.
+      var nb=new Blob([msg]).size, hd={"content-type":"application/json"}, plain=function(){
+        return fetch(GB_DREAM_LATER_PATH,{method:"POST",headers:hd,body:msg}); };
+      (nb<60000?fetch(GB_DREAM_LATER_PATH,{method:"POST",headers:hd,body:msg,keepalive:true}).catch(plain):plain()).catch(function(){});
+      logEv("dream_later",{n:nb});
     }catch(_pe){}
     return Promise.reject(e); }
   return callModel.apply(null,arguments);
 }
 function gbPackUnwind(preSky){
   inFlight=false; dreaming=false; _flightT=0; dreamScene=false; _skyHue=preSky; _gbSleepWhy="";
+  // dream() spent these as it began; nothing landed, so the visit still has them.
+  if(_gbPackKeep){ _gbSleepOK=_gbPackKeep[0]; _gbSleepAt=_gbPackKeep[1]; _gbDreamOnOpen=_gbPackKeep[2]; _gbPackKeep=null; }
   try{ $("say").classList.remove("thinking"); $("say").textContent=""; $("brainTxt").textContent="awake"; $("dreamCap").style.display="none"; }catch(e){}
 }
 /* A page going away with conversation undreamed. dream() keeps every gate (ownership, a turn
    in flight, energy); one that holds it back is asked again a few times while the page lives. */
 function gbDreamPack(n){ try{
   if(!document.hidden||_gbCanned||!_gbPersona()||!_live||dreaming||!gbVisit().length||llmCfg()) return;
-  if(!inFlight&&soulOwned()){ _gbPackGo=true; dream(false); }
-  if(_gbPackGo||inFlight&&!dreaming){ _gbPackGo=false; if(n<3) setTimeout(function(){ gbDreamPack(n+1); },5000); }
+  if(!inFlight&&soulOwned()){ _gbPackKeep=[_gbSleepOK,_gbSleepAt,_gbDreamOnOpen]; _gbPackGo=true; dream(false); }
+  if(_gbPackGo||inFlight&&!dreaming){ _gbPackGo=false; _gbPackKeep=null; if(n<3) setTimeout(function(){ gbDreamPack(n+1); },5000); }
 }catch(e){ _gbPackGo=false; } }
 /* A visit opening (the page's first tick, or shown again): call off the box's dream, or take
    its answer. The open-time dream waits for this ask. */
 function gbBoxDreamOpen(){
-  var P=_gbPersona(); if(!P||!soulOwned()){ _gbBoxAsk=false; return; }
-  _gbBoxAsk=true; var hold=setTimeout(function(){ _gbBoxAsk=false; },GB_BOX_ASK_MS);
+  var P=_gbPersona(), mine=++_gbAskN; if(!P){ _gbBoxAsk=false; return; }
+  if(!soulOwned()){ _gbBoxAsk=false; _gbAsked=false; return; }   // a tab that takes the soul later asks then
+  _gbBoxAsk=true; var hold=setTimeout(function(){ if(mine===_gbAskN) _gbBoxAsk=false; },GB_BOX_ASK_MS);
   fetch(GB_DREAM_LATER_PATH,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({op:"open",persona:P})})
     .then(function(r){ return r.status===200?r.json():null; })
     .then(function(j){ if(j&&typeof j.raw==="string"&&j.raw&&typeof j.print==="string"){
-      _gbCanned={raw:j.raw,print:j.print}; _gbDreamOnOpen=false; logEv("dream_box",{n:j.raw.length}); } })
-    .catch(function(){}).then(function(){ clearTimeout(hold); _gbBoxAsk=false; });
+      _gbCanned={raw:j.raw,print:j.print}; logEv("dream_box",{n:j.raw.length}); } })
+    .catch(function(){}).then(function(){ clearTimeout(hold); if(mine===_gbAskN) _gbBoxAsk=false; });
 }
 function gbCannedDream(){
   if(!_gbAsked){ _gbAsked=true; gbBoxDreamOpen(); }
@@ -3399,7 +3409,9 @@ function gbCannedDream(){
   if(_gbCannedGo){ _gbCannedGo=false; return false; }
   return true;
 }
-document.addEventListener("visibilitychange",function(){ if(document.hidden) gbDreamPack(0); else { _gbAsked=false; _gbBoxAsk=true; } });
+/* On window, after the page's own listener there (next.html: the diary's hide flush), so the
+   diary's beacon is out first and keeps its share of the keepalive budget. */
+window.addEventListener("visibilitychange",function(){ if(document.hidden) gbDreamPack(0); else { _gbAsked=false; _gbBoxAsk=true; } });
 """
 DREAM_LATER_PATCHES: list[tuple[str, str, str, int]] = [
     ("v3/next.html", "function dream(force){", _GB_DREAM_LATER_JS + "function dream(force){", 1),
@@ -3417,6 +3429,12 @@ DREAM_LATER_PATCHES: list[tuple[str, str, str, int]] = [
         'if(_gbPackGo) _gbSleepWhy="its person went away a while ago, and it fell asleep on its'
         ' own"; logEv("dream_start",{trig:_gbPackGo?"later":_gbCannedGo?"box":force?"forced"'
         ':"auto",',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'var _fxD=(typeof _flexArm==="function")?_flexArm(',
+        'var _fxD=(typeof _flexArm==="function"&&!_gbPackGo&&!_gbCannedGo)?_flexArm(',
         1,
     ),
     (
