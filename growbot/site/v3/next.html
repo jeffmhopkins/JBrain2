@@ -10881,7 +10881,7 @@ function _runGait(spec,attempt){
 
 /* ---- THE FAST LOOP (slow table — LLM reasons over full memory, drives legs) ---- */
 var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
-function gbOpenDreamDue(){ return _gbDreamOnOpen&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
+function gbOpenDreamDue(){ return _gbDreamOnOpen&&!_gbBoxAsk&&!_gbCanned&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
 var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000, GB_WARM_LOOK_MS=3000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 /* The box resumes a turn from the longest prefix it read before, so the history ahead of the new
@@ -12005,13 +12005,16 @@ var lastBeatT=0, beatN=0, lastWatchT=0, lastSpokeT=-1e9, lastReplyT=0;   // [P6]
 var _dreamPt0=0, _dreamRetry=false;   // 1021: the person's turns when this dream started; turns taken while it ran count toward the next one (review 3). The plain retry keeps the first attempt's count (fix-check 1022)
 var _typedT=0;   // 1021: the last keystroke in #txt or the design bar's #gbkTxt (one capture listener on the document); maybeDream holds a dream while someone is typing
 var _gbSleepOK=false, _gbSleepAt=0, _gbDreamOnOpen=false, _gbSleepWhy="", _gbBootT=Date.now(),
-  GB_SLEEP_IDLE_MS=300000, GB_OPEN_GAP_MS=600000, GB_TIRED_REPLIES=60, GB_TIRED_MIN=20,
+  GB_SLEEP_IDLE_MS=300000, GB_OPEN_GAP_MS=600000, GB_LATER_GAP_MS=3900000, GB_TIRED_REPLIES=60, GB_TIRED_MIN=20,
   GB_TIRED_MS=1800000, GB_DREAM_SESS=80, GB_SLEEP_HOLD_MS=180000;
 /* Permission to sleep lasts a few minutes: a dream that cannot start by then (energy, a busy
    body) must not leave the person's quiet guard off and a goodnight hanging over a live chat. */
 function gbSleepDue(){
   return gbSleepAllowed() || gbOpenDreamDue() || (Date.now()-lastActT>GB_SLEEP_IDLE_MS && callsSinceDream>=3);
 }
+/* The gap that makes a new visit owe the last one's dream: past the box's hour where the box
+   dreams it (DREAM_LATER_PATCHES: a box soul on the box's own brain), ten minutes elsewhere. */
+function gbOpenGap(){ try{ if(window.__gbBoxSoul&&window.__gbBoxSoul.persona&&!llmCfg()) return GB_LATER_GAP_MS; }catch(e){} return GB_OPEN_GAP_MS; }
 function gbSleepAllowed(){
   if(_gbSleepOK&&Date.now()-_gbSleepAt>GB_SLEEP_HOLD_MS){ _gbSleepOK=false; try{ logEv("sleep_expired",{}); }catch(e){} }
   return _gbSleepOK;
@@ -12140,11 +12143,74 @@ function _dreamSameDiary(){ try{ var L=(_live&&_live.log)||[], sc=(_live&&_live.
     var last=L[L.length-1];
     return sc.dreamLogT===last.t && sc.dreamLogH===h8(String((last&&last.txt)||""));
   }catch(e){ return false; } }   // 0903: true only when a landed dream stamped THIS EXACT LAST ENTRY (t + text hash) — an unstamped soul (fresh sprout, or a pre-0903 soul carrying only the old count) is never gated; a throw fails OPEN to the old behaviour
+var _gbPackGo=false, _gbCannedGo=false, _gbCanned=null, _gbBoxAsk=true, _gbAsked=false, _gbAskN=0, _gbPackKeep=null,
+  GB_DREAM_LATER_PATH="/api/box/dream", GB_BOX_ASK_MS=150000;
+function _gbPersona(){ try{ return (window.__gbBoxSoul&&window.__gbBoxSoul.persona)||""; }catch(e){ return ""; } }
+/* What the box's answer must still match when it lands: the visit it summarises, the turns
+   counted toward it, and the identity it rewrites (an owner's edit or another dream moves it). */
+function gbDreamPrint(){ try{
+  var sc=(_live&&_live.scratch)||{}, v=gbVisit(), l=v.length?v[v.length-1]:null;
+  return h8(JSON.stringify([v.length,l?+l.t||0:0,l?String(l.txt||""):"",+sc.pt||0,+(_live&&_live.identityAt)||0]));
+}catch(e){ return ""; } }
+/* dream()'s one model call. Packing hands it to the box and unwinds (the catch below); a
+   collected answer stands in for the call; anything else is today's call. */
+function gbDreamCall(sys,msgs,slug,maxTok){
+  if(_gbCannedGo&&_gbCanned){ var c=_gbCanned; _gbCannedGo=false; _gbCanned=null; return Promise.resolve(c.raw); }
+  if(_gbPackGo){ _gbPackGo=false; var P=_gbPersona(), e=new Error("dream handed to the box"); e.gbPacked=true;
+    try{ var msg=JSON.stringify({op:"later",persona:P,print:gbDreamPrint(),
+        body:_mkBody(slug,maxTok,[{role:"system",content:sys}].concat(msgs))});
+      // keepalive lets the call outlive a closing page, but browsers allow 64 KiB of such bodies
+      // in flight in all (the diary's hide beacon among them); one it refuses goes plain, which
+      // a page that is only hidden still finishes.
+      var nb=new Blob([msg]).size, hd={"content-type":"application/json"}, plain=function(){
+        return fetch(GB_DREAM_LATER_PATH,{method:"POST",headers:hd,body:msg}); };
+      (nb<60000?fetch(GB_DREAM_LATER_PATH,{method:"POST",headers:hd,body:msg,keepalive:true}).catch(plain):plain()).catch(function(){});
+      logEv("dream_later",{n:nb});
+    }catch(_pe){}
+    return Promise.reject(e); }
+  return callModel.apply(null,arguments);
+}
+function gbPackUnwind(preSky){
+  inFlight=false; dreaming=false; _flightT=0; dreamScene=false; _skyHue=preSky; _gbSleepWhy="";
+  // dream() spent these as it began; nothing landed, so the visit still has them.
+  if(_gbPackKeep){ _gbSleepOK=_gbPackKeep[0]; _gbSleepAt=_gbPackKeep[1]; _gbDreamOnOpen=_gbPackKeep[2]; _gbPackKeep=null; }
+  try{ $("say").classList.remove("thinking"); $("say").textContent=""; $("brainTxt").textContent="awake"; $("dreamCap").style.display="none"; }catch(e){}
+}
+/* A page going away with conversation undreamed. dream() keeps every gate (ownership, a turn
+   in flight, energy); one that holds it back is asked again a few times while the page lives. */
+function gbDreamPack(n){ try{
+  if(!document.hidden||_gbCanned||!_gbPersona()||!_live||dreaming||!gbVisit().length||llmCfg()) return;
+  if(!inFlight&&soulOwned()){ _gbPackKeep=[_gbSleepOK,_gbSleepAt,_gbDreamOnOpen]; _gbPackGo=true; dream(false); }
+  if(_gbPackGo||inFlight&&!dreaming){ _gbPackGo=false; _gbPackKeep=null; if(n<3) setTimeout(function(){ gbDreamPack(n+1); },5000); }
+}catch(e){ _gbPackGo=false; } }
+/* A visit opening (the page's first tick, or shown again): call off the box's dream, or take
+   its answer. The open-time dream waits for this ask. */
+function gbBoxDreamOpen(){
+  var P=_gbPersona(), mine=++_gbAskN; if(!P){ _gbBoxAsk=false; return; }
+  if(!soulOwned()){ _gbBoxAsk=false; _gbAsked=false; return; }   // a tab that takes the soul later asks then
+  _gbBoxAsk=true; var hold=setTimeout(function(){ if(mine===_gbAskN) _gbBoxAsk=false; },GB_BOX_ASK_MS);
+  fetch(GB_DREAM_LATER_PATH,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({op:"open",persona:P})})
+    .then(function(r){ return r.status===200?r.json():null; })
+    .then(function(j){ if(j&&typeof j.raw==="string"&&j.raw&&typeof j.print==="string"){
+      _gbCanned={raw:j.raw,print:j.print}; logEv("dream_box",{n:j.raw.length}); } })
+    .catch(function(){}).then(function(){ clearTimeout(hold); if(mine===_gbAskN) _gbBoxAsk=false; });
+}
+function gbCannedDream(){
+  if(!_gbAsked){ _gbAsked=true; gbBoxDreamOpen(); }
+  if(!_gbCanned||inFlight||dreaming) return false;
+  if(_gbCanned.print!==gbDreamPrint()){ _gbCanned=null; try{ logEv("dream_box_stale",{}); }catch(e){} return false; }
+  _gbCannedGo=true; try{ dream(false); }catch(e){}
+  if(_gbCannedGo){ _gbCannedGo=false; return false; }
+  return true;
+}
+/* On window, after the page's own listener there (next.html: the diary's hide flush), so the
+   diary's beacon is out first and keeps its share of the keepalive budget. */
+window.addEventListener("visibilitychange",function(){ if(document.hidden) gbDreamPack(0); else { _gbAsked=false; _gbBoxAsk=true; } });
 function dream(force){
   var _retry=(typeof _dreamRetry!=="undefined"&&_dreamRetry); _dreamRetry=false;   // 1021 (fix-check): the plain retry keeps the first attempt's turn count (_dreamPt0); read and cleared on every call, so an early return cannot leave it set
   var _od=!force&&(typeof _dreamOd!=="undefined"&&_dreamOd===true); _dreamOd=false;   // 1026: maybeDream's overdue override let this one through an activity or an event thought (dream_start od:1). Read and cleared on every call, so an early return cannot leave it set; the moon button is never an override
   var _ra=(_retry&&typeof _dreamRetryAuto==="number")?_dreamRetryAuto:0; _dreamRetryAuto=0; if(_ra===2) _od=true;   // 1026 (review): the plain retry of an automatic dream is still that dream (see the force line below)
-  if(window._wakeGateUp) return;
+  if(window._wakeGateUp&&!_gbCannedGo) return;
   if(typeof vmBusy==="function"&&vmBusy()) return;
   if(!soulOwned()) return;   // MEMORY OWNERSHIP: a tab that does not own the soul neither thinks nor dreams (its saves would refuse)
   if(inFlight||!orCfg||!_live){ if(force) setErr("busy — try again in a moment"); return; }
@@ -12160,7 +12226,7 @@ function dream(force){
   if(force){stopMotion();silence();}
   _dreamDeferLogged=false; _dreamHoldSeen={}; if(!_retry) _dreamPt0=(_live&&_live.scratch&&+_live.scratch.pt)||0;   // 0925 S4: a dream actually starts here, so the next deferral episode may write its one dream_defer row
   _dreamT0=Date.now(); if(_gbSleepOK||_gbDreamOnOpen) _gbSleepWhy=_gbSleepOK?"its person said it could sleep, after a long time together":"a new visit began and it had not slept since the last one"; _gbSleepOK=false; _gbDreamOnOpen=false;
-  logEv("dream_start",{trig:force?"forced":"auto",csd:callsSinceDream,pt:(_live.scratch&&+_live.scratch.pt)||0,gate:window._wakeGateUp?1:0,od:_od?1:0,sinceLast:Math.round((Date.now()-lastDreamT)/1000),slug:brainOverride(orCfg.dream,true),plain:window._dreamPlain?1:0});   /* 0814: dream_start and dream_err recorded NO slug and NO params, so when a user's plain retry came back empty at 20s the journal could not say which brain, which reasoning mode, or which budget produced it — and reasoning-off kimi is clean in ~4s on every provider, so it was demonstrably none of the obvious causes. An event about a failure that cannot name its own inputs is the same class as nf/vs/model: it records that something happened, not what. slug is the RESOLVED dream brain (post-brainOverride), plain says whether this is the fallback attempt. */   // diagnose the field double-dream (two completions 10.7s apart on 0702 despite this guard)
+  if(_gbPackGo) _gbSleepWhy="its person went away a while ago, and it fell asleep on its own"; logEv("dream_start",{trig:_gbPackGo?"later":_gbCannedGo?"box":force?"forced":"auto",csd:callsSinceDream,pt:(_live.scratch&&+_live.scratch.pt)||0,gate:window._wakeGateUp?1:0,od:_od?1:0,sinceLast:Math.round((Date.now()-lastDreamT)/1000),slug:brainOverride(orCfg.dream,true),plain:window._dreamPlain?1:0});   /* 0814: dream_start and dream_err recorded NO slug and NO params, so when a user's plain retry came back empty at 20s the journal could not say which brain, which reasoning mode, or which budget produced it — and reasoning-off kimi is clean in ~4s on every provider, so it was demonstrably none of the obvious causes. An event about a failure that cannot name its own inputs is the same class as nf/vs/model: it records that something happened, not what. slug is the RESOLVED dream brain (post-brainOverride), plain says whether this is the fallback attempt. */   // diagnose the field double-dream (two completions 10.7s apart on 0702 despite this guard)
   inFlight=true; _flightT=Date.now();
   /* 0807 LATCH PREVENTION (same shape as think()). A forged moodTrail bricked exactly this window
      on 0804 (review B1): everything from here to the callModel below is synchronous, and a throw
@@ -12209,8 +12275,8 @@ function dream(force){
   var _dgen=_flightGen;                                  // 0807: if the watchdog gives up on this dream, a late answer must not write identity behind the creature's back
   var _dreamLang=_replyLanguage()||vtLang();
   var _dmo=brainOverride(orCfg.dream,true), _du0=(typeof _dreamUsd==="number")?_dreamUsd:0;   // 0914 F-75: the dream event names its brain and its cost (delta of the dream meter); the dispatch line below is left byte-identical (harnesses execute it verbatim)
-  /*FLEX-TICKS{*/var _fxD=(typeof _flexArm==="function")?_flexArm("dream",_dmo,force||_retry):null;   /* 1109: null = today's dream call, exactly; the moon button's dream and every plain retry are never armed *//*}FLEX-TICKS*/
-  callModel(buildDreamSystem(DREAM_SYS,_live,_convLang),[{role:"user",content:user}],brainOverride(orCfg.dream,true),1000,90000/*FLEX-TICKS{*/,undefined,undefined,undefined,typeof _fxD!=="undefined"?_fxD:undefined/*}FLEX-TICKS*/).then(function(raw){   // [credit screen] free mode dreams free too; an explicit dial pick leaves dreams on the big brain   // 620→700: the evidence citations + bond_line ride in the same JSON
+  /*FLEX-TICKS{*/var _fxD=(typeof _flexArm==="function"&&!_gbPackGo&&!_gbCannedGo)?_flexArm("dream",_dmo,force||_retry):null;   /* 1109: null = today's dream call, exactly; the moon button's dream and every plain retry are never armed *//*}FLEX-TICKS*/
+  gbDreamCall(buildDreamSystem(DREAM_SYS,_live,_convLang),[{role:"user",content:user}],brainOverride(orCfg.dream,true),1000,90000/*FLEX-TICKS{*/,undefined,undefined,undefined,typeof _fxD!=="undefined"?_fxD:undefined/*}FLEX-TICKS*/).then(function(raw){   // [credit screen] free mode dreams free too; an explicit dial pick leaves dreams on the big brain   // 620→700: the evidence citations + bond_line ride in the same JSON
     if(_dgen!==_flightGen) return;                        // the watchdog gave up on this dream; a late answer must NOT write identity behind the creature's back
     inFlight=false; dreaming=false; _flightT=0; _skyHue=_preSky; $("say").classList.remove("thinking"); $("brainTxt").textContent="awake";   // hand the sky back to whatever held it before the dream
     try{ $("dreamCap").style.display="none"; }catch(e){}   // [0726 item 4] dream done → caption off (the wake line speaks next)
@@ -12233,7 +12299,7 @@ function dream(force){
     var _sc=(o&&typeof o.scene==="string")?o.scene.toLowerCase().split(/[^a-z]+/).filter(function(w){return ["stars","moon","sun","cloud","trees","hills","water","rain","path","flowers","bird","heart","home","friend"].indexOf(w)>=0;}).slice(0,4):[];   // STORYBOOK: the dream's own picture-words
     dreamMotifs=_sc; dreamSceneT0=0; if(_sc.length) dreamScene=true;   // set BEFORE the wake line speaks so the scene draws during the narration; empty scene → today's violet wash
     if(pendingUser){ _voiceNote("dream_yielded_to_user"); } else if(typeof woke!=="undefined"&&!woke){ $("say").textContent=wl; } else if(!paused){ $("say").textContent=wl; speak(wl,"calm",_dreamLang); } else _pendDreamWake={t:wl,lang:_dreamLang}; drainUser();   // paused (e.g. brain panel open mid-dream) → the wake line is PARKED and the unpause delivers it (K3 0727 F7); never silently dropped
-  }).catch(function(e){ if(_dgen!==_flightGen) return;
+  }).catch(function(e){ if(_dgen!==_flightGen) return; if(e&&e.gbPacked){ gbPackUnwind(_preSky); return; }
     inFlight=false; dreaming=false; _flightT=0; dreamScene=false; _skyHue=_preSky; $("say").classList.remove("thinking"); $("brainTxt").textContent="awake";   // dreamScene cleared too — a failed dream never leaves the storybook frozen
     try{ $("dreamCap").style.display="none"; }catch(_e){}   // [0726 item 4] failed dream → caption off (the plain-retry below re-shows it)
     var _em=String(e&&e.message||""), _ab=!!(e&&e.name==="AbortError")||/abort/i.test(_em);
@@ -13858,7 +13924,7 @@ function bootOwned(){
       : ("engine loaded but globals missing [loadSoul:"+(typeof loadSoul)+" buildSystem:"+(typeof buildSystem)+" S:"+(typeof S)+" CONSTITUTION:"+(typeof CONSTITUTION)+"] — tell Brit this line.")); return; }
   _live=loadSoul(); if(typeof vmBoot==="function") vmBoot();
   try{ var _pz=_closeGoalTraces("",true); if(_pz) logEv("goal_replay_closed",{n:_pz,why:"boot_pose"}); }catch(e){}   // 0925 M5: a one-shot pose goal (lie down, stand, sit) is never restored at boot, even if it was still open (18:10:33 boot, 18:10:36 "lay down flat" set again from the replayed beat); the body install's saveSoul keeps it
-  try{ var _csd0=+(_live.scratch&&_live.scratch.csd); if(_csd0>0&&isFinite(_csd0)) callsSinceDream=Math.min(Math.floor(_csd0),60); var _gbLastV=gbVisit().slice(-1)[0]; if(_gbLastV&&Date.now()-(+_gbLastV.t||0)>GB_OPEN_GAP_MS) _gbDreamOnOpen=true; }catch(e){}
+  try{ var _csd0=+(_live.scratch&&_live.scratch.csd); if(_csd0>0&&isFinite(_csd0)) callsSinceDream=Math.min(Math.floor(_csd0),60); var _gbLastV=gbVisit().slice(-1)[0]; if(_gbLastV&&Date.now()-(+_gbLastV.t||0)>gbOpenGap()) _gbDreamOnOpen=true; }catch(e){}
   try{ var _sc0=_live.scratch; if(!(+_sc0.dreamAt>0)&&_sc0.lastDream&&+_sc0.lastDream.t>0) _sc0.dreamAt=+_sc0.lastDream.t; }catch(e){}   /* 1021: a soul from before the dream rule has no scratch.dreamAt; its last dream's time (scratch.lastDream, kept since 0929) stands in, so the update does not make every creature dream at its first turn. A soul with neither (a newborn, a gallery template, a v2 graduate) is NOT stamped here: a stamp would make an unlived sprout look lived and hold a v2 graduation onto it (_pristineSeed, fix-check 1022). _dreamDue uses this page's boot time for it instead */   /* 1005 DREAM ON RETURN (a tester: a deploy reload at 02:59Z reset the dream counter, then the app closed; no dream that night). The un-dreamed reply count now lives in the soul (scratch.csd, written with every reply's save, zeroed when a dream lands), so a reload or a next-day visit picks up where it left off and the ordinary gates decide: 12+ dreams after the next reply, 3+ dreams on the usual 2-min idle. Cooldown, novelty and speech gates are unchanged. */
   try{ gbBadgeSync(); }catch(e){}   // 0808: a stashed money code stays VISIBLE across reloads until truly redeemed
   try{ if(_live&&(_live.bornAt===1||(_live.log&&_live.log.length>2))) localStorage.setItem("pb2_graduated","1"); }catch(e){}   // ONE-URL TRUTH (0710): backfill the routing flag for creatures that graduated before it existed — any real agent creature marks this browser's home as v3
@@ -14093,6 +14159,7 @@ function bootOwned(){
     if(recording){ lastActT=now; return; }                                                // holding talk IS engagement — never drift to rest mid-hold
     if((vadOn&&(now-vadStartT<6000||(_pcmLive&&_pcmUtt&&_pcmUtt.gbId)))||now<vadHoldUntil||Object.keys(_gbUtts).length){ lastActT=now; return; }            // 🎧 they're mid-utterance / a transcript is in flight — a beat now would SPEAK OVER them and cancel their capture (0710 listening regression); 6s bound so street noise can't starve seek-beats
     if(now<speakingUntil) return;                                                          // [0717 field] NEVER stomp active speech with an AUTONOMOUS beat — the loop was cutting off its own long dream-wake line mid-sentence (STALE-CUT at speak():357 fired once the dream had spoken >2.5s). User turns (pendingUser above) still interrupt; only self-driven beats wait for the mouth.
+    if(gbCannedDream()) return;
     if((actOn||seekGoal)&&typeof _dreamOverdue==="function"&&_dreamOverdue(now)&&_dreamDue(now)){ maybeDream(); if(inFlight||dreaming) return; }   // 1026: an OVERDUE dream (DREAM_OVERDUE_MS) may start during an activity, ahead of its next turn, once nobody is talking or moving (maybeDream decides). A dream that starts owns this tick; the activity's turn, and any due wake, go out on the first tick after it lands
     if(typeof window!=="undefined"&&window._wakeGateUp){ if(_dreamDue(now)) maybeDream(); return; }   // 1109: BEHIND THE WAKE SCREEN only a due dream may start (the same door as below; maybeDream keeps every hold). No beat, watch or quiet turn, and nothing here is spent: lastBeatT, lastWatchT, a goal or activity beat and a due timer wake all wait untouched, so after the Wake tap (its greeting first) they go out on the normal cadence (the tap stamps lastBeatT: the greeting is that visit's quiet-company beat). think() refuses behind the screen too
     if(typeof _ret!=="undefined"&&_ret&&typeof woke!=="undefined"&&!woke) return;   // 1109 (review): the Wake tap dropped the screen but its greeting has not gone out yet (an embedded page's 3 s dwell, a body.json still loading, a greeting held by a flight or refused by a cool-off). No beat, watch or quiet turn goes ahead of it; the paths that already retry tryWake send it (the dwell timer, the cfg and body landings, _wakeHeld above, the unpause, the return to the page), and the cadence resumes once woke is set. Person turns are above this line and are never held. A newborn (_ret false) is untouched

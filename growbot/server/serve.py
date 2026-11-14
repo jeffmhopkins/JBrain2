@@ -208,6 +208,19 @@ BRAIN_PATH = "/api/box/brain"
 MAX_BRAIN_BODY = 16 * 1024
 BRAIN_TIMEOUT_S = 20.0
 MAX_PREFS_BODY = 320 * 1024
+# A dream the page could not stay open for (owner, 2026-11-14: "a task ... that tries to run 1hr
+# after creature session close"). A page going away hands the box the dream call it would make;
+# the box makes it this long after, unless a visit opens first, and keeps the answer for the
+# next open to land at once. Kept in memory only: a restart loses it, and that open then dreams
+# as it always did.
+DREAM_PATH = "/api/box/dream"
+DREAM_LATER_S = 3600.0
+# The dream's whole request (its system text, the visit, the diary): far under this.
+MAX_DREAM_BODY = 256 * 1024
+# The page's own fuse on a dream is 90 s; an open waits for one already under way this long.
+DREAM_WAIT_S = 120.0
+# One waiting dream per persona; a box holds a handful of personas.
+DREAMS_MAX = 64
 MAX_MEMORY_BODY = 2_500_000
 MEMORY_ID_RE = re.compile(r"r[0-9a-f]{1,32}")
 # The creature's diary (upstream's brain log): a snapshot is at most 70 KB on the page
@@ -784,6 +797,8 @@ def body_limit(req: Request) -> int:
         return MAX_MEMORY_BODY
     if req.path == PREFS_PATH:
         return MAX_PREFS_BODY
+    if req.path == DREAM_PATH:
+        return MAX_DREAM_BODY
     return MAX_BODY
 
 
@@ -1147,6 +1162,28 @@ class Backoff:
 # ── the app ───────────────────────────────────────────────────────────────────
 
 
+@dataclass
+class _Later:
+    """A persona's dream the box makes for a page that went away: `waiting` out the hour,
+    `dreaming`, or `ready` with the model's answer for the next open."""
+
+    mark: str
+    body: dict[str, Any]
+    phone: str = ""
+    state: str = "waiting"
+    raw: str = ""
+    task: asyncio.Task[None] | None = None
+
+
+def _reply_text(up: Upstream) -> str:
+    """A chat completion's text, or "" for anything else (an error in a 200, no choices)."""
+    try:
+        text = json.loads(up.body)["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        return ""
+    return text if isinstance(text, str) else ""
+
+
 class GrowBot:
     def __init__(self, config: Config, sessions: Sessions | None = None) -> None:
         self.config = config
@@ -1186,6 +1223,7 @@ class GrowBot:
         # Apart from the soul sync, so a slow api answering these polls never holds a soul.
         self._cal_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-cal")
         self._act_rid = ACT_RID_BASE
+        self._dreams: dict[str, _Later] = {}
         self.did = hashlib.sha256(b"growbot-on-the-box").hexdigest()[:16]
 
     # -- outbound ---------------------------------------------------------------
@@ -1773,6 +1811,8 @@ class GrowBot:
             return await self.prefs_route(req)
         if req.path in (BRAIN_PATH + "/search", BRAIN_PATH + "/note"):
             return await self.brain_route(req)
+        if req.path == DREAM_PATH:
+            return await self.dream_route(req)
         if name in ("journal", "episodes") and req.method == "DELETE":
             # The app's erase flow reads a JSON answer; there is nothing here to erase.
             return json_response(200, {"ok": True})
@@ -2079,6 +2119,113 @@ class GrowBot:
             why = detail if isinstance(detail, str) else "refused"
             return json_response(up.status, {"error": why[:200]}, headers)
         return json_response(503, {"error": "the box is busy"}, headers)
+
+    async def dream_route(self, req: Request) -> Response:
+        """`POST {op: "later", persona, print, body}` from a page going away: the dream call
+        it would have made, made DREAM_LATER_S from now. `POST {op: "open", persona}` from a
+        visit opening: a dream still waiting is called off (the visit goes on), one under way
+        is waited for, and a finished one is handed over once, `{raw, print}`. 204 for a G2
+        session, whose creature keeps its soul on the phone."""
+        headers = [("Cache-Control", "no-store")]
+        claims = self._claims(req)
+        if claims is None or not claims.persona:
+            return Response(204, headers=headers)
+        if req.method != "POST":
+            return json_response(405, {"error": "method not allowed"}, headers)
+        msg = _parse(req.body)
+        if msg is None or msg.get("op") not in ("later", "open"):
+            return json_response(400, {"error": "a dream to keep or a visit opening"}, headers)
+        if msg.get("persona") != claims.persona:
+            return json_response(409, {"error": "other"}, headers)
+        persona, phone = claims.persona, claims.phone
+        # A session outlives a hand-over: only the phone that holds the persona now may plant,
+        # call off or read its dream, the same hold the api keeps for the soul.
+        held = await self._call(
+            self._api_post,
+            "/internal/growbot/soul/state",
+            {"persona": persona, "phone": phone},
+            pool=self._soul_pool,
+        )
+        if held.status != 200:
+            why = "moved" if held.status == 409 else "gone" if held.status == 404 else ""
+            if why:
+                return json_response(held.status, {"error": why}, headers)
+            return json_response(503, {"error": "the box is busy"}, headers)
+        if msg["op"] == "open":
+            return json_response(200, await self._dream_open(persona, phone), headers)
+        body, mark = msg.get("body"), msg.get("print")
+        if (
+            not isinstance(body, dict)
+            or not isinstance(body.get("messages"), list)
+            or not isinstance(mark, str)
+            or not 0 < len(mark) <= 64
+        ):
+            return json_response(400, {"error": "a dream call and its print"}, headers)
+        self._dream_drop(persona)
+        if len(self._dreams) >= DREAMS_MAX:
+            return json_response(503, {"error": "the box is busy"}, headers)
+        later = _Later(mark, body, phone)
+        later.task = asyncio.create_task(self._dream_later(persona, later))
+        self._dreams[persona] = later
+        return json_response(200, {"ok": True}, headers)
+
+    def _dream_drop(self, persona: str) -> None:
+        old = self._dreams.pop(persona, None)
+        if old is not None and old.task is not None and old.state == "waiting":
+            old.task.cancel()
+
+    async def _dream_open(self, persona: str, phone: str) -> dict[str, object]:
+        later = self._dreams.get(persona)
+        if later is None:
+            return {"ok": True}
+        if later.phone != phone:
+            # Planted by a phone that has since handed the persona over: its soul moved on.
+            self._dream_drop(persona)
+            return {"ok": True}
+        if later.state == "dreaming" and later.task is not None:
+            # A phone opening as the box dreams waits for it, rather than dreaming twice.
+            with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(later.task), DREAM_WAIT_S)
+        if self._dreams.get(persona) is not later:
+            return {"ok": True}
+        if later.state != "ready":
+            self._dream_drop(persona)
+            return {"ok": True}
+        del self._dreams[persona]
+        return {"ok": True, "raw": later.raw, "print": later.mark}
+
+    async def _dream_later(self, persona: str, later: _Later) -> None:
+        await asyncio.sleep(DREAM_LATER_S)
+        later.state = "dreaming"
+        raw = ""
+        try:
+            models = await self._call(self.models)
+            body = self.llm_body(json.dumps(later.body).encode(), False, models)
+            if body is not None:
+                url = self.config.api_url + "/internal/growbot/llm/v1/chat/completions"
+                head = {
+                    "Content-Type": "application/json",
+                    "X-Growbot-Persona": persona,
+                    **self._auth(),
+                }
+                up = await self._call(
+                    http_call,
+                    url,
+                    body,
+                    head,
+                    "POST",
+                    UPSTREAM_TIMEOUT_S,
+                    pool=self._streams,
+                )
+                raw = _reply_text(up) if up.status == 200 else ""
+        except Exception as exc:  # noqa: BLE001 - a failed dream leaves the next open to dream
+            _warn_once("dream", f"a dream for later failed: {exc!r}"[:200])
+        finally:
+            later.body = {}
+            if raw and self._dreams.get(persona) is later:
+                later.raw, later.state = raw, "ready"
+            elif self._dreams.get(persona) is later:
+                del self._dreams[persona]
 
     def device(self) -> dict[str, object]:
         """One owned device with nothing metered: upstream's credit and adoption UI reads these."""

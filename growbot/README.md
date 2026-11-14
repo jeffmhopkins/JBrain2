@@ -420,6 +420,31 @@ page the owner changed them (`PATCH /api/growbot/personas/{id}/prefs {set, drop}
 debug API): the page writes them where it stands and fires `gb-box-prefs` `{changed}`, which the
 camera listens for.
 
+### Dreaming after the visit
+
+A creature dreams in its page (`dream()` in `next.html`), so a page closed with conversation
+still undreamed left the dream to the next open, which then waited on it (owner, 2026-11-14:
+*"a task … that tries to run 1hr after creature session close"*). Now, as the page goes away
+(hidden or closed) with something said since the last dream, it builds the very call `dream()`
+would make and hands it to the box; the box makes it an hour later through the creature's own
+lane, as its persona, and keeps the answer in memory. A visit opening first calls it off, so a
+quick return is the same visit. The next open collects the answer and lands it through
+`dream()`'s own landing with no model call, at once, behind the sleep screen if it is still up.
+An answer lands only on the soul it was dreamed from (the visit and the identity stamp
+unchanged, `gbDreamPrint`). The dream a new visit owes on open is now the fallback, for a gap
+of more than 65 minutes: a box that restarted, a page killed before it could hand its dream
+over, or a failed call. A creature on a local brain lane, which the box cannot reach, or with
+its soul on the phone hands nothing over and still dreams on open after 10 minutes
+(`gbOpenGap`, `DREAM_LATER_PATCHES`). A hand-over gives back the leave to sleep and any dream
+the visit owed, so a quick return still has them.
+
+| Route | Answer |
+| --- | --- |
+| `POST /api/box/dream` `{op: "later", persona, print, body}` | `{ok}`. The dream call to make in an hour, replacing one already waiting; capped at 256 KB, 400 for a body that is not a chat request, 409 `other` as the soul's, 503 past 64 waiting personas. |
+| `POST /api/box/dream` `{op: "open", persona}` | `{ok}`, or `{ok, raw, print}` once for a dream the box finished. A waiting dream is called off; one under way is waited for (up to 120 s). |
+
+Both are 204 for a G2 session, whose creature keeps its soul on the phone and dreams there. Each first asks the api whether this phone still holds the persona (`/internal/growbot/soul/state`), and passes on its 409 `moved` or 404 `gone`, since a session outlives a hand-over; a dream planted by another phone is dropped, never handed over.
+
 ### Fast turns
 
 The box's model is a hybrid: llama.cpp reuses a cached prompt only from a context checkpoint,
