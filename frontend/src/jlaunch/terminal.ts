@@ -1,4 +1,4 @@
-// The Math launcher's terminal WebSocket URL. The live-terminal bridge itself is shared
+// The Jobs launcher's terminal WebSocket URL. The live-terminal bridge itself is shared
 // with jcode (`attachTerminal` in ../jcode/terminal.ts) — this only points it at the
 // jlaunch job PTY. The browser sends the owner session cookie on the same-origin
 // handshake; the api authenticates the owner and proxies to the job's shell.

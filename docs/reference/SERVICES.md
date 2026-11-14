@@ -146,7 +146,7 @@ Owner-app screens, grouped:
 
 - **Knowledge** — Home stream + omnibox, Search, Note view + Analysis tab, Entity page / Entity list / ego-Graph, Wiki landing + reader + Talk, Review inbox.
 - **Authoring / agent** — Full Brain / Research chat (the persona surfaces, with Sessions + Proposals side panels), Lists + list detail, Calendar/Appointments, Image gen/edit, Tasks (scheduled agent runs), Intake links.
-- **System** — Ops (health/metrics/restart/logs/update/export/import), Automations + Runs (the workflow surface), Data, Location (Devices/Timeline/Map, pairing, geofences, digest), Settings, LLM Settings, jcode launcher + session (xterm terminal + dev-server preview), Math launcher + job (Overview/Terminal/Result tabs — live xterm, start/stop/kill, sharelink).
+- **System** — Ops (health/metrics/restart/logs/update/export/import), Automations + Runs (the workflow surface), Data, Location (Devices/Timeline/Map, pairing, geofences, digest), Settings, LLM Settings, jcode launcher + session (xterm terminal + dev-server preview), Jobs launcher (the tile was "Math") + job (Overview/Terminal/Result tabs — live xterm, start/stop/kill, sharelink).
 
 ### JBrain360 — the Android location client (`android/`)
 

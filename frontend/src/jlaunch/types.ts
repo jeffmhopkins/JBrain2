@@ -1,4 +1,4 @@
-// Types for the Math launcher (jlaunch). The spec/job shapes mirror the control server's
+// Types for the Jobs launcher (jlaunch). The spec/job shapes mirror the control server's
 // public() dicts (proxied by the api's owner routes); the run/share shapes mirror the
 // owner run-mirror (JlaunchRunRow) and the public results endpoint.
 

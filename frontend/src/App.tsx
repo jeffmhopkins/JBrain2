@@ -287,6 +287,9 @@ export function App() {
     // Picking a new card abandons any "return to the session's source card" intent.
     setSessionBackTo(null);
     setMinecraftFromOps(false);
+    // The launcher goes away once a tile is picked, so leaving the card lands on home,
+    // not back on the grid (owner, 2026-11-14).
+    setLauncherOpen(false);
     setCard(target);
   }
 
