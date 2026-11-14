@@ -319,7 +319,7 @@ export function Launcher({
   // count jump on open); null only on a device that has never resolved it, where
   // the tile stays hidden until the fetch below confirms enablement.
   const [imageEnabled, setImageEnabled] = useState<boolean | null>(loadImageEnabledCached);
-  // Config gate for the Math (jlaunch) tile — same pattern as Image.
+  // Config gate for the Jobs (jlaunch) tile — same pattern as Image.
   const [jlaunchEnabled, setJlaunchEnabled] = useState<boolean | null>(loadJlaunchEnabledCached);
   // Two gates quiet the poll: a backgrounded PWA, and a launcher buried under a
   // card. Returning to either re-runs this effect — an immediate refetch, then
@@ -653,8 +653,8 @@ export function Launcher({
             }
             // In edit mode a tap does nothing, as on a phone; Done leaves.
             if (editing) return;
-            // Stay open beneath the card: the card slides up over
-            // the launcher, and dismissing it reveals us again.
+            // The app closes the launcher as the card opens, so leaving the card
+            // lands on home (owner, 2026-11-14).
             onNavigate(target);
           }}
         >
