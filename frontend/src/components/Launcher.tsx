@@ -505,6 +505,9 @@ export function Launcher({
   useEffect(() => {
     const justClosed = wasOpen.current && !open;
     wasOpen.current = open;
+    // Reopened inside the exit window (a quick back out of Jobs): the cleanup cancelled the
+    // timer that would have cleared `closing`, so clear it here or the panel stays off-screen.
+    if (open) setClosing(false);
     if (!justClosed) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     setClosing(true);

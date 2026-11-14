@@ -199,6 +199,17 @@ describe("Launcher controlled retreat", () => {
     expect(screen.queryByRole("navigation", { name: "Launcher" })).toBeNull();
   });
 
+  it("drops the retreat when reopened mid-exit", () => {
+    const { rerender } = render(<Launcher open onClose={noop} onNavigate={noop} />);
+    rerender(<Launcher open={false} onClose={noop} onNavigate={noop} />);
+    act(() => vi.advanceTimersByTime(50));
+    rerender(<Launcher open onClose={noop} onNavigate={noop} />);
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.getByRole("navigation", { name: "Launcher" })).not.toHaveClass(
+      "launcher-closing",
+    );
+  });
+
   it("unmounts immediately when reduced motion is preferred", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true }));
     const { rerender } = render(<Launcher open onClose={noop} onNavigate={noop} />);
@@ -797,7 +808,12 @@ describe("Launcher Jobs tile", () => {
     const Fresh = await freshLauncher([{ id: "b", state: "succeeded" }]);
     render(<Fresh open onClose={() => {}} onNavigate={vi.fn()} />);
     const tile = await screen.findByRole("button", { name: /Jobs/ });
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() =>
+      expect(vi.mocked(fetch).mock.calls.some(([u]) => String(u) === "/api/jlaunch/jobs")).toBe(
+        true,
+      ),
+    );
+    await new Promise((r) => setTimeout(r, 0));
     expect(tile).toHaveTextContent(/^Jobs$/);
   });
 });
