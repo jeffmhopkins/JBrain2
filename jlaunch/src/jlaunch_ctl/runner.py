@@ -52,6 +52,8 @@ def build_script(spec: JobSpec, state_dir: str) -> str:
         'record() { printf \'{"rc":%s,"phase":"%s"}\\n\' "$1" "$PHASE" > "$STATE/status.json"; }',  # noqa: E501
         "run_phase() {",
         '  PHASE="$1"',
+        # The manager reads this while the job runs; status.json only lands at the end.
+        '  printf \'%s\' "$PHASE" > "$STATE/phase"',
         '  echo "== jlaunch phase: $PHASE =="',
         "  local t0 t1 rc",
         "  t0=$(date +%s)",
