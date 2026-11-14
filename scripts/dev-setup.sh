@@ -116,6 +116,10 @@ fi
 # (COVERAGE_CORE=sysmon) is available — it cuts the pytest coverage overhead from
 # ~+84% to ~+15%. `uv sync` below auto-fetches that interpreter; nothing to install
 # by hand. CI (.github/workflows/ci.yml) pins the same runtime and sets the env var.
+# supervisor/.python-version pins 3.13 too, and for a different reason: the sdr sidecar it
+# tests runs on Debian trixie's CPython 3.13 (deploy/Dockerfile.sdr), and with no pin uv took
+# the CI runner's system 3.14, for which the locked numpy has no wheel. The gcc-15 source build
+# it fell back to computed the demodulator's filters wrong (test_sdr_demod.py caught it).
 ensure_uv() {
   if ! command -v uv >/dev/null 2>&1; then
     log "installing uv"
