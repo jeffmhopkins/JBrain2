@@ -3964,6 +3964,17 @@ export interface GrowbotPolicySource {
   added: boolean;
 }
 
+/** What a refresh from the training repo changed in the library (POST
+ * /growbot/policies/refresh): kept walks added, updated or removed, by name, and any it
+ * couldn't take, with why. */
+export interface GrowbotKeptSync {
+  commit: string;
+  added: string[];
+  updated: string[];
+  removed: string[];
+  skipped: string[];
+}
+
 /** The creature's answer: whether it started the move, and if not, why in its own words. */
 export interface GrowbotMoveResult {
   ok: boolean;
@@ -8379,6 +8390,13 @@ export const api = {
   async growbotPolicySources(): Promise<GrowbotPolicySource[]> {
     const response = await request("/api/growbot/policies/sources");
     return (await response.json()) as GrowbotPolicySource[];
+  },
+
+  /** Pull the walks kept in the training repo (its policies/index.toml) into the library.
+   * ApiError 422 says what's wrong with the repo's files; 502 = repo or launcher down. */
+  async refreshGrowbotKept(): Promise<GrowbotKeptSync> {
+    const response = await request("/api/growbot/policies/refresh", { method: "POST" });
+    return (await response.json()) as GrowbotKeptSync;
   },
 
   async addGrowbotPolicy(jobId: string, name: string): Promise<GrowbotPolicy> {

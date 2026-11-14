@@ -491,3 +491,27 @@ def test_client_refresh_passes_the_launchers_reason_through() -> None:
     with pytest.raises(JlaunchError) as gone:
         asyncio.run(offline.refresh_catalog())
     assert gone.value.status is None
+
+
+def test_client_reads_the_kept_policies() -> None:
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/catalog/policies":
+            return httpx.Response(200, json={"commit": "c" * 40, "policies": [], "error": None})
+        if req.url.path == "/catalog/policies/look-v1":
+            return httpx.Response(200, content=b'{"w": 1}')
+        return httpx.Response(404, json={"detail": "no kept policy"})
+
+    client = JlaunchClient("http://jl", "tok", transport=httpx.MockTransport(handle))
+    assert asyncio.run(client.list_kept_policies())["commit"] == "c" * 40
+    assert asyncio.run(client.get_kept_policy("look-v1")) == b'{"w": 1}'
+    with pytest.raises(JlaunchError) as missing:
+        asyncio.run(client.get_kept_policy("nope"))
+    assert missing.value.status == 404
+
+    def boom(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    offline = JlaunchClient("http://jl", "tok", transport=httpx.MockTransport(boom))
+    with pytest.raises(JlaunchError) as gone:
+        asyncio.run(offline.get_kept_policy("look-v1"))
+    assert gone.value.status is None
