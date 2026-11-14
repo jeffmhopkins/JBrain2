@@ -142,4 +142,67 @@ describe("JlaunchScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restore Census" }));
     await waitFor(() => expect(archive).toHaveBeenCalledWith("erdos", false));
   });
+  it("re-reads the training repo's jobs and says what changed", async () => {
+    const repoSpec = {
+      ...SPEC,
+      source: "repo",
+      commit: "abcdef0123456789abcdef0123456789abcdef01",
+      config: "configs/look.toml",
+    } as JlaunchSpec;
+    const specs = vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([repoSpec]);
+    vi.spyOn(api, "jlaunchJobs").mockResolvedValue([]);
+    const pull = vi.spyOn(api, "jlaunchRefreshSpecs").mockResolvedValue({
+      commit: "1234567890abcdef1234567890abcdef12345678",
+      jobs: ["growbot_look", "growbot_new"],
+      added: ["growbot_new"],
+      removed: [],
+    });
+    render(<JlaunchScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("GrowBot look"));
+    expect(screen.getByText("configs/look.toml · training repo at abcdef0")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Check the training repo for new jobs" }));
+    expect(await screen.findByText("New: growbot_new (training repo at 1234567).")).toBeTruthy();
+    expect(pull).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(specs).toHaveBeenCalledTimes(2));
+
+    pull.mockResolvedValueOnce({ commit: "f".repeat(40), jobs: [], added: [], removed: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Check the training repo for new jobs" }));
+    expect(await screen.findByText("Up to date with the training repo at fffffff.")).toBeTruthy();
+
+    pull.mockResolvedValueOnce({
+      commit: "e".repeat(40),
+      jobs: [],
+      added: [],
+      removed: ["growbot_look"],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Check the training repo for new jobs" }));
+    expect(
+      await screen.findByText("Gone from jobs.toml: growbot_look (training repo at eeeeeee)."),
+    ).toBeTruthy();
+  });
+
+  it("keeps the list and says why when the repo's jobs can't be read", async () => {
+    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC]);
+    vi.spyOn(api, "jlaunchJobs").mockResolvedValue([]);
+    const pull = vi
+      .spyOn(api, "jlaunchRefreshSpecs")
+      .mockRejectedValueOnce(new ApiError(422, "jobs.toml job 2: listed twice"))
+      .mockRejectedValueOnce(new ApiError(502, "down"));
+    render(<JlaunchScreen onClose={() => {}} />);
+    const button = await screen.findByRole("button", {
+      name: "Check the training repo for new jobs",
+    });
+    fireEvent.click(button);
+    expect(
+      await screen.findByText(
+        "jobs.toml has a problem, so the list is unchanged: jobs.toml job 2: listed twice",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(button);
+    expect(
+      await screen.findByText("Couldn't reach the training repo. The list is unchanged."),
+    ).toBeTruthy();
+    expect(pull).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("GrowBot look")).toBeTruthy();
+  });
 });

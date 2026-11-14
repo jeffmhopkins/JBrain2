@@ -664,7 +664,7 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   and kept weights live in `github.com/jeffmhopkins/GrowBot_Training` (MuJoCo + PPO on the CPU;
   a slow walk steered by one heading-error input, exported in the runner's `segments` format
   with the error on `cmd_yaw`). The Launcher's `growbot_heading_walk` job
-  (`jlaunch/src/jlaunch_ctl/specs.py`) trains it on the box and hands back the run as a
+  (listed in the training repo's `jobs.toml`) trains it on the box and hands back the run as a
   tarball with the policy JSON and a browser 3D `replay.html`. ✅ Driving it (owner,
   2026-11-14: *"modify this GUI to be able to handle loading these policies … pull it directly
   from the tasks that train them"*): the Body tab's *Trained walks* sheet copies a finished
@@ -695,6 +695,15 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   stand tall, or lower so the camera looks further up), which `growbot_runner.js` now passes
   through from `cmd.pitch` (+1, standing tall, when the app sends none). The optional `growbot_look` job trains a stand-in-place
   specialist on `configs/look.toml`, for if the walk wobbles when stopped.
+  ✅ New training jobs without a box update (owner, 2026-11-14: *"have those tasks sent over to
+  the training repo and then my server pulls them automatically from there … with a refresh
+  button"*): the GrowBot jobs are no longer in `specs.py`. They are read from the training
+  repo's `jobs.toml` (`jlaunch/src/jlaunch_ctl/catalog.py`): each entry names a config under
+  `configs/`, and the launcher runs it through the one fixed pipeline (install, smoke,
+  `./run.sh --config`, package), so the file can't put a command on the box. The Jobs screen's
+  refresh button (and a debug token's `POST /jlaunch/specs/refresh`) re-reads it; the box
+  also re-reads it when it starts and before each Start, and a run clones the exact commit it
+  was read at and records it.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic. Its store
   landed early with the brain log (§2 "Brain log", migration 0262); reading it in the PWA and

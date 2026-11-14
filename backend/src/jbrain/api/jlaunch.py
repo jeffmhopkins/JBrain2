@@ -157,6 +157,22 @@ class ArchiveSpecRequest(BaseModel):
     archived: bool
 
 
+@router.post("/jlaunch/specs/refresh")
+async def refresh_specs(owner: OwnerDep, request: Request) -> dict[str, Any]:
+    return await refresh_catalog(request)
+
+
+async def refresh_catalog(request: Request) -> dict[str, Any]:
+    """Re-read the training repo's jobs.toml (the owner's Refresh, or a debug token's), so
+    a job pushed there appears with no box update. 422 carries what's wrong with the file;
+    502 means the repo or the launcher couldn't be reached."""
+    try:
+        return await _client(request).refresh_catalog()
+    except JlaunchError as exc:
+        code = 422 if exc.status == 422 else 502
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+
 @router.put("/jlaunch/specs/{name}/archive", status_code=204)
 async def archive_spec(
     name: str, body: ArchiveSpecRequest, owner: OwnerDep, request: Request

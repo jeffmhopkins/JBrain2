@@ -4,8 +4,10 @@ before/around any query; DB writes are neutralized)."""
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -15,6 +17,7 @@ from jbrain.api.deps import current_principal
 from jbrain.auth.service import PrincipalInfo
 from jbrain.external import jlaunch_shares
 from jbrain.jlaunch import FakeJlaunchClient, JlaunchError
+from jbrain.jlaunch.client import JlaunchClient
 
 OWNER = PrincipalInfo(id="owner1", kind="owner", label="owner")
 NON_OWNER = PrincipalInfo(id="cap1", kind="capability_token", label="token")
@@ -435,3 +438,56 @@ def test_archive_and_restore_a_job_type(_no_db: None) -> None:
     )
     nobody = TestClient(_app(NON_OWNER, jlaunch_client=FakeJlaunchClient()))
     assert nobody.put(url, json={"archived": True}).status_code == 403
+
+
+def test_owner_refreshes_the_job_types() -> None:
+    fake = FakeJlaunchClient()
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    got = client.post("/api/jlaunch/specs/refresh")
+    assert got.status_code == 200 and got.json()["commit"] == "a" * 40
+    fake.refresh_result = JlaunchError("jobs.toml isn't valid TOML", status=422)
+    bad = client.post("/api/jlaunch/specs/refresh")
+    assert bad.status_code == 422 and bad.json()["detail"] == "jobs.toml isn't valid TOML"
+    assert (
+        TestClient(_app(NON_OWNER, jlaunch_client=fake))
+        .post("/api/jlaunch/specs/refresh")
+        .status_code
+        == 403
+    )
+    assert (
+        TestClient(_app(OWNER, jlaunch_client=None)).post("/api/jlaunch/specs/refresh").status_code
+        == 404
+    )
+
+
+def test_client_refresh_passes_the_launchers_reason_through() -> None:
+    answers = iter(
+        [
+            httpx.Response(200, json={"commit": "c" * 40, "added": ["growbot_x"]}),
+            httpx.Response(422, json={"detail": "jobs.toml job 2: listed twice"}),
+            httpx.Response(502, text="bad gateway"),
+        ]
+    )
+    seen: list[str] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen.append(f"{req.method} {req.url.path} {req.headers['authorization']}")
+        return next(answers)
+
+    client = JlaunchClient("http://jl", "tok", transport=httpx.MockTransport(handle))
+    assert asyncio.run(client.refresh_catalog())["added"] == ["growbot_x"]
+    with pytest.raises(JlaunchError) as bad:
+        asyncio.run(client.refresh_catalog())
+    assert bad.value.status == 422 and str(bad.value) == "jobs.toml job 2: listed twice"
+    with pytest.raises(JlaunchError) as down:
+        asyncio.run(client.refresh_catalog())
+    assert down.value.status == 502 and "control server error" in str(down.value)
+    assert seen[0] == "POST /catalog/refresh Bearer tok"
+
+    def boom(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    offline = JlaunchClient("http://jl", "tok", transport=httpx.MockTransport(boom))
+    with pytest.raises(JlaunchError) as gone:
+        asyncio.run(offline.refresh_catalog())
+    assert gone.value.status is None

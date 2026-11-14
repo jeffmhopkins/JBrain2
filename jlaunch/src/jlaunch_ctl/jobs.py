@@ -30,9 +30,13 @@ import stat
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from jlaunch_ctl.runner import build_script
 from jlaunch_ctl.specs import SPECS, JobSpec, get_spec
+
+if TYPE_CHECKING:
+    from jlaunch_ctl.catalog import Catalog
 from jlaunch_ctl.terminal import (
     PtyTerminal,
     TerminalRegistry,
@@ -123,6 +127,8 @@ class Job:
     artifact_present: bool = False
     artifact_bytes: int | None = None
     console_tail: str = ""
+    # The training repo commit a manifest job cloned; empty for a built-in spec.
+    commit: str = ""
 
     def public(self) -> dict[str, object]:
         data = asdict(self)
@@ -141,12 +147,14 @@ class JobManager:
         registry: TerminalRegistry,
         *,
         max_concurrent_jobs: int = 1,
+        catalog: Catalog | None = None,
     ) -> None:
         self._workspace_root = Path(workspace_root)
         self._state_root = Path(state_root)
         self._artifact_root = Path(artifact_root)
         self._registry = registry
         self._max = max_concurrent_jobs
+        self._catalog = catalog
         self._jobs: dict[str, Job] = {}
         # Job ids whose stop/kill was owner-requested, so finalize records `killed`
         # rather than reading the (non-zero) rc as a spontaneous failure.
@@ -182,15 +190,27 @@ class JobManager:
                 if phase:
                     job.phase = phase
 
+    def _listed(self, name: str) -> bool:
+        return self._catalog is not None and self._catalog.owns(name)
+
     def _live_count(self) -> int:
         return sum(1 for j in self._jobs.values() if j.state in LIVE_STATES)
 
     # -- lifecycle ---------------------------------------------------------------
 
     async def start(self, spec_name: str) -> Job:
+        if self._max > 0 and self._live_count() >= self._max:
+            raise BusyError("a job is already running")
+        if self._catalog is not None and self._catalog.owns(spec_name):
+            # A config fix pushed a minute ago is what should train; an unreachable repo
+            # falls back to the commit the list already shows.
+            await self._catalog.refresh_quietly()
+            if not self._catalog.owns(spec_name):
+                raise JobError(f"{spec_name} is no longer in the training repo's jobs")
         spec = get_spec(spec_name)
-        if spec is None:
+        if spec is None or (spec.commit and not self._listed(spec_name)):
             raise JobError(f"unknown spec: {spec_name}")
+        # The refresh above awaited: a second Start may have got in meanwhile.
         if self._max > 0 and self._live_count() >= self._max:
             raise BusyError("a job is already running")
 
@@ -211,6 +231,7 @@ class JobManager:
             artifact_name=Path(spec.artifact_path).name,
             started_at=_now(),
             machine=read_machine(),
+            commit=spec.commit,
         )
         self._jobs[jid] = job
 

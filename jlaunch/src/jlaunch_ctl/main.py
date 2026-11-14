@@ -3,6 +3,7 @@
 import logging
 
 from jlaunch_ctl.app import create_app
+from jlaunch_ctl.catalog import Catalog
 from jlaunch_ctl.config import Settings
 from jlaunch_ctl.jobs import JobManager
 from jlaunch_ctl.terminal import TerminalRegistry
@@ -17,11 +18,14 @@ logging.basicConfig(
 logging.getLogger("jlaunch_ctl").setLevel(_level)
 
 registry = TerminalRegistry()
+catalog = Catalog(settings.state_root)
+catalog.load()
 jobs = JobManager(
     settings.workspace_root,
     settings.state_root,
     settings.artifact_root,
     registry,
     max_concurrent_jobs=settings.max_concurrent_jobs,
+    catalog=catalog,
 )
-app = create_app(settings, jobs, registry)
+app = create_app(settings, jobs, registry, catalog)

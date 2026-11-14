@@ -2162,7 +2162,7 @@ fieldset.settings-field > legend {
 
 /* Debug-access (capability token) management list */
 .settings-error {
-  color: var(--danger, #e5484d);
+  color: var(--danger);
 }
 .debug-token-list {
   list-style: none;
@@ -25961,6 +25961,39 @@ button.task-band:active {
 }
 .jl-dot {
   color: var(--amber);
+}
+.jl-pull {
+  margin-left: auto;
+  color: var(--text-2);
+}
+.jl-pull.spin svg {
+  animation: jl-pull-spin 0.9s linear infinite;
+}
+@keyframes jl-pull-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jl-pull.spin svg {
+    animation: none;
+  }
+}
+.jl-pulled {
+  display: block;
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 2px 0 10px;
+}
+.jl-pulled.bad {
+  color: var(--danger);
+}
+.jl-spec-src {
+  font-size: 11.5px;
+  color: var(--text-3, var(--text-2));
+  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace);
+  margin: -6px 0 11px;
 }
 .jl-empty {
   color: var(--text-2);

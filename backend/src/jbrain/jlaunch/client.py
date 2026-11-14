@@ -8,6 +8,7 @@ network; this is the only place the api contacts it.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any, Protocol
 
 import httpx
@@ -50,6 +51,8 @@ class JlaunchApi(Protocol):
     async def list_live(self, jid: str) -> list[dict[str, Any]]: ...
 
     async def get_live(self, jid: str, name: str) -> tuple[bytes, str]: ...
+
+    async def refresh_catalog(self) -> dict[str, Any]: ...
 
 
 class JlaunchClient:
@@ -134,6 +137,25 @@ class JlaunchClient:
     async def list_live(self, jid: str) -> list[dict[str, Any]]:
         return await self._json("GET", f"/jobs/{jid}/live")
 
+    async def refresh_catalog(self) -> dict[str, Any]:
+        """Re-read the training repo's jobs.toml. A clone of a small repo, so it gets the
+        artifact's longer read allowance rather than the 30 s control timeout."""
+        try:
+            async with self._client(timeout=httpx.Timeout(30.0, read=180.0)) as client:
+                resp = await client.post("/catalog/refresh")
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPStatusError as exc:
+            detail = ""
+            with contextlib.suppress(ValueError, AttributeError):
+                detail = str(exc.response.json().get("detail") or "")
+            raise JlaunchError(
+                detail or f"jlaunch control server error: {exc}",
+                status=exc.response.status_code,
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise JlaunchError(f"jlaunch control server error: {exc}") from exc
+
     async def get_live(self, jid: str, name: str) -> tuple[bytes, str]:
         """One file from a job's live folder and its media type. The control server caps
         these (32 MB) and allowlists the names, so a whole read is fine."""
@@ -161,6 +183,14 @@ class FakeJlaunchClient:
         self.started_specs: list[str] = []
         # jid -> {name: (bytes, media type)}: what each job's live folder holds.
         self.live: dict[str, dict[str, tuple[bytes, str]]] = {}
+        # What the next catalog refresh answers: a result, or an error to raise.
+        self.refresh_result: dict[str, Any] | JlaunchError = {
+            "commit": "a" * 40,
+            "added": [],
+            "removed": [],
+            "jobs": [],
+            "error": None,
+        }
 
     def _make(self, jid: str, spec: str) -> dict[str, Any]:
         return {
@@ -246,6 +276,11 @@ class FakeJlaunchClient:
         if found is None:
             raise JlaunchError("no such live file", status=404)
         return found
+
+    async def refresh_catalog(self) -> dict[str, Any]:
+        if isinstance(self.refresh_result, JlaunchError):
+            raise self.refresh_result
+        return self.refresh_result
 
     # -- test helpers ------------------------------------------------------------
 

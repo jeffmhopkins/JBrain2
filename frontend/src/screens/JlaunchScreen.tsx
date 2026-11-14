@@ -10,7 +10,13 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import { EngineBanner } from "../components/EngineBanner";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, TrashIcon } from "../components/icons";
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  RefreshIcon,
+  TrashIcon,
+} from "../components/icons";
 import { fmtEta, jlaunchLiveUrl, jlaunchResultUrl } from "../jlaunch/live";
 import { jlaunchShareUrl } from "../jlaunch/share";
 import { attachTerminal, jlaunchTerminalWsUrl } from "../jlaunch/terminal";
@@ -18,6 +24,7 @@ import type {
   JlaunchJob,
   JlaunchLiveFile,
   JlaunchProgress,
+  JlaunchRefresh,
   JlaunchShare,
   JlaunchSpec,
 } from "../jlaunch/types";
@@ -47,6 +54,9 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [archiving, setArchiving] = useState<string | null>(null);
+  // Re-reading the training repo's jobs.toml, and what the last read found.
+  const [pulling, setPulling] = useState(false);
+  const [pulled, setPulled] = useState<{ ok: boolean; text: string } | null>(null);
   // The one job the Runs tab is narrowed to (from a job's View runs), and the groups the
   // owner has folded shut ("jobs:<category>", "archived:<category>", "r:<spec>").
   const [focus, setFocus] = useState<string | null>(null);
@@ -126,6 +136,24 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
     }
   }
 
+  async function pullJobs() {
+    setPulling(true);
+    try {
+      setPulled({ ok: true, text: pulledText(await api.jlaunchRefreshSpecs()) });
+    } catch (err) {
+      setPulled({
+        ok: false,
+        text:
+          err instanceof ApiError && err.status === 422
+            ? `jobs.toml has a problem, so the list is unchanged: ${err.message}`
+            : "Couldn't reach the training repo. The list is unchanged.",
+      });
+    } finally {
+      setPulling(false);
+      void refresh();
+    }
+  }
+
   async function archive(spec: JlaunchSpec, on: boolean) {
     setArchiving(spec.name);
     try {
@@ -170,8 +198,24 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
         <h2 className="jl-bar-title">
           Jobs<span className="jl-dot">.</span>
         </h2>
+        {state.kind === "ready" && (
+          // New training jobs come from the training repo's jobs.toml; this re-reads it so
+          // one pushed there shows up without a box update (owner, 2026-11-14).
+          <button
+            type="button"
+            className={`icon-btn jl-pull${pulling ? " spin" : ""}`}
+            disabled={pulling}
+            onClick={() => void pullJobs()}
+            aria-label="Check the training repo for new jobs"
+          >
+            <RefreshIcon size={20} />
+          </button>
+        )}
       </header>
       <EngineBanner />
+      {pulled && state.kind === "ready" && (
+        <output className={`jl-pulled${pulled.ok ? "" : " bad"}`}>{pulled.text}</output>
+      )}
 
       {state.kind === "disabled" ? (
         <p className="jl-empty">The job launcher isn't enabled on this server.</p>
@@ -249,6 +293,11 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                             // must not launch hours of work (owner, 2026-11-14).
                             <div className="jl-spec-detail">
                               <p className="jl-spec-note">{spec.notes}</p>
+                              {spec.source === "repo" && spec.commit && (
+                                <p className="jl-spec-src">
+                                  {spec.config} · training repo at {spec.commit.slice(0, 7)}
+                                </p>
+                              )}
                               <div className="jl-spec-actions">
                                 {spec.archived ? (
                                   <button
@@ -418,6 +467,15 @@ function Group({
       {open && children}
     </section>
   );
+}
+
+function pulledText(r: JlaunchRefresh): string {
+  const at = `training repo at ${r.commit.slice(0, 7)}`;
+  const parts = [
+    r.added.length ? `New: ${r.added.join(", ")}` : "",
+    r.removed.length ? `Gone from jobs.toml: ${r.removed.join(", ")}` : "",
+  ].filter(Boolean);
+  return parts.length ? `${parts.join(". ")} (${at}).` : `Up to date with the ${at}.`;
 }
 
 function groupBy<T>(items: T[], key: (item: T) => string): [string, T[]][] {
@@ -618,7 +676,10 @@ function OverviewPane({
         <h3 className="jl-h3">Job</h3>
         <div className="jl-meta">
           <div className="jl-meta-title">{job.title}</div>
-          <div>repo · {job.repo}</div>
+          <div>
+            repo · {job.repo}
+            {job.commit ? ` @ ${job.commit.slice(0, 7)}` : ""}
+          </div>
           <div>
             state · {job.state}
             {job.error ? ` — ${job.error}` : ""}

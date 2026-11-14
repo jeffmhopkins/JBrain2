@@ -6,13 +6,14 @@ is verified. Specs are CODE-DEFINED (never owner-supplied URLs), so the repo is 
 trusted constant — but the clone still runs with git's ext/file transports denied and
 the URL shape validated, defense in depth.
 
-Erdos-Straus 1e12 was the first spec; a GrowBot policy training run is another. Adding a
-computation is a new entry here, no new plumbing.
+Erdos-Straus 1e12 was the first spec. GrowBot policy training jobs are not defined
+here: they are read from the training repo's ``jobs.toml`` (``catalog.py``), which can
+only pick a config for a fixed pipeline, so a new one needs no box update.
 """
 
 from __future__ import annotations
 
-import dataclasses
+import re
 from dataclasses import dataclass
 
 
@@ -24,6 +25,7 @@ class SpecError(ValueError):
 # an arbitrary command at clone time and ``file://`` reads host-visible trees — both are
 # refused even though spec URLs are code-defined.
 _ALLOWED_SCHEMES = ("https://", "git://")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,11 @@ class JobSpec:
     # watching from the phone: progress, a fresh replay, the latest weights. Only plain
     # files in it are served, through an allowlist of names and types. Empty = none.
     live_dir: str = ""
+    # Set only for a job read from a repo's manifest (catalog.py): the exact commit a
+    # run clones, the config it trains, and the Jobs screen group it belongs in.
+    commit: str = ""
+    config: str = ""
+    category: str = ""
 
     def public(self) -> dict[str, object]:
         return {
@@ -74,6 +81,10 @@ class JobSpec:
             "all_cores": self.all_cores,
             "notes": self.notes,
             "live": bool(self.live_dir),
+            "source": "repo" if self.commit else "builtin",
+            "commit": self.commit,
+            "config": self.config,
+            **({"category": self.category} if self.category else {}),
         }
 
 
@@ -92,6 +103,8 @@ def _validate(spec: JobSpec) -> JobSpec:
         spec.live_dir.startswith("/") or ".." in spec.live_dir.split("/")
     ):
         raise SpecError(f"{spec.name}: live_dir must stay inside the checkout")
+    if spec.commit and not (spec.repo_url and _COMMIT_RE.fullmatch(spec.commit)):
+        raise SpecError(f"{spec.name}: commit must be a full sha of a cloned repo")
     return spec
 
 
@@ -207,118 +220,24 @@ ERDOS_STRAUS_1E12_NATIVE = _native_spec("1e12", "12", "1000000000000", "2-5 h", 
 ERDOS_STRAUS_1E13_NATIVE = _native_spec("1e13", "13", "10000000000000", "1-2 days", 20)
 
 
-# A GrowBot walking policy trained on the box's CPU cores
-# (github.com/jeffmhopkins/GrowBot_Training): MuJoCo + Stable-Baselines3 PPO, one
-# simulator per core. The repo owns the environment, reward and config; this spec only
-# runs it. run.sh trains, exports the app-format policy JSON (checked against the
-# trained network: export_verify.log must end "EXPORT OK"), evaluates it and writes a
-# browser 3D replay page; the run folder ships as one tarball. CPU-only torch keeps the
-# install small, and nothing needs the GPU or a display.
-GROWBOT_HEADING_WALK = _validate(
-    JobSpec(
-        name="growbot_heading_walk",
-        title="GrowBot heading walk (train a walking policy)",
-        repo_url="https://github.com/jeffmhopkins/GrowBot_Training",
-        branch="main",
-        phases=(
-            Phase("install", "./install.sh"),
-            Phase("smoke", ".venv/bin/python -m pytest -q"),
-            Phase("train", "./run.sh jlaunch"),
-            Phase(
-                "package",
-                "cp runs/jlaunch.tar.gz growbot_heading_walk_artifacts.tar.gz",
-            ),
-        ),
-        artifact_path="growbot_heading_walk_artifacts.tar.gz",
-        artifact_media_type="application/gzip",
-        verify_log="runs/jlaunch/export_verify.log",
-        verify_must_end_with="EXPORT OK",
-        headline_markers=("eval summary:", "max |json - network|:"),
-        est_hours="1-3 h",
-        disk_gb=3,
-        all_cores=True,
-        notes=(
-            "Trains the slow heading-following walk with the repo's default config "
-            "(configs/heading_walk.toml) on every core. The download is the run "
-            "folder: the policy JSON the app loads, replay.html (open it in a browser "
-            "to watch the walks in 3D), the evaluation, checkpoints and TensorBoard "
-            "logs. While it trains, the Live card shows progress and a 3D replay "
-            "of the latest checkpoint."
-        ),
-        live_dir="runs/jlaunch/live",
-    )
-)
-
-
-# The second GrowBot walk (owner, 2026-11-14): tail first, toward what the phone's
-# rear camera sees, learning to get up from folded flat, and steered by three inputs
-# (heading, speed, camera height) so one policy covers walk, stop-and-look and back
-# away. Same repo and pipeline as the heading walk; only the config differs. Its 80M
-# steps run longer.
-GROWBOT_CAMERA_WALK = _validate(
-    dataclasses.replace(
-        GROWBOT_HEADING_WALK,
-        name="growbot_camera_walk",
-        title="GrowBot camera walk (tail first, toward the camera's view)",
-        phases=(
-            Phase("install", "./install.sh"),
-            Phase("smoke", ".venv/bin/python -m pytest -q"),
-            Phase("train", "./run.sh jlaunch --config configs/camera_walk.toml"),
-            Phase(
-                "package",
-                "cp runs/jlaunch.tar.gz growbot_camera_walk_artifacts.tar.gz",
-            ),
-        ),
-        artifact_path="growbot_camera_walk_artifacts.tar.gz",
-        est_hours="3-6 h",
-        notes=(
-            "Trains the face-following walk (configs/camera_walk.toml): it walks tail "
-            "first, toward what the phone's camera sees, and learns to get up from "
-            "folded flat. Three inputs steer it: the heading to the face, a speed "
-            "(walk up, stop and keep facing it, or back away) and a camera height "
-            "(stand tall, or lower to look up). Downloads and the Live card work as "
-            "for the heading walk."
-        ),
-    )
-)
-
-
-# The stationary specialist (owner, 2026-11-14): the camera walk at speed 0 already
-# turns on the spot, so this is only for when that wobbles: never walks, trained for a
-# steady camera and quick, big turns.
-GROWBOT_LOOK = _validate(
-    dataclasses.replace(
-        GROWBOT_CAMERA_WALK,
-        name="growbot_look",
-        title="GrowBot look (stay put, turn to face a direction)",
-        phases=(
-            Phase("install", "./install.sh"),
-            Phase("smoke", ".venv/bin/python -m pytest -q"),
-            Phase("train", "./run.sh jlaunch --config configs/look.toml"),
-            Phase("package", "cp runs/jlaunch.tar.gz growbot_look_artifacts.tar.gz"),
-        ),
-        artifact_path="growbot_look_artifacts.tar.gz",
-        est_hours="2-4 h",
-        notes=(
-            "Trains the stand-in-place look (configs/look.toml): it never walks, only "
-            "turns on the spot to face a heading and holds a camera height, trained "
-            "for a steady view. The camera walk at speed 0 does the same job; run "
-            "this one if that wobbles. Downloads and the Live card work as for the "
-            "heading walk."
-        ),
-    )
-)
-
-
 SPECS: dict[str, JobSpec] = {
     ERDOS_STRAUS_1E12.name: ERDOS_STRAUS_1E12,
     ERDOS_STRAUS_1E12_NATIVE.name: ERDOS_STRAUS_1E12_NATIVE,
     ERDOS_STRAUS_1E13_NATIVE.name: ERDOS_STRAUS_1E13_NATIVE,
-    GROWBOT_HEADING_WALK.name: GROWBOT_HEADING_WALK,
-    GROWBOT_CAMERA_WALK.name: GROWBOT_CAMERA_WALK,
-    GROWBOT_LOOK.name: GROWBOT_LOOK,
 }
+
+# The GrowBot training jobs are not here: they come from the training repo's jobs.toml
+# (catalog.py), which fills these two. REPO_SPECS also holds retired jobs, so an old
+# run's result still resolves; LISTED_REPO_SPECS is what the Jobs list offers.
+REPO_SPECS: dict[str, JobSpec] = {}
+LISTED_REPO_SPECS: list[str] = []
 
 
 def get_spec(name: str) -> JobSpec | None:
-    return SPECS.get(name)
+    return SPECS.get(name) or REPO_SPECS.get(name)
+
+
+def listed_specs() -> list[JobSpec]:
+    """What can be started: the built-in specs, then the repo's current jobs."""
+    repo = [REPO_SPECS[n] for n in LISTED_REPO_SPECS if n in REPO_SPECS]
+    return [*SPECS.values(), *repo]

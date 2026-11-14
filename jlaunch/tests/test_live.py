@@ -70,13 +70,6 @@ def test_live_dir_must_stay_in_checkout() -> None:
             )
 
 
-def test_growbot_spec_declares_its_live_folder() -> None:
-    spec = specs_mod.SPECS["growbot_heading_walk"]
-    assert spec.live_dir == "runs/jlaunch/live"
-    assert spec.public()["live"] is True
-    assert specs_mod.SPECS["erdos_straus_1e12"].public()["live"] is False
-
-
 async def test_lists_and_serves_only_plain_allowlisted_files(ctx) -> None:
     app, manager = ctx
     async with _client(app) as ac:
