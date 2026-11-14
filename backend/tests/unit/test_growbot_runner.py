@@ -50,4 +50,4 @@ def _actions(channels: list[str], cmds: list[dict[str, float]]) -> list[list[flo
 def test_cmd_pitch_reaches_the_policy() -> None:
     out = _actions(["accel_z", "cmd_yaw", "cmd_pitch"], [{"yaw": 0.2, "pitch": -0.5}, {}])
     assert out[0][0] == pytest.approx(-0.462117, abs=1e-5)  # tanh(-0.5)
-    assert out[1][0] == pytest.approx(0.0)  # an app that sends no pitch reads 0
+    assert out[1][0] == pytest.approx(0.761594, abs=1e-5)  # no pitch sent: tall, tanh(1)

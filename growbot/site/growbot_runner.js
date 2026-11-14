@@ -259,7 +259,8 @@ export class Walker {
   }
 
   // accel/gyro: {x,y,z} ALREADY rotated into the body frame (caller applies the z-up Rx). cmd:{fwd,yaw,pitch} optional.
-  // pitch: the camera walk's camera-height command (-1 low .. +1 tall); absent reads 0.
+  // pitch: the camera walk's camera-height command (-1 low .. +1 tall); absent reads +1,
+  // standing tall, the stance it was trained to hold by default.
   // euler: {roll,pitch,yaw} in rad (base-relative phone euler, same source as the classic obs16 path) —
   // only read by policies declaring euler_* channels; IMU_SIGN applies per-axis exactly as the classic walker.
   // Returns {l,r} servo degrees (0-180) + raw action.
@@ -278,7 +279,7 @@ export class Walker {
       accel_x: s[0] * A.x, accel_y: s[1] * A.y, accel_z: s[2] * A.z,
       gyro_x: s[0] * G.x, gyro_y: s[1] * G.y, gyro_z: s[2] * G.z,
       euler_roll: s[0] * E.roll, euler_pitch: s[1] * E.pitch, euler_yaw: s[2] * E.yaw,   // same per-axis bench signs as the classic obs16 walker
-      cmd_forward: cmd.fwd, cmd_yaw: cmd.yaw, cmd_pitch: cmd.pitch || 0,
+      cmd_forward: cmd.fwd, cmd_yaw: cmd.yaw, cmd_pitch: typeof cmd.pitch === 'number' && isFinite(cmd.pitch) ? cmd.pitch : 1,
     };
     const resolve = (ch) => {
       const v = src[ch];
