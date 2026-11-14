@@ -761,7 +761,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-'
-        'tools2"' in page
+        'tools2-quiet"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -3411,6 +3411,132 @@ def test_each_pending_timer_is_a_pill_top_right_until_it_goes() -> None:
     assert 'if (typeof window.gbTimers === "function") list = window.gbTimers().slice();' in strip
     assert 'x.at > t ? countdown(x.at - t) : "due"' in strip
     assert strip.index("renderTimers();\n    schedule();") > strip.index("function render()")
+
+
+def _quiet_page(script: str) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("var GB_NOISE_LP=") : page.index("function _yieldNow(){")]
+    store = "var _ls={};var localStorage={getItem:function(k){return k in _ls?_ls[k]:null;}};"
+    logs = "var logs=[];function logEv(e,d){logs.push([e,d]);}"
+    out = subprocess.run(
+        [node, "-e", f"{store}{logs}\n{code}\n{script}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout)
+    assert isinstance(got, dict)
+    return got
+
+
+def test_truck_noise_clips_are_dropped_before_they_reach_the_creature() -> None:
+    """Field, 2026-11-13, on truck Bluetooth: "You can hold る" (avg logprob -3.43) and quiet
+    thumps (peak 0.07-0.17, a fifth voiced or less) reached Dave as words. Real speech at home
+    measured peak 0.17+ with 0.28+ voiced, so it passes, and so does a well-voiced clip the model
+    doubted. Push-to-talk and recorder clips are deliberate and never dropped."""
+    got = _quiet_page(
+        "var p='pcm';console.log(JSON.stringify({r:["
+        "gbNoiseClip({lane:p,mx:0.166,duty:0.21},{lp:-3.43}),"
+        "gbNoiseClip({lane:p,mx:0.075,duty:0.04},{lp:-0.08}),"
+        "gbNoiseClip({lane:p,mx:0.11,duty:0.11},{lp:-0.16}),"
+        "gbNoiseClip({lane:p,mx:0.167,duty:0.44},{lp:-0.12}),"
+        "gbNoiseClip({lane:p,mx:0.43,duty:0.66},{lp:-0.2}),"
+        "gbNoiseClip({lane:p,mx:0.35,duty:0.6},{lp:null}),"
+        "gbNoiseClip({lane:p,mx:0.5,duty:0.5},{lp:-1.9}),"
+        "gbNoiseClip({lane:p,mx:0.3,duty:0.3},{lp:-3.43}),"
+        "gbNoiseClip({lane:'talk',mx:0.075,duty:0.04},{lp:-3}),"
+        "gbNoiseClip({lane:'',mx:0.075,duty:0.04},{lp:-3}),"
+        "gbNoiseClip(null,null)]}));"
+    )
+    assert got["r"] == ["quiet", "quiet", "quiet", "", "", "", "", "lp", "", "", ""]
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    wired = (
+        'var _g=_sttGate(d); var _gbNz=_g.drop?"":gbNoiseClip((meta&&meta.gbSnap)||_sp,_sr);'
+        ' if(_gbNz){ try{ _listenStash=null; logEv("stt_noise",{w:_gbNz});'
+        ' if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); }catch(_nz){}'
+        ' _sttPhase("done"); return; }'
+    )
+    assert page.count(wired) == 2
+    assert "lane:_sttLane}" in page
+    assert "if(_gbP) meta.gbPiece=_gbP; meta.gbSnap=_sttSnap;" in page
+
+
+def test_a_scene_line_he_already_said_is_not_said_again() -> None:
+    """Field, 2026-11-13: "I see the dark road ahead and the green glow of the dashboard" in
+    many wordings opened 12 of 40 replies. On his own beats, a scene sentence close to one said
+    in the last ten minutes is cut; a new one, a short one, and any non-scene sentence are kept,
+    and a reply to the person is never cut, so "say that again" is still said again. A buffered
+    reply is never cut to nothing."""
+    got = _quiet_page(
+        "gbSaidKeep('I see the dark road ahead and the green glow of the dashboard. Hi.');"
+        "gbSaidKeep('Your friend Quorra likes the big wheel at the fair.');"
+        "var r={};"
+        "r.a=gbNoRepeat('I see the green dashboard and the dark road. Maple Street is long.');"
+        "r.b=gbNoRepeat('The dark road and green dashboard glow again. Tamsin waves.');"
+        "r.c=gbNoRepeat('Your friend Quorra likes the big wheel at the fair.');"
+        "r.d=gbNoRepeat('Hi. Okay.');"
+        "r.e=gbNoRepeat('I see the green dashboard glow and the dark road.');"
+        "r.keep=gbNoRepeat('I see the green dashboard glow and the dark road.',1);"
+        "r.num=gbSentences('It is 2.5 miles. Then left! Okay');"
+        "gbSaidKeep('I see what you mean, your timer is set for ten minutes.');"
+        "r.plain=gbNoRepeat('I see what you mean, your timer is set for ten minutes.');"
+        "_gbHuman=true;r.asked=gbNoRepeat('I see the green dashboard glow and the dark road.');"
+        "_gbHuman=false;"
+        "_gbSaid[0].t=Date.now()-GB_SAID_KEEP_MS-1;_gbSaid[1].t=_gbSaid[0].t;"
+        "r.old=gbNoRepeat('I see the green dashboard and the dark road.');"
+        "r.logs=logs;console.log(JSON.stringify(r));"
+    )
+    assert got["a"] == "Maple Street is long."
+    assert got["b"] == "Tamsin waves."
+    assert got["c"] == "Your friend Quorra likes the big wheel at the fair."
+    assert got["d"] == "Hi. Okay."
+    assert got["e"] == ""
+    assert got["keep"] == "I see the green dashboard glow and the dark road."
+    assert got["num"] == ["It is 2.5 miles.", "Then left!", "Okay"]
+    assert got["plain"] == "I see what you mean, your timer is set for ten minutes."
+    assert got["asked"] == "I see the green dashboard glow and the dark road."
+    assert got["old"] == "I see the green dashboard and the dark road."
+    assert got["logs"][0] == ["repeat_cut", {"n": 1}]
+
+
+def test_he_finishes_his_line_unless_tapped() -> None:
+    """Owner, 2026-11-13: "I almost prefer it to have him finish his thing before being able to
+    record me". Yield and barge-in are opt-in per phone; a tap while his voice plays stops him and
+    holds the rest of this reply if it was this reply's voice, except in a tap-counting game where
+    taps are answers."""
+    got = _quiet_page(
+        "var r=[gbOptIn('gb_yield'),gbOptIn('gb_bargein')];_ls.gb_yield='1';"
+        "r.push(gbOptIn('gb_yield'));r.push(_gbCut);"
+        "console.log(JSON.stringify({r:r}));"
+    )
+    assert got["r"] == [False, False, True, False]
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        "  if(_gbCut) return true;\n  if(_yieldSaid) return _yieldSaid===1;\n"
+        '  if(!gbOptIn("gb_yield")) return false;\n' in page
+    )
+    assert '_bgOn=gbOptIn("gb_bargein");' in page
+    assert 'localStorage.gb_bargein!=="0"' not in page
+    assert (
+        "    if((_voiceActive||_chainBusy)&&e.isPrimary!==false&&!(typeof tapCountingContext"
+        '==="function"&&tapCountingContext())){ try{ logEv("tap_cut",{}); }catch(_tc){}'
+        " _gbCut=_streamSaid; silence(); return; }" in page
+    )
+    assert "_yieldSaid=0; _gbCut=false; _gbHuman=!!_hreqAtIssue;" in page
+    assert "  var chunk=gbNoRepeat(v.slice(_streamSpoke.length,upto).trim());" in page
+    assert (
+        "    if(o&&o.say){ try{ if(!_streamSaid) o.say=gbNoRepeat(o.say,1);"
+        " if(!_gbCut&&_yieldSaid!==1&&!MUTED) gbSaidKeep(o.say); }catch(_nr){} }\n"
+        "    var said=(o.say&&o.say.trim())" in page
+    )
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert (
+        "Do not tell them what your eyes see unless they ask or something new has appeared"
+        in prompts
+    )
 
 
 def test_a_timer_follow_up_that_waits_past_its_second_tells_it_once() -> None:

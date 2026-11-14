@@ -2255,7 +2255,7 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2-quiet"',
         1,
     ),
     # And the soul code that names a fresh persona (NAME_PATCHES).
@@ -2809,6 +2809,133 @@ TALKLOG_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += TALKLOG_PATCHES
+
+# Talking in a truck over Bluetooth (owner, 2026-11-13: "the audio kept cutting him off and he just
+# never had a chance to speak ... I almost prefer it to have him finish his thing before being able
+# to record me"). The log showed no barge-in at all: every reply that went unheard was upstream's
+# yield, which holds the whole reply silent while the ear is open, and road noise kept it open. Now:
+# - he always says his reply. Yield and barge-in are off unless a phone asks (localStorage
+#   gb_yield / gb_bargein = "1"); the mic already opens no utterance while he speaks;
+# - a tap on him while his voice is playing stops him, the manual cut-in; if it is this reply's
+#   voice, the rest of the reply stays a caption (it rides the yield gate). Not during a
+#   tap-counting game, where taps are answers;
+# - a phone-mic clip that was quiet and mostly silence (peak under 0.2 and voiced under a quarter of
+#   it: the truck's thumps; real speech at home measured 0.17+ with 0.28+ voiced), or that the speech
+#   model barely believed (avg logprob under -1.5, "You can hold る") and was voiced under 0.35, is
+#   dropped like whisper's own no-speech gate, before it reaches him. Judged on the clip's own stats
+#   (the shared snapshot is overwritten by the next clip). Only the always-listening PCM lane:
+#   push-to-talk is deliberate, and the recorder fallback is not covered yet. Unlike that gate it
+#   does not hand the clip to the
+#   sound-naming ear: that call runs on the same model slot and wiped his cached prompt, so the next
+#   turn re-read it all (30 s, three times that drive);
+# - a camera-scene sentence close to one he said in the last ten minutes is not said again ("I see
+#   the dark road and the green glow of the dashboard" opened 12 of 40 replies). Only scene-shaped
+#   sentences, only on his own beats (a reply to the person is never cut, so "say that again" is
+#   said again), a whole buffered reply is never cut to nothing, and a held line is not counted.
+_GB_QUIET_JS = r"""var GB_NOISE_LP=-1.5, GB_NOISE_LP_DUTY=0.35, GB_NOISE_MX=0.2, GB_NOISE_DUTY=0.25, GB_SAID_KEEP_MS=600000, GB_SAID_MAX=40,
+  GB_SAID_STOP={i:1,a:1,an:1,the:1,and:1,or:1,but:1,of:1,to:1,in:1,on:1,at:1,is:1,are:1,am:1,was:1,it:1,its:1,
+    this:1,that:1,my:1,your:1,you:1,me:1,we:1,us:1,so:1,just:1,now:1,very:1,too:1,with:1,for:1,can:1,still:1},
+  GB_SCENE=/^(?:(?:oh|wow|hmm|look|ah),?\s+)?(?:i\s+(?:can\s+|still\s+|just\s+)?(?:see|spot|notice)\s+(?:a|an|the|some|lots?|many|two|three)\b|i(?:'|’)?m\s+(?:seeing|looking|watching)\b|my\s+eyes\b|(?:the|that|this)\s+(?:\w+\s+){0,2}(?:road|dashboard|dash|sky|lights?|street|highway|trees?|windshield|window|glow|scenery)\b|it(?:'|’)?s\s+(?:so\s+|very\s+|still\s+|getting\s+)?(?:dark|bright|night)\b|it\s+is\s+(?:so\s+|very\s+|still\s+|getting\s+)?(?:dark|bright|night)\b)/i,
+  _gbSaid=[], _gbCut=false, _gbHuman=false;
+function gbOptIn(k){ try{ return localStorage.getItem(k)==="1"; }catch(e){ return false; } }
+function gbNoiseClip(sp,row){ try{
+  if(!sp||sp.lane!=="pcm") return "";
+  var lp=row&&row.lp, mx=+sp.mx, du=+sp.duty;
+  if(!isFinite(du)) return "";
+  if(isFinite(mx)&&mx>0&&mx<GB_NOISE_MX&&du<GB_NOISE_DUTY) return "quiet";
+  if(typeof lp==="number"&&isFinite(lp)&&lp<GB_NOISE_LP&&du<GB_NOISE_LP_DUTY) return "lp";
+}catch(e){} return ""; }
+function gbSaidWords(t){ var w=String(t||"").toLowerCase().replace(/['’]/g,"").split(/[^a-z0-9]+/), out={}, n=0;
+  for(var i=0;i<w.length;i++){ var x=w[i]; if(x.length<2||GB_SAID_STOP[x]===1) continue; if(x.length>4&&/s$/.test(x)) x=x.slice(0,-1); if(!out[x]){ out[x]=1; n++; } }
+  return {w:out,n:n}; }
+function gbSaidBefore(a){ if(a.n<3) return false; var now=Date.now();
+  for(var i=_gbSaid.length-1;i>=0;i--){ var b=_gbSaid[i]; if(now-b.t>GB_SAID_KEEP_MS) break;
+    var both=0, k; for(k in a.w) if(b.w[k]) both++;
+    if(both>=3&&both/(a.n+b.n-both)>=0.5) return true; }
+  return false; }
+function gbSentences(t){ var out=[], p=String(t||"").replace(/([.!?…]+["»”]?)\s+/g,"$1\u0001").split("\u0001");
+  for(var i=0;i<p.length;i++){ var x=p[i].trim(); if(x) out.push(x); } return out; }
+function gbNoRepeat(t,keepOne){ if(_gbHuman) return String(t||""); var s=gbSentences(t), kept=[], cut=0;
+  for(var i=0;i<s.length;i++){ if(GB_SCENE.test(s[i])&&gbSaidBefore(gbSaidWords(s[i]))) cut++; else kept.push(s[i]); }
+  if(!cut) return String(t||"");
+  if(!kept.length&&keepOne) return String(t||"");
+  try{ logEv("repeat_cut",{n:cut}); }catch(e){}
+  return kept.join(" "); }
+function gbSaidKeep(t){ var s=gbSentences(t), now=Date.now();
+  for(var i=0;i<s.length;i++){ var a=gbSaidWords(s[i]); if(a.n>=3) _gbSaid.push({t:now,w:a.w,n:a.n}); }
+  if(_gbSaid.length>GB_SAID_MAX) _gbSaid.splice(0,_gbSaid.length-GB_SAID_MAX); }
+"""
+
+QUIET_RIDE_PATCHES: list[tuple[str, str, str, int]] = [
+    ("v3/next.html", "function _yieldNow(){", _GB_QUIET_JS + "function _yieldNow(){", 1),
+    (
+        "v3/next.html",
+        "  if(_yieldSaid) return _yieldSaid===1;\n",
+        "  if(_gbCut) return true;\n  if(_yieldSaid) return _yieldSaid===1;\n"
+        "  if(!gbOptIn(\"gb_yield\")) return false;\n",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'try{ _bgOn=localStorage.gb_bargein!=="0"; }catch(e){ _bgOn=true; }',
+        '_bgOn=gbOptIn("gb_bargein");',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var _g=_sttGate(d);",
+        'var _g=_sttGate(d); var _gbNz=_g.drop?"":gbNoiseClip((meta&&meta.gbSnap)||_sp,_sr);'
+        ' if(_gbNz){ try{ _listenStash=null; logEv("stt_noise",{w:_gbNz});'
+        ' if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); }catch(_nz){}'
+        ' _sttPhase("done"); return; }',
+        2,
+    ),
+    (
+        "v3/next.html",
+        "  var meta=_languageRequest(clipMs); if(_gbP) meta.gbPiece=_gbP;",
+        "  var meta=_languageRequest(clipMs); if(_gbP) meta.gbPiece=_gbP; meta.gbSnap=_sttSnap;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  var chunk=v.slice(_streamSpoke.length,upto).trim();",
+        "  var chunk=gbNoRepeat(v.slice(_streamSpoke.length,upto).trim());",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    var said=(o.say&&o.say.trim())",
+        "    if(o&&o.say){ try{ if(!_streamSaid) o.say=gbNoRepeat(o.say,1);"
+        " if(!_gbCut&&_yieldSaid!==1&&!MUTED) gbSaidKeep(o.say); }catch(_nr){} }\n"
+        "    var said=(o.say&&o.say.trim())",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '    if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false){ gbPttDown(e); return; }',
+        '    if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false){ gbPttDown(e); return; }\n'
+        "    if((_voiceActive||_chainBusy)&&e.isPrimary!==false&&!(typeof tapCountingContext"
+        '==="function"&&tapCountingContext())){ try{ logEv("tap_cut",{}); }catch(_tc){}'
+        " _gbCut=_streamSaid; silence(); return; }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_streamSpoke=""; _streamSaid=false; _streamBurst=false; _yieldSaid=0;',
+        '_streamSpoke=""; _streamSaid=false; _streamBurst=false; _yieldSaid=0; _gbCut=false;'
+        " _gbHuman=!!_hreqAtIssue;",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "Never chain line after line.",
+        "Never chain line after line. Do not tell them what your eyes see unless they ask or"
+        " something new has appeared, and never say again what you already said in this"
+        " conversation.",
+        1,
+    ),
+]
+PATCHES += QUIET_RIDE_PATCHES
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
