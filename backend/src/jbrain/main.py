@@ -108,6 +108,7 @@ from jbrain.api import (
     growbot_flash,
     growbot_llm,
     growbot_personas,
+    growbot_policies,
     growbot_upstream,
     health,
     home_network,
@@ -210,6 +211,7 @@ from jbrain.growbot.body import SqlBodyRepo
 from jbrain.growbot.calls import SqlCallLog
 from jbrain.growbot.journal import SqlJournal
 from jbrain.growbot.personas import SqlPersonaRepo
+from jbrain.growbot.policies import SqlPolicyRepo
 from jbrain.growbot.repo import SqlGrowbotRepo
 from jbrain.growbot.upstream import MAX_COMPARE_BYTES as GROWBOT_COMPARE_MAX_BYTES
 from jbrain.growbot.upstream import NOTIFY_KIND as GROWBOT_UPSTREAM_NOTIFY_KIND
@@ -512,6 +514,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.owner_device_repo = SqlOwnerDeviceRepo(maker)
         app.state.growbot_repo = SqlGrowbotRepo(maker)
         app.state.growbot_body = SqlBodyRepo(maker)
+        app.state.growbot_policies = SqlPolicyRepo(maker)
         app.state.growbot_calls = SqlCallLog(maker)
         app.state.growbot_journal = SqlJournal(maker)
         app.state.growbot_personas = SqlPersonaRepo(
@@ -2044,6 +2047,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(panel_notice.debug_router, prefix="/api")
         app.include_router(growbot.debug_router, prefix="/api")
         app.include_router(growbot_body.debug_router, prefix="/api")
+        app.include_router(growbot_policies.debug_router, prefix="/api")
         app.include_router(growbot_personas.debug_router, prefix="/api")
         app.include_router(growbot_upstream.debug_router, prefix="/api")
         app.include_router(growbot_flash.debug_router, prefix="/api")
@@ -2084,6 +2088,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(feed.router, prefix="/api")
     app.include_router(growbot.router, prefix="/api")
     app.include_router(growbot_body.router, prefix="/api")
+    app.include_router(growbot_policies.router, prefix="/api")
     app.include_router(growbot_personas.router, prefix="/api")
     app.include_router(growbot_upstream.router, prefix="/api")
     # Flashing a robot from the PWA, its status card and revoke (GROWBOT_PLAN §3, G2).
@@ -2145,6 +2150,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The GrowBot sidecar's ticket and key checks and its model lane, on its own token.
     app.include_router(growbot.internal_router, prefix="/internal")
     app.include_router(growbot_body.internal_router, prefix="/internal")
+    app.include_router(growbot_policies.internal_router, prefix="/internal")
     app.include_router(growbot_personas.internal_router, prefix="/internal")
     app.include_router(growbot_brain.internal_router, prefix="/internal")
     app.include_router(growbot_llm.router, prefix="/internal")

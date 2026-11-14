@@ -138,6 +138,7 @@ MOVES = frozenset(
     {"forward", "back", "spin_left", "spin_right", "wiggle", "bow", "sway", "stop"}
 )
 MOVE_SECS = (1.0, 15.0)
+WALKS = frozenset({"forward", "back", "spin_left", "spin_right"})
 # A creature answers at once (it acks what it started, not what it finished); one that has not
 # by then is busy or gone, and the api's own call to here is 5 s.
 MOVE_ACK_S = 3.0
@@ -145,6 +146,12 @@ MODELS_CACHE_S = 30.0
 # A creature polls its robot's calibration every few seconds; one api read serves them all.
 CAL_CACHE_S = 2.0
 CAL_PATH = "/api/box/cal"
+# A trained walk from JBrain's policy library, which the Body tab drives by its id.
+POLICY_PATH = "/api/box/policy"
+POLICY_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+# A library policy never changes under its id, so one read serves a run of walks; a deleted
+# one stops loading within this.
+POLICY_CACHE_S = 60.0
 # Whether a persona's phone wears a robot, for its calibration polls; a hand-over shows within.
 WEARS_CACHE_S = 15.0
 # The PWA's direct leg moves (api/growbot_body.py), checked again here since they go straight
@@ -1134,6 +1141,7 @@ class GrowBot:
         self._root_cert_at = -math.inf
         self._models_at = -math.inf
         self._cals: dict[str, tuple[float, Any]] = {}
+        self._policies: dict[str, tuple[float, bytes]] = {}
         self._wears: dict[tuple[str, str, str], tuple[float, bool]] = {}
         # Apart from the soul sync, so a slow api answering these polls never holds a soul.
         self._cal_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-cal")
@@ -1392,6 +1400,13 @@ class GrowBot:
             or not (secs == 0 or MOVE_SECS[0] <= secs <= MOVE_SECS[1])
         ):
             return json_response(400, {"error": "secs"})
+        # A walk or spin may name a trained walk from the library to run instead of the
+        # creature's own (the creature loads it from POLICY_PATH).
+        policy = msg.get("policy", "") if msg else ""
+        if not isinstance(policy, str) or (
+            policy and (what not in WALKS or not POLICY_ID_RE.fullmatch(policy))
+        ):
+            return json_response(400, {"error": "policy"})
         chan = self.channels.get(f"{code}-agent")
         creature = chan.body if chan is not None else None
         if chan is None or creature is None:
@@ -1400,7 +1415,10 @@ class GrowBot:
         waiter: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         chan.acks[rid] = waiter
         try:
-            creature.send_json({"t": "box_move", "rid": rid, "move": what, "secs": secs})
+            frame: dict[str, Any] = {"t": "box_move", "rid": rid, "move": what, "secs": secs}
+            if policy:
+                frame["policy"] = policy
+            creature.send_json(frame)
             ack = await asyncio.wait_for(waiter, MOVE_ACK_S)
         except TimeoutError:
             return json_response(504, {"error": "no_answer"})
@@ -1648,6 +1666,8 @@ class GrowBot:
             return await self.soul_route(req)
         if req.path == CAL_PATH:
             return await self.cal_route(req)
+        if req.path == POLICY_PATH:
+            return await self.policy_route(req)
         if req.path in (MEMORY_PATH, MEMORY_PATH + "/view", MEMORY_PATH + "/forget"):
             return await self.memory_route(req)
         if req.path == PREFS_PATH:
@@ -1739,6 +1759,36 @@ class GrowBot:
             self._cals.clear()
         self._cals[code] = (time.monotonic(), cal)
         return cal
+
+    async def policy_route(self, req: Request) -> Response:
+        """`GET ?id=<uuid>`: a library policy's JSON for the creature's runner, read from the
+        api. Any signed-in phone may load one: a policy is weights, not anyone's data, and
+        the move that names it already came from the robot's owner."""
+        if req.method != "GET":
+            return json_response(405, {"error": "method not allowed"})
+        pid = req.arg("id")
+        headers = [("Cache-Control", "no-store")]
+        if not POLICY_ID_RE.fullmatch(pid):
+            return json_response(400, {"error": "id"}, headers)
+        now = time.monotonic()
+        hit = self._policies.get(pid)
+        if hit is None or now - hit[0] >= POLICY_CACHE_S:
+            url = f"{self.config.api_url}/internal/growbot/policies/{pid}"
+            up = await self._call(
+                http_call, url, None, self._auth(), "GET", 10.0, pool=self._cal_pool
+            )
+            ok = up.status == 200 and _parse(up.body) is not None
+            if len(self._policies) > 16:
+                self._policies.clear()
+            # The api's 404 is kept too (as empty), so a page asking for ids that don't
+            # exist can't hold the cal pool's threads, which the legs' polls share.
+            if ok or up.status == 404:
+                hit = self._policies[pid] = (now, up.body if ok else b"")
+            if not ok:
+                return json_response(404, {"error": "no such policy"}, headers)
+        if not hit or not hit[1]:
+            return json_response(404, {"error": "no such policy"}, headers)
+        return Response(200, hit[1], "application/json", headers=headers)
 
     async def soul_route(self, req: Request) -> Response:
         """The persona's soul, which lives on the box (plan §2c): `GET` pulls it, `POST

@@ -3934,6 +3934,27 @@ export type GrowbotMove =
   | "sway"
   | "stop";
 
+/** A walk trained by a Jobs GrowBot job, kept in the box's policy library. `contract` is what
+ *  the pad feeds it: which end walks first, and whether it takes a speed and a camera height. */
+export interface GrowbotPolicy {
+  id: string;
+  name: string;
+  source_job: string;
+  source_spec: string;
+  bytes: number;
+  created_at: string;
+  contract: { facing: "nose" | "camera"; speed: boolean; pitch: boolean; control_hz: number };
+}
+
+/** A finished GrowBot training job whose policy can be added to the library. */
+export interface GrowbotPolicySource {
+  job_id: string;
+  spec: string;
+  title: string;
+  finished_at: string | null;
+  added: boolean;
+}
+
 /** The creature's answer: whether it started the move, and if not, why in its own words. */
 export interface GrowbotMoveResult {
   ok: boolean;
@@ -8294,12 +8315,48 @@ export const api = {
 
   /** One move for the creature wearing `code`; `secs` (1-15, 0 for its own pick) for a walk
    *  or spin. Refused with words when nobody drives it or its page is not on screen. */
-  async moveGrowbotRobot(code: string, move: GrowbotMove, secs = 0): Promise<GrowbotMoveResult> {
+  /** `policy`: a library walk to run this walk or spin with, steered by heading. */
+  async moveGrowbotRobot(
+    code: string,
+    move: GrowbotMove,
+    secs = 0,
+    policy?: string,
+  ): Promise<GrowbotMoveResult> {
     const response = await request(
       `/api/growbot/robots/${encodeURIComponent(code)}/move`,
-      jsonInit("POST", { move, secs }),
+      jsonInit("POST", policy ? { move, secs, policy } : { move, secs }),
     );
     return (await response.json()) as GrowbotMoveResult;
+  },
+
+  async growbotPolicies(): Promise<GrowbotPolicy[]> {
+    const response = await request("/api/growbot/policies");
+    return (await response.json()) as GrowbotPolicy[];
+  },
+
+  async growbotPolicySources(): Promise<GrowbotPolicySource[]> {
+    const response = await request("/api/growbot/policies/sources");
+    return (await response.json()) as GrowbotPolicySource[];
+  },
+
+  async addGrowbotPolicy(jobId: string, name: string): Promise<GrowbotPolicy> {
+    const response = await request(
+      "/api/growbot/policies",
+      jsonInit("POST", { job_id: jobId, name }),
+    );
+    return (await response.json()) as GrowbotPolicy;
+  },
+
+  async renameGrowbotPolicy(id: string, name: string): Promise<GrowbotPolicy> {
+    const response = await request(
+      `/api/growbot/policies/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { name }),
+    );
+    return (await response.json()) as GrowbotPolicy;
+  },
+
+  async deleteGrowbotPolicy(id: string): Promise<void> {
+    await request(`/api/growbot/policies/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   async growbotCal(code: string): Promise<GrowbotCalOut> {

@@ -79,6 +79,8 @@ class _Fake(BaseHTTPRequestHandler):
     # Each robot's saved calibration (None: never saved), and the status the api answers.
     cals: dict[str, dict[str, Any] | None] = {}
     cal_status = 200
+    # The policy library: id -> the policy JSON the api serves.
+    policies: dict[str, dict[str, Any]] = {}
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         return None
@@ -129,6 +131,12 @@ class _Fake(BaseHTTPRequestHandler):
                 return
             code = path.split("/")[4]
             self._reply(200, json.dumps({"cal": _Fake.cals.get(code)}).encode())
+        elif path.startswith("/internal/growbot/policies/"):
+            got = _Fake.policies.get(path.rsplit("/", 1)[1])
+            if not authed_get(self) or got is None:
+                self._reply(401 if not authed_get(self) else 404, b"{}")
+                return
+            self._reply(200, json.dumps(got).encode())
         elif path == "/tts":
             if _Fake.tts_status != 200:
                 self._reply(_Fake.tts_status, b"down", "text/plain")
@@ -320,6 +328,7 @@ def fake() -> Iterator[str]:
     _Fake.soul = {}
     _Fake.cals = {}
     _Fake.cal_status = 200
+    _Fake.policies = {}
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Fake)
     threading.Thread(target=server.serve_forever, args=(0.02,), daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
@@ -2599,9 +2608,57 @@ def test_a_late_ack_after_the_wait_reaches_no_one(
     page.shut()
 
 
+_PID = "0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6"
+
+
+def test_a_walk_can_name_a_library_policy_for_the_creature(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    seen: list[dict[str, Any]] = []
+
+    def answer() -> None:
+        msg = page.message()
+        seen.append(msg)
+        page.text({"t": "box_ack", "rid": msg["rid"], "ok": True, "state": "accepted"})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    got = _move(run, {"code": "gb-abc123", "move": "spin_left", "secs": 5, "policy": _PID})
+    t.join(5)
+    assert got == (200, {"ok": True, "state": "accepted", "why": ""})
+    assert seen[0]["policy"] == _PID and seen[0]["move"] == "spin_left"
+    page.shut()
+
+
+def test_a_move_without_a_policy_sends_none(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    seen: list[dict[str, Any]] = []
+
+    def answer() -> None:
+        msg = page.message()
+        seen.append(msg)
+        page.text({"t": "box_ack", "rid": msg["rid"], "ok": True})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    _move(run, {"code": "gb-abc123", "move": "forward", "secs": 3})
+    t.join(5)
+    assert "policy" not in seen[0]
+    page.shut()
+
+
 @pytest.mark.parametrize(
     "body",
     [
+        {"code": "gb-abc123", "move": "forward", "policy": "../x"},
+        {"code": "gb-abc123", "move": "forward", "policy": _PID.upper()},
+        {"code": "gb-abc123", "move": "forward", "policy": 3},
+        # A gesture or a stop runs no walk policy.
+        {"code": "gb-abc123", "move": "wiggle", "policy": _PID},
+        {"code": "gb-abc123", "move": "stop", "policy": _PID},
         {"code": "../x", "move": "stop"},
         {"move": "stop"},
         {"code": "gb-abc123", "move": "dance"},
@@ -2784,6 +2841,39 @@ def test_the_calibration_read_wants_a_code_a_get_and_a_session(run: _Running) ->
     resp = run.request("GET", "/api/box/cal?id=gb-abc123", cookie=False)
     resp.read()
     assert resp.status == 401
+
+
+def _policy_get(run: _Running, query: str, cookie: bool = True) -> tuple[int, Any]:
+    resp = run.request("GET", "/api/box/policy" + query, cookie=cookie)
+    data = resp.read()
+    return resp.status, (json.loads(data) if data and resp.status != 401 else None)
+
+
+def test_the_creature_loads_a_library_policy_through_the_box(run: _Running) -> None:
+    _Fake.policies = {_PID: {"obs_size": 2, "obs_spec": {"control_hz": 25}}}
+    assert _policy_get(run, f"?id={_PID}") == (
+        200,
+        {"obs_size": 2, "obs_spec": {"control_hz": 25}},
+    )
+    reads = [r for r in _Fake.seen if "/policies/" in r["path"]]
+    assert reads[0]["path"] == f"/internal/growbot/policies/{_PID}"
+    assert reads[0]["auth"] == f"Bearer {_TOKEN}"
+    # One read serves a run of walks.
+    _policy_get(run, f"?id={_PID}")
+    assert len([r for r in _Fake.seen if "/policies/" in r["path"]]) == 1
+
+
+def test_a_policy_read_wants_an_id_a_get_and_a_session(run: _Running) -> None:
+    assert _policy_get(run, "?id=../x")[0] == 400
+    assert _policy_get(run, "")[0] == 400
+    # The api has no such policy (deleted, or never was), and the box remembers that briefly.
+    assert _policy_get(run, f"?id={_PID}")[0] == 404
+    assert _policy_get(run, f"?id={_PID}")[0] == 404
+    assert len([r for r in _Fake.seen if "/policies/" in r["path"]]) == 1
+    resp = run.request("POST", f"/api/box/policy?id={_PID}", b"{}")
+    resp.read()
+    assert resp.status == 405
+    assert _policy_get(run, f"?id={_PID}", cookie=False)[0] == 401
 
 
 def test_handle_checks_the_bearer_too(run: _Running, gb: types.ModuleType) -> None:

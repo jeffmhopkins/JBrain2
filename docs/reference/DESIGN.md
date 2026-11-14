@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-11-14 — picking a launcher tile closes the launcher; the Math tile is now Jobs
+> **Status:** Living · **Last verified:** 2026-11-14 — the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3308,7 +3308,20 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   seconds. Under the bar, what the creature said: *Walking forward for 5 s.*, or its own words
   for why not, in rose. Then *Walks and spins run for* as pill chips (*2 s*, *5 s* by default,
   *10 s*, *15 s*, inside the box's 1-15 bound) and *Tricks* as pill chips (*Wiggle*, *Bow*,
-  *Sway*). A strip above the pad says how to set the robot down, or, amber, why nothing can
+  *Sway*). Above the pad, **Walk with** as pill chips sized to their words: *Its own walks*
+  (the creature's stock walk and spins), one chip per trained walk in the box's library by
+  its name, then a dashed steel *Trained walks…* (*Add a trained walk…* while there are none)
+  that opens the **Trained walks** sheet. The pick is remembered per robot on this phone. With
+  a trained walk picked the keys steer it by heading: *Ahead*, *Left* and *Right* (a 90° turn),
+  and *Back* when the walk takes a speed or *Turn* (around) when it only takes a heading; the
+  answer names it (*Turning left with Quick trot for 5 s.*), and tricks stay the creature's
+  own. The sheet lists *On the box* (each walk's name, *nose first, heading only* or *camera
+  end first, with speed*, its size and day; *Rename* inline, *Delete* armed: *Sure?*), then
+  *From finished training jobs* (each finished GrowBot training run that left a walk, with
+  *Add*, or an *On the box* tag once added; empty: *No finished GrowBot training yet. Start a
+  GrowBot walk on the Jobs screen; when it finishes, its walk shows up here.*). An added walk
+  is named for its kind and day (*Camera walk, Nov 14*). A strip above the pad says how to set
+  the robot down (with a trained walk, its name and kind), or, amber, why nothing can
   move. The walk runs on the rider phone's motion sensors, so every key is disabled until the
   robot is on (*Turn the robot on to move it.*) and a creature wearing it is open on screen
   (*Open a persona wearing it and keep the creature on screen. Its phone's motion sensors run

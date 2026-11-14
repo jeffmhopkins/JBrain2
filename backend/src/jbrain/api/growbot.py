@@ -39,6 +39,7 @@ from jbrain.api.internal_auth import require_growbot
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.growbot.personas import PersonaRepo
+from jbrain.growbot.policies import PolicyRepo
 from jbrain.growbot.repo import CODE_RE, GrowbotRepo, RobotInfo
 from jbrain.storage import InternalSecrets
 
@@ -256,10 +257,19 @@ async def _list_robots(request: Request, ctx: SessionContext) -> list[RobotOut]:
 Move = Literal["forward", "back", "spin_left", "spin_right", "wiggle", "bow", "sway", "stop"]
 
 
+_WALKS = frozenset({"forward", "back", "spin_left", "spin_right"})
+
+
 class MoveIn(BaseModel):
     move: Move
     # How long a walk or spin runs; 0 lets the creature pick, as it does for its own brain.
     secs: int = Field(default=0, ge=0, le=15)
+    # A trained walk from the policy library (growbot_policies.py) to run this walk or spin
+    # with, steered by heading; None runs the creature's own.
+    policy: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    )
 
 
 class MoveOut(BaseModel):
@@ -279,12 +289,16 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
     robots = await _repo(request).list_robots(ctx)
     if not any(r.code == code and r.revoked_at is None for r in robots):
         raise HTTPException(status_code=404, detail="no such robot")
-    resp = await _sidecar(
-        request,
-        "POST",
-        "/internal/robots/move",
-        {"code": code, "move": body.move, "secs": body.secs},
-    )
+    sent: dict[str, object] = {"code": code, "move": body.move, "secs": body.secs}
+    if body.policy is not None:
+        if body.move not in _WALKS:
+            raise HTTPException(status_code=422, detail="only a walk or a spin runs a policy")
+        library = cast(PolicyRepo, request.app.state.growbot_policies)
+        # Checked here so the creature is never sent to load one that isn't there.
+        if not await library.exists(ctx, body.policy):
+            raise HTTPException(status_code=404, detail="no such policy")
+        sent["policy"] = body.policy
+    resp = await _sidecar(request, "POST", "/internal/robots/move", sent)
     if resp is None:
         raise HTTPException(status_code=503, detail="GrowBot isn't running on the box.")
     if resp.status_code in _MOVE_REFUSED:
@@ -297,7 +311,14 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
     if out is None:
         log.warning("growbot.move_failed", code=code, status=resp.status_code)
         raise HTTPException(status_code=502, detail="GrowBot couldn't pass the move on.")
-    log.info("growbot.move", code=code, move=body.move, ok=out.ok, state=out.state)
+    log.info(
+        "growbot.move",
+        code=code,
+        move=body.move,
+        policy=body.policy,
+        ok=out.ok,
+        state=out.state,
+    )
     return out
 
 

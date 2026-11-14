@@ -56,6 +56,7 @@ ENROLL_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
 # the repo is a stand-in that says yes, and with hosting off every model name is unknown.
 _PID = "00000000-0000-4000-8000-000000000001"
 _PHONE = "phone-0123456789abcdef"
+_POLICY = "00000000-0000-4000-8000-0000000000a1"
 
 
 class _YesPersonaRepo:
@@ -107,6 +108,7 @@ GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ),
     ("GET", "/internal/growbot/body/gb-x", None, 200),
     ("GET", "/internal/growbot/robots/gb-x/cal", None, 200),
+    ("GET", f"/internal/growbot/policies/{_POLICY}", None, 200),
     ("POST", "/internal/growbot/calls", {"kind": "tts", "ok": True, "total_ms": 1}, 204),
     ("POST", "/internal/growbot/journal", {"sid": "nx-abc", "rows": []}, 200),
     ("POST", "/internal/growbot/memories/list", {"persona": _PID, "phone": _PHONE}, 200),
@@ -137,6 +139,7 @@ GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
 _TEMPLATES = {
     "/internal/growbot/body/gb-x": "/internal/growbot/body/{code}",
     "/internal/growbot/robots/gb-x/cal": "/internal/growbot/robots/{code}/cal",
+    f"/internal/growbot/policies/{_POLICY}": "/internal/growbot/policies/{pid}",
 }
 # Keeps its own HMAC bearer (api/llm_internal.py, tested in test_llm_internal.py).
 _OWN_BEARER = {"/internal/llm/regen-gateway-config"}
@@ -145,6 +148,11 @@ _OWN_BEARER = {"/internal/llm/regen-gateway-config"}
 class _YesBodyRepo:
     async def get_cal(self, ctx: object, code: str) -> tuple[bool, None]:
         return True, None
+
+
+class _YesPolicyRepo:
+    async def get_json(self, ctx: object, pid: str) -> dict[str, object]:
+        return {}
 
 
 class _YesGrowbotRepo:
@@ -165,6 +173,7 @@ def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
         app.state.growbot_repo = _YesGrowbotRepo()
         app.state.growbot_personas = _YesPersonaRepo()
         app.state.growbot_body = _YesBodyRepo()
+        app.state.growbot_policies = _YesPolicyRepo()
         yield app, c
 
 
