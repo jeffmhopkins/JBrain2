@@ -56,6 +56,16 @@ One always-on container serving the box's **speech I/O**:
   normalizer for the **wall** (whose `mdToPlain` leaves digits intact) and the backstop for any raw
   `/tts` caller; the non-numeric rewrites (compass, state) work for the PWA too because
   `speakable.js` leaves those tokens untouched for the box.
+- **Sound tagger (`POST :8801/tag`).** **CED-tiny** (`mispeech/ced-tiny`, Apache-2.0, 6.7 MB of
+  ONNX on the onnxruntime Kokoro already brings) names a 16-bit WAV clip against AudioSet's 527
+  everyday sounds and answers `{"tags": [[label, score], …]}`, best first (up to 12, each 0-1,
+  none under 0.05). It scores every label at once, so one clip can be both `Speech` and `Dog`. A
+  clip longer than the model's 10 s window is tagged in windows and each sound keeps its best
+  window's score; 60 s at most is read. About 20 ms per 5 s clip on two CPU threads. The weights
+  are baked into the image at `/opt/ced` from one pinned Hugging Face revision, checked by
+  SHA-256; without them `/tag` answers 503 and `/tts/health` reports `tagger_available: false`.
+  Its only caller is the GrowBot sidecar (`growbot/server/serve.py`), which turns the tags into
+  words (`growbot/README.md`).
 - **STT (`:8080`)** — whisper.cpp behind llama-swap (load-on-demand, idle-unload). The api
   reaches it at `http://tts-stt:8080/v1`; the model + `llama-swap.yaml` config are
   provisioned by `jbrain enable-whisper` (`scripts/whisper-setup.sh`).

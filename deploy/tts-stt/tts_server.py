@@ -445,6 +445,7 @@ def tts_health() -> dict[str, Any]:
         "g2p": g2p,
         "lexicon_entries": len(KOKORO_LEXICON),
         "voice_count": len(tts_voices()),
+        "tagger_available": _tagger_available(),
     }
 
 
@@ -654,6 +655,140 @@ def tts_wav(
     )
 
 
+# --- CED-tiny: the box's sound tagger (Apache-2.0) ------------------------------------------
+# No model on the box could hear a sound: the brain takes text and images only, and whisper
+# writes words. CED-tiny (mispeech/ced-tiny, 6.7 MB of ONNX) scores a clip against AudioSet's 527
+# everyday sounds in ~20 ms on two CPU threads, and it scores them all at once, so one clip can be
+# both "Speech" and "Dog". The weights are baked into the image (Dockerfile.tts-stt, pinned by
+# revision and SHA-256); a box without them answers /tag with 503 and names nothing.
+CED_DIR = Path(os.environ.get("BRAIN_CED_DIR", "/opt/ced"))
+CED_MODEL = "model.onnx"
+CED_LABELS = "config.json"
+CED_RATE = 16000
+# Its exported graph refuses a clip much over 10 s (a fixed position table) or under ~0.15 s, so a
+# long clip is tagged in 10 s windows and each sound keeps its best window's score.
+CED_WINDOW = 10 * CED_RATE
+CED_MIN = CED_RATE // 4
+TAG_MAX_S = 60
+TAG_MAX_BYTES = 4 * 1024 * 1024
+TAG_TOP = 12
+TAG_FLOOR = 0.05
+
+# 0 or 1 (session, labels), or None once a load has failed, so a missing model is not retried on
+# every clip.
+_tagger_holder: list[Any] = []
+_tagger_load_lock = threading.Lock()
+
+
+def _tagger_available() -> bool:
+    return (CED_DIR / CED_MODEL).exists() and (CED_DIR / CED_LABELS).exists()
+
+
+def _load_tagger() -> Any:
+    if not _tagger_holder:
+        with _tagger_load_lock:
+            if not _tagger_holder:
+                loaded: Any = None
+                if _tagger_available():
+                    try:
+                        import onnxruntime as ort
+
+                        opts = ort.SessionOptions()
+                        # Two threads: it shares the container's CPU with Kokoro and whisper.
+                        opts.intra_op_num_threads = 2
+                        session = ort.InferenceSession(
+                            str(CED_DIR / CED_MODEL), opts, providers=["CPUExecutionProvider"]
+                        )
+                        id2label = json.loads((CED_DIR / CED_LABELS).read_text())["id2label"]
+                        labels = [str(id2label[str(i)]) for i in range(len(id2label))]
+                        loaded = (session, labels)
+                    except Exception as exc:  # noqa: BLE001 — a bad model must not take TTS down
+                        print(f"[tag] sound tagger failed to load: {exc}", file=sys.stderr)
+                _tagger_holder.append(loaded)
+    return _tagger_holder[0]
+
+
+def _wav_samples(raw: bytes) -> list[float] | None:
+    """A 16-bit PCM WAV as mono floats at 16 kHz, or None for anything else. The page's clips are
+    already mono 16 kHz, so the linear resample only runs for a stray clip."""
+    try:
+        with wave.open(io.BytesIO(raw)) as w:
+            if w.getsampwidth() != 2 or w.getnchannels() < 1:
+                return None
+            channels, rate = w.getnchannels(), w.getframerate()
+            pcm = w.readframes(min(w.getnframes(), TAG_MAX_S * rate))
+    except (wave.Error, EOFError, ValueError, RuntimeError):
+        # RuntimeError: a hostile chunk size trips the stdlib chunk reader itself.
+        return None
+    if rate <= 0:
+        return None
+    ints = array("h")
+    ints.frombytes(pcm[: len(pcm) - len(pcm) % 2])
+    if sys.byteorder == "big":
+        ints.byteswap()
+    if channels > 1:
+        n = len(ints) // channels
+        mono = [sum(ints[i * channels : (i + 1) * channels]) / channels for i in range(n)]
+    else:
+        mono = list(ints)
+    floats = [x / 32768.0 for x in mono]
+    if rate == CED_RATE or not floats:
+        return floats
+    n = int(len(floats) * CED_RATE / rate)
+    step = rate / CED_RATE
+    last = len(floats) - 1
+    out = []
+    for i in range(n):
+        pos = i * step
+        j = int(pos)
+        k = min(j + 1, last)
+        frac = pos - j
+        out.append(floats[j] * (1 - frac) + floats[k] * frac)
+    return out
+
+
+def _ced_run(session: Any, window: list[float]) -> list[float]:
+    import numpy as np
+
+    out = session.run(None, {session.get_inputs()[0].name: np.asarray([window], "float32")})
+    return [float(x) for x in out[0][0]]
+
+
+_tag_lock = threading.Lock()
+
+
+def tag_wav(raw: bytes) -> list[tuple[str, float]] | None:
+    """The clip's likeliest sounds, best first, as (AudioSet label, 0-1 score). None when the
+    tagger is not baked or the clip is not a WAV it can read."""
+    tagger = _load_tagger()
+    if tagger is None:
+        return None
+    samples = _wav_samples(raw)
+    if not samples:
+        return None
+    session, labels = tagger
+    best = [0.0] * len(labels)
+    started = time.monotonic()
+    with _tag_lock:
+        for at in range(0, len(samples), CED_WINDOW):
+            window = samples[at : at + CED_WINDOW]
+            if len(window) < CED_MIN:
+                if at:
+                    break
+                window = window + [0.0] * (CED_MIN - len(window))
+            for i, score in enumerate(_ced_run(session, window)):
+                if score > best[i]:
+                    best[i] = score
+    ranked = sorted(
+        ((labels[i], round(s, 3)) for i, s in enumerate(best) if s >= TAG_FLOOR),
+        key=lambda pair: -pair[1],
+    )[:TAG_TOP]
+    if _tts_debug[0]:
+        took = round((time.monotonic() - started) * 1000)
+        print(f"[tag] {len(samples) / CED_RATE:.1f}s in {took} ms: {ranked[:3]}", file=sys.stderr)
+    return ranked
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -724,6 +859,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path.split("?", 1)[0] == "/tag":
+            self._tag()
+            return
         # The app pushes {"kind": "tts_debug", "on": bool} while a debug-console token is
         # live, switching on the verbose per-clip trace. Latched like the wall's flags.
         if self.path.split("?", 1)[0] != "/event":
@@ -741,6 +879,25 @@ class Handler(BaseHTTPRequestHandler):
             self._send(204, b"", "text/plain")
         else:
             self._send(400, b"unknown kind", "text/plain")
+
+    def _tag(self) -> None:
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            n = -1
+        if n <= 0 or n > TAG_MAX_BYTES:
+            self._send(413 if n > TAG_MAX_BYTES else 400, b"bad clip", "text/plain")
+            return
+        raw = self.rfile.read(n)
+        try:
+            tags = tag_wav(raw)
+        except Exception as exc:  # noqa: BLE001 — a failed tag is a 503, never a dead server
+            print(f"[tag] tagging failed: {exc}", file=sys.stderr)
+            tags = None
+        if tags is None:
+            self._send(503, b"tagger unavailable", "text/plain")
+            return
+        self._send(200, json.dumps({"tags": tags}).encode(), "application/json")
 
     def log_message(self, *args) -> None:  # quiet; runs as a background service
         pass

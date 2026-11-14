@@ -2072,12 +2072,12 @@ class GrowBot:
 
     async def llm(self, req: Request, *, stream: bool) -> Response:
         if _asks_to_hear(req.body):
-            # The page's sound-naming ear sends the clip as audio, which no model on the box can
-            # take: stripped, it reached the creature's model as a bare "name this sound", which
+            # The page's sound-naming ear sends the clip as audio, which the brain cannot take:
+            # stripped, it reached the creature's model as a bare "name this sound", which
             # answered "SPEECH: someone is talking" every time (field, 2026-11-13), sent the
             # noise on to whisper, and took the creature's slot and its cached prompt with it.
-            # Nothing was heard, so nothing is named: the ear reads an empty answer as silence.
-            return _nothing_heard(stream)
+            # The speech service's sound tagger names it instead, and the brain is never called.
+            return await self.name_sound(req.body, stream)
         models = await self._call(self.models)
         body = self.llm_body(req.body, stream, models)
         if body is None:
@@ -2095,6 +2095,24 @@ class GrowBot:
         return await stream_upstream(
             url, body, headers, sse=stream, executor=self._streams
         )
+
+    async def name_sound(self, raw: bytes, stream: bool) -> Response:
+        clip = _heard_clip(raw)
+        tags = await self._call(self.tag, clip, pool=self._streams) if clip else None
+        # No clip, no tagger or nothing it is sure of: an empty name, which the ear reads as
+        # silence rather than a guess.
+        return _answer(sound_name(tags) if tags else "", stream)
+
+    def tag(self, clip: bytes) -> list[tuple[str, float]] | None:
+        """The speech service's sound tags for a WAV clip, best first, or None."""
+        up = http_call(
+            self.config.tts_url + "/tag",
+            clip,
+            {"Content-Type": "audio/wav"},
+            "POST",
+            TAG_TIMEOUT_S,
+        )
+        return _tags(up.body) if up.status == 200 else None
 
     async def stt(self, req: Request) -> Response:
         parts = parse_multipart(req.body, req.header("content-type"))
@@ -2121,6 +2139,14 @@ class GrowBot:
         fields["audio_ctx"] = str(audio_window(audio.data) or 0)
         body, ctype = build_multipart(fields, audio)
         started = time.monotonic()
+        # Tagged alongside whisper (owner, 2026-11-13: "if I whistle or a dog is barking or a
+        # piano is playing"): a sound behind the words rides the transcript as `gb_sounds`.
+        # The tag takes tens of ms against whisper's seconds, so the turn waits on nothing new.
+        tagging = (
+            asyncio.ensure_future(self._call(self.tag, audio.data, pool=self._streams))
+            if audio.data[:4] == b"RIFF"
+            else None
+        )
         up = await self._call(
             http_call,
             self.config.stt_url + "/audio/transcriptions",
@@ -2130,6 +2156,11 @@ class GrowBot:
             STT_TIMEOUT_S,
             pool=self._streams,
         )
+        if tagging is not None and up.status != 200:
+            # No words to ride, so a slow tagger must not hold the failure back.
+            tagging.cancel()
+            tagging = None
+        tags = await tagging if tagging is not None else None
         took = round((time.monotonic() - started) * 1000)
         clip = wav_seconds(audio.data)
         row: dict[str, Any] = {
@@ -2151,6 +2182,10 @@ class GrowBot:
             # Not 429: upstream reads that as a spent daily allowance and stops listening.
             return json_response(503, {"error": _stt_failure(up)})
         heard = normalise_transcript(up.body)
+        sounds = also_heard(tags) if tags and str(heard.get("text", "")).strip() else ""
+        if sounds:
+            heard["gb_sounds"] = sounds
+            row["detail"]["sounds"] = sounds
         self.log_call({**row, "ok": True, "text": str(heard.get("text", ""))[:8000]})
         return json_response(200, heard)
 
@@ -2770,6 +2805,50 @@ def _stt_failure(up: Upstream) -> str:
 
 
 AUDIO_PARTS = frozenset({"input_audio", "audio_url"})
+# The page caps a clip at about 12 s of 16 kHz WAV (~384 KB, ~512 KB as base64).
+MAX_HEARD_B64 = 4 * 1024 * 1024
+TAG_TIMEOUT_S = 5.0
+# How sure CED-tiny must be (0-1, per sound): to call a clip speech, to name a sound in a clip
+# that was not words, and to mention a sound behind words. They start from a 32-clip ESC-50 run
+# (2026-11-13), where right answers mostly scored over 0.3. Speech sits between two failures. The
+# clips that reach the ear are the ones the speech judge refused, a soft sentence among them, and
+# SPEECH: is its only way back to whisper; but two SPEECH: answers on refused clips switch the
+# judge off for the session (the page's blind-judge tripwire), which the old always-SPEECH ear
+# did every time. So speech must be the clip's clearest sound, and at more than the naming bar.
+TAG_SPEECH_AT = 0.4
+TAG_NAME_AT = 0.3
+TAG_ALSO_AT = 0.4
+# Over this a sound is said as "what sounds like", under it as "a noise that might be".
+TAG_SURE_AT = 0.7
+# AudioSet parents that say where or what family, not what: "Animal" over "Dog", "Inside".
+TAG_VAGUE = frozenset(
+    {
+        "Animal",
+        "Domestic animals",
+        "Livestock",
+        "Wild animals",
+        "Inside",
+        "Outside",
+        "Sound effect",
+        "Silence",
+        "Noise",
+        "Environmental noise",
+        "Hubbub",
+    }
+)
+TAG_SPEECH = frozenset(
+    {
+        "Speech",
+        "Male speech",
+        "Female speech",
+        "Child speech",
+        "Conversation",
+        "Narration",
+        "Babbling",
+        "Speech synthesizer",
+    }
+)
+TAG_VOICE = TAG_SPEECH | {"Shout", "Bellow", "Whoop", "Yell", "Whispering"}
 
 
 def _asks_to_hear(raw: bytes) -> bool:
@@ -2790,8 +2869,94 @@ def _asks_to_hear(raw: bytes) -> bool:
     return False
 
 
-def _nothing_heard(stream: bool) -> Response:
-    reply = {"role": "assistant", "content": ""}
+def _heard_clip(raw: bytes) -> bytes | None:
+    """The WAV of the first `input_audio` part, or None (an `audio_url` is never fetched)."""
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return None
+    for message in body.get("messages") or [] if isinstance(body, dict) else []:
+        content = message.get("content") if isinstance(message, dict) else None
+        for part in content if isinstance(content, list) else []:
+            sound = part.get("input_audio") if isinstance(part, dict) else None
+            data = sound.get("data") if isinstance(sound, dict) else None
+            if isinstance(data, str) and len(data) <= MAX_HEARD_B64:
+                try:
+                    clip = base64.b64decode(data, validate=True)
+                except ValueError:
+                    return None
+                return clip if clip[:4] == b"RIFF" else None
+    return None
+
+
+def _tags(raw: bytes) -> list[tuple[str, float]] | None:
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return None
+    rows = body.get("tags") if isinstance(body, dict) else None
+    if not isinstance(rows, list):
+        return None
+    out = [
+        (row[0], float(row[1]))
+        for row in rows
+        if isinstance(row, list)
+        and len(row) == 2
+        and isinstance(row[0], str)
+        and isinstance(row[1], (int, float))
+        and not isinstance(row[1], bool)
+    ]
+    return sorted(out, key=lambda pair: -pair[1])
+
+
+def _sound_words(
+    tags: list[tuple[str, float]], skip: frozenset[str], floor: float
+) -> str:
+    """Up to two clear sounds, lowercased, a label whose words sit inside one already said folded
+    into it ("Church bell" keeps out "Bell", "Alarm clock" keeps out "Clock"; "Train" does not
+    keep out "Rain"), said as a likelihood: "a noise that might be bark or dog"."""
+    said: list[str] = []
+    top = 0.0
+    for label, score in tags:
+        if score < floor or len(said) == 2:
+            break
+        if label in skip or label in TAG_VAGUE:
+            continue
+        word = label.lower()
+        words = _words(word)
+        if any(words <= heard or heard <= words for heard in map(_words, said)):
+            continue
+        said.append(word)
+        top = max(top, score)
+    if not said:
+        return ""
+    # A tag is a likelihood, not a fact (owner, 2026-11-13: "a noise that might sound like
+    # laughter"), so the creature is told it as one, more sure only when the tagger is.
+    lead = "what sounds like" if top >= TAG_SURE_AT else "a noise that might be"
+    return f"{lead} {' or '.join(said)}"
+
+
+def _words(label: str) -> set[str]:
+    return set(re.findall(r"[a-z]+", label))
+
+
+def sound_name(tags: list[tuple[str, float]]) -> str:
+    """What the ear answers for a clip: SPEECH: when the clearest sound is a person talking (the
+    page then sends the clip to whisper), else up to two sounds, else nothing."""
+    clear = [(label, score) for label, score in tags if label not in TAG_VAGUE]
+    if clear and clear[0][0] in TAG_SPEECH and clear[0][1] >= TAG_SPEECH_AT:
+        return "SPEECH: someone is talking"
+    return _sound_words(clear, TAG_SPEECH, TAG_NAME_AT)
+
+
+def also_heard(tags: list[tuple[str, float]]) -> str:
+    """A sound behind a person's words, held to a higher bar than a clip on its own: the
+    person's own voice (talk, a shout, a whisper) is not news."""
+    return _sound_words(tags, TAG_VOICE, TAG_ALSO_AT)
+
+
+def _answer(text: str, stream: bool) -> Response:
+    reply = {"role": "assistant", "content": text}
     if not stream:
         choice = {"index": 0, "message": reply, "finish_reason": "stop"}
         return json_response(200, {"object": "chat.completion", "choices": [choice]})

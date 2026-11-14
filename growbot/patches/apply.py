@@ -2954,6 +2954,49 @@ QUIET_RIDE_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += QUIET_RIDE_PATCHES
 
+# A sound behind his words (owner, 2026-11-13: "if I whistle or a dog is barking or a piano is
+# playing"). The box tags each speech clip alongside whisper and returns what else it clearly
+# heard as `gb_sounds` (serve.py `also_heard`). Stamped when the words began (now less the
+# transcript's last segment end), it becomes the ear's newest hearing unless the ear named a
+# clip captured after that, and a clip the ear names that was captured during the words is not
+# dropped as older. The
+# turn those words start carries "your ears made out …: behind your person's words: piano"
+# on the same context line the sound-naming ear uses.
+EAR_TAG_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'function _listenFire(){ if(!_listenStash) return;',
+        "function gbAlsoHeard(d){ try{ var s=(d&&typeof d.gb_sounds===\"string\")?"
+        "d.gb_sounds.trim().slice(0,160):\"\", end=0; ((d&&d.segments)||[]).forEach(function(g){"
+        " if(g&&typeof g.end===\"number\"&&g.end>end) end=g.end; });"
+        " var t=Date.now()-Math.min(end,120)*1000; if(!s||(_earHeard&&t<_earHeard.t))"
+        " return; _earHeard={t:t,src:\"behind-words\",rid:0,txt:\"behind your person's words: \"+s};"
+        " logEv(\"listen\",{trig:\"words\",n:s}); }catch(e){} }\n"
+        'function _listenFire(){ if(!_listenStash) return;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_sttPhase("done"); heardText((d&&d.text||"").trim(),meta,d&&d.language);',
+        '_sttPhase("done"); gbAlsoHeard(d); heardText((d&&d.text||"").trim(),meta,d&&d.language);',
+        2,
+    ),
+    # The box's names already carry their own doubt ("a noise that might be dog", "what sounds
+    # like dog"), so a short or quiet clip folds its word into that phrase rather than wrapping
+    # it ("a faint sound: a noise that might be dog").
+    (
+        "v3/next.html",
+        'if(_shown&&_short) _shown="a short sound ("+_shown.replace(/[.!]+$/,"")+")";',
+        'var _hedge=/^(a noise that might be|what sounds like) /i.test(_shown);'
+        ' if(_shown&&_hedge&&(_short||_quiet)){ var _w=_short?"short":"faint";'
+        ' _shown=_shown.replace(/^a noise /i,"a "+_w+" noise ").replace(/^what sounds like /i,'
+        '"a "+_w+" sound like "); }\n    else if(_shown&&_short) _shown="a short sound ("'
+        '+_shown.replace(/[.!]+$/,"")+")";',
+        1,
+    ),
+]
+PATCHES += EAR_TAG_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

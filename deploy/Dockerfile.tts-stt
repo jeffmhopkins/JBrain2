@@ -177,6 +177,48 @@ for name in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):
         raise SystemExit(f"[kokoro] giving up on {name}")
 PY
 
+# CED-tiny, the box's sound tagger (mispeech/ced-tiny, Apache-2.0): 6.7 MB of ONNX that names a
+# clip against AudioSet's 527 everyday sounds, served by tts_server.py's /tag. It runs on the
+# onnxruntime kokoro-onnx already brought in. Pinned to one Hugging Face revision and checked by
+# SHA-256, so an upstream re-push can never change what the creature hears. NON-FATAL like the
+# Kokoro fetch: on failure /opt/ced is removed, /tag answers 503, and the ear names nothing.
+# Keep the filenames in step with tts_server.py's CED_MODEL/CED_LABELS (the test guards this).
+RUN python3 - <<'PY' \
+ || { echo >&2 "!!!!! [ced] =============================================================="; \
+      echo >&2 "!!!!! [ced] sound tagger fetch FAILED — /opt/ced removed"; \
+      echo >&2 "!!!!! [ced] the creature can hear words but not name sounds until the"; \
+      echo >&2 "!!!!! [ced] next successful build"; \
+      echo >&2 "!!!!! [ced] =============================================================="; \
+      rm -rf /opt/ced; }
+import hashlib
+import time
+import urllib.request
+from pathlib import Path
+
+rev = "ace276d29dd0bb3f3517b0fa8cf300738c409019"
+want = {
+    "model.onnx": "3890f227660be71886ff48633d11a731993e0206db8a486781412c28a0873435",
+    "config.json": "3a060c57c28b8138cf66bbab2c0dcab79f07c871b600f52a06f2652bf3cad2bd",
+}
+d = Path("/opt/ced")
+d.mkdir(parents=True, exist_ok=True)
+for name, sha in want.items():
+    url = f"https://huggingface.co/mispeech/ced-tiny/resolve/{rev}/{name}"
+    for attempt in range(4):
+        try:
+            print(f"[ced] fetching {name} (attempt {attempt + 1})", flush=True)
+            data = urllib.request.urlopen(url, timeout=120).read()
+            if hashlib.sha256(data).hexdigest() != sha:
+                raise ValueError(f"{name} does not match its pinned SHA-256")
+            (d / name).write_bytes(data)
+            break
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ced] {name} failed: {exc}", flush=True)
+            time.sleep(2 * (attempt + 1))
+    else:
+        raise SystemExit(f"[ced] giving up on {name}")
+PY
+
 # No app COPY: tts_server.py + entrypoint.sh are bind-mounted at /tts and launched via the
 # compose entrypoint (which starts the TTS server, then execs llama-swap). Only the baked Kokoro
-# weights + the whisper/Kokoro runtimes live in the image.
+# and CED weights + the whisper/Kokoro runtimes live in the image.

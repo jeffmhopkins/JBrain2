@@ -11,6 +11,7 @@ Kokoro is the sole on-box engine, with the caller's device voice as the only fal
 
 import importlib.util
 import io
+import json
 import sys
 import types
 import wave
@@ -671,3 +672,169 @@ def test_kokoro_blends_are_well_formed(server: types.ModuleType) -> None:
         assert key not in server.CURATED_KOKORO_VOICES, f"blend {key!r} collides with a real voice"
         for vname, _weight in blend:
             assert vname in server.CURATED_KOKORO_VOICES
+
+
+# --- CED-tiny sound tagger -----------------------------------------------------------------
+
+
+def _pcm_wav(samples: list[int], rate: int = 16000, channels: int = 1) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(int(x).to_bytes(2, "little", signed=True) for x in samples))
+    return buf.getvalue()
+
+
+class _FakeOrt(types.ModuleType):
+    """onnxruntime stand-in: records the session it was asked for. The run itself is
+    `_ced_run`, faked per test, so numpy never enters the backend venv."""
+
+    loads: list[str] = []
+
+    class SessionOptions:
+        intra_op_num_threads = 0
+
+    def __init__(self) -> None:
+        super().__init__("onnxruntime")
+        _FakeOrt.loads = []
+
+    @staticmethod
+    def InferenceSession(path: str, opts: object, providers: list[str]) -> object:  # noqa: N802
+        _FakeOrt.loads.append(path)
+        return object()
+
+
+@pytest.fixture
+def tag_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[types.ModuleType, list[list[float]]]:
+    """A server with fake CED weights: labels a/b/c, and a model that scores each window by
+    its loudest sample, so window pooling is checkable. Returns the windows it was handed."""
+    mod = _load_server()
+    cdir = tmp_path / "ced"
+    cdir.mkdir()
+    (cdir / mod.CED_MODEL).write_bytes(b"onnx")
+    labels = {"id2label": {"0": "Speech", "1": "Dog", "2": "Piano"}}
+    (cdir / mod.CED_LABELS).write_text(json.dumps(labels))
+    monkeypatch.setattr(mod, "CED_DIR", cdir)
+    monkeypatch.setitem(sys.modules, "onnxruntime", _FakeOrt())
+    seen: list[list[float]] = []
+
+    def run(session: object, window: list[float]) -> list[float]:
+        seen.append(window)
+        loud = max(abs(x) for x in window)
+        return [0.9, loud, 0.01]
+
+    monkeypatch.setattr(mod, "_ced_run", run)
+    return mod, seen
+
+
+def test_a_clip_is_tagged_best_first_and_loaded_once(
+    tag_server: tuple[types.ModuleType, list[list[float]]],
+) -> None:
+    mod, seen = tag_server
+    clip = _pcm_wav([16384] * 8000)
+    assert mod.tag_wav(clip) == [("Speech", 0.9), ("Dog", 0.5)]
+    assert mod.tag_wav(clip) == [("Speech", 0.9), ("Dog", 0.5)]
+    # The 0.01 piano is under the floor; the model loaded once for both clips.
+    assert len(_FakeOrt.loads) == 1 and len(seen) == 2 and len(seen[0]) == 8000
+    assert mod.tts_health()["tagger_available"] is True
+
+
+def test_a_long_clip_is_tagged_in_windows_and_keeps_each_sounds_best(
+    tag_server: tuple[types.ModuleType, list[list[float]]],
+) -> None:
+    """The exported graph refuses much over 10 s, so a long clip goes in 10 s windows; a dog
+    in the last window still counts, and a sliver of a window too short to run is dropped."""
+    mod, seen = tag_server
+    win = mod.CED_WINDOW
+    samples = [0] * win + [8192] * win + [32767] * 100
+    tags = dict(mod.tag_wav(_pcm_wav(samples)))
+    assert [len(w) for w in seen] == [win, win]
+    assert tags["Dog"] == 0.25
+
+
+def test_a_very_short_clip_is_padded_to_what_the_model_takes(
+    tag_server: tuple[types.ModuleType, list[list[float]]],
+) -> None:
+    mod, seen = tag_server
+    assert dict(mod.tag_wav(_pcm_wav([16384] * 100)))["Dog"] == 0.5
+    assert len(seen[0]) == mod.CED_MIN and seen[0][100:] == [0.0] * (mod.CED_MIN - 100)
+
+
+def test_the_tagger_reads_only_16_bit_wavs_and_resamples_to_16k(server: types.ModuleType) -> None:
+    same = server._wav_samples(_pcm_wav([16384, -16384]))
+    assert same == [0.5, -0.5]
+    # Stereo is folded to mono, and 8 kHz is stretched to 16 kHz.
+    stereo = server._wav_samples(_pcm_wav([16384, 0] * 800, rate=8000, channels=2))
+    assert stereo is not None and len(stereo) == 1600 and stereo[0] == 0.25
+    eight_bit = io.BytesIO()
+    with wave.open(eight_bit, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(1)
+        w.setframerate(16000)
+        w.writeframes(b"\x80" * 100)
+    assert server._wav_samples(eight_bit.getvalue()) is None
+    assert server._wav_samples(b"not a wav") is None
+    assert server._wav_samples(_pcm_wav([])) == []
+
+
+def test_no_tagger_baked_tags_nothing(
+    server: types.ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(server, "CED_DIR", tmp_path / "ced_absent")
+    assert server.tag_wav(_pcm_wav([1] * 4000)) is None
+    assert server.tts_health()["tagger_available"] is False
+
+
+def test_a_tagger_that_will_not_load_is_not_retried(
+    tag_server: tuple[types.ModuleType, list[list[float]]],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    mod, _ = tag_server
+
+    def broken(*args: object, **kwargs: object) -> object:
+        _FakeOrt.loads.append("broken")
+        raise RuntimeError("bad model")
+
+    monkeypatch.setattr(_FakeOrt, "InferenceSession", staticmethod(broken))
+    assert mod.tag_wav(_pcm_wav([1] * 4000)) is None
+    assert mod.tag_wav(_pcm_wav([1] * 4000)) is None
+    assert _FakeOrt.loads == ["broken"]
+    assert "sound tagger failed to load" in capsys.readouterr().err
+
+
+def test_the_tag_route_answers_tags_or_503(
+    tag_server: tuple[types.ModuleType, list[list[float]]],
+) -> None:
+    from http.server import ThreadingHTTPServer
+    from threading import Thread
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
+
+    mod, _ = tag_server
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+    Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/tag"
+    try:
+        with urlopen(Request(url, data=_pcm_wav([16384] * 4000), method="POST")) as resp:
+            assert json.loads(resp.read()) == {"tags": [["Speech", 0.9], ["Dog", 0.5]]}
+        for body, status in ((b"not a wav", 503), (b"", 400)):
+            with pytest.raises(HTTPError) as err:
+                urlopen(Request(url, data=body, method="POST"))
+            assert err.value.code == status
+    finally:
+        httpd.shutdown()
+
+
+def test_dockerfile_bakes_the_pinned_tagger(server: types.ModuleType) -> None:
+    """The weights reach /tag only if the image bakes them under the names the server reads,
+    from one pinned revision checked by hash."""
+    dockerfile = _DOCKERFILE.read_text()
+    assert "mispeech/ced-tiny/resolve/{rev}/{name}" in dockerfile
+    assert f'"{server.CED_MODEL}": "' in dockerfile and f'"{server.CED_LABELS}": "' in dockerfile
+    assert 'Path("/opt/ced")' in dockerfile and str(server.CED_DIR) == "/opt/ced"
+    assert "hashlib.sha256(data).hexdigest() != sha" in dockerfile
