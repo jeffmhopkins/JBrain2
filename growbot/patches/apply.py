@@ -2747,24 +2747,30 @@ PATCHES += TALKLOG_PATCHES
 # yield, which holds the whole reply silent while the ear is open, and road noise kept it open. Now:
 # - he always says his reply. Yield and barge-in are off unless a phone asks (localStorage
 #   gb_yield / gb_bargein = "1"); the mic already opens no utterance while he speaks;
-# - a tap on him while he is speaking stops him, the manual cut-in;
-# - a clip the speech model barely believed (avg logprob under -1.5: "You can hold る") or that
-#   was quiet and mostly silence (peak under 0.2 and voiced under a quarter of it: the truck's
-#   thumps; real speech at home measured 0.17+ with 0.28+ voiced) is dropped like whisper's own
-#   no-speech gate, before it reaches him. Signal, not words, as that gate's rule says. Unlike
-#   that gate it does not hand the clip to the sound-naming ear: that call runs on the same model
-#   slot and wiped his cached prompt, so the next turn re-read it all (30 s, three times that drive);
-# - a sentence close to one he said in the last ten minutes is not said again ("I see the dark road
-#   and the green glow of the dashboard" opened 12 of 40 replies), streamed or not.
-_GB_QUIET_JS = r"""var GB_NOISE_LP=-1.5, GB_NOISE_MX=0.2, GB_NOISE_DUTY=0.25, GB_SAID_KEEP_MS=600000, GB_SAID_MAX=40,
+# - a tap on him while his voice is playing stops him, the manual cut-in, and the rest of that reply
+#   stays a caption (it rides the yield gate). Not during a tap-counting game, where taps are answers;
+# - a phone-mic clip that was quiet and mostly silence (peak under 0.2 and voiced under a quarter of
+#   it: the truck's thumps; real speech at home measured 0.17+ with 0.28+ voiced), or that the speech
+#   model barely believed (avg logprob under -1.5, "You can hold る") and was voiced under 0.35, is
+#   dropped like whisper's own no-speech gate, before it reaches him. Push-to-talk and recorder
+#   clips are deliberate and never dropped. Unlike that gate it does not hand the clip to the
+#   sound-naming ear: that call runs on the same model slot and wiped his cached prompt, so the next
+#   turn re-read it all (30 s, three times that drive);
+# - a camera-scene sentence close to one he said in the last ten minutes is not said again ("I see
+#   the dark road and the green glow of the dashboard" opened 12 of 40 replies). Only scene-shaped
+#   sentences: "say that again" must still be said again, and a whole reply is never cut to nothing.
+_GB_QUIET_JS = r"""var GB_NOISE_LP=-1.5, GB_NOISE_LP_DUTY=0.35, GB_NOISE_MX=0.2, GB_NOISE_DUTY=0.25, GB_SAID_KEEP_MS=600000, GB_SAID_MAX=40,
   GB_SAID_STOP={i:1,a:1,an:1,the:1,and:1,or:1,but:1,of:1,to:1,in:1,on:1,at:1,is:1,are:1,am:1,was:1,it:1,its:1,
     this:1,that:1,my:1,your:1,you:1,me:1,we:1,us:1,so:1,just:1,now:1,very:1,too:1,with:1,for:1,can:1,still:1},
-  _gbSaid=[];
+  GB_SCENE=/^(?:(?:oh|wow|hmm|look|ah),?\s+)?(?:i\s+(?:can\s+|still\s+|just\s+)?(?:see|spot|notice)\b|i(?:'|’)?m\s+(?:seeing|looking|watching)\b|my\s+eyes\b|(?:the|that|this)\s+(?:\w+\s+){0,2}(?:road|dashboard|dash|sky|lights?|street|highway|trees?|windshield|window|glow|scenery)\b|it(?:'|’)?s\s+(?:so\s+|very\s+|still\s+|getting\s+)?(?:dark|bright|night)\b|it\s+is\s+(?:so\s+|very\s+|still\s+|getting\s+)?(?:dark|bright|night)\b|everything\s+(?:looks|is)\b)/i,
+  _gbSaid=[], _gbCut=false;
 function gbOptIn(k){ try{ return localStorage.getItem(k)==="1"; }catch(e){ return false; } }
 function gbNoiseClip(sp,row){ try{
-  var lp=row&&row.lp, mx=sp&&+sp.mx, du=sp&&+sp.duty;
-  if(typeof lp==="number"&&isFinite(lp)&&lp<GB_NOISE_LP) return "lp";
-  if(isFinite(mx)&&isFinite(du)&&mx>0&&mx<GB_NOISE_MX&&du<GB_NOISE_DUTY) return "quiet";
+  if(!sp||sp.lane!=="pcm") return "";
+  var lp=row&&row.lp, mx=+sp.mx, du=+sp.duty;
+  if(!isFinite(du)) return "";
+  if(isFinite(mx)&&mx>0&&mx<GB_NOISE_MX&&du<GB_NOISE_DUTY) return "quiet";
+  if(typeof lp==="number"&&isFinite(lp)&&lp<GB_NOISE_LP&&du<GB_NOISE_LP_DUTY) return "lp";
 }catch(e){} return ""; }
 function gbSaidWords(t){ var w=String(t||"").toLowerCase().replace(/['’]/g,"").split(/[^a-z0-9]+/), out={}, n=0;
   for(var i=0;i<w.length;i++){ var x=w[i]; if(x.length<2||GB_SAID_STOP[x]===1) continue; if(x.length>4&&/s$/.test(x)) x=x.slice(0,-1); if(!out[x]){ out[x]=1; n++; } }
@@ -2774,11 +2780,14 @@ function gbSaidBefore(a){ if(a.n<3) return false; var now=Date.now();
     var both=0, k; for(k in a.w) if(b.w[k]) both++;
     if(both>=3&&both/(a.n+b.n-both)>=0.5) return true; }
   return false; }
-function gbSentences(t){ return String(t||"").match(/[^.!?…]+[.!?…]*["»”]?\s*/g)||[]; }
-function gbNoRepeat(t){ var s=gbSentences(t), kept=[], cut=0;
-  for(var i=0;i<s.length;i++){ if(gbSaidBefore(gbSaidWords(s[i]))) cut++; else kept.push(s[i]); }
-  if(cut) try{ logEv("repeat_cut",{n:cut}); }catch(e){}
-  return cut?kept.join("").trim():String(t||""); }
+function gbSentences(t){ var out=[], p=String(t||"").replace(/([.!?…]+["»”]?)\s+/g,"$1\u0001").split("\u0001");
+  for(var i=0;i<p.length;i++){ var x=p[i].trim(); if(x) out.push(x); } return out; }
+function gbNoRepeat(t,keepOne){ var s=gbSentences(t), kept=[], cut=0;
+  for(var i=0;i<s.length;i++){ if(GB_SCENE.test(s[i])&&gbSaidBefore(gbSaidWords(s[i]))) cut++; else kept.push(s[i]); }
+  if(!cut) return String(t||"");
+  if(!kept.length&&keepOne) return String(t||"");
+  try{ logEv("repeat_cut",{n:cut}); }catch(e){}
+  return kept.join(" "); }
 function gbSaidKeep(t){ var s=gbSentences(t), now=Date.now();
   for(var i=0;i<s.length;i++){ var a=gbSaidWords(s[i]); if(a.n>=3) _gbSaid.push({t:now,w:a.w,n:a.n}); }
   if(_gbSaid.length>GB_SAID_MAX) _gbSaid.splice(0,_gbSaid.length-GB_SAID_MAX); }
@@ -2789,7 +2798,8 @@ QUIET_RIDE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         "  if(_yieldSaid) return _yieldSaid===1;\n",
-        "  if(_yieldSaid) return _yieldSaid===1;\n  if(!gbOptIn(\"gb_yield\")) return false;\n",
+        "  if(_gbCut) return true;\n  if(_yieldSaid) return _yieldSaid===1;\n"
+        "  if(!gbOptIn(\"gb_yield\")) return false;\n",
         1,
     ),
     (
@@ -2802,8 +2812,9 @@ QUIET_RIDE_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "var _g=_sttGate(d);",
         'var _g=_sttGate(d); var _gbNz=_g.drop?"":gbNoiseClip(_sp,_sr);'
-        ' if(_gbNz){ try{ logEv("stt_noise",{w:_gbNz}); if(meta&&meta.gbPiece)'
-        ' _gbPiece(meta.gbPiece,"",meta); }catch(_nz){} _sttPhase("done"); return; }',
+        ' if(_gbNz){ try{ _listenStash=null; logEv("stt_noise",{w:_gbNz});'
+        ' if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); }catch(_nz){}'
+        ' _sttPhase("done"); return; }',
         2,
     ),
     (
@@ -2815,7 +2826,7 @@ QUIET_RIDE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         "    var said=(o.say&&o.say.trim())",
-        "    if(o&&o.say){ try{ if(!_streamSaid) o.say=gbNoRepeat(o.say); gbSaidKeep(o.say); }catch(_nr){} }\n"
+        "    if(o&&o.say){ try{ if(!_streamSaid) o.say=gbNoRepeat(o.say,1); gbSaidKeep(o.say); }catch(_nr){} }\n"
         "    var said=(o.say&&o.say.trim())",
         1,
     ),
@@ -2823,7 +2834,15 @@ QUIET_RIDE_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         '    if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false){ gbPttDown(e); return; }',
         '    if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false){ gbPttDown(e); return; }\n'
-        '    if(Date.now()<speakingUntil&&e.isPrimary!==false){ try{ logEv("tap_cut",{}); }catch(_tc){} silence(); return; }',
+        "    if((_voiceActive||_chainBusy)&&e.isPrimary!==false&&!(typeof tapCountingContext"
+        '==="function"&&tapCountingContext())){ try{ logEv("tap_cut",{}); }catch(_tc){}'
+        " _gbCut=true; silence(); return; }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_streamSpoke=""; _streamSaid=false; _streamBurst=false; _yieldSaid=0;',
+        '_streamSpoke=""; _streamSaid=false; _streamBurst=false; _yieldSaid=0; _gbCut=false;',
         1,
     ),
     (
