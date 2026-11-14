@@ -171,6 +171,8 @@ CAL_CACHE_S = 2.0
 CAL_PATH = "/api/box/cal"
 # A trained walk from JBrain's policy library, which the Body tab drives by its id.
 POLICY_PATH = "/api/box/policy"
+# The id the Body tab's Drive gives the walk it starts, so only that walk takes its steering.
+DRIVE_RE = re.compile(r"[0-9a-f]{8,32}")
 POLICY_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # A library policy never changes under its id, so one read serves a run of walks; a deleted
 # one stops loading within this.
@@ -1451,6 +1453,11 @@ class GrowBot:
             return json_response(400, {"error": "policy"})
         if what == "look" and not policy:
             return json_response(400, {"error": "policy"})
+        drive = msg.get("drive", "") if msg else ""
+        if not isinstance(drive, str) or (
+            drive and (not policy or not DRIVE_RE.fullmatch(drive))
+        ):
+            return json_response(400, {"error": "drive"})
         name = msg.get("name", "") if msg else ""
         if (what == "gesture") != bool(name) or (name and not _gesture_name(name)):
             return json_response(400, {"error": "name"})
@@ -1465,6 +1472,8 @@ class GrowBot:
             frame: dict[str, Any] = {"t": "box_move", "rid": rid, "move": what, "secs": secs}
             if policy:
                 frame["policy"] = policy
+            if drive:
+                frame["drive"] = drive
             if name:
                 frame["name"] = name
             creature.send_json(frame)
@@ -1483,6 +1492,44 @@ class GrowBot:
                 "why": why[:220] if isinstance(why, str) else "",
             },
         )
+
+    async def steer(self, req: Request) -> Response:
+        """The Body tab's continuous steering of the trained walk its Drive started (`drive`,
+        the id it gave that walk's move): the heading (deg, left positive, from where the walk
+        started), speed and camera height. Answered with whether that walk still runs there,
+        so a Drive whose walk ended on the phone (a tip, a Stop from elsewhere) stops."""
+        if not self._internal_ok(req):
+            return json_response(401, {"error": "unauthorized"})
+        if req.method != "POST":
+            return json_response(405, {"error": "post only"})
+        msg = _parse(req.body) or {}
+        code = msg.get("code")
+        if not isinstance(code, str) or not CODE_RE.fullmatch(code):
+            return json_response(400, {"error": "code"})
+        drive = msg.get("drive")
+        if not isinstance(drive, str) or not DRIVE_RE.fullmatch(drive):
+            return json_response(400, {"error": "drive"})
+        frame: dict[str, Any] = {"t": "box_steer", "drive": drive}
+        for key, lo, hi in (("heading", -180, 180), ("speed", -1, 1), ("pitch", -1, 1)):
+            v = msg.get(key)
+            if isinstance(v, bool) or not isinstance(v, int | float) or not lo <= v <= hi:
+                return json_response(400, {"error": key})
+            frame[key] = v
+        chan = self.channels.get(f"{code}-agent")
+        creature = chan.body if chan is not None else None
+        if chan is None or creature is None:
+            return json_response(409, {"error": "no_creature"})
+        rid = secrets.token_hex(8)
+        waiter: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        chan.acks[rid] = waiter
+        try:
+            creature.send_json({**frame, "rid": rid})
+            ack = await asyncio.wait_for(waiter, MOVE_ACK_S)
+        except TimeoutError:
+            return json_response(504, {"error": "no_answer"})
+        finally:
+            chan.acks.pop(rid, None)
+        return json_response(200, {"ok": ack.get("ok") is True})
 
     def _same_origin(self, req: Request) -> bool:
         """A request a browser sent from another origin (the PWA on :443 is same-site, so
@@ -1551,6 +1598,8 @@ class GrowBot:
             return await self.root_cert_route(req)
         if req.path == "/internal/robots/move":
             return await self.move(req)
+        if req.path == "/internal/robots/steer":
+            return await self.steer(req)
         if req.path.startswith("/internal/"):
             return self.internal(req)
         if req.path in PUBLIC_PATHS and req.method in ("GET", "HEAD"):

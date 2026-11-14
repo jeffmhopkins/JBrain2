@@ -1463,6 +1463,19 @@ details.gb-help[open] summary::after {
 .gb-adv .gb-trim {
   grid-template-columns: 5.5em minmax(0, 1fr) 3.2em;
 }
+/* Drive: a trained walk steered live, label | slider | value, and the toggle under them. */
+.gb-drive {
+  margin: 4px 0 12px;
+  padding: 0;
+  border: 0;
+}
+.gb-drive .gb-trim {
+  grid-template-columns: 6.5em minmax(0, 1fr) 5.5em;
+}
+.gb-drive > .gb-chip {
+  width: 100%;
+  margin-top: 8px;
+}
 .gb-switch {
   display: flex;
   align-items: flex-start;

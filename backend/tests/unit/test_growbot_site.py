@@ -3745,7 +3745,12 @@ def test_a_doubtful_name_folds_short_or_faint_into_its_own_doubt() -> None:
 _TRAINED_HARNESS = Path(__file__).with_name("growbot_trained_walk_harness.mjs")
 
 
-def _trained_walk(move: str, phone: dict[str, Any], duty_ms: int = 60000) -> dict[str, Any]:
+def _trained_walk(
+    move: str,
+    phone: dict[str, Any],
+    duty_ms: int = 60000,
+    steer: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -3758,6 +3763,7 @@ def _trained_walk(move: str, phone: dict[str, Any], duty_ms: int = 60000) -> dic
             move,
             json.dumps(phone),
             str(duty_ms),
+            *([json.dumps(steer)] if steer else []),
         ],
         capture_output=True,
         text=True,
@@ -3813,6 +3819,46 @@ def test_a_heading_only_walk_turns_around_to_go_back(move: str, yaw: float, fwd:
     got = _trained_walk(move, still)
     assert abs(abs(got["fed"][0]["cmd"]["yaw"]) - yaw) < 1e-9
     assert got["fed"][0]["cmd"]["fwd"] == fwd
+
+
+_STILL = {"accel": {"x": 0.0, "y": 0.0, "z": 9.8}, "rate": {"a": 0.0, "b": 0.0, "g": 0.0}}
+_STEER = {"at": 1300, "drive": "d1ce0001", "heading": -45, "speed": 0.5, "pitch": -1}
+
+
+def test_the_body_tabs_steering_retargets_its_walk_and_keeps_it_going() -> None:
+    got = _trained_walk("forward", _STILL, steer=_STEER)
+    assert got["steered"] is True
+    assert got["fed"][0]["cmd"]["yaw"] == 0
+    # A heading-only policy: the heading steers it, the speed and height are not its to read.
+    assert abs(got["tail"][-1]["cmd"]["yaw"] + 0.25) < 1e-9
+    assert got["tail"][-1]["cmd"]["fwd"] == 1 and got["tail"][-1]["cmd"]["pitch"] == 1
+    # Walking 1.5 s past the steer instead of the 1 s it was granted, paid from the duty budget.
+    assert got["n"] > 40 and got["last"] == ["rest"]
+    assert got["walkLog"][0]["ms"] == 1000 and sum(w["ms"] for w in got["walkLog"]) > 1500
+
+
+@pytest.mark.parametrize(
+    "steer",
+    [
+        # Another drive's steering (an old tab's, or one in flight past a pad move).
+        {**_STEER, "drive": "0dd0dd00"},
+        # Out of range.
+        {**_STEER, "heading": 200},
+    ],
+)
+def test_a_walk_takes_only_its_own_drives_steering(steer: dict[str, Any]) -> None:
+    got = _trained_walk("forward", _STILL, steer=steer)
+    assert got["steered"] is False
+    assert all(f["cmd"]["yaw"] == 0 for f in got["tail"])
+    assert [w["ms"] for w in got["walkLog"]] == [1000]
+
+
+def test_steering_never_spends_duty_the_legs_lack() -> None:
+    got = _trained_walk("forward", _STILL, duty_ms=1200, steer=_STEER)
+    assert got["steered"] is True
+    # Retargeted, but not kept going: the budget can't pay for another 1.2 s.
+    assert [w["ms"] for w in got["walkLog"]] == [1000]
+    assert got["n"] < 32
 
 
 def test_the_trained_walk_keeps_upstreams_stops() -> None:

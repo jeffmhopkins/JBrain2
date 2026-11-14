@@ -3963,6 +3963,11 @@ export interface GrowbotPolicy {
   active?: boolean;
 }
 
+/** Live steering for the trained walk a Drive started (`drive`, the id its move gave it):
+ *  heading (deg, left positive, from where the walk started), speed (-1 back .. 1 ahead) and
+ *  camera height (-1 low .. 1 tall). */
+export type GrowbotSteer = { drive: string; heading: number; speed: number; pitch: number };
+
 export type GrowbotMotion = "walk" | "turn" | "trick";
 
 /** The owner's switches for one library policy. */
@@ -8387,6 +8392,7 @@ export const api = {
     secs = 0,
     policy?: string,
     name?: string,
+    drive?: string,
   ): Promise<GrowbotMoveResult> {
     const response = await request(
       `/api/growbot/robots/${encodeURIComponent(code)}/move`,
@@ -8395,9 +8401,15 @@ export const api = {
         secs,
         ...(policy ? { policy } : {}),
         ...(name ? { name } : {}),
+        ...(drive ? { drive } : {}),
       }),
     );
     return (await response.json()) as GrowbotMoveResult;
+  },
+
+  /** Steer the trained walk running now, and keep it going a moment (the Body tab's Drive). */
+  async steerGrowbotRobot(code: string, steer: GrowbotSteer): Promise<void> {
+    await request(`/api/growbot/robots/${encodeURIComponent(code)}/steer`, jsonInit("POST", steer));
   },
 
   async growbotPolicies(): Promise<GrowbotPolicy[]> {

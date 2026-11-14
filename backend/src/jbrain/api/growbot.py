@@ -311,6 +311,9 @@ _GESTURE = re.compile(_GESTURE_PATTERN)
 GESTURES_MAX = 32
 
 
+_DRIVE_PATTERN = r"^[0-9a-f]{8,32}$"
+
+
 class MoveIn(BaseModel):
     move: Move
     # The gesture `gesture` plays, by its name in the creature's body; only that move takes one.
@@ -323,6 +326,9 @@ class MoveIn(BaseModel):
         default=None,
         pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     )
+    # The Body tab's Drive names the trained walk it starts, so only that walk takes its
+    # steering (SteerIn.drive).
+    drive: str | None = Field(default=None, pattern=_DRIVE_PATTERN)
 
 
 class MoveOut(BaseModel):
@@ -346,7 +352,11 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
         raise HTTPException(status_code=422, detail="a gesture move, and only that, takes a name")
     if body.move == "look" and body.policy is None:
         raise HTTPException(status_code=422, detail="a trick runs a library policy: name one")
+    if body.drive is not None and body.policy is None:
+        raise HTTPException(status_code=422, detail="only a trained walk can be driven")
     sent: dict[str, object] = {"code": code, "move": body.move, "secs": body.secs}
+    if body.drive is not None:
+        sent["drive"] = body.drive
     if body.name is not None:
         sent["name"] = body.name
     if body.policy is not None:
@@ -380,6 +390,41 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
         state=out.state,
     )
     return out
+
+
+class SteerIn(BaseModel):
+    """The Body tab's continuous steering of the trained walk its Drive started (`drive`, the
+    id its move gave that walk; no other walk takes it): the heading (deg, left
+    positive, from where the walk started), the speed (-1 back .. 1 ahead; a heading-only
+    walk ignores it) and the camera height (-1 low .. 1 tall; only a camera walk reads it)."""
+
+    drive: str = Field(pattern=_DRIVE_PATTERN)
+    heading: float = Field(ge=-180, le=180)
+    speed: float = Field(default=1, ge=-1, le=1)
+    pitch: float = Field(default=1, ge=-1, le=1)
+
+
+async def _steer(request: Request, ctx: SessionContext, code: str, body: SteerIn) -> Response:
+    robots = await _repo(request).list_robots(ctx)
+    if not any(r.code == code and r.revoked_at is None for r in robots):
+        raise HTTPException(status_code=404, detail="no such robot")
+    sent = {"code": code, **body.model_dump()}
+    resp = await _sidecar(request, "POST", "/internal/robots/steer", sent)
+    if resp is None:
+        raise HTTPException(status_code=503, detail="GrowBot isn't running on the box.")
+    if resp.status_code in _MOVE_REFUSED:
+        raise HTTPException(status_code=resp.status_code, detail=_MOVE_REFUSED[resp.status_code])
+    try:
+        got = resp.json() if resp.status_code == 200 else None
+    except ValueError:
+        got = None
+    if not isinstance(got, dict):
+        log.warning("growbot.steer_failed", code=code, status=resp.status_code)
+        raise HTTPException(status_code=502, detail="GrowBot couldn't pass the steering on.")
+    if got.get("ok") is not True:
+        # The drive's walk ended on the phone (done, tipped, stopped from elsewhere).
+        raise HTTPException(status_code=410, detail="The walk ended.")
+    return Response(status_code=202)
 
 
 async def _delete_robot(request: Request, ctx: SessionContext, code: str) -> Response:
@@ -417,6 +462,12 @@ async def delete_robot(request: Request, owner: OwnerDep, code: Code) -> Respons
 async def move_robot(request: Request, owner: OwnerDep, code: Code, body: MoveIn) -> MoveOut:
     """Ask the creature wearing `code` to walk, spin, gesture or stop, from the Body tab."""
     return await _move(request, _owner_ctx(owner), code, body)
+
+
+@router.post("/robots/{code}/steer", status_code=202)
+async def steer_robot(request: Request, owner: OwnerDep, code: Code, body: SteerIn) -> Response:
+    """Steer the trained walk the creature wearing `code` runs, and keep it going a moment."""
+    return await _steer(request, _owner_ctx(owner), code, body)
 
 
 # The sidecar keys every `gb_session` from this file too (growbot/server/serve.py `Sessions`),
@@ -471,6 +522,12 @@ async def debug_list_robots(request: Request, _p: DebugDep) -> list[RobotOut]:
 async def debug_delete_robot(request: Request, _p: DebugDep, code: Code) -> Response:
     request.state.debug_detail = f"growbot forget {code}"
     return await _delete_robot(request, _DEBUG_OWNER, code)
+
+
+@debug_router.post("/robots/{code}/steer", status_code=202)
+async def debug_steer_robot(request: Request, _p: DebugDep, code: Code, body: SteerIn) -> Response:
+    request.state.debug_detail = f"growbot steer {code}"
+    return await _steer(request, _DEBUG_OWNER, code, body)
 
 
 @debug_router.post("/robots/{code}/move")
