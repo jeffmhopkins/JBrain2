@@ -316,10 +316,7 @@ export function GrowbotMovePanel({
       {library && (
         <GrowbotPoliciesSheet
           policies={policies}
-          onChange={(next) => {
-            setPolicies(next);
-            if (walkWith && !next.some((p) => p.id === walkWith)) pick("");
-          }}
+          onChange={(update) => setPolicies(update)}
           onClose={() => setLibrary(false)}
         />
       )}

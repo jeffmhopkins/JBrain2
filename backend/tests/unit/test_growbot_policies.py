@@ -60,6 +60,8 @@ class FakePolicies:
     def __init__(self) -> None:
         self.rows: dict[str, tuple[PolicyRow, dict[str, Any]]] = {}
         self.contexts: list[SessionContext] = []
+        # Rows summary() no longer reads, as SqlPolicyRepo.rename raises for them.
+        self.unreadable: set[str] = set()
 
     async def list(self, ctx: SessionContext) -> list[PolicyRow]:
         self.contexts.append(ctx)
@@ -91,6 +93,8 @@ class FakePolicies:
         got = self.rows.get(pid)
         if got is None:
             return None
+        if pid in self.unreadable:
+            raise PolicyError("its control rate (obs_spec.control_hz) is missing or out of range")
         row = PolicyRow(**{**got[0].__dict__, "name": name})
         self.rows[pid] = (row, got[1])
         return row
@@ -102,6 +106,10 @@ class FakePolicies:
         self.contexts.append(ctx)
         got = self.rows.get(pid)
         return got[1] if got else None
+
+    async def exists(self, ctx: SessionContext, pid: str) -> bool:
+        self.contexts.append(ctx)
+        return pid in self.rows
 
 
 async def _finished(jl: FakeJlaunchClient, spec: str, files: dict[str, bytes]) -> str:
@@ -191,6 +199,7 @@ async def test_a_job_that_is_not_a_finished_walk_adds_nothing(tmp_path: Path) ->
             "control rate",
         ),
         (json.dumps(policy(layers=[])).encode(), "no layers"),
+        (json.dumps(policy(["gyro_z", "cmd_yaw", "lidar_0"])).encode(), "can't feed"),
     ],
 )
 async def test_a_file_the_pad_cannot_steer_is_refused_with_why(
@@ -218,6 +227,10 @@ async def test_rename_and_delete(tmp_path: Path) -> None:
         "Brisk"
     )
     assert client.patch(f"/api/growbot/policies/{pid}", json={"name": "\n"}).status_code == 422
+    # A row the runner contract moved past: refused with why, never a 500.
+    lib.unreadable.add(pid)
+    got = client.patch(f"/api/growbot/policies/{pid}", json={"name": "Old"})
+    assert got.status_code == 409 and "control rate" in got.json()["detail"]
     assert client.delete(f"/api/growbot/policies/{pid}").status_code == 204
     assert client.delete(f"/api/growbot/policies/{pid}").status_code == 404
     other = str(uuid.uuid4())

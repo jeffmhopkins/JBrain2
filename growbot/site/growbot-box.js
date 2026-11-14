@@ -1466,32 +1466,37 @@
    - The file loads from the box (/api/box/policy) into upstream's own Walker
      (growbot_runner.js), ticked at its control_hz, reset at the walk's start.
    - Legs neutral (with this phone's trims) for 1 s first, as the simulator starts each episode.
-   - The IMU in the body frame: x toward the nose (the phone's top, its camera end), y to the
-     robot's left, z out of the screen; so accel (phone.y, -phone.x, phone.z) and gyro
+   - The IMU in the body frame: x toward the nose (the phone's top), y to the robot's left, z
+     out of the screen, whichever end the walk leads with (a camera walk only measures its
+     heading from the tail, which the relative target below makes no difference to); so accel (phone.y, -phone.x, phone.z) and gyro
      (beta, -alpha, gamma) in rad/s, as upstream's forward walk maps them. Then levelled by the
      smallest rotation taking the gravity measured at the settled stance to +z, with IMU_SIGN
-     [1, 1, 1] and gain 1, as trained.
+     [1, 1, 1] and gain 1, as trained; the Walker is pinned to z-up so it never rotates again.
    - The heading is the levelled gyro's z rate integrated from the start (counter-clockwise
      positive), and each tick cmd_yaw = wrap180(target - heading) / 180, positive = turn left.
      Training adds drift and noise to that, and the facing end does not change the sum, since the
      target is set relative to where the facing end points at the start.
    - The pad's moves are targets: forward 0 at full speed, left +90 and right -90 (standing to
-     turn when it takes a speed), back -1 speed where it takes one, else a turn around (180).
+     turn when it takes a speed), back -1 speed where it takes one, else a turn around (180),
+     which keeps turning left: at ±180 exactly the error's sign would flip with the noise.
    - Every stop upstream's walks have: Stop and any newer move (stopMotion / carryLegMotion own
-     _motion), pause, hide, a dream, a lost relay, a tip or a grab, and the duty cool-off. */
+     _motion), pause, hide, a dream, a lost relay, a tip or a grab, the tip cool-off, and the
+     legs' duty budget (dutyLeftMs / policySeconds / _walkLog, as runGait grants it). */
 (function () {
   "use strict";
-  var D = Math.PI / 180, PREP_MS = 1000, cache = {};
+  // The page keeps a policy as long as the box does (serve.py POLICY_CACHE_S), so one deleted
+  // from the library stops walking within a minute rather than at the next reload.
+  var D = Math.PI / 180, PREP_MS = 1000, KEEP_MS = 60000, cache = {};
 
   function load(pid) {
-    var ref = "/api/box/policy?id=" + encodeURIComponent(pid);
-    if (!cache[pid]) {
-      cache[pid] = fetch(ref, { cache: "no-store" }).then(function (r) {
+    var ref = "/api/box/policy?id=" + encodeURIComponent(pid), hit = cache[pid];
+    if (!hit || Date.now() - hit.t >= KEEP_MS) {
+      hit = cache[pid] = { t: Date.now(), p: fetch(ref, { cache: "no-store" }).then(function (r) {
         if (!r.ok) throw new Error(r.status === 404 ? "that policy isn't on the box any more" : "policy " + r.status);
         return r.json();
-      }).catch(function (e) { delete cache[pid]; throw e; });
+      }).catch(function (e) { delete cache[pid]; throw e; }) };
     }
-    return cache[pid];
+    return hit.p;
   }
 
   function channels(pj) {
@@ -1507,7 +1512,7 @@
   function command(move, hasSpeed) {
     if (move === "spin_left") return { target: 90, fwd: hasSpeed ? 0 : 1 };
     if (move === "spin_right") return { target: -90, fwd: hasSpeed ? 0 : 1 };
-    if (move === "back") return hasSpeed ? { target: 0, fwd: -1 } : { target: 180, fwd: 1 };
+    if (move === "back") return hasSpeed ? { target: 0, fwd: -1 } : { target: 180, fwd: 1, around: true };
     return { target: 0, fwd: 1 };
   }
 
@@ -1550,7 +1555,9 @@
     ensureIMU();
     if (!ori) { refuse(attempt, "no_orientation", "no orientation readings from this phone — tap to allow motion, then try again"); return; }
     if (Date.now() < _gaitCoolUntil) { refuse(attempt, "cooling", "catching my balance a moment…"); return; }
-    var walkS = secs > 0 ? secs : (move === "forward" || move === "back" ? 8 : 4);
+    var left = dutyLeftMs();
+    if (left < 800) { refuse(attempt, "duty_limit", "resting its legs a moment (duty limit)"); return; }
+    var dflt = move === "forward" || move === "back" ? 8 : 4, walkS = policySeconds(secs, dflt, left);
     carryLegMotion();
     var gen = _motionGen, M = { kind: "walk", loading: true, report: attempt };
     _motion = M;
@@ -1567,11 +1574,13 @@
       if (yaw.meaning !== "heading_error") throw new Error("that policy isn't steered by a heading");
       var cal = Object.assign({}, calNow(), { IMU_SIGN: [1, 1, 1], gain: 1, turn: 0 });
       var walker = new mod.Walker(policy, cal), hz = Number(sp.control_hz) || 25;
+      walker.setFrame("zup");
       var cmd = command(move, channels(policy).indexOf("cmd_forward") >= 0);
       var L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0;
       var prepEnd = Date.now() + PREP_MS, grav = { x: 0, y: 0, z: 0, n: 0 };
       var R = null, heading = 0, lastT = 0, endT = 0, upB = null, tipN = 0, jerkN = 0;
       M.loading = false;
+      _walkLog.push({ t: Date.now(), ms: walkS * 1000 });
       selfMoveUntil = Date.now() + PREP_MS + walkS * 1000 + 3500;
       $("brainTxt").textContent = "finding my stance…";
 
@@ -1585,7 +1594,18 @@
         (window._body.raw || window._body).pose(l, r);
         M.lastPose = { l: l - L, r: r - Rr };
       }
-      function prep() {
+      // A tick runs off a timer, outside the load's catch: a throw there must still free the legs.
+      function guarded(tick) {
+        return function () {
+          try { tick(); } catch (e) {
+            if (_motion !== M) return;
+            stopMotion();
+            setErr("my trained walk stumbled (" + ((e && e.message) || e) + ")");
+            $("brainTxt").textContent = "awake";
+          }
+        };
+      }
+      var prep = guarded(function () {
         if (gone()) return;
         try { send(90 + L, 90 + Rr); } catch (e) { stopMotion(); return; }
         if (!M.started) { M.started = true; _moveReport(attempt, "started", "stance_commands", { gait: "trained", policy: pid }); }
@@ -1600,8 +1620,8 @@
         try { logEv("walk_start", { gait: "trained", policy: pid, dir: move, target: cmd.target, fwd: cmd.fwd, granted: walkS }); } catch (e) {}
         $("brainTxt").textContent = "walking…";
         step();
-      }
-      function step() {
+      });
+      var step = guarded(function () {
         if (gone()) return;
         var t0 = performance.now();
         if (Date.now() >= endT) {
@@ -1628,10 +1648,11 @@
         lastT = t0;
         heading += G.z * dt;
         var err = wrap180(cmd.target - heading / D);
+        if (cmd.around && Math.abs(err) > 90) err = Math.abs(err);
         var out = walker.step(A, G, { fwd: cmd.fwd, yaw: err / 180, pitch: 1 });
         try { send(out.l, out.r); } catch (e) { stopMotion(); return; }
         M.loopIv = setTimeout(step, Math.max(0, 1000 / hz - (performance.now() - t0)));
-      }
+      });
       prep();
     }).catch(function (e) {
       if (gen !== _motionGen) return;

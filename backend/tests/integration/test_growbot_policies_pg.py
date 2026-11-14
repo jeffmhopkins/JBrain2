@@ -4,6 +4,7 @@ SQL (add, list, rename, delete, the sidecar's JSON read) does what the api assum
 The mandatory RLS isolation test for the new table (CLAUDE.md rule 3).
 """
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -54,11 +55,29 @@ async def test_the_library_round_trips(maker: async_sessionmaker) -> None:
     assert row.contract.facing == "camera" and row.contract.control_hz == 25
     assert [r.id for r in await repo.list(OWNER)] == [row.id]
     assert await repo.get_json(SYSTEM_OWNER, row.id) == POLICY
+    assert await repo.exists(OWNER, row.id)
     renamed = await repo.rename(OWNER, row.id, "Brisk")
     assert renamed is not None and renamed.name == "Brisk" and renamed.bytes == 1234
     assert await repo.delete(OWNER, row.id)
     assert not await repo.delete(OWNER, row.id)
     assert await repo.get_json(OWNER, row.id) is None
+    assert not await repo.exists(OWNER, row.id)
+
+
+async def test_a_listing_reads_the_weights_only_as_present(maker: async_sessionmaker) -> None:
+    """list() summarises a stand-in for the weights, which must still tell a row with empty
+    ones apart: that row is left out, as summary() refuses it."""
+    repo = SqlPolicyRepo(maker)
+    good = await repo.add(OWNER, "good", POLICY, 1, "", "")
+    async with scoped_session(maker, SYSTEM_OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.growbot_policies (name, source_job, source_spec, policy, bytes)"
+                " VALUES ('hollow', '', '', CAST(:p AS jsonb), 1)"
+            ),
+            {"p": json.dumps({**POLICY, "layers": []})},
+        )
+    assert [r.id for r in await repo.list(OWNER)] == [good.id]
 
 
 async def test_the_library_is_owner_only(maker: async_sessionmaker) -> None:
@@ -67,6 +86,7 @@ async def test_the_library_is_owner_only(maker: async_sessionmaker) -> None:
     for ctx in NON_OWNERS:
         assert await repo.list(ctx) == [], ctx
         assert await repo.get_json(ctx, row.id) is None, ctx
+        assert not await repo.exists(ctx, row.id), ctx
         assert await repo.rename(ctx, row.id, "x") is None, ctx
         assert not await repo.delete(ctx, row.id), ctx
         with pytest.raises(DBAPIError):

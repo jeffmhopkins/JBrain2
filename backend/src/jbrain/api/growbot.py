@@ -295,7 +295,7 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
             raise HTTPException(status_code=422, detail="only a walk or a spin runs a policy")
         library = cast(PolicyRepo, request.app.state.growbot_policies)
         # Checked here so the creature is never sent to load one that isn't there.
-        if await library.get_json(ctx, body.policy) is None:
+        if not await library.exists(ctx, body.policy):
             raise HTTPException(status_code=404, detail="no such policy")
         sent["policy"] = body.policy
     resp = await _sidecar(request, "POST", "/internal/robots/move", sent)

@@ -193,7 +193,10 @@ async def add_policy(request: Request, owner: OwnerDep, body: AddIn) -> PolicyOu
 async def rename_policy(
     request: Request, owner: OwnerDep, pid: PolicyId, body: RenameIn
 ) -> PolicyOut:
-    row = await _repo(request).rename(_owner_ctx(owner), pid, body.name)
+    try:
+        row = await _repo(request).rename(_owner_ctx(owner), pid, body.name)
+    except PolicyError as exc:
+        raise HTTPException(status_code=409, detail=f"that walk can't be driven: {exc}") from exc
     if row is None:
         raise HTTPException(status_code=404, detail="no such policy")
     return _out(row)

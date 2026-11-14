@@ -3745,7 +3745,7 @@ def test_a_doubtful_name_folds_short_or_faint_into_its_own_doubt() -> None:
 _TRAINED_HARNESS = Path(__file__).with_name("growbot_trained_walk_harness.mjs")
 
 
-def _trained_walk(move: str, phone: dict[str, Any]) -> dict[str, Any]:
+def _trained_walk(move: str, phone: dict[str, Any], duty_ms: int = 60000) -> dict[str, Any]:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -3757,6 +3757,7 @@ def _trained_walk(move: str, phone: dict[str, Any]) -> dict[str, Any]:
             str(_SITE / "growbot-box.js"),
             move,
             json.dumps(phone),
+            str(duty_ms),
         ],
         capture_output=True,
         text=True,
@@ -3796,6 +3797,14 @@ def test_a_trained_walk_levels_the_stance_and_steers_by_heading() -> None:
     assert 18 <= got["n"] <= 30
     assert got["last"] == ["rest"]
     assert got["errs"] == []
+    # It spends the legs' duty budget like a stock walk.
+    assert [w["ms"] for w in got["walkLog"]] == [1000]
+
+
+def test_a_trained_walk_rests_when_the_duty_budget_is_spent() -> None:
+    got = _trained_walk("forward", _LEANING, duty_ms=500)
+    assert got["reports"] == [["blocked", "duty_limit"]]
+    assert got["n"] == 0 and got["walkLog"] == []
 
 
 @pytest.mark.parametrize(("move", "yaw", "fwd"), [("forward", 0.0, 1), ("back", 1.0, 1)])
@@ -3809,7 +3818,16 @@ def test_a_heading_only_walk_turns_around_to_go_back(move: str, yaw: float, fwd:
 def test_the_trained_walk_keeps_upstreams_stops() -> None:
     box = (_SITE / "growbot-box.js").read_text()
     walk = box[box.index("/* Trained walks from JBrain's policy library") :]
-    for stop in ("paused", "document.hidden", "dreaming", "_bodyAlive()", "_gaitCoolUntil"):
+    for stop in (
+        "paused",
+        "document.hidden",
+        "dreaming",
+        "_bodyAlive()",
+        "_gaitCoolUntil",
+        "dutyLeftMs()",
+        # The page levels the IMU itself, so the runner must not rotate it again.
+        'setFrame("zup")',
+    ):
         assert stop in walk, stop
     assert "tipN >= 5 || jerkN >= 6" in walk
     # It owns the legs only through _motion, which Stop and every newer move clear.

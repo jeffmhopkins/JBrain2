@@ -9,7 +9,8 @@ import { useArm } from "./growbotArm";
 
 interface Props {
   policies: GrowbotPolicy[];
-  onChange: (next: GrowbotPolicy[]) => void;
+  // An update, not a value: a rename can land after an add, and must not drop it.
+  onChange: (update: (all: GrowbotPolicy[]) => GrowbotPolicy[]) => void;
   onClose: () => void;
 }
 
@@ -151,7 +152,7 @@ export function GrowbotPoliciesSheet({ policies, onChange, onClose }: Props) {
     setBusy(s.job_id);
     try {
       const made = await api.addGrowbotPolicy(s.job_id, startName(s));
-      onChange([made, ...policies]);
+      onChange((all) => [made, ...all]);
       setSources((all) =>
         (all ?? []).map((x) => (x.job_id === s.job_id ? { ...x, added: true } : x)),
       );
@@ -175,8 +176,19 @@ export function GrowbotPoliciesSheet({ policies, onChange, onClose }: Props) {
               key={p.id}
               p={p}
               say={say}
-              onRenamed={(n) => onChange(policies.map((x) => (x.id === n.id ? n : x)))}
-              onDeleted={() => onChange(policies.filter((x) => x.id !== p.id))}
+              onRenamed={(n) => onChange((all) => all.map((x) => (x.id === n.id ? n : x)))}
+              onDeleted={() => {
+                onChange((all) => all.filter((x) => x.id !== p.id));
+                // Its job can be added again, unless another copy from it is still on the box.
+                const kept = policies.some((x) => x.id !== p.id && x.source_job === p.source_job);
+                if (!kept) {
+                  setSources((all) =>
+                    (all ?? []).map((s) =>
+                      s.job_id === p.source_job ? { ...s, added: false } : s,
+                    ),
+                  );
+                }
+              }}
             />
           ))}
         </div>

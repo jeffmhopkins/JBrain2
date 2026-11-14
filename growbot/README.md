@@ -293,8 +293,9 @@ The page's `gbTrainedWalk` then loads the runner (`/growbot_runner.js`) and driv
 GrowBot_Training trained it: legs neutral and a 1 s settle, the measured gravity rotated to +z,
 heading integrated from the levelled gyro, and `cmd_yaw` the wrapped heading error over 180
 each tick (forward holds heading; the spins aim ±90°; back backs away when the walk takes
-`cmd_forward`, else aims behind). It keeps the stock walks' stops: a tip or a grab, a pause,
-a hidden page, a dream, or the relay dropping.
+`cmd_forward`, else turns left until it faces behind). It spends the legs' duty budget as a
+stock walk does, and keeps the stock walks' stops: a tip or a grab, a pause, a hidden page, a
+dream, or the relay dropping. The library refuses a policy with an input the runner can't feed.
 
 ## Leg calibration (the Body tab's Legs pane)
 

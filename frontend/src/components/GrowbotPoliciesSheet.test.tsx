@@ -49,6 +49,15 @@ function serve(route: (c: Call) => Response) {
   return calls;
 }
 
+// The sheet hands its parent updates; this keeps the list they build.
+function holder(start: GrowbotPolicy[]) {
+  const box = { all: start };
+  const onChange = vi.fn((update: (all: GrowbotPolicy[]) => GrowbotPolicy[]) => {
+    box.all = update(box.all);
+  });
+  return { box, onChange };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -61,14 +70,14 @@ describe("GrowbotPoliciesSheet", () => {
       contract: { facing: "camera", speed: true, pitch: true, control_hz: 25 },
     });
     const calls = serve((c) => (c.method === "POST" ? json(made, 201) : json([CAMERA_JOB])));
-    const onChange = vi.fn();
+    const { box, onChange } = holder([policy()]);
     render(<GrowbotPoliciesSheet policies={[policy()]} onChange={onChange} onClose={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Add the walk from Camera walk" }));
     await screen.findByText(/Added Camera walk, Nov 14/);
     const post = calls.find((c) => c.method === "POST");
     expect(post).toMatchObject({ url: "/api/growbot/policies", body: { job_id: "j-2" } });
     expect(String((post?.body as { name: string }).name)).toMatch(/^Camera walk/);
-    expect(onChange).toHaveBeenCalledWith([made, policy()]);
+    expect(box.all).toEqual([made, policy()]);
     expect(screen.getByText("On the box", { selector: ".gb-tag" })).toBeInTheDocument();
   });
 
@@ -88,19 +97,19 @@ describe("GrowbotPoliciesSheet", () => {
           ? new Response(null, { status: 204 })
           : json([]),
     );
-    const onChange = vi.fn();
+    const { box, onChange } = holder([policy()]);
     render(<GrowbotPoliciesSheet policies={[policy()]} onChange={onChange} onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Rename Quick trot" }));
     const field = screen.getByRole("textbox", { name: "New name for Quick trot" });
     fireEvent.change(field, { target: { value: "Zoomies" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    await waitFor(() => expect(onChange).toHaveBeenCalledWith([renamed]));
+    await waitFor(() => expect(box.all).toEqual([renamed]));
     expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ name: "Zoomies" });
 
     fireEvent.click(screen.getByRole("button", { name: "Delete Quick trot" }));
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Tap again to delete Quick trot" }));
-    await waitFor(() => expect(onChange).toHaveBeenCalledWith([]));
+    await waitFor(() => expect(box.all).toEqual([]));
     await screen.findByText("Deleted Quick trot.");
   });
 
@@ -109,6 +118,22 @@ describe("GrowbotPoliciesSheet", () => {
     render(<GrowbotPoliciesSheet policies={[]} onChange={vi.fn()} onClose={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Add the walk from Camera walk" }));
     await screen.findByText(/bad policy/);
+  });
+});
+
+describe("GrowbotPoliciesSheet after a delete", () => {
+  it("offers the walk's job again", async () => {
+    serve((c) =>
+      c.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : json([{ ...CAMERA_JOB, job_id: "j-1", added: true }]),
+    );
+    const { onChange } = holder([policy()]);
+    render(<GrowbotPoliciesSheet policies={[policy()]} onChange={onChange} onClose={vi.fn()} />);
+    await screen.findByText("On the box", { selector: ".gb-tag" });
+    fireEvent.click(screen.getByRole("button", { name: "Delete Quick trot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap again to delete Quick trot" }));
+    await screen.findByRole("button", { name: "Add the walk from Camera walk" });
   });
 });
 

@@ -1,6 +1,6 @@
 // tests/unit/test_growbot_site.py runs growbot-box.js's trained walk here, in node, against
 // stubs of the next.html globals it drives. Arguments: the runner's file URL, growbot-box.js,
-// the pad's move, and the phone's IMU as JSON.
+// the pad's move, the phone's IMU as JSON, and optionally the legs' duty left (ms).
 import { register } from "node:module";
 const RUNNER = process.argv[2], BOX = process.argv[3], MOVE = process.argv[4];
 const PHONE = JSON.parse(process.argv[5]);
@@ -23,6 +23,9 @@ g._bodyAlive = () => true; g.ensureIMU = () => {}; g.holdStop = () => {}; g.logE
 g.phoneTiltDegrees = () => 0; g.setErr = (m) => errs.push(m);
 g.calNow = () => ({ L_OFF: 4, R_OFF: -2, L_SIGN: -1, R_SIGN: 1, IMU_SIGN: [1, -1, 1], gain: 0.7 });
 g.$ = () => ({ textContent: "" });
+// The legs' duty budget, as next.html keeps it: a run is granted no more than what is left.
+g._walkLog = []; g.dutyLeftMs = () => Number(process.argv[6] || 60000);
+g.policySeconds = (v, fallback, ms) => Math.min(Number(v) > 0 ? Math.max(1, Number(v)) : fallback, ms / 1000);
 let seq = 0;
 g._moveRequest = (name) => ({ id: ++seq, action: name, state: "requested" });
 g._moveReport = (a, state, why) => { a.state = state; reports.push([state, why]); };
@@ -41,4 +44,4 @@ const src = fs.readFileSync(BOX, "utf8");
 g.gbTrainedWalk("0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, 1);
 const accepted = reports[0];
 await new Promise((r) => setTimeout(r, 2400));
-console.log(JSON.stringify({ accepted, reports, fed: fed.slice(0, 3), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
+console.log(JSON.stringify({ accepted, reports, walkLog: g._walkLog, fed: fed.slice(0, 3), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));

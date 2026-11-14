@@ -9,6 +9,7 @@ library and the Body tab never have to parse the whole file.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -21,6 +22,27 @@ from jbrain.db.session import SessionContext, scoped_session
 # The largest library policy: the trained MLPs are tens of KB, upstream's biggest stock walk
 # about 600 KB; the creature parses it whole on the phone.
 MAX_POLICY_BYTES = 4 * 1024 * 1024
+
+
+# The channels growbot_runner.js's Walker._validate takes; it throws on any other, so the library
+# refuses those rather than offer a walk that can only fail on the phone.
+_RUNNER_CHANNELS = frozenset(
+    {
+        "accel_x",
+        "accel_y",
+        "accel_z",
+        "gyro_x",
+        "gyro_y",
+        "gyro_z",
+        "cmd_forward",
+        "cmd_yaw",
+        "cmd_pitch",
+        "euler_roll",
+        "euler_pitch",
+        "euler_yaw",
+    }
+)
+_RUNNER_PATTERN = re.compile(r"prev_action_\d+|cycle:.+|cmd_mode_[a-z0-9_]+")
 
 
 class PolicyError(ValueError):
@@ -71,6 +93,9 @@ def summary(policy: Any) -> Contract:
         channels = [str(c) for c in spec["channels"]]
     if not channels:
         raise PolicyError("the policy declares no input channels")
+    odd = [c for c in channels if c not in _RUNNER_CHANNELS and not _RUNNER_PATTERN.fullmatch(c)]
+    if odd:
+        raise PolicyError(f"the phone's runner can't feed its input {odd[0]!r}")
     for key in ("mean", "std", "layers"):
         if not isinstance(policy.get(key), list) or not policy[key]:
             raise PolicyError(f"the policy has no {key}")
@@ -142,8 +167,25 @@ class PolicyRepo(Protocol):
 
     async def get_json(self, ctx: SessionContext, pid: str) -> dict[str, Any] | None: ...
 
+    async def exists(self, ctx: SessionContext, pid: str) -> bool: ...
 
-_COLS = "id, name, source_job, source_spec, policy, bytes, created_at"
+
+def _stub(key: str) -> str:
+    # A one-element stand-in for a weight array, so a listing never ships megabytes of weights
+    # out of Postgres just for summary() to see that they are there.
+    v = f"policy->'{key}'"
+    return (
+        f"'{key}', CASE WHEN jsonb_typeof({v}) = 'array' THEN"
+        f" CASE WHEN jsonb_array_length({v}) > 0 THEN '[0]'::jsonb END END"
+    )
+
+
+_COLS = (
+    "id, name, source_job, source_spec, bytes, created_at,"
+    " jsonb_build_object('obs_spec', policy->'obs_spec', "
+    + ", ".join(_stub(k) for k in ("mean", "std", "layers"))
+    + ") AS policy"
+)
 
 
 class SqlPolicyRepo:
@@ -197,6 +239,8 @@ class SqlPolicyRepo:
         return _row(r)
 
     async def rename(self, ctx: SessionContext, pid: str, name: str) -> PolicyRow | None:
+        """None when there is no such policy; PolicyError when the row is one summary() no
+        longer reads (list() leaves those out, so the owner can only reach one by id)."""
         async with scoped_session(self._maker, ctx) as session:
             r = (
                 await session.execute(
@@ -226,3 +270,11 @@ class SqlPolicyRepo:
                 )
             ).first()
         return dict(r.policy) if r is not None and isinstance(r.policy, dict) else None
+
+    async def exists(self, ctx: SessionContext, pid: str) -> bool:
+        async with scoped_session(self._maker, ctx) as session:
+            r = await session.execute(
+                text("SELECT 1 FROM app.growbot_policies WHERE id = CAST(:i AS uuid)"),
+                {"i": pid},
+            )
+            return r.first() is not None
