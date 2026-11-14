@@ -115,6 +115,31 @@ def test_delete_is_idempotent_204(_no_db: None) -> None:
     assert client.delete("/api/jlaunch/jobs/deadbeef").status_code == 204
 
 
+def test_delete_refuses_a_live_job(_no_db: None) -> None:
+    import asyncio
+
+    fake = FakeJlaunchClient()
+    jid = asyncio.run(fake.start_job("erdos_straus_1e12"))["id"]
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    got = client.delete(f"/api/jlaunch/jobs/{jid}")
+    assert got.status_code == 409
+    assert "stop it first" in got.json()["detail"]
+    assert asyncio.run(fake.get_job(jid))["state"] == "running"
+    fake.mark_succeeded(jid)
+    assert client.delete(f"/api/jlaunch/jobs/{jid}").status_code == 204
+
+
+def test_delete_502s_when_the_control_server_is_unreachable(_no_db: None) -> None:
+    fake = FakeJlaunchClient()
+
+    async def down(_jid: str) -> dict[str, object]:
+        raise JlaunchError("connection refused")
+
+    fake.get_job = down  # type: ignore[method-assign]
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    assert client.delete("/api/jlaunch/jobs/deadbeef").status_code == 502
+
+
 class _FakeBlobs:
     async def put_stream(self, chunks) -> str:  # noqa: ANN001
         async for _ in chunks:  # drain so the client's stream generator runs

@@ -2,7 +2,8 @@
 
 What an assistant relies on with no terminal: the runs are listed, a running job's live
 folder reads back exactly as the owner sees it (sandboxed), the finished result downloads,
-and nothing here can start, stop or delete a run."""
+a registered spec starts, a finished run deletes, and nothing here can stop a run or delete
+a live one."""
 
 from __future__ import annotations
 
@@ -68,15 +69,32 @@ def test_result_downloads_once_finished(debug_client: tuple[TestClient, str]) ->
     assert got.headers["content-disposition"].startswith("attachment;")
 
 
-def test_cannot_stop_or_delete_a_run(debug_client: tuple[TestClient, str]) -> None:  # noqa: F811
+def test_cannot_stop_a_run(debug_client: tuple[TestClient, str]) -> None:  # noqa: F811
     client, key = debug_client
     fake, jid = _launcher(client)
-    for method, path in (
-        ("POST", f"/api/debug/jlaunch/jobs/{jid}/stop"),
-        ("DELETE", f"/api/debug/jlaunch/jobs/{jid}"),
-    ):
-        assert client.request(method, path, headers=_auth(key)).status_code in (404, 405)
+    got = client.post(f"/api/debug/jlaunch/jobs/{jid}/stop", headers=_auth(key))
+    assert got.status_code in (404, 405)
     assert (asyncio.run(fake.get_job(jid)))["state"] == "running"
+
+
+def test_deletes_a_finished_run_but_never_a_live_one(
+    debug_client: tuple[TestClient, str],  # noqa: F811
+    _no_db: None,  # noqa: F811
+) -> None:
+    client, key = debug_client
+    fake, jid = _launcher(client)
+    url = f"/api/debug/jlaunch/jobs/{jid}"
+    assert client.delete(url).status_code == 401
+    live = client.delete(url, headers=_auth(key))
+    assert live.status_code == 409
+    assert (asyncio.run(fake.get_job(jid)))["state"] == "running"
+    fake.mark_succeeded(jid)
+    assert client.delete(url, headers=_auth(key)).status_code == 204
+    assert client.get(url, headers=_auth(key)).status_code == 404
+    # Already gone (or never known): still 204, so a retried delete is harmless.
+    assert client.delete(url, headers=_auth(key)).status_code == 204
+    assert client.delete("/api/debug/jlaunch/jobs/bad.id", headers=_auth(key)).status_code == 404
+    assert "jlaunch.delete" in client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
 
 
 def test_starts_a_registered_spec_and_nothing_else(

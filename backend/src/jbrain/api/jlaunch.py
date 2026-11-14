@@ -186,13 +186,35 @@ async def _control_then_mirror(
 
 @router.delete("/jlaunch/jobs/{jid}", status_code=204)
 async def delete_job(jid: str, owner: OwnerDep, request: Request) -> None:
+    await delete(request, jid, _owner_ctx(owner.id))
+
+
+# A job in one of these still owns its checkout and live folder.
+_LIVE_STATES = frozenset({"queued", "cloning", "running"})
+
+
+async def delete(request: Request, jid: str, ctx: SessionContext) -> None:
+    """Delete a finished run (the owner's, or a debug token's): its checkout, scratch,
+    result, mirror row and share links. A live job is refused with 409 rather than killed:
+    the control server's own delete would kill it first, and a stray delete must never
+    take down hours of training (owner, 2026-11-14) — stop it, then delete."""
     _valid_id(jid)
+    client = _client(request)
     try:
-        await _client(request).delete(jid)  # idempotent (swallows a 404)
+        job = await client.get_job(jid)
+    except JlaunchError as exc:
+        # 404: the control server already forgot it; only the mirror row is left to drop.
+        if exc.status != 404:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        job = None
+    if job is not None and job.get("state") in _LIVE_STATES:
+        raise HTTPException(status_code=409, detail="the job is still running; stop it first")
+    try:
+        await client.delete(jid)  # idempotent (swallows a 404)
     except JlaunchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     # Drop the mirror row too; the FK cascade removes any share links with it.
-    async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
+    async with scoped_session(_maker(request), ctx) as db:
         await _REPO.delete(db, jid)
 
 
