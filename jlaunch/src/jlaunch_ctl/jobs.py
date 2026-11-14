@@ -68,6 +68,13 @@ LIVE_MAX_BYTES = 32 * 1024 * 1024
 LIVE_STATES = ("cloning", "running")
 # How long a Start waits on re-reading the training repo before using the list it has.
 START_REFRESH_S = 15.0
+# A job's id (secrets.token_hex(4)): the only state-root entries read back as runs.
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{8}$")
+# Each run's record, in its state folder, so a restart (every Ops -> Update) doesn't
+# forget the finished runs: their results and 3D replays were on disk all along, but the
+# record lived only in memory, so the app showed the run with nothing to open (owner,
+# 2026-11-14).
+_RECORD = "job.json"
 
 
 class JobError(RuntimeError):
@@ -131,10 +138,16 @@ class Job:
     console_tail: str = ""
     # The training repo commit a manifest job cloned; empty for a built-in spec.
     commit: str = ""
+    # The spec's live folder and artifact, inside the checkout, kept on the record so a
+    # finished run still serves them after its spec has changed or left the list.
+    live_dir: str = ""
+    artifact_path: str = ""
 
     def public(self) -> dict[str, object]:
         data = asdict(self)
-        data.pop("workspace", None)  # an internal path, not part of the control API
+        # Internal paths, not part of the control API.
+        for key in ("workspace", "live_dir", "artifact_path"):
+            data.pop(key, None)
         return data
 
 
@@ -163,6 +176,43 @@ class JobManager:
         self._killing: set[str] = set()
         # Live finalize tasks, held so the loop doesn't GC them mid-run.
         self._finalize_tasks: set[asyncio.Task[None]] = set()
+        self._load_records()
+
+    # -- records -----------------------------------------------------------------
+
+    def _save(self, job: Job) -> None:
+        path = self._state_root / job.id / _RECORD
+        tmp = path.with_name(f".{_RECORD}.tmp")
+        try:
+            tmp.write_text(json.dumps(asdict(job)))
+            tmp.replace(path)
+        except OSError:
+            _log.warning("job record not saved id=%s", job.id, exc_info=True)
+
+    def _load_records(self) -> None:
+        """Read back the runs a previous control server started.
+
+        The job can write to its own state folder, so a record is data, never trusted
+        for a path: the id comes from the folder's name and the checkout is rebuilt
+        from it, and the live folder and artifact are confined to that checkout and the
+        artifact root where they are used. A run that was live when the server went
+        down has no terminal now, so the first poll reaps it as lost (or finished, if
+        it wrote its exit code meanwhile)."""
+        try:
+            entries = sorted(os.scandir(self._state_root), key=lambda e: e.name)
+        except OSError:
+            return
+        for entry in entries:
+            if not _JOB_ID_RE.match(entry.name) or not entry.is_dir(
+                follow_symlinks=False
+            ):
+                continue
+            data = _read_json(Path(entry.path) / _RECORD)
+            if not data:
+                continue
+            job = _job_from_record(entry.name, data, self._workspace_root / entry.name)
+            if job is not None:
+                self._jobs[job.id] = job
 
     # -- queries -----------------------------------------------------------------
 
@@ -242,8 +292,11 @@ class JobManager:
             started_at=_now(),
             machine=read_machine(),
             commit=spec.commit,
+            live_dir=spec.live_dir or "",
+            artifact_path=spec.artifact_path,
         )
         self._jobs[jid] = job
+        self._save(job)
 
         (state / "job.sh").write_text(build_script(spec, str(state)))
         # Create the persistent PTY in the empty checkout, then feed it the job. `exec`
@@ -279,6 +332,13 @@ class JobManager:
         job = self._jobs.get(jid)
         if job is None or job.state not in LIVE_STATES:
             return
+        try:
+            self._end(job, spec, reaped=reaped)
+        finally:
+            self._save(job)
+
+    def _end(self, job: Job, spec: JobSpec | None, *, reaped: bool) -> None:
+        jid = job.id
         was_killed = jid in self._killing
         self._killing.discard(jid)
         job.finished_at = _now()
@@ -329,7 +389,7 @@ class JobManager:
             # Copy the deliverable out of the checkout so it survives independent of it.
             with contextlib.suppress(OSError):
                 self._artifact_root.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(artifact, self._artifact_dest(job.id, spec))
+                shutil.copy2(artifact, self._artifact_dest(job))
         job.verify_ok = _verify_ok(
             workspace / spec.verify_log, spec.verify_must_end_with
         )
@@ -379,46 +439,50 @@ class JobManager:
         self._registry.remove(jid)
         shutil.rmtree(job.workspace, ignore_errors=True)
         shutil.rmtree(self._state_root / jid, ignore_errors=True)
-        spec = get_spec(job.spec_name)
-        if spec is not None:
-            with contextlib.suppress(OSError):
-                self._artifact_dest(jid, spec).unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            self._artifact_dest(job).unlink(missing_ok=True)
         self._jobs.pop(jid, None)
         self._killing.discard(jid)
 
     # -- artifact ----------------------------------------------------------------
 
-    def _artifact_dest(self, jid: str, spec: JobSpec) -> Path:
-        return self._artifact_root / f"{jid}-{Path(spec.artifact_path).name}"
+    def _artifact_rel(self, job: Job) -> str:
+        spec = get_spec(job.spec_name)
+        return spec.artifact_path if spec is not None else job.artifact_path
+
+    def _artifact_dest(self, job: Job) -> Path:
+        name = Path(self._artifact_rel(job)).name or "artifact"
+        return self._artifact_root / f"{job.id}-{name}"
 
     def artifact_path(self, jid: str) -> Path:
         """Path to a finished job's collected artifact, or raise if it isn't there."""
         job = self.get(jid)
-        spec = get_spec(job.spec_name)
-        if spec is None or not job.artifact_present:
+        rel = self._artifact_rel(job)
+        if not rel or not job.artifact_present:
             raise JobError("no artifact for this job")
-        dest = self._artifact_dest(jid, spec)
+        dest = self._artifact_dest(job)
         if dest.is_file():
             return dest
         # Fall back to the in-checkout copy if the out-copy didn't happen.
-        src = Path(job.workspace) / spec.artifact_path
-        if src.is_file():
+        workspace = Path(job.workspace).resolve()
+        src = (workspace / rel).resolve()
+        if src.is_relative_to(workspace) and src.is_file():
             return src
         raise JobError("artifact file is missing")
 
     def artifact_name(self, jid: str) -> str:
-        spec = get_spec(self.get(jid).spec_name)
-        return Path(spec.artifact_path).name if spec else "artifact"
+        return Path(self._artifact_rel(self.get(jid))).name or "artifact"
 
     # -- live folder -------------------------------------------------------------
 
     def _live_dir(self, jid: str) -> Path:
         job = self.get(jid)
         spec = get_spec(job.spec_name)
-        if spec is None or not spec.live_dir:
+        live_dir = spec.live_dir if spec is not None else job.live_dir
+        if not live_dir:
             raise JobError("this job has no live folder")
         workspace = Path(job.workspace).resolve()
-        folder = (workspace / spec.live_dir).resolve()
+        folder = (workspace / live_dir).resolve()
         # The job could make the folder (or a parent) a symlink out of its checkout.
         if not folder.is_relative_to(workspace):
             raise JobError("live folder is outside the checkout")
@@ -478,6 +542,57 @@ class JobManager:
 
     def close_all(self) -> None:
         self._registry.close_all()
+
+
+def _job_from_record(jid: str, data: dict[str, object], workspace: Path) -> Job | None:
+    def text(key: str) -> str:
+        value = data.get(key)
+        return value if isinstance(value, str) else ""
+
+    def opt_text(key: str) -> str | None:
+        value = data.get(key)
+        return value if isinstance(value, str) else None
+
+    def rows(key: str) -> list:
+        value = data.get(key)
+        return (
+            [r for r in value if isinstance(r, dict)] if isinstance(value, list) else []
+        )
+
+    state = text("state")
+    if not state or not text("spec_name"):
+        return None
+    machine = data.get("machine")
+    verify = data.get("verify_ok")
+    size = data.get("artifact_bytes")
+    headline = data.get("headline")
+    return Job(
+        id=jid,
+        spec_name=text("spec_name"),
+        title=text("title"),
+        repo=text("repo"),
+        state=state,
+        phase=text("phase"),
+        workspace=str(workspace),
+        artifact_name=text("artifact_name"),
+        started_at=opt_text("started_at"),
+        finished_at=opt_text("finished_at"),
+        verify_ok=verify if isinstance(verify, bool) else None,
+        headline=[h for h in headline if isinstance(h, str)]
+        if isinstance(headline, list)
+        else [],
+        machine=machine if isinstance(machine, dict) else {},
+        phase_times=rows("phase_times"),
+        error=opt_text("error"),
+        artifact_present=data.get("artifact_present") is True,
+        artifact_bytes=size
+        if isinstance(size, int) and not isinstance(size, bool)
+        else None,
+        console_tail=text("console_tail"),
+        commit=text("commit"),
+        live_dir=text("live_dir"),
+        artifact_path=text("artifact_path"),
+    )
 
 
 def _live_name_ok(name: str) -> bool:
