@@ -147,6 +147,7 @@ async def test_a_bad_index_keeps_the_jobs_and_the_last_good_policies(tmp_path) -
     repo.index, repo.files = INDEX, dict(FILES)
     cat = Catalog(str(tmp_path), fetch=repo)
     await cat.refresh()
+    repo_first = repo.commit
     repo.index = _entry(file="policies/nope/policy_final.json")
     repo.manifest, repo.commit = _job(name="growbot_new"), "b" * 40
     got = await cat.refresh()
@@ -154,6 +155,12 @@ async def test_a_bad_index_keeps_the_jobs_and_the_last_good_policies(tmp_path) -
     assert "isn't in the repo" in str(got["policy_error"])
     assert [p["slug"] for p in cat.policies()] == ["look-v1", "walk-v2"]
     assert cat.policy_bytes("walk-v2") == WALK
+    assert cat.policies()[0]["commit"] == repo_first
+    # A restart still says the policies are stale, and from when.
+    again = Catalog(str(tmp_path), fetch=repo)
+    again.load()
+    assert again.policy_error == cat.policy_error
+    assert again.policies()[0]["commit"] == repo_first
     # Fixed in the repo: the error clears.
     repo.index = INDEX
     assert (await cat.refresh())["policy_error"] is None

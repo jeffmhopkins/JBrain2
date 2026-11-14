@@ -225,17 +225,19 @@ async def _sync_kept_locked(request: Request, ctx: SessionContext) -> KeptSyncOu
         raise HTTPException(status_code=422, detail=str(listing["error"]))
     repo = _repo(request)
     have: dict[str, tuple[PolicyRow, str]] = {}
-    for row in await repo.list(ctx):
+    out = KeptSyncOut(
+        commit=str(listing.get("commit") or ""), added=[], updated=[], removed=[], skipped=[]
+    )
+    # Oldest first, so a duplicate a racing sync added goes and the owner's row stays.
+    for row in sorted(await repo.list(ctx), key=lambda r: r.created_at):
         m = _KEPT_RE.fullmatch(row.source_job)
         if not m:
             continue
         if m.group(1) in have:
-            await repo.delete(ctx, row.id)
+            if await repo.delete(ctx, row.id):
+                out.removed.append(row.name)
             continue
         have[m.group(1)] = (row, m.group(2))
-    out = KeptSyncOut(
-        commit=str(listing.get("commit") or ""), added=[], updated=[], removed=[], skipped=[]
-    )
     listed: set[str] = set()
     for entry in listing.get("policies") or []:
         slug, blob = str(entry.get("slug") or ""), str(entry.get("blob") or "")

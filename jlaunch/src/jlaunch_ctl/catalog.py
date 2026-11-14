@@ -331,6 +331,9 @@ class Catalog:
         # queueing another clone behind it.
         self._inflight: asyncio.Future[dict[str, object]] | None = None
         self.commit = ""
+        # The commit the kept policies were last taken from: older than ``commit`` while
+        # the repo's index is broken.
+        self.policy_commit = ""
         self.fetched_at: str | None = None
         self.error: str | None = None
         # Why the last refresh couldn't take the repo's policies (its jobs still did).
@@ -360,7 +363,7 @@ class Catalog:
 
     def policies(self) -> list[dict[str, object]]:
         """The kept policies the index lists, with the commit they were read at."""
-        return [{**e, "commit": self.commit} for e in self._policies.values()]
+        return [{**e, "commit": self.policy_commit} for e in self._policies.values()]
 
     def policy_bytes(self, slug: str) -> bytes:
         """One kept policy's JSON, served only if it still is the blob the index named:
@@ -411,6 +414,10 @@ class Catalog:
         self._known = known
         self._listed = {n: known[n][0] for n in names if n in known}
         self.commit = commit if isinstance(commit, str) else ""
+        pcommit = data.get("policy_commit")
+        self.policy_commit = pcommit if isinstance(pcommit, str) else self.commit
+        perror = data.get("policy_error")
+        self.policy_error = perror if isinstance(perror, str) else None
         self.fetched_at = fetched_at if isinstance(fetched_at, str) else None
         self._policies = {}
         saved_policies = data.get("policies")
@@ -448,7 +455,15 @@ class Catalog:
                     if kept is None
                     else {str(e["slug"]): e for e in kept}
                 )
-                self._save(snapshot.commit, fetched_at, listed, known, policies)
+                pcommit = self.policy_commit if kept is None else snapshot.commit
+                self._save(
+                    snapshot.commit,
+                    fetched_at,
+                    listed,
+                    known,
+                    policies,
+                    (pcommit, policy_error),
+                )
             except (CatalogError, OSError, ValueError) as exc:
                 err = exc if isinstance(exc, CatalogError) else CatalogError(str(exc))
                 self.error = str(err)
@@ -456,7 +471,7 @@ class Catalog:
                 raise err from exc
             self._listed, self._known, self._policies = listed, known, policies
             self.commit, self.fetched_at, self.error = snapshot.commit, fetched_at, None
-            self.policy_error = policy_error
+            self.policy_commit, self.policy_error = pcommit, policy_error
             self._publish()
             self._prune_policy_files()
             after = set(listed)
@@ -546,7 +561,9 @@ class Catalog:
             self._own_policy_dir()
             for path in self._policy_dir.iterdir():
                 if path.name not in keep:
-                    path.unlink(missing_ok=True)
+                    # One thing a job left that won't go never stops the rest.
+                    with contextlib.suppress(OSError):
+                        path.unlink(missing_ok=True)
 
     async def refresh_quietly(self) -> None:
         """Refresh if the repo answers; otherwise run from the last good catalog."""
@@ -567,6 +584,7 @@ class Catalog:
         listed: dict[str, dict[str, object]],
         known: dict[str, tuple[dict[str, object], str]],
         policies: dict[str, dict[str, object]],
+        policy_state: tuple[str, str | None],
     ) -> None:
         data = {
             "commit": commit,
@@ -574,6 +592,8 @@ class Catalog:
             "listed": sorted(listed),
             "known": {n: {"entry": e, "commit": c} for n, (e, c) in known.items()},
             "policies": list(policies.values()),
+            "policy_commit": policy_state[0],
+            "policy_error": policy_state[1],
         }
         self._file.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._file.with_suffix(".tmp")

@@ -403,8 +403,8 @@ async def test_kept_sync_heals_races_and_odd_listings(tmp_path: Path) -> None:
     ((row, body),) = lib.rows.values()
     await lib.add(lib.contexts[0], "Look v1", body, row.bytes, row.source_job, row.source_spec)
     assert len(lib.rows) == 2
-    client.post("/api/growbot/policies/refresh")
-    assert [r.name for r, _p in lib.rows.values()] == ["Look v1"]
+    assert client.post("/api/growbot/policies/refresh").json()["removed"] == ["Look v1"]
+    assert list(lib.rows) == [row.id]
 
     # The launcher re-read the repo between the list and the read: skipped, not mis-tagged.
     entry, _body = jl.kept["look-v1"]
