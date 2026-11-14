@@ -3141,6 +3141,9 @@ def test_the_conversation_stays_on_screen_after_the_caption_moves_on() -> None:
     assert '<div id="gbTrail"></div><div id="youSaid"></div>' in creature
     # LOG is a cell in the bottom row beside BRAIN, not a pill on the trail (owner, 2026-11-13).
     assert 'cellEl.id = "gbkLogCell";' in talk and "gbtTop" not in talk
+    # The person's own words show whole in the trail; only Dave's lines clamp (owner, 2026-11-14).
+    assert "display:block;-webkit-line-clamp:none;max-height:30vh;overflow-y:auto}" in talk
+    assert "el.textContent='you: \\u201c'+String(txt)+'\\u201d';" in creature
     assert "cells.insertBefore(cellEl, brain ? brain.nextSibling : cells.firstChild);" in talk
     assert '<button type="button" class="gbkCell" id="gbkBrain" aria-haspopup="dialog">' in creature
     for hook in (

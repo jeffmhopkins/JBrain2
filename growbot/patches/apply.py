@@ -2730,6 +2730,14 @@ TALKLOG_PATCHES: list[tuple[str, str, str, int]] = [
         '#gbTrail,#gbLog")) return;',
         1,
     ),
+    # The person's words linger whole under the trail (owner, 2026-11-14: "cut off"), not the
+    # first 140 characters closed by a quote mark as if that were all they said.
+    (
+        "v3/next.html",
+        "el.textContent='you: \\u201c'+String(txt).slice(0,140)+'\\u201d';",
+        "el.textContent='you: \\u201c'+String(txt)+'\\u201d';",
+        1,
+    ),
     # The open log drawer sits on the bar and LOG closes it, so it holds the bar up like Brain.
     (
         "v3/next.html",
