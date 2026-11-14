@@ -287,6 +287,9 @@ export function App() {
     // Picking a new card abandons any "return to the session's source card" intent.
     setSessionBackTo(null);
     setMinecraftFromOps(false);
+    // The launcher goes away once a tile is picked, so leaving the card lands on home,
+    // not back on the grid (owner, 2026-11-14).
+    setLauncherOpen(false);
     setCard(target);
   }
 
@@ -305,8 +308,8 @@ export function App() {
     closeCardToLauncher();
   }
 
-  // Automations owns its own full-screen overlay, so it closes straight to the
-  // launcher (no subscreen slide-out to play) and drops any open Runs layer.
+  // Automations owns its own full-screen overlay, so it closes straight to home (no
+  // subscreen slide-out to play) and drops any open Runs layer.
   function closeAutomations() {
     setRunsOpen(false);
     setCard(null);
@@ -316,7 +319,8 @@ export function App() {
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
 
-  // Climb one level: the card sinks away, revealing the launcher beneath.
+  // Climb one level: the card sinks away, revealing what is beneath (home, since picking
+  // a tile closed the launcher).
   function closeCardToLauncher() {
     if (reducedMotion()) {
       setCard(null);
@@ -562,7 +566,7 @@ export function App() {
     if (card === "automations") return closeAutomations();
     // The vitals turn detail is a layer above its card, so it climbs off first.
     if (vitalsTurn !== null) return setVitalsTurn(null);
-    // Tasks/Image/jcode close straight to the launcher (own overlay, no subscreen slide).
+    // Tasks/Image/jcode close straight to home (own overlay, no subscreen slide).
     if (card === "tasks") return setCard(null);
     if (card === "image") return setCard(null);
     if (card === "jcode") return setCard(null);

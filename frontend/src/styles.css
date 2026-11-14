@@ -25996,10 +25996,6 @@ button.task-band:active {
   margin-bottom: 10px;
   color: var(--text);
   font: inherit;
-  cursor: pointer;
-}
-.jl-spec:hover {
-  border-color: color-mix(in srgb, var(--amber) 40%, var(--border));
 }
 .jl-spec-main {
   flex: 1;
@@ -26026,9 +26022,18 @@ button.task-band:active {
 }
 .jl-spec-start {
   flex: none;
+  font: inherit;
   font-size: 13px;
   font-weight: 600;
   color: var(--amber);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 10px 8px;
+  cursor: pointer;
+}
+.jl-spec-start:hover {
+  border-color: color-mix(in srgb, var(--amber) 40%, var(--border));
 }
 
 /* run list */

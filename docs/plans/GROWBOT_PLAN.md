@@ -689,6 +689,12 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   camera's side), pays for standing a few degrees taller (the sim body tops out about 8°
   above its resting pitch, so a phone wedge is the bigger lever), and starts 3 in 10
   episodes folded flat so getting up is part of the walk rather than a separate policy.
+  It then became the one face-following policy (owner, 2026-11-14: *"the one policy with a
+  speed and direction kind of fits all the bills"*): besides the heading it takes a speed
+  (`cmd_forward`: walk up, stop and keep facing, back away) and a camera height (`cmd_pitch`:
+  stand tall, or lower so the camera looks further up), which `growbot_runner.js` now passes
+  through from `cmd.pitch` (+1, standing tall, when the app sends none). The optional `growbot_look` job trains a stand-in-place
+  specialist on `configs/look.toml`, for if the walk wobbles when stopped.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic. Its store
   landed early with the brain log (§2 "Brain log", migration 0262); reading it in the PWA and

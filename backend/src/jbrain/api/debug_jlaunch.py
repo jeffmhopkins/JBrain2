@@ -3,8 +3,11 @@
 The owner has no terminal, so a long run on the box (a GrowBot training run, a census)
 is followed from a debug token: the runs and their state, the console tail, a running
 job's live folder (progress, the latest replay, the latest weights) and the finished
-result. Read-only by design: starting, stopping and deleting a run stay with the owner in
-the PWA. The bytes come back exactly as the owner's routes serve them (`jlaunch.py`).
+result. One write: starting a registered spec (owner, 2026-11-14: the owner went to bed
+handing the assistant "start the camera walk and look training"). It runs only what the
+code-defined spec registry holds, one job at a time, exactly as the PWA's Start; stopping
+and deleting a run stay with the owner. The bytes come back exactly as the owner's routes
+serve them (`jlaunch.py`).
 """
 
 from __future__ import annotations
@@ -16,9 +19,23 @@ from fastapi.responses import Response, StreamingResponse
 
 from jbrain.api import jlaunch
 from jbrain.api.deps import DebugDep
+from jbrain.db.session import SessionContext
 from jbrain.jlaunch import JlaunchError
 
 router = APIRouter(prefix="/debug/jlaunch")
+
+# Rows a debug start writes carry the console's owner identity, as its other writes do.
+_OWNER_CTX = SessionContext(principal_id="debug-console", principal_kind="owner")
+
+
+@router.post("/jobs", status_code=201)
+async def jlaunch_start(
+    body: jlaunch.StartJobRequest, request: Request, _p: DebugDep
+) -> dict[str, Any]:
+    """**Start a run** of a registered spec (names from `GET /debug/jlaunch`), as the PWA's
+    Start does. 404 for an unknown spec, 409 while another job is running."""
+    request.state.debug_detail = f"jlaunch start {body.spec}"
+    return await jlaunch.start(request, body.spec, _OWNER_CTX)
 
 
 @router.get("")
