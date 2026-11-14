@@ -68,6 +68,13 @@ LIVE_MAX_BYTES = 32 * 1024 * 1024
 LIVE_STATES = ("cloning", "running")
 # How long a Start waits on re-reading the training repo before using the list it has.
 START_REFRESH_S = 15.0
+# A job's id (secrets.token_hex(4)): the only state-root entries read back as runs.
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{8}$")
+# Each run's record, in its state folder, so a restart (every Ops -> Update) doesn't
+# forget the finished runs: their results and 3D replays were on disk all along, but the
+# record lived only in memory, so the app showed the run with nothing to open (owner,
+# 2026-11-14).
+_RECORD = "job.json"
 
 
 class JobError(RuntimeError):
@@ -131,10 +138,16 @@ class Job:
     console_tail: str = ""
     # The training repo commit a manifest job cloned; empty for a built-in spec.
     commit: str = ""
+    # The spec's live folder and artifact, inside the checkout, kept on the record so a
+    # finished run still serves them after its spec has changed or left the list.
+    live_dir: str = ""
+    artifact_path: str = ""
 
     def public(self) -> dict[str, object]:
         data = asdict(self)
-        data.pop("workspace", None)  # an internal path, not part of the control API
+        # Internal paths, not part of the control API.
+        for key in ("workspace", "live_dir", "artifact_path"):
+            data.pop(key, None)
         return data
 
 
@@ -163,6 +176,70 @@ class JobManager:
         self._killing: set[str] = set()
         # Live finalize tasks, held so the loop doesn't GC them mid-run.
         self._finalize_tasks: set[asyncio.Task[None]] = set()
+        self._load_records()
+
+    # -- records -----------------------------------------------------------------
+
+    def _save(self, job: Job) -> None:
+        # The job can write its state folder, and this runs on the event loop: never
+        # follow a symlink there (the folder itself, or one planted at the temp name)
+        # and never open anything that could block, such as a FIFO.
+        tmp = f".{_RECORD}.tmp"
+        try:
+            data = json.dumps(asdict(job)).encode()
+            folder = os.open(
+                self._state_root / job.id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+        except (OSError, ValueError, RecursionError):
+            _log.warning("job record not saved id=%s", job.id, exc_info=True)
+            return
+        try:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp, dir_fd=folder)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK
+            fd = os.open(tmp, flags, 0o600, dir_fd=folder)
+            try:
+                view = memoryview(data)
+                while view:
+                    view = view[os.write(fd, view) :]
+            finally:
+                os.close(fd)
+            os.replace(tmp, _RECORD, src_dir_fd=folder, dst_dir_fd=folder)
+        except OSError:
+            _log.warning("job record not saved id=%s", job.id, exc_info=True)
+        finally:
+            os.close(folder)
+
+    def _load_records(self) -> None:
+        """Read back the runs a previous control server started.
+
+        The job can write to its own state folder, so a record is data, never trusted
+        for a path: the id comes from the folder's name and the checkout is rebuilt
+        from it, and the live folder and artifact are confined to that checkout and the
+        artifact root where they are used. A run that was live when the server went
+        down has no terminal now, so the first poll reaps it as lost (or finished, if
+        it wrote its exit code meanwhile)."""
+        try:
+            entries = sorted(os.scandir(self._state_root), key=lambda e: e.name)
+        except OSError:
+            return
+        for entry in entries:
+            if not _JOB_ID_RE.match(entry.name) or not entry.is_dir(
+                follow_symlinks=False
+            ):
+                continue
+            # One bad record (deep nesting, a huge number, junk types) must never stop
+            # the server starting: it would fail the same way after every Update.
+            try:
+                data = _read_record(Path(entry.path) / _RECORD)
+                job = _job_from_record(
+                    entry.name, data, self._workspace_root / entry.name
+                )
+            except Exception:
+                _log.warning("job record skipped id=%s", entry.name, exc_info=True)
+                continue
+            if job is not None:
+                self._jobs[job.id] = job
 
     # -- queries -----------------------------------------------------------------
 
@@ -242,8 +319,11 @@ class JobManager:
             started_at=_now(),
             machine=read_machine(),
             commit=spec.commit,
+            live_dir=spec.live_dir or "",
+            artifact_path=spec.artifact_path,
         )
         self._jobs[jid] = job
+        self._save(job)
 
         (state / "job.sh").write_text(build_script(spec, str(state)))
         # Create the persistent PTY in the empty checkout, then feed it the job. `exec`
@@ -279,6 +359,13 @@ class JobManager:
         job = self._jobs.get(jid)
         if job is None or job.state not in LIVE_STATES:
             return
+        try:
+            self._end(job, spec, reaped=reaped)
+        finally:
+            self._save(job)
+
+    def _end(self, job: Job, spec: JobSpec | None, *, reaped: bool) -> None:
+        jid = job.id
         was_killed = jid in self._killing
         self._killing.discard(jid)
         job.finished_at = _now()
@@ -318,18 +405,18 @@ class JobManager:
         rc = status.get("rc") if status else None
         if status and "phase" in status:
             job.phase = str(status["phase"])
-        job.phase_times = _read_jsonl(state / "phase_times.jsonl")
-        job.headline = _read_lines(state / "headline.txt")
+        job.phase_times = _flat_rows(_read_jsonl(state / "phase_times.jsonl"))
+        job.headline = _short_lines(_read_lines(state / "headline.txt"))
         job.console_tail = _read_tail(state / "console.log")
 
-        artifact = workspace / spec.artifact_path
+        artifact = workspace / (self._artifact_rel(job) or spec.artifact_path)
         if artifact.is_file():
             job.artifact_present = True
             job.artifact_bytes = artifact.stat().st_size
             # Copy the deliverable out of the checkout so it survives independent of it.
             with contextlib.suppress(OSError):
                 self._artifact_root.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(artifact, self._artifact_dest(job.id, spec))
+                shutil.copy2(artifact, self._artifact_dest(job))
         job.verify_ok = _verify_ok(
             workspace / spec.verify_log, spec.verify_must_end_with
         )
@@ -379,46 +466,55 @@ class JobManager:
         self._registry.remove(jid)
         shutil.rmtree(job.workspace, ignore_errors=True)
         shutil.rmtree(self._state_root / jid, ignore_errors=True)
-        spec = get_spec(job.spec_name)
-        if spec is not None:
-            with contextlib.suppress(OSError):
-                self._artifact_dest(jid, spec).unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            self._artifact_dest(job).unlink(missing_ok=True)
         self._jobs.pop(jid, None)
         self._killing.discard(jid)
 
     # -- artifact ----------------------------------------------------------------
 
-    def _artifact_dest(self, jid: str, spec: JobSpec) -> Path:
-        return self._artifact_root / f"{jid}-{Path(spec.artifact_path).name}"
+    def _artifact_rel(self, job: Job) -> str:
+        # The run's own, as its spec was at start: the spec may have moved it since.
+        if job.artifact_path:
+            return job.artifact_path
+        spec = get_spec(job.spec_name)
+        return spec.artifact_path if spec is not None else ""
+
+    def _artifact_dest(self, job: Job) -> Path:
+        name = Path(self._artifact_rel(job)).name or "artifact"
+        return self._artifact_root / f"{job.id}-{name}"
 
     def artifact_path(self, jid: str) -> Path:
         """Path to a finished job's collected artifact, or raise if it isn't there."""
         job = self.get(jid)
-        spec = get_spec(job.spec_name)
-        if spec is None or not job.artifact_present:
+        rel = self._artifact_rel(job)
+        if not rel or not job.artifact_present:
             raise JobError("no artifact for this job")
-        dest = self._artifact_dest(jid, spec)
+        dest = self._artifact_dest(job)
         if dest.is_file():
             return dest
         # Fall back to the in-checkout copy if the out-copy didn't happen.
-        src = Path(job.workspace) / spec.artifact_path
-        if src.is_file():
+        workspace = Path(job.workspace).resolve()
+        src = (workspace / rel).resolve()
+        if src.is_relative_to(workspace) and src.is_file():
             return src
         raise JobError("artifact file is missing")
 
     def artifact_name(self, jid: str) -> str:
-        spec = get_spec(self.get(jid).spec_name)
-        return Path(spec.artifact_path).name if spec else "artifact"
+        return Path(self._artifact_rel(self.get(jid))).name or "artifact"
 
     # -- live folder -------------------------------------------------------------
 
     def _live_dir(self, jid: str) -> Path:
         job = self.get(jid)
-        spec = get_spec(job.spec_name)
-        if spec is None or not spec.live_dir:
+        live_dir = job.live_dir
+        if not live_dir:
+            spec = get_spec(job.spec_name)
+            live_dir = spec.live_dir if spec is not None else ""
+        if not live_dir:
             raise JobError("this job has no live folder")
         workspace = Path(job.workspace).resolve()
-        folder = (workspace / spec.live_dir).resolve()
+        folder = (workspace / live_dir).resolve()
         # The job could make the folder (or a parent) a symlink out of its checkout.
         if not folder.is_relative_to(workspace):
             raise JobError("live folder is outside the checkout")
@@ -478,6 +574,125 @@ class JobManager:
 
     def close_all(self) -> None:
         self._registry.close_all()
+
+
+_RECORD_MAX_BYTES = 1024 * 1024
+_RECORD_STATES = frozenset({"cloning", "running", "succeeded", "failed", "killed"})
+
+
+def _read_record(path: Path) -> dict[str, object] | None:
+    """A job record, or None. Opened without following a symlink or blocking on a FIFO,
+    and size-capped, as the job can plant anything there; any parse error is the
+    caller's to skip."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > _RECORD_MAX_BYTES:
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as fh:
+            raw = fh.read(_RECORD_MAX_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(raw) > _RECORD_MAX_BYTES:
+        return None
+    data = json.loads(raw.decode("utf-8", errors="replace"))
+    return data if isinstance(data, dict) else None
+
+
+# What the job's own files may put on its record: flat rows of plain values, a bounded
+# number of short lines. Nested values could be deep enough to fail serialising the run
+# list (every run then vanishes from the app), and a record past _RECORD_MAX_BYTES
+# would be skipped on reload.
+_MAX_ROWS = 256
+_MAX_LINE = 512
+
+
+def _flat(row: dict) -> dict[str, object]:
+    scalar = (str, int, float, bool, type(None))
+    out: dict[str, object] = {}
+    for k, v in list(row.items())[:64]:
+        if isinstance(k, str) and isinstance(v, scalar):
+            out[k[:_MAX_LINE]] = v[:_MAX_LINE] if isinstance(v, str) else v
+    return out
+
+
+def _flat_rows(rows: list) -> list[dict[str, object]]:
+    return [_flat(r) for r in rows[:_MAX_ROWS] if isinstance(r, dict)]
+
+
+def _short_lines(lines: list[str]) -> list[str]:
+    return [line[:_MAX_LINE] for line in lines[:_MAX_ROWS]]
+
+
+def _rel_path(value: object) -> str:
+    # A checkout-relative path, or nothing: never absolute, never up and out, no NUL.
+    if not isinstance(value, str) or not value or "\0" in value:
+        return ""
+    parts = Path(value).parts
+    if Path(value).is_absolute() or ".." in parts:
+        return ""
+    return value
+
+
+def _job_from_record(
+    jid: str, data: dict[str, object] | None, workspace: Path
+) -> Job | None:
+    if not data:
+        return None
+
+    def text(key: str) -> str:
+        value = data.get(key)
+        return value if isinstance(value, str) else ""
+
+    def opt_text(key: str) -> str | None:
+        value = data.get(key)
+        return value if isinstance(value, str) else None
+
+    def rows(key: str) -> list:
+        value = data.get(key)
+        return _flat_rows(value) if isinstance(value, list) else []
+
+    state = text("state")
+    if not state or not text("spec_name"):
+        return None
+    # The api treats states it doesn't know (such as "queued") as live and refuses to
+    # delete them, and jlaunch never reaps them: an unknown state ends as failed.
+    if state not in _RECORD_STATES:
+        state = "failed"
+    machine = data.get("machine")
+    verify = data.get("verify_ok")
+    size = data.get("artifact_bytes")
+    headline = data.get("headline")
+    return Job(
+        id=jid,
+        spec_name=text("spec_name"),
+        title=text("title"),
+        repo=text("repo"),
+        state=state,
+        phase=text("phase"),
+        workspace=str(workspace),
+        artifact_name=text("artifact_name"),
+        started_at=opt_text("started_at"),
+        finished_at=opt_text("finished_at"),
+        verify_ok=verify if isinstance(verify, bool) else None,
+        headline=_short_lines([h for h in headline if isinstance(h, str)])
+        if isinstance(headline, list)
+        else [],
+        machine=_flat(machine) if isinstance(machine, dict) else {},
+        phase_times=rows("phase_times"),
+        error=opt_text("error"),
+        artifact_present=data.get("artifact_present") is True,
+        artifact_bytes=size
+        if isinstance(size, int) and not isinstance(size, bool)
+        else None,
+        console_tail=text("console_tail"),
+        commit=text("commit"),
+        live_dir=_rel_path(data.get("live_dir")),
+        artifact_path=_rel_path(data.get("artifact_path")),
+    )
 
 
 def _live_name_ok(name: str) -> bool:
