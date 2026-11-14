@@ -1,13 +1,14 @@
-"""`/api/debug/jlaunch/*` — the assistant's read-only window on the job launcher.
+"""`/api/debug/jlaunch/*` — the assistant's window on the job launcher.
 
 The owner has no terminal, so a long run on the box (a GrowBot training run, a census)
 is followed from a debug token: the runs and their state, the console tail, a running
 job's live folder (progress, the latest replay, the latest weights) and the finished
-result. Three writes: starting a registered spec (owner, 2026-11-14: the owner went to bed
+result. Its writes: starting a registered spec (owner, 2026-11-14: the owner went to bed
 handing the assistant "start the camera walk and look training"), which runs only what
 the code-defined spec registry holds, one job at a time, exactly as the PWA's Start; and
 deleting a finished run (owner, 2026-11-14: "delete bad runs ... via debug token"), which
-refuses a live one; and the owner's note on a run. Stopping a run stays with the owner.
+refuses a live one; the owner's note on a run; and archiving a job type. Stopping a run
+stays with the owner.
 The bytes come back exactly as the owner's routes serve them (`jlaunch.py`).
 """
 
@@ -59,9 +60,21 @@ async def jlaunch_note(
     return await jlaunch.set_note(request, jid, body.note, _OWNER_CTX)
 
 
+@router.put("/specs/{name}/archive", status_code=204)
+async def jlaunch_archive(
+    name: str, body: jlaunch.ArchiveSpecRequest, request: Request, _p: DebugDep
+) -> None:
+    """**Archive or restore a job type** (`{"archived": true|false}`), as the PWA's Archive
+    and Restore do: it moves between the Jobs and Archived tabs; its runs are untouched."""
+    jlaunch.valid_spec_name(name)
+    request.state.debug_detail = f"jlaunch archive {name} {body.archived}"
+    await jlaunch.set_archived(request, name, body.archived, _OWNER_CTX)
+
+
 @router.get("")
 async def jlaunch_overview(request: Request, _p: DebugDep) -> dict[str, Any]:
-    """The runnable specs and every job the control server knows, newest first. A job here
+    """The runnable specs (each with the owner's `archived` flag) and every job the control
+    server knows, newest first. A job here
     carries its state, phase, headline and finish reason; `GET /jobs/{id}` adds the
     console tail."""
     request.state.debug_detail = "jlaunch overview"
@@ -72,6 +85,8 @@ async def jlaunch_overview(request: Request, _p: DebugDep) -> dict[str, Any]:
     except JlaunchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     jobs = sorted(jobs, key=lambda j: str(j.get("started_at") or ""), reverse=True)
+    archived = await jlaunch.archived_names(request, _OWNER_CTX)
+    specs = [{**spec, "archived": spec.get("name") in archived} for spec in specs]
     return {"specs": specs, "jobs": jobs}
 
 

@@ -235,11 +235,13 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # download; and starting a registered spec (`POST /jlaunch/jobs`), so a training
             # run the owner asked for can start while they sleep; and deleting a finished
             # run (`DELETE /jlaunch/jobs/{id}`, refused while live), and noting what a run
-            # was for (`PATCH /jlaunch/jobs/{id}`). Stopping stays with them.
+            # was for (`PATCH /jlaunch/jobs/{id}`), and archiving a job type (`PUT
+            # /jlaunch/specs/{name}/archive`). Stopping stays with them.
             "jlaunch.read",
             "jlaunch.start",
             "jlaunch.delete",
             "jlaunch.note",
+            "jlaunch.archive",
         ],
     )
 

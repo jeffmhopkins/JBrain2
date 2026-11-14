@@ -24,7 +24,7 @@ from jbrain.api.jshare_public import SANDBOX
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.external import jlaunch_shares
 from jbrain.jlaunch import JlaunchApi, JlaunchError
-from jbrain.models.jlaunch import JlaunchRunRepo
+from jbrain.models.jlaunch import JlaunchRunRepo, JlaunchSpecArchiveRepo
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -34,10 +34,13 @@ if TYPE_CHECKING:
 router = APIRouter()
 
 _REPO = JlaunchRunRepo()
+_ARCHIVE = JlaunchSpecArchiveRepo()
 
 # Job ids are the control server's hex tokens; mirror its gate so a malformed id can never
 # be interpolated into a proxied URL.
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# A spec name, as the launcher's registry spells them.
+_SPEC_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 # A live file's name, as the control server allowlists it; checked here too so a name is
@@ -90,7 +93,7 @@ def _owner_ctx(principal_id: str) -> SessionContext:
 
 
 def _valid_id(jid: str) -> None:
-    if not _ID_RE.match(jid):
+    if not _ID_RE.fullmatch(jid):
         raise HTTPException(status_code=404, detail="unknown job")
 
 
@@ -132,12 +135,56 @@ def _category(spec: dict[str, Any]) -> str:
 
 
 @router.get("/jlaunch/specs")
-async def list_specs(_owner: OwnerDep, request: Request) -> list[dict[str, Any]]:
+async def list_specs(owner: OwnerDep, request: Request) -> list[dict[str, Any]]:
     try:
         specs = await _client(request).list_specs()
     except JlaunchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return [{**spec, "category": _category(spec)} for spec in specs]
+    archived = await archived_names(request, _owner_ctx(owner.id))
+    return [
+        {**spec, "category": _category(spec), "archived": spec.get("name") in archived}
+        for spec in specs
+    ]
+
+
+async def archived_names(request: Request, ctx: SessionContext) -> set[str]:
+    """The job types the owner archived (the PWA's specs list, or a debug token's)."""
+    async with scoped_session(_maker(request), ctx) as db:
+        return await _ARCHIVE.names(db)
+
+
+class ArchiveSpecRequest(BaseModel):
+    archived: bool
+
+
+@router.put("/jlaunch/specs/{name}/archive", status_code=204)
+async def archive_spec(
+    name: str, body: ArchiveSpecRequest, owner: OwnerDep, request: Request
+) -> None:
+    await set_archived(request, name, body.archived, _owner_ctx(owner.id))
+
+
+def valid_spec_name(name: str) -> None:
+    # fullmatch, not match: `$` would let a trailing newline through.
+    if not _SPEC_RE.fullmatch(name):
+        raise HTTPException(status_code=404, detail="unknown job spec")
+
+
+async def set_archived(request: Request, name: str, archived: bool, ctx: SessionContext) -> None:
+    """Archive or restore a job type (the owner's, or a debug token's). Only a spec the
+    launcher has can be archived; restoring takes any name, so one the launcher has since
+    dropped can still be cleared. A job type's runs are left as they are."""
+    valid_spec_name(name)
+    client = _client(request)
+    if archived:
+        try:
+            names = {str(spec.get("name")) for spec in await client.list_specs()}
+        except JlaunchError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if name not in names:
+            raise HTTPException(status_code=404, detail="unknown job spec")
+    async with scoped_session(_maker(request), ctx) as db:
+        await _ARCHIVE.set(db, name, archived=archived)
 
 
 @router.post("/jlaunch/jobs", status_code=201)

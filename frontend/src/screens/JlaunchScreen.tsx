@@ -38,7 +38,7 @@ type LoadState =
   | { kind: "disabled" }
   | { kind: "error" };
 
-type ListTab = "jobs" | "runs";
+type ListTab = "jobs" | "runs" | "archived";
 
 export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -46,8 +46,9 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<ListTab>("jobs");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [archiving, setArchiving] = useState<string | null>(null);
   // The one job the Runs tab is narrowed to (from a job's View runs), and the groups the
-  // owner has folded shut ("c:<category>" on Jobs, "r:<spec>" on Runs).
+  // owner has folded shut ("jobs:<category>", "archived:<category>", "r:<spec>").
   const [focus, setFocus] = useState<string | null>(null);
   const [shut, setShut] = useState<Set<string>>(() => new Set());
   const foreground = useForeground();
@@ -75,6 +76,14 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   const specs = state.kind === "ready" ? state.specs : [];
   const jobs = state.kind === "ready" ? state.jobs : [];
   const anyLive = jobs.some(isLive);
+  // Archived job types leave the Jobs tab for the Archived one, and their finished runs
+  // leave the Runs list too (a View runs from the Archived tab still shows them); a live
+  // run always stays in view.
+  const archived = specs.filter((s) => s.archived);
+  const active = specs.filter((s) => !s.archived);
+  const shelved = new Set(archived.map((s) => s.name));
+  const current = jobs.filter((j) => isLive(j) || !shelved.has(j.spec_name));
+  const shelf = tab === "archived" ? archived : active;
 
   // Keep a running job's phase and pill current on the Runs list, as the job screen does.
   useEffect(() => {
@@ -114,6 +123,19 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
       } else {
         alert("Couldn't start the job.");
       }
+    }
+  }
+
+  async function archive(spec: JlaunchSpec, on: boolean) {
+    setArchiving(spec.name);
+    try {
+      await api.jlaunchArchive(spec.name, on);
+      setExpanded(null);
+    } catch {
+      alert(on ? "Couldn't archive the job type." : "Couldn't restore the job type.");
+    } finally {
+      setArchiving(null);
+      void refresh();
     }
   }
 
@@ -160,7 +182,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
       ) : (
         <div className="jl-body">
           <div className="jl-tabs" role="tablist" aria-label="Jobs and runs">
-            {(["jobs", "runs"] as const).map((t) => (
+            {(["jobs", "runs", "archived"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -172,87 +194,126 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                   setFocus(null);
                 }}
               >
-                {t === "jobs" ? "Jobs" : "Runs"}
-                <span className="jl-tab-n">{t === "jobs" ? specs.length : jobs.length}</span>
+                {t === "jobs" ? "Jobs" : t === "runs" ? "Runs" : "Archived"}
+                <span className="jl-tab-n">
+                  {t === "jobs" ? active.length : t === "runs" ? current.length : archived.length}
+                </span>
                 {t === "runs" && anyLive && <span className="jl-tab-live" aria-hidden="true" />}
               </button>
             ))}
           </div>
 
-          {tab === "jobs" ? (
-            groupBy(specs, (spec) => spec.category || "Other").map(([category, group]) => (
-              <Group
-                key={category}
-                label={category}
-                count={group.length}
-                open={!shut.has(`c:${category}`)}
-                onToggle={() => toggle(`c:${category}`)}
-              >
-                <div className="jl-rows">
-                  {group.map((spec) => {
-                    const open = expanded === spec.name;
-                    const runs = jobs.filter((j) => j.spec_name === spec.name).length;
-                    return (
-                      <div key={spec.name} className={`jl-spec${open ? " open" : ""}`}>
-                        <button
-                          type="button"
-                          className="jl-spec-head"
-                          aria-expanded={open}
-                          onClick={() => setExpanded(open ? null : spec.name)}
-                        >
-                          <span className="jl-row-main">
-                            <span className="jl-spec-title">{spec.title}</span>
-                            <span className="jl-row-sub">
-                              {spec.est_hours} · {spec.all_cores ? "all cores" : "single core"} ·{" "}
-                              {spec.disk_gb} GB
+          {tab !== "runs" ? (
+            shelf.length === 0 ? (
+              <p className="jl-empty">
+                {tab === "archived"
+                  ? "Nothing archived. Open a job and tap Archive to move it here."
+                  : archived.length > 0
+                    ? "Every job type is archived — restore one from the Archived tab."
+                    : "The launcher has no job types."}
+              </p>
+            ) : (
+              groupBy(shelf, (spec) => spec.category || "Other").map(([category, group]) => (
+                <Group
+                  key={category}
+                  label={category}
+                  count={group.length}
+                  open={!shut.has(`${tab}:${category}`)}
+                  onToggle={() => toggle(`${tab}:${category}`)}
+                >
+                  <div className="jl-rows">
+                    {group.map((spec) => {
+                      const open = expanded === spec.name;
+                      const runs = jobs.filter((j) => j.spec_name === spec.name).length;
+                      return (
+                        <div key={spec.name} className={`jl-spec${open ? " open" : ""}`}>
+                          <button
+                            type="button"
+                            className="jl-spec-head"
+                            aria-expanded={open}
+                            onClick={() => setExpanded(open ? null : spec.name)}
+                          >
+                            <span className="jl-row-main">
+                              <span className="jl-spec-title">{spec.title}</span>
+                              <span className="jl-row-sub">
+                                {spec.est_hours} · {spec.all_cores ? "all cores" : "single core"} ·{" "}
+                                {spec.disk_gb} GB
+                              </span>
                             </span>
-                          </span>
-                          <span className="jl-spec-chev" aria-hidden="true">
-                            <ChevronDownIcon size={16} />
-                          </span>
-                        </button>
-                        {open && (
-                          // Only the Start button starts a run: a stray tap while scrolling
-                          // must not launch hours of work (owner, 2026-11-14).
-                          <div className="jl-spec-detail">
-                            <p className="jl-spec-note">{spec.notes}</p>
-                            <div className="jl-spec-actions">
-                              <button
-                                type="button"
-                                className="jl-spec-start"
-                                onClick={() => void start(spec.name)}
-                                aria-label={`Start ${spec.title}`}
-                              >
-                                Start run →
-                              </button>
-                              <button
-                                type="button"
-                                className="jl-spec-runs"
-                                disabled={runs === 0}
-                                onClick={() => {
-                                  setFocus(spec.name);
-                                  setShut((prev) => {
-                                    const next = new Set(prev);
-                                    next.delete(`r:${spec.name}`);
-                                    return next;
-                                  });
-                                  setTab("runs");
-                                }}
-                                aria-label={`View runs of ${spec.title}`}
-                              >
-                                {runs === 0 ? "No runs yet" : `View runs (${runs})`}
-                              </button>
+                            <span className="jl-spec-chev" aria-hidden="true">
+                              <ChevronDownIcon size={16} />
+                            </span>
+                          </button>
+                          {open && (
+                            // Only the Start button starts a run: a stray tap while scrolling
+                            // must not launch hours of work (owner, 2026-11-14).
+                            <div className="jl-spec-detail">
+                              <p className="jl-spec-note">{spec.notes}</p>
+                              <div className="jl-spec-actions">
+                                {spec.archived ? (
+                                  <button
+                                    type="button"
+                                    className="jl-spec-start"
+                                    disabled={archiving === spec.name}
+                                    onClick={() => void archive(spec, false)}
+                                    aria-label={`Restore ${spec.title}`}
+                                  >
+                                    Restore
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="jl-spec-start"
+                                    onClick={() => void start(spec.name)}
+                                    aria-label={`Start ${spec.title}`}
+                                  >
+                                    Start run →
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="jl-spec-runs"
+                                  disabled={runs === 0}
+                                  onClick={() => {
+                                    setFocus(spec.name);
+                                    setShut((prev) => {
+                                      const next = new Set(prev);
+                                      next.delete(`r:${spec.name}`);
+                                      return next;
+                                    });
+                                    setTab("runs");
+                                  }}
+                                  aria-label={`View runs of ${spec.title}`}
+                                >
+                                  {runs === 0 ? "No runs yet" : `View runs (${runs})`}
+                                </button>
+                              </div>
+                              {!spec.archived && (
+                                <button
+                                  type="button"
+                                  className="jl-spec-archive"
+                                  disabled={archiving === spec.name}
+                                  onClick={() => void archive(spec, true)}
+                                  aria-label={`Archive ${spec.title}`}
+                                >
+                                  Archive this job type
+                                </button>
+                              )}
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </Group>
-            ))
-          ) : jobs.length === 0 ? (
-            <p className="jl-empty">No runs yet — start one from the Jobs tab.</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </Group>
+              ))
+            )
+          ) : (focus ? jobs : current).length === 0 ? (
+            <p className="jl-empty">
+              {jobs.length > 0
+                ? "Only archived jobs' runs — open one from the Archived tab to see them."
+                : "No runs yet — start one from the Jobs tab."}
+            </p>
           ) : (
             <>
               {focus && (
@@ -260,7 +321,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                   Showing one job's runs · <span className="jl-filter-x">Show all</span>
                 </button>
               )}
-              {runGroups(jobs, specs)
+              {runGroups(focus ? jobs : current, specs)
                 .filter((g) => !focus || g.spec === focus)
                 .map((g) => (
                   <Group
