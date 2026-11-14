@@ -182,7 +182,7 @@
 </div>
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2-quiet" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1008-emergent"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -2208,7 +2208,7 @@ function groqTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext
     .then(function(r){ /* 0827 FAIL-CLOSED (grok found it, measured 5 field cases: successes at 8832ms, 9339, 14276, 35010 and 58142ms — a 58-SECOND transcription is a person who was never answered). clearTimeout used to run HERE, in the HEADERS handler, so the BODY PARSE ran with no leash at all. Worse than the latency: those calls landed in the SUCCESS bucket, so they were invisible in the timeout rate and the instrument was lying about its own worst cases. The timer now stays armed until the parse finishes; an abort mid-parse rejects into the catch below, which is the existing fallback path. */ if(r.status===429){ return r.json().catch(function(){ return {}; }).then(function(j){ var e=new Error("q429"); e.q=(j&&j.error)||"429"; throw e; }); } if(!r.ok) throw new Error("groq "+r.status); return r.json(); })
     .then(function(d){ if(_tm)clearTimeout(_tm);   // 0827: the leash is released HERE, once the body is parsed and the call is genuinely done
     _sttOvl=Math.max(0,_sttOvl-1); var _sp=_sttSnap||{};
-    try{ var _sr={ms:Date.now()-_sg0,kb:Math.round(blob.size/1024),tgt:"groq",lane:_sp.lane||_sttLane,mx:Math.round((_sp.mx||0)*1000)/1000,pv:_sp.pv,mean:_sp.mean||0,duty:_sp.duty||0,n:_sp.n||0,pri:STT_GROQ?1:0,ovl:_sttOvl}; try{ _sttConf(d,_sr); }catch(_c){} logEv("stt",_sr); }catch(e){} var _g=_sttGate(d); if(_g.drop){ try{ logEv("stt_drop",{p:_g.p,tgt:"groq"}); if(meta&&meta.gbPiece){ _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); return; } }catch(_e){} if(_sttLane==="pcm"){ try{ _listenFire(); }catch(_lf){} } _sttPhase("done"); return; } try{ _sttSoft(meta,d); }catch(_bs){} _sttPhase("done"); heardText((d&&d.text||"").trim(),meta,d&&d.language); })
+    try{ var _sr={ms:Date.now()-_sg0,kb:Math.round(blob.size/1024),tgt:"groq",lane:_sp.lane||_sttLane,mx:Math.round((_sp.mx||0)*1000)/1000,pv:_sp.pv,mean:_sp.mean||0,duty:_sp.duty||0,n:_sp.n||0,pri:STT_GROQ?1:0,ovl:_sttOvl}; try{ _sttConf(d,_sr); }catch(_c){} logEv("stt",_sr); }catch(e){} var _g=_sttGate(d); var _gbNz=_g.drop?"":gbNoiseClip(_sp,_sr); if(_gbNz){ try{ logEv("stt_noise",{w:_gbNz}); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); }catch(_nz){} _sttPhase("done"); return; } if(_g.drop){ try{ logEv("stt_drop",{p:_g.p,tgt:"groq"}); if(meta&&meta.gbPiece){ _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); return; } }catch(_e){} if(_sttLane==="pcm"){ try{ _listenFire(); }catch(_lf){} } _sttPhase("done"); return; } try{ _sttSoft(meta,d); }catch(_bs){} _sttPhase("done"); heardText((d&&d.text||"").trim(),meta,d&&d.language); })
     .catch(function(e){ if(_tm)clearTimeout(_tm); _sttPhase("done"); if(e&&e.q==="daily_limit"){ if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); toast("my free ears are used up for today. type to me, or feed me and they come back."); return; }   /* 0802 (C): quota = an upgrade moment, not an outage */
          // 0827: groq is primary for this device -> di is the backstop, same one-hop rule as the di lane
       _sttOvl=Math.max(0,_sttOvl-1); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); toast(window.gbBoxEars?window.gbBoxEars(e):"my ears are down on my end. try again in a moment, or type."); }); }   /* Groq (free backstop) failed too -> terminal; DeepInfra is primary above (0729). COPY (0729): this is a TRANSPORT failure, never a mic problem, so it must not say "couldn't hear you" — that wording sent a user hunting through mic permissions for a backend outage ("keep showing that it can not hear me. All mics are on."). "didn't catch that" stays for genuinely empty/garbled audio in heardText below; the two are different events and must read differently. */
@@ -2230,7 +2230,7 @@ function diTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext=t
     .then(function(r){ /* 0827 FAIL-CLOSED (grok found it, measured 5 field cases: successes at 8832ms, 9339, 14276, 35010 and 58142ms — a 58-SECOND transcription is a person who was never answered). clearTimeout used to run HERE, in the HEADERS handler, so the BODY PARSE ran with no leash at all. Worse than the latency: those calls landed in the SUCCESS bucket, so they were invisible in the timeout rate and the instrument was lying about its own worst cases. The timer now stays armed until the parse finishes; an abort mid-parse rejects into the catch below, which is the existing fallback path. */ if(r.status===429){ return r.json().catch(function(){ return {}; }).then(function(j){ var e=new Error("di429"); e.q=(j&&j.error)||"429"; throw e; }); } if(!r.ok) throw new Error("di "+r.status); return r.json(); })
     .then(function(d){ if(_tm)clearTimeout(_tm);   // 0827: the leash is released HERE, once the body is parsed and the call is genuinely done
     _sttOvl=Math.max(0,_sttOvl-1); var _sp=_sttSnap||{};
-    try{ var _sr={ms:Date.now()-_st0,kb:Math.round(blob.size/1024),tgt:"di",lane:_sp.lane||_sttLane,mx:Math.round((_sp.mx||0)*1000)/1000,pv:_sp.pv,mean:_sp.mean||0,duty:_sp.duty||0,n:_sp.n||0,pri:STT_GROQ?0:1,ovl:_sttOvl}; try{ _sttConf(d,_sr); }catch(_c){} logEv("stt",_sr); }catch(e){} var _g=_sttGate(d); if(_g.drop){ try{ logEv("stt_drop",{p:_g.p,tgt:"di"}); if(meta&&meta.gbPiece){ _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); return; } }catch(_e){} if(_sttLane==="pcm"){ try{ _listenFire(); }catch(_lf){} } _sttPhase("done"); return; } try{ _sttSoft(meta,d); }catch(_bs){} _sttPhase("done"); heardText((d&&d.text||"").trim(),meta,d&&d.language); })
+    try{ var _sr={ms:Date.now()-_st0,kb:Math.round(blob.size/1024),tgt:"di",lane:_sp.lane||_sttLane,mx:Math.round((_sp.mx||0)*1000)/1000,pv:_sp.pv,mean:_sp.mean||0,duty:_sp.duty||0,n:_sp.n||0,pri:STT_GROQ?0:1,ovl:_sttOvl}; try{ _sttConf(d,_sr); }catch(_c){} logEv("stt",_sr); }catch(e){} var _g=_sttGate(d); var _gbNz=_g.drop?"":gbNoiseClip(_sp,_sr); if(_gbNz){ try{ logEv("stt_noise",{w:_gbNz}); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); }catch(_nz){} _sttPhase("done"); return; } if(_g.drop){ try{ logEv("stt_drop",{p:_g.p,tgt:"di"}); if(meta&&meta.gbPiece){ _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); return; } }catch(_e){} if(_sttLane==="pcm"){ try{ _listenFire(); }catch(_lf){} } _sttPhase("done"); return; } try{ _sttSoft(meta,d); }catch(_bs){} _sttPhase("done"); heardText((d&&d.text||"").trim(),meta,d&&d.language); })
     .catch(function(e){ if(_tm)clearTimeout(_tm); if(e&&e.q==="daily_limit"){ if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); toast("my free ears are used up for today. type to me, or feed me and they come back."); return; }   /* 0802: the allowance is per-device across BOTH engines — falling back to groq would burn a call to hit the same 429 */
       
       _sttOvl=Math.max(0,_sttOvl-1); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); toast(window.gbBoxEars?window.gbBoxEars(e):"my ears are down on my end. try again in a moment, or type."); }); }   /* di failed OR timed out -> groq backstop. GUARDED: only the PRIMARY hands off; when groq is primary, di IS the backstop and must TERMINATE here — 0829: it used to terminate SILENTLY (no phase close, no toast), leaving the thinking spinner up and the person unanswered (the :957 phase-leak). */
@@ -4954,6 +4954,32 @@ function lastSentenceEnd(s){ var m=0,re=/([.!?…]+)\s/g,x;
 var GB_QUIET_AFTER_MS=90000;
 var GB_EXPLORE_TXT="QUIET — nothing has happened for a while. This time is yours: you may reach for one of your wants with your own body.";
 var YIELD_MAX=3, _yieldRun=0, _yieldSaid=0;              // _yieldSaid: 0 undecided this reply · 1 committed to HOLD · 2 committed to SPEAK THROUGH
+var GB_NOISE_LP=-1.5, GB_NOISE_MX=0.2, GB_NOISE_DUTY=0.25, GB_SAID_KEEP_MS=600000, GB_SAID_MAX=40,
+  GB_SAID_STOP={i:1,a:1,an:1,the:1,and:1,or:1,but:1,of:1,to:1,in:1,on:1,at:1,is:1,are:1,am:1,was:1,it:1,its:1,
+    this:1,that:1,my:1,your:1,you:1,me:1,we:1,us:1,so:1,just:1,now:1,very:1,too:1,with:1,for:1,can:1,still:1},
+  _gbSaid=[];
+function gbOptIn(k){ try{ return localStorage.getItem(k)==="1"; }catch(e){ return false; } }
+function gbNoiseClip(sp,row){ try{
+  var lp=row&&row.lp, mx=sp&&+sp.mx, du=sp&&+sp.duty;
+  if(typeof lp==="number"&&isFinite(lp)&&lp<GB_NOISE_LP) return "lp";
+  if(isFinite(mx)&&isFinite(du)&&mx>0&&mx<GB_NOISE_MX&&du<GB_NOISE_DUTY) return "quiet";
+}catch(e){} return ""; }
+function gbSaidWords(t){ var w=String(t||"").toLowerCase().replace(/['’]/g,"").split(/[^a-z0-9]+/), out={}, n=0;
+  for(var i=0;i<w.length;i++){ var x=w[i]; if(x.length<2||GB_SAID_STOP[x]===1) continue; if(x.length>4&&/s$/.test(x)) x=x.slice(0,-1); if(!out[x]){ out[x]=1; n++; } }
+  return {w:out,n:n}; }
+function gbSaidBefore(a){ if(a.n<3) return false; var now=Date.now();
+  for(var i=_gbSaid.length-1;i>=0;i--){ var b=_gbSaid[i]; if(now-b.t>GB_SAID_KEEP_MS) break;
+    var both=0, k; for(k in a.w) if(b.w[k]) both++;
+    if(both>=3&&both/(a.n+b.n-both)>=0.5) return true; }
+  return false; }
+function gbSentences(t){ return String(t||"").match(/[^.!?…]+[.!?…]*["»”]?\s*/g)||[]; }
+function gbNoRepeat(t){ var s=gbSentences(t), kept=[], cut=0;
+  for(var i=0;i<s.length;i++){ if(gbSaidBefore(gbSaidWords(s[i]))) cut++; else kept.push(s[i]); }
+  if(cut) try{ logEv("repeat_cut",{n:cut}); }catch(e){}
+  return cut?kept.join("").trim():String(t||""); }
+function gbSaidKeep(t){ var s=gbSentences(t), now=Date.now();
+  for(var i=0;i<s.length;i++){ var a=gbSaidWords(s[i]); if(a.n>=3) _gbSaid.push({t:now,w:a.w,n:a.n}); }
+  if(_gbSaid.length>GB_SAID_MAX) _gbSaid.splice(0,_gbSaid.length-GB_SAID_MAX); }
 function _yieldNow(){                                    // true = hold the voice; false = speak anyway
   /* 0821b: BOTH outcomes are memoed, not just the hold. The first cut memoed only the hold, so when
      the cap fired mid-reply _yieldSaid stayed false — and because the cap also zeroes the streak, the
@@ -4961,6 +4987,7 @@ function _yieldNow(){                                    // true = hold the voic
      the rest of a reply we had just decided to speak. Half a sentence out loud, half silent, plus a
      phantom streak in the telemetry. A reply commits once and every lane that asks gets that answer. */
   if(_yieldSaid) return _yieldSaid===1;
+  if(!gbOptIn("gb_yield")) return false;
   if(!vadOn){ _yieldRun=0; return false; }               // quiet room: nothing to yield to, no commitment — a person who starts talking MID-reply can still be yielded to on the next sentence
   if(_yieldRun>=YIELD_MAX){ try{ logEv("yield",{n:_yieldRun,cap:1}); }catch(e){} _yieldRun=0; _yieldSaid=2; return false; }   // capped: speak through it, then start counting again
   _yieldRun++; _yieldSaid=1; _voiceNote("yielded"); try{ logEv("yield",{n:_yieldRun}); }catch(e){} return true; }
@@ -5026,7 +5053,7 @@ function onSayStream(full,replyLang){ if(paused||(typeof _imitationSpeechTurn!==
   var s=extractSayPartial(full); if(!s) return; var v=s.value;
   var upto = s.closed ? v.length : lastSentenceEnd(v);                                  // while open, only voice COMPLETE sentences; on close, flush the remainder
   if(upto<=_streamSpoke.length) return;
-  var chunk=v.slice(_streamSpoke.length,upto).trim();
+  var chunk=gbNoRepeat(v.slice(_streamSpoke.length,upto).trim());
   _streamSpoke=v.slice(0,upto);
   var em=(/"emotion"\s*:\s*"(calm|curious|happy|alert|scared)"/.exec(full)||[])[1]||emotion;   // THIS reply's emotion once it has streamed in (it follows say in the schema) — else the previous think's (review: streamed voice wore last turn's mood)
   if(chunk){
@@ -5856,7 +5883,7 @@ var _bgEpi=0,_bgLearnMs=0,_bgSelf=0,_bgHits=[],_bgCool=0,_bgOn=true;
 function bargeTick(){ var now=Date.now();
   if(now>=speakingUntil||!listenMode||paused||document.hidden||recording){ _bgEpi=0; return; }   // GUARDS: creature actually speaking (speakingUntil covers every engine incl. song/stream floors) + ears ON (the user opted into 🎧) + page live + no held clip
   if(!_bgEpi){ _bgEpi=now; _bgLearnMs=0; _bgSelf=0; _bgHits=[];                                  // new speech episode → fresh calibration
-    try{ _bgOn=localStorage.gb_bargein!=="0"; }catch(e){ _bgOn=true; } return; }                 // kill switch: gb_bargein="0" disables
+    _bgOn=gbOptIn("gb_bargein"); return; }                 // kill switch: gb_bargein="0" disables
   if(!_bgOn||now<_bgCool) return;
   if(_bgLearnMs<500){ if(micRms>noiseFloor+0.05){ _bgLearnMs+=120; if(micRms>_bgSelf) _bgSelf=micRms; } return; }   // calibrate on the first real sound of the episode (audio-gated, not clock-gated: engine startup silence must not teach a near-floor self level)
   var selfBar=Math.max(_bgSelf,noiseFloor+0.08);                                                 // K3 0727 F5: floor the bar — a whisper-quiet utterance start learned a hair-trigger self level and one excited crescendo sentence could self-barge
@@ -8729,6 +8756,7 @@ function think(event,kind,extra){
     if(_imitationAtIssue){var _ir=jparse(raw);if(_ir&&typeof _ir==="object"&&!Array.isArray(_ir)&&_ir.imitate&&typeof _ir.say!=="string"){o={say:"",imitate:_ir.imitate};}}
     if(typeof _imitationReply==="function")o=_imitationReply(o,_imitationAtIssue);
     if(typeof _expressionReply==="function")o=_expressionReply(o,_hreqAtIssue,_expressionAtIssue,_mgen);
+    if(o&&o.say){ try{ if(!_streamSaid) o.say=gbNoRepeat(o.say); gbSaidKeep(o.say); }catch(_nr){} }
     var said=(o.say&&o.say.trim())?o.say.trim().replace(/\s*—\s*/g,", "):"";   // em-dash → comma for the CAPTION too (the #say display shows raw `said`, bypassing asciiTxt) — Brit 0729
     var _recoverySaid=typeof _recoverySpeechTurn!=="undefined"&&_recoverySpeechTurn,_recoveryOriginalSay=said;if(_recoverySaid)said="";
     var phoneDir=(MODE==="phone"&&o.walk&&typeof o.walk==="object"&&o.walk.dir)?String(o.walk.dir).toLowerCase():"";   // phone: a spoken movement instruction
@@ -10321,6 +10349,7 @@ function bootOwned(){
       try{ if(_ws.ear && !micStream) askMic(function(st){ micStream=micStream||st; ensureEar(); },function(){}); }catch(e){} }
     var x=e.target; if(x.closest&&x.closest("input,textarea,select,button,#editPanels,#feed,#modebar,#brainPanel,#sgNudge,#gbTrail,#gbLog")) return;  // controls/edit/trace/brain-tab/storage line = not a touch; tapping the CREATURE is (audit: brain-panel touches were petting)
     if(GB_MIC==="push"&&!window._wakeGateUp&&!paused&&e.isPrimary!==false){ gbPttDown(e); return; }
+    if(Date.now()<speakingUntil&&e.isPrimary!==false){ try{ logEv("tap_cut",{}); }catch(_tc){} silence(); return; }
     try{ var _tr=$("typeRow"); if(_tr&&_tr.classList.contains("open")) typeRowSet(false,false); }catch(_e){}   // [0726 item 1] tapping elsewhere folds the type row (transient; the closest() guard above already spared taps on the row itself + the ⌨ button)
     var r=cv.getBoundingClientRect(), nx=Math.max(0,Math.min(1,(e.clientX-r.left)/(r.width||1))), ny=Math.max(0,Math.min(1,(e.clientY-r.top)/(r.height||1)));   // the touch point in the creature's screen space
     spawnSparks(nx,ny,34,null,2.6);                           // instant visual feedback AT the finger — sparks bloom where you touch, not centered (v2 parity)
