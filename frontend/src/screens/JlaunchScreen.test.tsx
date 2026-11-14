@@ -127,9 +127,10 @@ describe("JlaunchScreen", () => {
     render(<JlaunchScreen onClose={() => {}} />);
     await screen.findByText("GrowBot look");
     expect(screen.queryByText("Census")).toBeNull();
-    fireEvent.click(screen.getByText("GrowBot look"));
+    // Archive sits on the collapsed row, no expanding needed.
     fireEvent.click(screen.getByRole("button", { name: "Archive GrowBot look" }));
     await waitFor(() => expect(archive).toHaveBeenCalledWith("growbot_look", true));
+    expect(await screen.findByText(/on the Archived tab/)).toBeTruthy();
     // The archived job type's finished runs leave the Runs list.
     fireEvent.click(screen.getByRole("tab", { name: /Runs/ }));
     expect(screen.queryByRole("button", { name: /of Census/ })).toBeNull();
@@ -138,11 +139,32 @@ describe("JlaunchScreen", () => {
     expect(screen.queryByRole("button", { name: "Start Census" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "View runs of Census" }));
     expect(screen.getByRole("button", { name: "Open v2 of Census" })).toBeTruthy();
-    // Back on Archived, the job opened before stays open.
+    // Back on Archived, Restore is on the row itself.
     fireEvent.click(screen.getByRole("tab", { name: /Archived/ }));
     fireEvent.click(screen.getByRole("button", { name: "Restore Census" }));
     await waitFor(() => expect(archive).toHaveBeenCalledWith("erdos", false));
   });
+  it("archives a job from its runs' header, never one with a live run, and undoes it", async () => {
+    const LIVE = { ...SPEC, name: "erdos", title: "Census" } as JlaunchSpec;
+    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC, LIVE]);
+    vi.spyOn(api, "jlaunchJobs").mockResolvedValue([
+      { ...job("c3", "running"), spec_name: "erdos", title: "Census" } as JlaunchJob,
+      job("b2", "succeeded"),
+      { ...job("d4", "succeeded"), spec_name: "gone", title: "Old job" } as JlaunchJob,
+    ]);
+    const archive = vi.spyOn(api, "jlaunchArchive").mockResolvedValue();
+    render(<JlaunchScreen onClose={() => {}} />);
+    await screen.findByRole("tab", { name: /Runs/, selected: true });
+    expect(screen.queryByRole("button", { name: "Archive Census" })).toBeNull();
+    // A job the launcher no longer has can't be archived (the server would refuse it).
+    expect(screen.queryByRole("button", { name: "Archive Old job" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Archive GrowBot look" }));
+    await waitFor(() => expect(archive).toHaveBeenCalledWith("growbot_look", true));
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(archive).toHaveBeenCalledWith("growbot_look", false));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Undo" })).toBeNull());
+  });
+
   it("re-reads the training repo's jobs and says what changed", async () => {
     const repoSpec = {
       ...SPEC,

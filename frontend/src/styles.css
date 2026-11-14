@@ -26068,19 +26068,61 @@ button.task-band:active {
   padding: 10px 8px;
   cursor: pointer;
 }
-.jl-spec-archive {
-  display: block;
-  margin: 10px auto 0;
+/* archive / restore, on a job's row and on its runs' header */
+.jl-spec-line,
+.jl-group-line {
+  display: flex;
+  align-items: stretch;
+}
+.jl-spec-line .jl-spec-head,
+.jl-group-line .jl-group-head {
+  flex: 1;
+  min-width: 0;
+}
+.jl-shelf {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  padding: 0 12px;
   font: inherit;
   font-size: 12px;
-  color: var(--text-3);
-  background: none;
+  font-weight: 600;
+  background: transparent;
   border: 0;
-  padding: 4px 8px;
+  border-radius: 0;
+  color: var(--text-3);
   cursor: pointer;
 }
-.jl-spec-archive:hover {
-  color: var(--text-2);
+.jl-spec-line .jl-shelf {
+  border-left: 1px solid var(--border);
+}
+.jl-group-line .jl-shelf {
+  min-width: 36px;
+  padding: 0 6px 6px;
+}
+.jl-shelf:hover {
+  color: var(--amber);
+}
+.jl-shelf.restore {
+  color: var(--amber);
+}
+.jl-shelf:disabled {
+  opacity: 0.4;
+}
+/* keeps a header with no archive (a running job) lined up with the rest */
+.jl-shelf.none {
+  visibility: hidden;
+}
+.jl-shelved-undo {
+  font: inherit;
+  font-weight: 600;
+  color: var(--amber);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
 }
 .jl-spec-runs:disabled {
   opacity: 0.5;
@@ -26141,7 +26183,7 @@ button.task-band:active {
   margin-left: auto;
   transform: rotate(-90deg);
 }
-.jl-group.open > .jl-group-head .jl-spec-chev {
+.jl-group.open > .jl-group-line .jl-spec-chev {
   transform: none;
 }
 .jl-filter {
