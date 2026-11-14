@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { type GrowbotPolicy, type GrowbotSteer, api } from "../api/client";
+import { ApiError, type GrowbotPolicy, type GrowbotSteer, api } from "../api/client";
 
 // Continuous steering for a trained walk (owner, 2026-11-14: steer heading, speed and camera
 // height as it walks, not only the pad's fixed moves). Drive starts the picked walk for a
@@ -99,7 +99,9 @@ export function GrowbotDrive({
           .catch((e: unknown) => {
             if (!live()) return;
             halt();
-            onSaid({ text: message(e), bad: true });
+            // A walk that ended on the phone (done, or stopped from elsewhere) is not a fault.
+            const ended = e instanceof ApiError && e.status === 410;
+            onSaid({ text: message(e), bad: !ended });
           })
           .finally(() => {
             sending = false;
