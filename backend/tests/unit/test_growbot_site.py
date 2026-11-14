@@ -2606,6 +2606,7 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     # The beat's own gates are the ones the 90 s test above pins; only its words are chosen.
     assert page.index(words) < page.index("if(idle>=GB_QUIET_AFTER_MS") < beat.start()
     assert "gb_quiet" not in page and 'get("quiet")' not in page
+
     setting = "" if explore is None else f"window.__gbBoxExplore={explore};"
     # Inside a function, so the page's globals never meet whatever this Node version ships.
     script = (
@@ -2614,6 +2615,17 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
     assert want in json.loads(out.stdout)
+
+
+def test_no_phone_switch_changes_what_the_page_asks_the_box_for() -> None:
+    """Upstream's Nov 12 per-phone switches (a URL parameter kept in phone storage) would
+    re-split the prompt, send speculative transcriptions, or send speech to an OpenRouter
+    audio lane the box answers with a 400. The box decides, so each is pinned off."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    for pinned in ("var CACHE_SPLIT=false;", "var FAST_EAR=false;", "var STTOR_ON=false;"):
+        assert page.count(pinned) == 1, pinned
+    for switch in ("cachesplit", "fastear", "sttor"):
+        assert f'get("{switch}")' not in page and f"localStorage.gb_{switch}=" not in page
 
 
 _WARM_HARNESS = r"""
@@ -3077,6 +3089,7 @@ def test_nothing_reaches_the_model_before_the_wake_tap() -> None:
         # reaches out does, and the gate still comes before every busy or ownership check.
         body = page[page.index(head) + len(head) :].split("\n")
         gate = body.index("  if(window._wakeGateUp) return;")
+        assert gate <= 5
         assert body[gate + 1].startswith('  if(typeof vmBusy==="function"&&vmBusy()) return;')
         assert not any("fetch(" in line or "send(" in line for line in body[:gate])
     warm = page[page.index("function gbWarmUp(){") : page.index("function gbWarmFresh(){")]

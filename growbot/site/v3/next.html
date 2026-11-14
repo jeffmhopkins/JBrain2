@@ -6191,7 +6191,7 @@ function creditScreen(exhausted){
    conversation language (it starts unset on every page load), the eye opening or closing, picture memory switched off, or
    the picture library reading as empty while the eye is closed. So a page load can show 2 to 4 on:1 rows before it settles;
    count those apart from in-session writes. */
-var CACHE_SPLIT=(function(){ try{ var q=new URLSearchParams(location.search).get("cachesplit"); if(q==="1") localStorage.gb_cachesplit="1"; else if(q==="0") localStorage.removeItem("gb_cachesplit"); if(q!==null){ try{ var u=new URL(location.href); u.searchParams.delete("cachesplit"); history.replaceState(null,"",u.pathname+u.search+u.hash); }catch(_re){} } return localStorage.gb_cachesplit==="1"; }catch(e){ return false; } })();
+var CACHE_SPLIT=false;
 var _csLast={t:"",d:""};
 function _csWhy(slug){   // "" when this call may carry the split, else why it goes stock
   if(!CACHE_SPLIT) return "off";
@@ -7624,7 +7624,7 @@ var _vadHold=1500, _vadEndT=0;   /* 0810 ADAPTIVE ENDPOINT (fit on the humlab lo
    floor clips can be adopted. One inline seam on the tail-anchor line asks _feCut; an unarmed page never calls it.
    FE_DAY: at most 40 spec calls per device per UTC day that replaced no stock call (kept as gb_fastear_day). FE_PER_MIN counts
    the same calls over a rolling minute: a spec leaves the count when it ends as a hit or cut, so adopted calls never use it up. ---- */
-var FAST_EAR=(function(){ var KILL=0; try{ var q=new URLSearchParams(location.search).get("fastear"); if(q==="1") localStorage.gb_fastear="1"; else if(q==="0") localStorage.removeItem("gb_fastear"); if(q!==null){ try{ var u=new URL(location.href); u.searchParams.delete("fastear"); history.replaceState(null,"",u.pathname+u.search+u.hash); }catch(_re){} } return !KILL&&localStorage.gb_fastear==="1"; }catch(e){ return false; } })();
+var FAST_EAR=false;
 var FE_MIN=700, FE_LEAD=1500, FE_GAP=400, FE_TICK=60, FE_SLICE=8, FE_PER_UTT=3, FE_PER_MIN=2, FE_COOL=120000, FE_LIVE=2, FE_TTL=20000, FE_STALE=3000, FE_ROWS=120, FE_DAY=40, FE_B=1, FE_LATE=0;
 var FE_REQ={g:{url:"/api/llm?target=groq-audio",model:"whisper-large-v3-turbo"},d:{url:"/api/llm?target=deepinfra-audio",model:"openai/whisper-large-v3-turbo"}};
 var _feSt={live:[],sends:[],cool:0,rows:0,on:0,lastU:null,lastVt:0,retry:null,uttU:null,uttK:0,pend:null,pump:null,rq:[]};
@@ -11997,7 +11997,7 @@ var _gbSleepOK=false, _gbSleepAt=0, _gbDreamOnOpen=false, _gbSleepWhy="", _gbBoo
   GB_SLEEP_IDLE_MS=300000, GB_OPEN_GAP_MS=600000, GB_TIRED_REPLIES=60, GB_TIRED_MIN=20,
   GB_TIRED_MS=1800000, GB_DREAM_SESS=80, GB_SLEEP_HOLD_MS=180000;
 /* Permission to sleep lasts a few minutes: a dream that cannot start by then (energy, a busy
-   body) must not leave the person's 30 s guard off and a goodnight hanging over a live chat. */
+   body) must not leave the person's quiet guard off and a goodnight hanging over a live chat. */
 function gbSleepDue(){
   return gbSleepAllowed() || gbOpenDreamDue() || (Date.now()-lastActT>GB_SLEEP_IDLE_MS && callsSinceDream>=3);
 }
@@ -12052,6 +12052,7 @@ var _humanT=0;   // 0925 (field session nx-mt7or): when the person's last typed 
 var DREAM_GAP_MAX_MS=30*60000, DREAM_GAP_MIN_MS=10*60000, DREAM_GAP_TURN_MS=2*60000, DREAM_QUIET_MS=20000;   /* 1021 DREAM WHEN ENOUGH HAS HAPPENED (Brit 10-21: "every 10-15 min'ish when active, inactive it can drop towards 25-30 min but no longer"). This replaces the 12-reply count and the 2-min idle dream. After the 10-05 counter fix, 205 of 421 visits with 3+ utterances (49%) still ended with no dream: the after-reply check is held by speech in nearly every visit, so dreams came only from 2 quiet minutes, and 141 of those 205 visits never had them. Now the wait since the last dream starts at 30 min and drops 2 min per turn the person takes, never under 10; the dream starts at the first moment maybeDream's gates allow (nobody has talked for 20 s, no activity, no move) and only if the person said something since the last dream. Simulated on the 10-06..10-21 journals: 10.7 min apart when active, 26 when quiet, 78% of chats dream (51% before). */
 var _dreamBootT=Date.now();   // 1021: a soul with no dream record yet counts its first gap from this page's start (kept in memory, see the boot seed)
 function _dreamDue(now){ return gbSleepDue(); }
+/* upstream's own clock, kept unpatched beside ours and never called */
 function _gbUpstreamDreamDue(now){ try{ var sc=(_live&&_live.scratch)||{}, pt=+sc.pt||0; if(!(pt>=1)) return false;   // scratch.pt: the person's turns since the last dream (sendTxtFrom counts them); scratch.dreamAt: when the last one landed (a soul from before 1021 has none, so its first turn after the update makes it due). Both are zeroed/stamped where a dream lands. Only the tab that owns the soul dreams, so no cross-tab merge is needed
     var at=+sc.dreamAt||0; if(!at||at>now+60000) at=(typeof _dreamBootT==="number")?_dreamBootT:0;   // no record yet, or a stamp from the future (the phone clock moved, a soul from a phone with a fast clock): count from this page's start
     return now-at>=Math.max(DREAM_GAP_MIN_MS,DREAM_GAP_MAX_MS-pt*DREAM_GAP_TURN_MS); }catch(e){ return false; } }
@@ -13749,10 +13750,7 @@ function _heldFetch(){ return Promise.reject(new Error("held: another tab owns t
    outside the storage try like JUDGE_ON, so it answers for this visit in private browsing too. The boot writes one
    stt_or row only when the switch is off. FAST EAR is untouched: its early calls go to the Groq or DeepInfra target
    only, and _feFetch passes any other address straight to fetch. ---- */
-var STTOR_ON=(function(){ var _op=null; try{ _op=new URLSearchParams(location.search).get("sttor"); }catch(e){}
-  if(_op==="0"){ try{ localStorage.gb_sttor="0"; }catch(e){} return false; }
-  if(_op==="1"){ try{ localStorage.removeItem("gb_sttor"); }catch(e){} return true; }
-  try{ return localStorage.gb_sttor!=="0"; }catch(e){ return true; } })();
+var STTOR_ON=false;
 var STTOR_LEASE=5000;
 var STTOR_COOL=120000, _orCool=0;   // rule 7: _orCool = the time until which this lane sits out after a failure
 function _orFmt(type){ type=String(type||""); return type.indexOf("wav")>=0?"wav":""; }   // "" = not a format this lane sends (rule 6: wav only)
@@ -13932,7 +13930,7 @@ function bootOwned(){
   updateStatus();                                            // show the mode chip from the start
   // 🧠 brain + ⏸ pause now live in the bottom control row (below) — no floating top-right buttons (Brit 0709)
   logEv("boot",{mode:MODE,bld:_bldOnce(),gu:(typeof _getupMode==="function"?_getupMode():"off"),plat:String((navigator&&navigator.platform)||"").slice(0,24),ua:String((navigator&&navigator.userAgent)||"").slice(0,160)});   /* 0914 F-74: ua added — a tester's phone booted a 5-day-old page and nothing named the browser */   /* 0902 STALE-BYTES ATTRIBUTION (MGR queue item 2; a session booted 4x after the 01:17Z ship on pre-00:28Z bytes): bld = an 8-hex djb2 of the running main script's own text, derived from the bytes the tab is actually executing — a stale tab reports its stale build even when the server already serves a newer one (an etag or a hand-typed constant would lie exactly there). The ledger records each ship's bld beside its md5 (test/harness prints it). ua already rides at the journal's top level; plat is the one field it lacks. *//*GETUP-SPEED{*/ try{ if(typeof _gsBoot==="function") _gsBoot(); }catch(_gsb){}   /* 1006 SPEED COMPARISON: the bench panel, ?getup=wire&getupspeed=1 only *//*}GETUP-SPEED*/
-  try{ gbStorageBoot(); }catch(e){}/*STT-OR{*/ try{ if(typeof STTOR_ON!=="undefined"&&!STTOR_ON) logEv("stt_or",{off:1}); }catch(e){}   /* 1112: one row per boot only when ?sttor=0 holds this phone on the old words chain (Groq, then DeepInfra) *//*}STT-OR*/   // 0928 STORAGE GUARD (3): one storage_ctx row per boot (webview / persisted / private / standalone / quota MB), plus a nudge an earlier page left waiting
+  try{ gbStorageBoot(); }catch(e){}/*STT-OR{*/   /* 1112: one row per boot only when ?sttor=0 holds this phone on the old words chain (Groq, then DeepInfra) *//*}STT-OR*/   // 0928 STORAGE GUARD (3): one storage_ctx row per boot (webview / persisted / private / standalone / quota MB), plus a nudge an earlier page left waiting
   /*QUIET-ARM{*/   /* 1111: one row per boot only when this phone is off the default quiet text (v 0 or 2), so those sessions can be told apart *//*}QUIET-ARM*/
   try{ if(sessionStorage.getItem("gb_move_in")){ sessionStorage.removeItem("gb_move_in"); logEv("move_in",{n:(_live.log||[]).length}); _fmSoulLanded(); } }catch(e){}   // 1016: a soul that came in through growbot.dev/move, counted once (see moveInGate). 1106 REC-07: and the finish moving step learns his memories are here
   try{ _fmShow(45); }catch(e){}   // 1106 REC-07: a finish moving step still open (gb_fm) is drawn on every boot until both halves are here or the person hides it

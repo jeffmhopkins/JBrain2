@@ -1796,7 +1796,7 @@ _GB_SLEEP_PAGE_JS = r"""var _gbSleepOK=false, _gbSleepAt=0, _gbDreamOnOpen=false
   GB_SLEEP_IDLE_MS=300000, GB_OPEN_GAP_MS=600000, GB_TIRED_REPLIES=60, GB_TIRED_MIN=20,
   GB_TIRED_MS=1800000, GB_DREAM_SESS=80, GB_SLEEP_HOLD_MS=180000;
 /* Permission to sleep lasts a few minutes: a dream that cannot start by then (energy, a busy
-   body) must not leave the person's 30 s guard off and a goodnight hanging over a live chat. */
+   body) must not leave the person's quiet guard off and a goodnight hanging over a live chat. */
 function gbSleepDue(){
   return gbSleepAllowed() || _gbDreamOnOpen || (Date.now()-lastActT>GB_SLEEP_IDLE_MS && callsSinceDream>=3);
 }
@@ -1861,7 +1861,9 @@ SLEEP_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         "function _dreamDue(now){ try{",
-        "function _dreamDue(now){ return gbSleepDue(); }\nfunction _gbUpstreamDreamDue(now){ try{",
+        "function _dreamDue(now){ return gbSleepDue(); }\n"
+        "/* upstream's own clock, kept unpatched beside ours and never called */\n"
+        "function _gbUpstreamDreamDue(now){ try{",
         1,
     ),
     # Its person just let it sleep: their last words are the permission, and the goodnight its
@@ -3225,6 +3227,55 @@ UPSTREAM_1112_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += UPSTREAM_1112_PATCHES
+
+# Upstream's Nov 12 page added per-phone switches (a URL parameter kept in phone storage) that
+# change what the page asks the box for. The box decides how the creature talks to its models,
+# so each is pinned to the behaviour the box serves: the prompt split stays ours (SPEED_PATCHES),
+# speculative transcription stays off, and speech goes to the transcription lanes the box
+# answers (Groq, then DeepInfra) rather than an OpenRouter audio lane it does not serve, which
+# upstream turned on by default.
+PHONE_SWITCH_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'var CACHE_SPLIT=(function(){ try{ var q=new URLSearchParams(location.search).get'
+        '("cachesplit"); if(q==="1") localStorage.gb_cachesplit="1"; else if(q==="0") loc'
+        'alStorage.removeItem("gb_cachesplit"); if(q!==null){ try{ var u=new URL(location'
+        '.href); u.searchParams.delete("cachesplit"); history.replaceState(null,"",u.path'
+        'name+u.search+u.hash); }catch(_re){} } return localStorage.gb_cachesplit==="1"; '
+        '}catch(e){ return false; } })();',
+        'var CACHE_SPLIT=false;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'var FAST_EAR=(function(){ var KILL=0; try{ var q=new URLSearchParams(location.se'
+        'arch).get("fastear"); if(q==="1") localStorage.gb_fastear="1"; else if(q==="0") '
+        'localStorage.removeItem("gb_fastear"); if(q!==null){ try{ var u=new URL(location'
+        '.href); u.searchParams.delete("fastear"); history.replaceState(null,"",u.pathnam'
+        'e+u.search+u.hash); }catch(_re){} } return !KILL&&localStorage.gb_fastear==="1";'
+        ' }catch(e){ return false; } })();',
+        'var FAST_EAR=false;',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'var STTOR_ON=(function(){ var _op=null; try{ _op=new URLSearchParams(location.se'
+        'arch).get("sttor"); }catch(e){}\n  if(_op==="0"){ try{ localStorage.gb_sttor="0";'
+        ' }catch(e){} return false; }\n  if(_op==="1"){ try{ localStorage.removeItem("gb_s'
+        'ttor"); }catch(e){} return true; }\n  try{ return localStorage.gb_sttor!=="0"; }c'
+        'atch(e){ return true; } })();\n',
+        'var STTOR_ON=false;\n',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '/*STT-OR{*/ try{ if(typeof STTOR_ON!=="undefined"&&!STTOR_ON) logEv("stt_or",{of'
+        'f:1}); }catch(e){}',
+        '/*STT-OR{*/',
+        1,
+    ),
+]
+PATCHES += PHONE_SWITCH_PATCHES
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
