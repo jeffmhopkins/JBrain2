@@ -134,11 +134,31 @@ BACKOFF_WINDOW_S = 300.0
 MAX_PEERS_PER_CHANNEL = 8
 # What the PWA's Body tab may ask the creature on the robot to do, and for how long a walk or
 # spin runs. The creature runs its own policies with its phone's IMU (growbot-box.js).
+# The escape spins and the tall stand are the live app's tricks the creature already runs for its
+# brain; `gesture` plays one of its body's named gestures (a soul's own saved ones too) by `name`.
 MOVES = frozenset(
-    {"forward", "back", "spin_left", "spin_right", "wiggle", "bow", "sway", "stop"}
+    {
+        "forward",
+        "back",
+        "spin_left",
+        "spin_right",
+        "spin_escape_left",
+        "spin_escape_right",
+        "stand_tall",
+        "wiggle",
+        "bow",
+        "sway",
+        "gesture",
+        "stop",
+    }
 )
 MOVE_SECS = (1.0, 15.0)
 WALKS = frozenset({"forward", "back", "spin_left", "spin_right"})
+# A gesture name upstream's creature can play (next.html _gestName): anything else it never can.
+GESTURE_RE = re.compile(r"[a-z0-9_-]+(?: [a-z0-9_-]+)*")
+GESTURE_MAX = 16
+# The gesture names a creature reports for the Body tab's trick buttons; a soul holds a handful.
+GESTURES_MAX = 32
 # A creature answers at once (it acks what it started, not what it finished); one that has not
 # by then is busy or gone, and the api's own call to here is 5 s.
 MOVE_ACK_S = 3.0
@@ -1003,6 +1023,8 @@ class Channel:
     body_since: float = 0.0
     # The PWA's moves sent to the creature on a side channel, awaiting its box_ack, by rid.
     acks: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
+    # The named gestures the creature on this side channel says its body has (box_info).
+    gestures: tuple[str, ...] = ()
 
     def status(self) -> dict[str, object]:
         return {"t": "status", "awake": 1 if self.body is not None else 0}
@@ -1019,6 +1041,18 @@ def _parse(data: bytes) -> dict[str, Any] | None:
         # Deep nesting under the frame cap would otherwise escape the socket's task.
         return None
     return msg if isinstance(msg, dict) else None
+
+
+def _gesture_name(name: Any) -> bool:
+    return isinstance(name, str) and len(name) <= GESTURE_MAX and bool(GESTURE_RE.fullmatch(name))
+
+
+def _gesture_names(names: Any) -> tuple[str, ...]:
+    """A creature's reported gesture names, keeping only ones it could play, deduplicated."""
+    if not isinstance(names, list):
+        return ()
+    kept = dict.fromkeys(n for n in names[: GESTURES_MAX * 2] if _gesture_name(n))
+    return tuple(kept)[:GESTURES_MAX]
 
 
 def _act_frame(frame: Any) -> dict[str, Any] | None:
@@ -1335,6 +1369,7 @@ class GrowBot:
                         "%Y-%m-%dT%H:%M:%SZ", time.gmtime(chan.body_since)
                     ),
                     "creature": self._creature(chan.name) is not None,
+                    "gestures": list(self._gestures(chan.name)),
                 }
                 for chan in sorted(self.channels.values(), key=lambda c: c.name)
                 if chan.body is not None and not chan.name.endswith("-agent")
@@ -1379,6 +1414,10 @@ class GrowBot:
         chan = self.channels.get(f"{code}-agent")
         return chan.body if chan is not None else None
 
+    def _gestures(self, code: str) -> tuple[str, ...]:
+        chan = self.channels.get(f"{code}-agent")
+        return chan.gestures if chan is not None and chan.body is not None else ()
+
     async def move(self, req: Request) -> Response:
         """The PWA's Body tab: one move for the creature wearing `code`, answered with what the
         creature said it did (`ok`, its move `state`, and `why` in its own words)."""
@@ -1407,6 +1446,9 @@ class GrowBot:
             policy and (what not in WALKS or not POLICY_ID_RE.fullmatch(policy))
         ):
             return json_response(400, {"error": "policy"})
+        name = msg.get("name", "") if msg else ""
+        if (what == "gesture") != bool(name) or (name and not _gesture_name(name)):
+            return json_response(400, {"error": "name"})
         chan = self.channels.get(f"{code}-agent")
         creature = chan.body if chan is not None else None
         if chan is None or creature is None:
@@ -1418,6 +1460,8 @@ class GrowBot:
             frame: dict[str, Any] = {"t": "box_move", "rid": rid, "move": what, "secs": secs}
             if policy:
                 frame["policy"] = policy
+            if name:
+                frame["name"] = name
             creature.send_json(frame)
             ack = await asyncio.wait_for(waiter, MOVE_ACK_S)
         except TimeoutError:
@@ -2538,6 +2582,8 @@ class GrowBot:
     ) -> None:
         old = chan.body
         chan.body, chan.body_hb = ws, hb
+        # A new page reports its own gestures; a replaced one's must not linger.
+        chan.gestures = ()
         chan.body_since = time.time()
         if old is not None:
             old.close(1000, "replaced")
@@ -2550,8 +2596,14 @@ class GrowBot:
                 kind, data = await ws.recv()
                 if kind != 0x1:
                     continue
-                msg = _parse(data) if chip or chan.acks else None
+                # A creature's frames are parsed only while a move awaits its answer, or for
+                # its gesture list, whose kind leads the frame.
+                ours = chip or bool(chan.acks) or b'"box_info"' in data[:24]
+                msg = _parse(data) if ours else None
                 if not chip:
+                    if msg is not None and msg.get("t") == "box_info":
+                        chan.gestures = _gesture_names(msg.get("gestures"))
+                        continue
                     if msg is not None and msg.get("t") == "box_ack":
                         waiter = chan.acks.pop(str(msg.get("rid")), None)
                         if waiter is not None and not waiter.done():
@@ -2570,6 +2622,7 @@ class GrowBot:
             if chan.body is ws:
                 chan.body = None
                 chan.body_hb = False
+                chan.gestures = ()
                 chan.to_peers(json.dumps(chan.status(), separators=(",", ":")))
             self._drop_empty(chan)
 

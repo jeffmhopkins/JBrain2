@@ -130,6 +130,34 @@ describe("GrowbotMovePanel", () => {
     expect(document.querySelector(".gb-move-drain")).toBeNull();
   });
 
+  it("runs the live app's tricks: the tall stance and the escape spins for the picked seconds", async () => {
+    const fetch = serve(json({ ok: true, state: "accepted", why: "" }));
+    render(<GrowbotMovePanel robot={robot()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Stand tall" }));
+    await screen.findByText("Standing tall.");
+    expect(sent(fetch).body).toEqual({ move: "stand_tall", secs: 0 });
+    fireEvent.click(screen.getByRole("button", { name: "10 s" }));
+    fireEvent.click(screen.getByRole("button", { name: "Escape spin right 10 s" }));
+    await screen.findByText("Escape-spinning right for 10 s.");
+    expect(sent(fetch, 1).body).toEqual({ move: "spin_escape_right", secs: 10 });
+  });
+
+  it("offers the soul's own saved gestures, played by name", async () => {
+    const fetch = serve(json({ ok: true, state: "accepted", why: "" }));
+    render(<GrowbotMovePanel robot={robot({ gestures: ["bow", "happy dance", "wiggle"] })} />);
+    // The stock three already have their buttons; only the soul's own get new ones.
+    expect(screen.getAllByRole("button", { name: "Bow" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "happy dance" }));
+    await screen.findByText("Playing happy dance.");
+    expect(sent(fetch).body).toEqual({ move: "gesture", secs: 0, name: "happy dance" });
+  });
+
+  it("shows no saved-gestures row when the soul has none of its own", () => {
+    serve(json({}));
+    render(<GrowbotMovePanel robot={robot({ gestures: ["wiggle", "bow", "sway"] })} />);
+    expect(screen.queryByText("Its saved gestures")).toBeNull();
+  });
+
   it("shows the creature's own words when it refuses", async () => {
     serve(json({ ok: false, state: "blocked", why: "robot not answering" }));
     render(<GrowbotMovePanel robot={robot()} />);

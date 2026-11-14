@@ -7,6 +7,10 @@
 // says so, and shows the creature's answer. "Walk with" picks the creature's own walks or a
 // trained one from the box's policy library (owner, 2026-11-14), which the pad then steers by
 // heading: up walks ahead, left and right turn it 90°, down backs away or turns it around.
+// The tricks are what the live app's creature does for its own brain besides walking (owner,
+// 2026-11-14: "the live app also has other policies for doing tricks"): its stock gestures and
+// tall stance, the escape spin it falls back to when a spin stalls, and any gesture its soul has
+// saved, which the creature reports to the box.
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotMove, type GrowbotPolicy, type GrowbotRobot, api } from "../api/client";
@@ -48,6 +52,15 @@ const TRICKS: { id: GrowbotMove; label: string }[] = [
   { id: "wiggle", label: "Wiggle" },
   { id: "bow", label: "Bow" },
   { id: "sway", label: "Sway" },
+  { id: "stand_tall", label: "Stand tall" },
+];
+const STOCK_GESTURES = new Set<string>(["wiggle", "bow", "sway"]);
+
+// The escape spin: upstream's harder-kicking spin for when the ordinary one stalls. It runs for
+// the picked seconds, like the pad's spins.
+const ESCAPES: { id: GrowbotMove; label: string; run: string }[] = [
+  { id: "spin_escape_left", label: "Escape spin left", run: "Escape spin left" },
+  { id: "spin_escape_right", label: "Escape spin right", run: "Escape spin right" },
 ];
 
 // Inside the box's MOVE_SECS bounds (1-15, growbot/server/serve.py); upstream's remote runs 5 s.
@@ -59,9 +72,13 @@ const DOING: Record<GrowbotMove, string> = {
   back: "Walking backward",
   spin_right: "Spinning right",
   spin_left: "Spinning left",
+  spin_escape_right: "Escape-spinning right",
+  spin_escape_left: "Escape-spinning left",
+  stand_tall: "Standing tall",
   wiggle: "Wiggling",
   bow: "Bowing",
   sway: "Swaying",
+  gesture: "Playing it",
   stop: "Stopped",
 };
 
@@ -169,15 +186,20 @@ export function GrowbotMovePanel({
     }, s * 1000);
   }
 
-  async function send(move: GrowbotMove, s = 0) {
+  async function send(move: GrowbotMove, s = 0, gesture?: string) {
     const mine = ++latest.current;
     setBusy(true);
     const live = () => mounted.current && mine === latest.current;
     try {
       const walk = trained && pad && move in pad ? trained : null;
-      const out = await api.moveGrowbotRobot(robot.code, move, s, walk?.id);
+      const out = await api.moveGrowbotRobot(robot.code, move, s, walk?.id, gesture);
       if (!live()) return;
-      const doing = walk && pad ? `${pad[move as Policy].doing} with ${walk.name}` : DOING[move];
+      const doing =
+        walk && pad
+          ? `${pad[move as Policy].doing} with ${walk.name}`
+          : gesture
+            ? `Playing ${gesture}`
+            : DOING[move];
       setSaid(
         out.ok
           ? { text: `${doing}${s ? ` for ${s} s` : ""}.`, bad: false }
@@ -210,6 +232,7 @@ export function GrowbotMovePanel({
 
   const off = !!blocked || busy;
   const lit = running?.move;
+  const saved = (robot.gestures ?? []).filter((g) => !STOCK_GESTURES.has(g));
   return (
     <div className="gb-move">
       <fieldset className="gb-chips gb-walk-with">
@@ -312,7 +335,37 @@ export function GrowbotMovePanel({
             {g.label}
           </button>
         ))}
+        {ESCAPES.map((g) => (
+          <button
+            key={g.id}
+            type="button"
+            className={`gb-chip trick${lit === g.id ? " on" : ""}`}
+            aria-label={`${g.run} ${secs} s`}
+            disabled={off}
+            onClick={() => void send(g.id, secs)}
+          >
+            {g.label}
+          </button>
+        ))}
       </div>
+      {saved.length > 0 && (
+        <>
+          <div className="gb-move-h">Its saved gestures</div>
+          <div className="gb-chips">
+            {saved.map((g) => (
+              <button
+                key={g}
+                type="button"
+                className="gb-chip trick"
+                disabled={off}
+                onClick={() => void send("gesture", 0, g)}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       {library && (
         <GrowbotPoliciesSheet
           policies={policies}
