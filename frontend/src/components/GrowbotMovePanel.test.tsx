@@ -27,11 +27,33 @@ function robot(over: Partial<GrowbotRobot> = {}): GrowbotRobot {
   };
 }
 
-function serve(reply: Response | (() => Response)) {
+const QUICK = {
+  id: "8d1c2f4e-0a3b-4c5d-9e6f-7a8b9c0d1e2f",
+  name: "Quick trot",
+  source_job: "j-1",
+  source_spec: "growbot_heading_walk",
+  bytes: 40960,
+  created_at: "2026-11-13T10:00:00Z",
+  contract: { facing: "nose", speed: false, pitch: false, control_hz: 25 },
+};
+
+// The policy library the panel reads on mount answers on its own, so `fetch` holds the moves.
+function serve(reply: Response | (() => Response), library: unknown[] = []) {
   const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
     typeof reply === "function" ? reply() : reply.clone(),
   );
-  vi.stubGlobal("fetch", fetch);
+  return withLibrary(fetch, library);
+}
+
+function withLibrary<F extends (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+  fetch: F,
+  library: unknown[] = [],
+): F {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input).endsWith("/growbot/policies") && !init?.method
+      ? json(library)
+      : fetch(input, init),
+  );
   return fetch;
 }
 
@@ -82,7 +104,7 @@ describe("GrowbotMovePanel", () => {
     const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
       String(init?.body).includes("forward") ? slow : json({ ok: true, state: "stopped", why: "" }),
     );
-    vi.stubGlobal("fetch", fetch);
+    withLibrary(fetch);
     render(<GrowbotMovePanel robot={robot()} />);
     fireEvent.click(screen.getByRole("button", { name: "Walk forward 5 s" }));
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
@@ -139,6 +161,44 @@ describe("GrowbotMovePanel", () => {
     rerender(<GrowbotMovePanel robot={robot({ creature: false })} onStop={shared} />);
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("drives a trained walk from the library, steering by heading", async () => {
+    localStorage.clear();
+    const fetch = serve(json({ ok: true, state: "started", why: "" }), [QUICK]);
+    render(<GrowbotMovePanel robot={robot()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Quick trot" }));
+    expect(screen.getByRole("button", { name: "Quick trot" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText(/nose first, heading only/)).toBeInTheDocument();
+    // Heading only: down turns it around rather than backing away.
+    expect(screen.getByRole("button", { name: "Turn around 5 s" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Turn left 5 s" }));
+    await screen.findByText("Turning left with Quick trot for 5 s.");
+    expect(sent(fetch).body).toEqual({ move: "spin_left", secs: 5, policy: QUICK.id });
+    // Tricks stay the creature's own.
+    fireEvent.click(screen.getByRole("button", { name: "Wiggle" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(sent(fetch, 1).body).toEqual({ move: "wiggle", secs: 0 });
+  });
+
+  it("remembers the walk per robot and falls back when it's gone", async () => {
+    localStorage.clear();
+    localStorage.setItem("gb-walk-with:gb-3fa91c", QUICK.id);
+    serve(json({}), [QUICK]);
+    const { unmount } = render(<GrowbotMovePanel robot={robot()} />);
+    await screen.findByRole("button", { name: "Walk ahead 5 s" });
+    unmount();
+    serve(json({}), []);
+    render(<GrowbotMovePanel robot={robot()} />);
+    expect(screen.getByRole("button", { name: "Its own walks" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Walk forward 5 s" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add a trained walk…" })).toBeInTheDocument();
   });
 });
 

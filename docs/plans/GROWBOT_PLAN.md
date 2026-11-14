@@ -665,10 +665,18 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   a slow walk steered by one heading-error input, exported in the runner's `segments` format
   with the error on `cmd_yaw`). The Launcher's `growbot_heading_walk` job
   (`jlaunch/src/jlaunch_ctl/specs.py`) trains it on the box and hands back the run as a
-  tarball with the policy JSON and a browser 3D `replay.html`. ◻️ Not yet done: the creature
-  has no heading source or gait entry for it (the training README's "Getting a policy onto the
-  robot" lists what the app needs), and bringing a trained policy into `growbot/site` is a sync
-  PR. ✅ Watching it from the phone (owner, 2026-11-14: *"viewed on my phone in real time as
+  tarball with the policy JSON and a browser 3D `replay.html`. ✅ Driving it (owner,
+  2026-11-14: *"modify this GUI to be able to handle loading these policies … pull it directly
+  from the tasks that train them"*): the Body tab's *Trained walks* sheet copies a finished
+  job's `policy_final.json` into the box's policy library (migration 0268,
+  `app.growbot_policies`, owner-only under RLS), and the Move pane's *Walk with* row picks one.
+  A walk move then carries the policy's id; the sidecar hands the creature its JSON
+  (`/api/box/policy`, read from the api's internal route), and `gbTrainedWalk` in
+  `growbot-box.js` runs it on the phone: the training's neutral settle, gravity levelled to
+  +z, the heading integrated from the levelled gyro, and each pad key a target heading (ahead,
+  ±90°, behind or backing away when the walk takes speed), with the stock walks' tip, grab,
+  pause and hide stops. No sync PR is needed per walk. ◻️ Bench check: the turn sign on the
+  real robot. ✅ Watching it from the phone (owner, 2026-11-14: *"viewed on my phone in real time as
   it's training … the result needs to be able to be downloaded or at least in a location that a
   debug token can be handed to Claude"*): the spec's `live_dir` is the run's `live/` folder,
   which the job screen's Live card shows while it trains (progress, time left, the walk's

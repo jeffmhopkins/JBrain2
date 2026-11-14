@@ -3735,3 +3735,82 @@ def test_a_doubtful_name_folds_short_or_faint_into_its_own_doubt() -> None:
         "a short sound (a click)",
         "a faint sound: a hum",
     ]
+
+
+# --- trained walks from the policy library (growbot-box.js gbTrainedWalk) -------------------
+
+# The next.html globals the trained walk drives, stubbed: a body that records each pose, a phone
+# lying level, and upstream's motion bookkeeping. Walker.step is wrapped to record what the
+# policy is fed each tick.
+_TRAINED_HARNESS = Path(__file__).with_name("growbot_trained_walk_harness.mjs")
+
+
+def _trained_walk(move: str, phone: dict[str, Any]) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    out = subprocess.run(
+        [
+            node,
+            str(_TRAINED_HARNESS),
+            (_SITE / "growbot_runner.js").as_uri(),
+            str(_SITE / "growbot-box.js"),
+            move,
+            json.dumps(phone),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+# A phone screen-up on a body leaning nose-up 30 degrees (its top, the camera end, is the nose):
+# gravity's reaction reads along +z and toward the phone's top (+y), so the body sees it toward
+# +x until the stance levels it away.
+_LEANING = {
+    "accel": {"x": 0.0, "y": 4.9, "z": 8.49},
+    # Turning left at 10 deg/s: about the screen normal, gamma.
+    "rate": {"a": 0.0, "b": 0.0, "g": 10.0},
+}
+
+
+def test_a_trained_walk_levels_the_stance_and_steers_by_heading() -> None:
+    got = _trained_walk("spin_left", _LEANING)
+    # Admitted at once, so the Body tab's ack reads ok while the policy loads.
+    assert got["accepted"] == ["accepted", "loading_policy"]
+    assert ["started", "stance_commands"] in got["reports"]
+    # The stance first: legs neutral with this phone's trims.
+    assert got["poses"][0] == [94, 88]
+    first = got["fed"][0]
+    # Levelled: the stance's gravity reads straight up, nothing along x or y.
+    assert abs(first["A"]["x"]) < 1e-6 and abs(first["A"]["y"]) < 1e-6
+    assert abs(first["A"]["z"] - (4.9**2 + 8.49**2) ** 0.5) < 1e-6
+    # A left spin is a target 90 degrees counter-clockwise: cmd_yaw starts at +0.5 and falls
+    # as the gyro (gamma, +z through the levelling's tilt) turns it left.
+    assert abs(first["cmd"]["yaw"] - 0.5) < 0.01
+    assert got["fed"][2]["cmd"]["yaw"] < first["cmd"]["yaw"]
+    assert first["G"]["z"] > 0
+    # About 25 ticks a second for the one-second walk, then the rest stance.
+    assert 18 <= got["n"] <= 30
+    assert got["last"] == ["rest"]
+    assert got["errs"] == []
+
+
+@pytest.mark.parametrize(("move", "yaw", "fwd"), [("forward", 0.0, 1), ("back", 1.0, 1)])
+def test_a_heading_only_walk_turns_around_to_go_back(move: str, yaw: float, fwd: int) -> None:
+    still = {"accel": {"x": 0.0, "y": 0.0, "z": 9.8}, "rate": {"a": 0.0, "b": 0.0, "g": 0.0}}
+    got = _trained_walk(move, still)
+    assert abs(abs(got["fed"][0]["cmd"]["yaw"]) - yaw) < 1e-9
+    assert got["fed"][0]["cmd"]["fwd"] == fwd
+
+
+def test_the_trained_walk_keeps_upstreams_stops() -> None:
+    box = (_SITE / "growbot-box.js").read_text()
+    walk = box[box.index("/* Trained walks from JBrain's policy library") :]
+    for stop in ("paused", "document.hidden", "dreaming", "_bodyAlive()", "_gaitCoolUntil"):
+        assert stop in walk, stop
+    assert "tipN >= 5 || jerkN >= 6" in walk
+    # It owns the legs only through _motion, which Stop and every newer move clear.
+    assert "_motion = M" in walk and "_motion !== M" in walk

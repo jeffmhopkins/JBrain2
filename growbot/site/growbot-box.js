@@ -1293,12 +1293,19 @@
   var code = q.get("id") || "";
   if (q.get("mode") !== "legs" || !/^gb-[A-Za-z0-9]{1,32}$/.test(code)) return;
   var RETRY_MIN_MS = 2000, RETRY_MAX_MS = 60000;
+  var POLICY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  var WALKS = /^(forward|back|spin_left|spin_right)$/;
   var ws = null, retry = RETRY_MIN_MS, timer = 0, replaced = false;
 
   function gone() { return !!(window.__gbBoxSoul && window.__gbBoxSoul.away); }
 
-  function run(move, secs) {
+  function run(move, secs, policy) {
     var spec = null;
+    if (policy) {
+      if (typeof window.gbTrainedWalk !== "function") throw new Error("this page can't run a trained walk");
+      window.gbTrainedWalk(policy, move, secs);
+      return;
+    }
     if (move === "forward") spec = { dir: "fwd" };
     else if (move === "back") spec = { dir: "back" };
     else if (move === "spin_left") spec = { gait: "spin_left", dir: "left" };
@@ -1316,13 +1323,13 @@
     }
   }
 
-  function answer(rid, move, secs) {
+  function answer(rid, move, secs, policy) {
     var err = document.getElementById("err");
     // setErr also retires a "try again" left under the old caption.
     if (typeof window.setErr === "function") window.setErr(""); else if (err) err.textContent = "";
     var before = window._moveLast, out = { t: "box_ack", rid: rid, ok: false, state: "", why: "" };
     try {
-      run(move, secs);
+      run(move, secs, policy);
       if (move === "stop") {
         // runGait files a halt word as a move it never admitted; the legs did stop.
         out.ok = true;
@@ -1377,7 +1384,9 @@
       if (gone()) { close(); return; }
       // The box's bounds again, so a frame from another of the rider's sockets gets no longer walk.
       var secs = typeof m.secs === "number" && m.secs >= 1 && m.secs <= 15 ? m.secs : 0;
-      try { s.send(JSON.stringify(answer(m.rid, String(m.move || ""), secs))); } catch (e) {}
+      var move = String(m.move || "");
+      var policy = typeof m.policy === "string" && POLICY_RE.test(m.policy) && WALKS.test(move) ? m.policy : "";
+      try { s.send(JSON.stringify(answer(m.rid, move, secs, policy))); } catch (e) {}
     };
     s.onclose = function (ev) {
       if (ws !== s) return;
@@ -1448,4 +1457,194 @@
   }
   setInterval(function () { if (!document.hidden) poll(); }, POLL_MS);
   document.addEventListener("visibilitychange", function () { if (!document.hidden) poll(); });
+})();
+
+/* Trained walks from JBrain's policy library (the Body tab's pad with a policy picked; backend
+   api/growbot_policies.py). GrowBot_Training's walks are steered by a heading, not upstream's
+   constant turn word, so they run here rather than through runGait (README "Getting a policy
+   onto the robot", and the training thread's contract, 2026-11-14):
+   - The file loads from the box (/api/box/policy) into upstream's own Walker
+     (growbot_runner.js), ticked at its control_hz, reset at the walk's start.
+   - Legs neutral (with this phone's trims) for 1 s first, as the simulator starts each episode.
+   - The IMU in the body frame: x toward the nose (the phone's top, its camera end), y to the
+     robot's left, z out of the screen; so accel (phone.y, -phone.x, phone.z) and gyro
+     (beta, -alpha, gamma) in rad/s, as upstream's forward walk maps them. Then levelled by the
+     smallest rotation taking the gravity measured at the settled stance to +z, with IMU_SIGN
+     [1, 1, 1] and gain 1, as trained.
+   - The heading is the levelled gyro's z rate integrated from the start (counter-clockwise
+     positive), and each tick cmd_yaw = wrap180(target - heading) / 180, positive = turn left.
+     Training adds drift and noise to that, and the facing end does not change the sum, since the
+     target is set relative to where the facing end points at the start.
+   - The pad's moves are targets: forward 0 at full speed, left +90 and right -90 (standing to
+     turn when it takes a speed), back -1 speed where it takes one, else a turn around (180).
+   - Every stop upstream's walks have: Stop and any newer move (stopMotion / carryLegMotion own
+     _motion), pause, hide, a dream, a lost relay, a tip or a grab, and the duty cool-off. */
+(function () {
+  "use strict";
+  var D = Math.PI / 180, PREP_MS = 1000, cache = {};
+
+  function load(pid) {
+    var ref = "/api/box/policy?id=" + encodeURIComponent(pid);
+    if (!cache[pid]) {
+      cache[pid] = fetch(ref, { cache: "no-store" }).then(function (r) {
+        if (!r.ok) throw new Error(r.status === 404 ? "that policy isn't on the box any more" : "policy " + r.status);
+        return r.json();
+      }).catch(function (e) { delete cache[pid]; throw e; });
+    }
+    return cache[pid];
+  }
+
+  function channels(pj) {
+    var sp = (pj && pj.obs_spec) || {}, out = [];
+    (Array.isArray(sp.segments) ? sp.segments : [sp]).forEach(function (seg) {
+      if (seg && Array.isArray(seg.channels)) out = out.concat(seg.channels);
+    });
+    return out;
+  }
+
+  // What the pad's move asks of a heading policy: a target (deg, counter-clockwise from where
+  // the facing end points at the start) and a speed.
+  function command(move, hasSpeed) {
+    if (move === "spin_left") return { target: 90, fwd: hasSpeed ? 0 : 1 };
+    if (move === "spin_right") return { target: -90, fwd: hasSpeed ? 0 : 1 };
+    if (move === "back") return hasSpeed ? { target: 0, fwd: -1 } : { target: 180, fwd: 1 };
+    return { target: 0, fwd: 1 };
+  }
+
+  function wrap180(d) { d = ((d + 180) % 360 + 360) % 360 - 180; return d; }
+
+  function mul(R, v) {
+    return { x: R[0][0] * v.x + R[0][1] * v.y + R[0][2] * v.z,
+             y: R[1][0] * v.x + R[1][1] * v.y + R[1][2] * v.z,
+             z: R[2][0] * v.x + R[2][1] * v.y + R[2][2] * v.z };
+  }
+
+  // The smallest rotation taking unit vector u onto +z (Rodrigues): v = u x z, c = u . z.
+  function levelling(u) {
+    var n = Math.hypot(u.x, u.y, u.z);
+    if (!(n > 1)) return null;
+    var a = u.x / n, b = u.y / n, c = u.z / n;
+    if (c < -0.999999) return [[1, 0, 0], [0, -1, 0], [0, 0, -1]];
+    var vx = b, vy = -a, k = 1 / (1 + c);
+    var V = [[0, 0, vy], [0, 0, -vx], [-vy, vx, 0]], R = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    for (var i = 0; i < 3; i++) for (var j = 0; j < 3; j++) {
+      var v2 = 0;
+      for (var m = 0; m < 3; m++) v2 += V[i][m] * V[m][j];
+      R[i][j] += V[i][j] + v2 * k;
+    }
+    return R;
+  }
+
+  function bodyAccel() { var a = window.accel || accel; return { x: a.y || 0, y: -(a.x || 0), z: a.z || 0 }; }
+  function bodyGyro() { var r = window.rate || rate; return { x: (r.b || 0) * D, y: -(r.a || 0) * D, z: (r.g || 0) * D }; }
+
+  function refuse(attempt, why, words) {
+    _moveReport(attempt, "blocked", why);
+    setErr(words);
+  }
+
+  function start(pid, move, secs, attempt) {
+    if (_wheels) { refuse(attempt, "no_legs", "a trained walk needs legs, and this body rolls"); return; }
+    if (!window._body || !window._body.ready) { refuse(attempt, "connection_unavailable", "no robot connected to walk — its legs aren't here"); return; }
+    if (!_bodyAlive()) { refuse(attempt, "connection_unavailable", "robot not answering"); return; }
+    ensureIMU();
+    if (!ori) { refuse(attempt, "no_orientation", "no orientation readings from this phone — tap to allow motion, then try again"); return; }
+    if (Date.now() < _gaitCoolUntil) { refuse(attempt, "cooling", "catching my balance a moment…"); return; }
+    var walkS = secs > 0 ? secs : (move === "forward" || move === "back" ? 8 : 4);
+    carryLegMotion();
+    var gen = _motionGen, M = { kind: "walk", loading: true, report: attempt };
+    _motion = M;
+    _moveReport(attempt, "accepted", "loading_policy");
+    $("brainTxt").textContent = "loading my trained walk…";
+    var policy = null;
+    load(pid).then(function (pj) {
+      policy = pj;
+      return import("/growbot_runner.js");
+    }).then(function (mod) {
+      if (gen !== _motionGen || _motion !== M) return;
+      if (paused || document.hidden || dreaming) { stopMotion(); return; }
+      var sp = policy.obs_spec || {}, yaw = sp.cmd_yaw || {};
+      if (yaw.meaning !== "heading_error") throw new Error("that policy isn't steered by a heading");
+      var cal = Object.assign({}, calNow(), { IMU_SIGN: [1, 1, 1], gain: 1, turn: 0 });
+      var walker = new mod.Walker(policy, cal), hz = Number(sp.control_hz) || 25;
+      var cmd = command(move, channels(policy).indexOf("cmd_forward") >= 0);
+      var L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0;
+      var prepEnd = Date.now() + PREP_MS, grav = { x: 0, y: 0, z: 0, n: 0 };
+      var R = null, heading = 0, lastT = 0, endT = 0, upB = null, tipN = 0, jerkN = 0;
+      M.loading = false;
+      selfMoveUntil = Date.now() + PREP_MS + walkS * 1000 + 3500;
+      $("brainTxt").textContent = "finding my stance…";
+
+      function gone() {
+        if (_motion !== M) return true;
+        if (paused || document.hidden || dreaming || !window._body || !window._body.ready || !_bodyAlive()) { stopMotion(); return true; }
+        return false;
+      }
+      function send(l, r) {
+        holdStop(false);
+        (window._body.raw || window._body).pose(l, r);
+        M.lastPose = { l: l - L, r: r - Rr };
+      }
+      function prep() {
+        if (gone()) return;
+        try { send(90 + L, 90 + Rr); } catch (e) { stopMotion(); return; }
+        if (!M.started) { M.started = true; _moveReport(attempt, "started", "stance_commands", { gait: "trained", policy: pid }); }
+        // The stance's gravity, from its last 400 ms once the legs have settled.
+        if (prepEnd - Date.now() <= 400) { var a = bodyAccel(); grav.x += a.x; grav.y += a.y; grav.z += a.z; grav.n++; }
+        if (Date.now() < prepEnd) { M.loopIv = setTimeout(prep, 100); return; }
+        R = grav.n ? levelling({ x: grav.x / grav.n, y: grav.y / grav.n, z: grav.z / grav.n }) : null;
+        if (!R) { stopMotion(); setErr("couldn't read which way is up — is motion allowed?"); return; }
+        upB = { b: ori.b, g: ori.g };
+        walker.reset();
+        lastT = performance.now(); endT = Date.now() + walkS * 1000;
+        try { logEv("walk_start", { gait: "trained", policy: pid, dir: move, target: cmd.target, fwd: cmd.fwd, granted: walkS }); } catch (e) {}
+        $("brainTxt").textContent = "walking…";
+        step();
+      }
+      function step() {
+        if (gone()) return;
+        var t0 = performance.now();
+        if (Date.now() >= endT) {
+          _imuWhy = "done";
+          carryLegMotion({ l: 90, r: 90 });
+          try { logEv("walk_end", { gait: "trained", policy: pid, why: "done", heading: Math.round(heading / D) }); } catch (e) {}
+          $("brainTxt").textContent = "awake";
+          return;
+        }
+        // Upstream's tip and grab abort (runGait's LEGS-3), on the same numbers.
+        var dTilt = ori && upB ? phoneTiltDegrees(ori, upB) : null, lin = typeof linMag === "number" ? linMag : 0;
+        tipN = dTilt > 55 ? tipN + 1 : 0;
+        jerkN = lin > 11 ? jerkN + 1 : 0;
+        if (tipN >= 5 || jerkN >= 6) {
+          var why = tipN >= 5 ? "tipped" : "grabbed";
+          _imuWhy = why; stopMotion(); _gaitCoolUntil = Date.now() + 4000;
+          try { logEv("gait_abort", { why: why, gait: "trained", policy: pid }); } catch (e) {}
+          setErr(why === "tipped" ? "I tipped over, so I stopped." : "easy — set me down gently.");
+          $("brainTxt").textContent = "awake";
+          return;
+        }
+        var A = mul(R, bodyAccel()), G = mul(R, bodyGyro());
+        var dt = Math.min(0.1, Math.max(0, (t0 - lastT) / 1000));
+        lastT = t0;
+        heading += G.z * dt;
+        var err = wrap180(cmd.target - heading / D);
+        var out = walker.step(A, G, { fwd: cmd.fwd, yaw: err / 180, pitch: 1 });
+        try { send(out.l, out.r); } catch (e) { stopMotion(); return; }
+        M.loopIv = setTimeout(step, Math.max(0, 1000 / hz - (performance.now() - t0)));
+      }
+      prep();
+    }).catch(function (e) {
+      if (gen !== _motionGen) return;
+      stopMotion();
+      setErr("trained walk didn't load (" + ((e && e.message) || e) + ")");
+      $("brainTxt").textContent = "awake";
+    });
+  }
+
+  // As runGait: one move request, and a move it never admitted reads as blocked.
+  window.gbTrainedWalk = function (pid, move, secs) {
+    var attempt = _moveRequest("walk:trained:" + String(move).slice(0, 16));
+    try { start(pid, move, +secs || 0, attempt); }
+    finally { if (attempt.state === "requested") _moveReport(attempt, "blocked", "not_admitted"); }
+  };
 })();

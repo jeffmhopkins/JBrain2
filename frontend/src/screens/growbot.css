@@ -1382,6 +1382,33 @@ details.gb-help[open] summary::after {
   color: var(--text-3);
   background: var(--surface);
 }
+/* "Walk with": trained walks' names run long, so these chips size to their words and wrap. */
+.gb-walk-with {
+  margin-bottom: 8px;
+}
+.gb-walk-with .gb-chip {
+  flex: 0 1 auto;
+  max-width: 100%;
+  padding: 0 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gb-walk-with .gb-chip.add {
+  border-style: dashed;
+  color: var(--accent);
+}
+
+/* The Trained walks sheet's rows (components/GrowbotPoliciesSheet.tsx). */
+.gb-pol-row .gb-tx {
+  flex: 1;
+  min-width: 0;
+}
+.gb-pol-name {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+}
 
 /* The Body tab's controls card (components/GrowbotBodyControls.tsx): Move | Legs, one Stop. */
 .gb-ctl .gb-seg {

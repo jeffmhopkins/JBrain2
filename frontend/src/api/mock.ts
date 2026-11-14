@@ -30,6 +30,7 @@ import type {
   GrowbotPersona,
   GrowbotPhase,
   GrowbotPhone,
+  GrowbotPolicy,
   GrowbotRobot,
   GrowbotSoul,
   HomeNetQuery,
@@ -214,6 +215,32 @@ const mockGb = {
   // Saved calibrations by robot (absent: never saved) and the moves the screen sent.
   cals: {} as Record<string, GrowbotCal>,
   acts: [] as { code: string; body: unknown }[],
+  // The policy library, and the finished training jobs it can add from.
+  policies: [
+    {
+      id: "0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6",
+      name: "First heading walk",
+      source_job: "job-heading-1",
+      source_spec: "growbot_heading_walk",
+      bytes: 41_822,
+      created_at: "2026-11-14T03:30:00Z",
+      contract: { facing: "nose", speed: false, pitch: false, control_hz: 25 },
+    },
+  ] as GrowbotPolicy[],
+  policySources: [
+    {
+      job_id: "job-camera-1",
+      spec: "growbot_camera_walk",
+      title: "GrowBot camera walk (tail first, toward the camera's view)",
+      finished_at: "2026-11-14T08:10:00Z",
+    },
+    {
+      job_id: "job-heading-1",
+      spec: "growbot_heading_walk",
+      title: "GrowBot heading walk (train a walking policy)",
+      finished_at: "2026-11-14T03:20:00Z",
+    },
+  ],
 };
 
 const MOCK_GB_CAL: GrowbotCal = {
@@ -952,6 +979,53 @@ async function mockGrowbot(
     return json(mockGbUpstream());
   }
   if (path === "/api/growbot/robots" && method === "GET") return json(robots());
+  if (path === "/api/growbot/policies" && method === "GET") return json(mockGb.policies);
+  if (path === "/api/growbot/policies/sources" && method === "GET") {
+    const added = new Set(mockGb.policies.map((p) => p.source_job));
+    return json(mockGb.policySources.map((s) => ({ ...s, added: added.has(s.job_id) })));
+  }
+  if (path === "/api/growbot/policies" && method === "POST") {
+    const { job_id, name } = JSON.parse(String(init?.body ?? "{}")) as {
+      job_id?: string;
+      name?: string;
+    };
+    const src = mockGb.policySources.find((s) => s.job_id === job_id);
+    if (!src) return json({ detail: "that job left no finished policy" }, 404);
+    if (!name?.trim()) return json({ detail: "a name is needed" }, 422);
+    const camera = src.spec === "growbot_camera_walk";
+    const made: GrowbotPolicy = {
+      id: crypto.randomUUID(),
+      name: name.trim(),
+      source_job: src.job_id,
+      source_spec: src.spec,
+      bytes: 52_310,
+      created_at: new Date().toISOString(),
+      contract: {
+        facing: camera ? "camera" : "nose",
+        speed: camera,
+        pitch: camera,
+        control_hz: 25,
+      },
+    };
+    mockGb.policies.unshift(made);
+    return json(made, 201);
+  }
+  const pol = /^\/api\/growbot\/policies\/([^/]+)$/.exec(path);
+  if (pol) {
+    const at = mockGb.policies.findIndex((p) => p.id === decodeURIComponent(pol[1] ?? ""));
+    if (at < 0) return json({ detail: "no such policy" }, 404);
+    if (method === "DELETE") {
+      mockGb.policies.splice(at, 1);
+      return new Response(null, { status: 204 });
+    }
+    if (method === "PATCH") {
+      const { name } = JSON.parse(String(init?.body ?? "{}")) as { name?: string };
+      const p = mockGb.policies[at];
+      if (!p || !name?.trim()) return json({ detail: "a name is needed" }, 422);
+      p.name = name.trim();
+      return json(p);
+    }
+  }
   const cal = /^\/api\/growbot\/robots\/([^/]+)\/(cal|act)$/.exec(path);
   if (cal) {
     const code = decodeURIComponent(cal[1] ?? "");

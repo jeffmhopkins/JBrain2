@@ -4,10 +4,13 @@
 // long as chips under it, and the gestures as tricks. The walk and spin policies need the
 // motion sensors of the phone riding the robot, so every move goes to the creature page on
 // that phone (growbot-box.js), which runs it as if its own brain had asked; this panel only
-// says so, and shows the creature's answer.
+// says so, and shows the creature's answer. "Walk with" picks the creature's own walks or a
+// trained one from the box's policy library (owner, 2026-11-14), which the pad then steers by
+// heading: up walks ahead, left and right turn it 90°, down backs away or turns it around.
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { type GrowbotMove, type GrowbotRobot, api } from "../api/client";
+import { type GrowbotMove, type GrowbotPolicy, type GrowbotRobot, api } from "../api/client";
+import { GrowbotPoliciesSheet, walkKind } from "./GrowbotPoliciesSheet";
 import { ChevronDownIcon, ChevronUpIcon, RotateCcwIcon, RotateCwIcon, StopIcon } from "./icons";
 
 type Policy = "forward" | "back" | "spin_right" | "spin_left";
@@ -25,6 +28,21 @@ const PAD: { id: Policy; label: string; run: string; at: string; icon: ReactNode
   { id: "spin_right", label: "Spin", run: "Spin right", at: "e", icon: <RotateCwIcon size={26} /> },
   { id: "back", label: "Back", run: "Walk backward", at: "s", icon: <ChevronDownIcon size={30} /> },
 ];
+
+// The same pad steering a trained walk: each key is a heading (growbot-box.js gbTrainedWalk).
+function trainedPad(
+  p: GrowbotPolicy,
+): Record<Policy, { label: string; run: string; doing: string }> {
+  const back = p.contract.speed
+    ? { label: "Back", run: "Back away", doing: "Backing away" }
+    : { label: "Turn", run: "Turn around", doing: "Turning around" };
+  return {
+    forward: { label: "Ahead", run: "Walk ahead", doing: "Walking ahead" },
+    spin_left: { label: "Left", run: "Turn left", doing: "Turning left" },
+    spin_right: { label: "Right", run: "Turn right", doing: "Turning right" },
+    back,
+  };
+}
 
 const TRICKS: { id: GrowbotMove; label: string }[] = [
   { id: "wiggle", label: "Wiggle" },
@@ -48,6 +66,24 @@ const DOING: Record<GrowbotMove, string> = {
 };
 
 type Said = { text: string; bad: boolean };
+
+// Which walk this phone last drove a robot with: a per-viewer convenience, so storage may fail.
+function storedWalk(code: string): string {
+  try {
+    return localStorage.getItem(`gb-walk-with:${code}`) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function storeWalk(code: string, id: string): void {
+  try {
+    if (id) localStorage.setItem(`gb-walk-with:${code}`, id);
+    else localStorage.removeItem(`gb-walk-with:${code}`);
+  } catch {
+    // A private window keeps the pick for this visit only.
+  }
+}
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -89,6 +125,9 @@ export function GrowbotMovePanel({
   // over a Stop pressed after it.
   const latest = useRef(0);
   const [said, setSaid] = useState<Said | null>(null);
+  const [policies, setPolicies] = useState<GrowbotPolicy[]>([]);
+  const [walkWith, setWalkWith] = useState(() => storedWalk(robot.code));
+  const [library, setLibrary] = useState(false);
   const mounted = useRef(true);
   const done = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -98,8 +137,26 @@ export function GrowbotMovePanel({
     },
     [],
   );
+  useEffect(() => {
+    let gone = false;
+    // No library (an older box, or it's down) is just no trained walks to pick.
+    api.growbotPolicies().then(
+      (got) => !gone && setPolicies(got),
+      () => undefined,
+    );
+    return () => {
+      gone = true;
+    };
+  }, []);
   const blocked = moveBlocked(robot);
   const name = robot.name || robot.code;
+  const trained = policies.find((p) => p.id === walkWith) ?? null;
+  const pad = trained ? trainedPad(trained) : null;
+
+  function pick(id: string) {
+    setWalkWith(id);
+    storeWalk(robot.code, id);
+  }
   // The pad's Stop works whenever the chip is on: a shared Stop also stops the chip itself,
   // creature or not.
   const canStop = onStop ? robot.connected && !robot.revoked_at : !blocked;
@@ -117,11 +174,13 @@ export function GrowbotMovePanel({
     setBusy(true);
     const live = () => mounted.current && mine === latest.current;
     try {
-      const out = await api.moveGrowbotRobot(robot.code, move, s);
+      const walk = trained && pad && move in pad ? trained : null;
+      const out = await api.moveGrowbotRobot(robot.code, move, s, walk?.id);
       if (!live()) return;
+      const doing = walk && pad ? `${pad[move as Policy].doing} with ${walk.name}` : DOING[move];
       setSaid(
         out.ok
-          ? { text: `${DOING[move]}${s ? ` for ${s} s` : ""}.`, bad: false }
+          ? { text: `${doing}${s ? ` for ${s} s` : ""}.`, bad: false }
           : { text: out.why || `${name} didn't start it.`, bad: true },
       );
       if (out.ok && s) finish(move, s, mine);
@@ -153,8 +212,37 @@ export function GrowbotMovePanel({
   const lit = running?.move;
   return (
     <div className="gb-move">
+      <fieldset className="gb-chips gb-walk-with">
+        <legend className="gb-move-h">Walk with</legend>
+        <button
+          type="button"
+          className={`gb-chip${trained ? "" : " on"}`}
+          aria-pressed={!trained}
+          onClick={() => pick("")}
+        >
+          Its own walks
+        </button>
+        {policies.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={`gb-chip${trained?.id === p.id ? " on" : ""}`}
+            aria-pressed={trained?.id === p.id}
+            onClick={() => pick(p.id)}
+          >
+            {p.name}
+          </button>
+        ))}
+        <button type="button" className="gb-chip add" onClick={() => setLibrary(true)}>
+          {policies.length ? "Trained walks…" : "Add a trained walk…"}
+        </button>
+      </fieldset>
+
       <p className={`gb-move-tip${blocked ? " blocked" : ""}`}>
-        {blocked ?? `Forward is toward the phone's screen. Set ${name} down still a moment first.`}
+        {blocked ??
+          (trained
+            ? `${trained.name}: ${walkKind(trained)}. Ahead walks the way it faces; left and right turn it 90°.`
+            : `Forward is toward the phone's screen. Set ${name} down still a moment first.`)}
       </p>
 
       <div className="gb-pad">
@@ -163,12 +251,12 @@ export function GrowbotMovePanel({
             key={p.id}
             type="button"
             className={`gb-pad-b ${p.at}${lit === p.id ? " on" : ""}`}
-            aria-label={`${p.run} ${secs} s`}
+            aria-label={`${pad ? pad[p.id].run : p.run} ${secs} s`}
             disabled={off}
             onClick={() => void send(p.id, secs)}
           >
             {p.icon}
-            <span aria-hidden="true">{p.label}</span>
+            <span aria-hidden="true">{pad ? pad[p.id].label : p.label}</span>
           </button>
         ))}
         <button
@@ -225,6 +313,16 @@ export function GrowbotMovePanel({
           </button>
         ))}
       </div>
+      {library && (
+        <GrowbotPoliciesSheet
+          policies={policies}
+          onChange={(next) => {
+            setPolicies(next);
+            if (walkWith && !next.some((p) => p.id === walkWith)) pick("");
+          }}
+          onClose={() => setLibrary(false)}
+        />
+      )}
     </div>
   );
 }

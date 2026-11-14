@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-13
+> **Status:** Living · **Last verified:** 2026-11-14
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -284,6 +284,17 @@ stops every move. `POST /internal/robots/move` `{code, move, secs}` (`move` one 
 why}` at once: what it started, or its own words for why not. The route answers `{ok, state,
 why}`, 409 `no_creature` when no page listens and 504 `no_answer` after 3 s; a `box_ack` that
 arrives while no move waits is bridged to the agents like any other frame.
+
+**Trained walks.** A walk move may also carry `policy`, the id of a walk in the box's policy
+library (`app.growbot_policies`, added on the Body tab from a finished GrowBot training job).
+The sidecar passes it in the `box_move` frame and serves the JSON at `GET /api/box/policy?id=`
+(a page session, read from the api's `/internal/growbot/policies/{id}` and cached a minute).
+The page's `gbTrainedWalk` then loads the runner (`/growbot_runner.js`) and drives it the way
+GrowBot_Training trained it: legs neutral and a 1 s settle, the measured gravity rotated to +z,
+heading integrated from the levelled gyro, and `cmd_yaw` the wrapped heading error over 180
+each tick (forward holds heading; the spins aim ±90°; back backs away when the walk takes
+`cmd_forward`, else aims behind). It keeps the stock walks' stops: a tip or a grab, a pause,
+a hidden page, a dream, or the relay dropping.
 
 ## Leg calibration (the Body tab's Legs pane)
 
