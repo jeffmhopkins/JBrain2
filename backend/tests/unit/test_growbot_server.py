@@ -69,6 +69,8 @@ class _Fake(BaseHTTPRequestHandler):
     root_cert: bytes = b"-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
     tts_status = 200
     llm_status = 200
+    # The speech service's sound tagger: (status, body) for POST /tag.
+    tag_reply: tuple[int, bytes] = (404, b"{}")
     # Who wears each robot: code -> (persona, phone). Nobody, unless a test says so.
     riders: dict[str, tuple[str, str]] = {}
     body_status = 200
@@ -226,6 +228,8 @@ class _Fake(BaseHTTPRequestHandler):
             self._reply(200, json.dumps(reply).encode())
         elif self.path == "/v1/audio/transcriptions":
             self._reply(200, _Fake.stt_reply)
+        elif self.path == "/tag":
+            self._reply(*_Fake.tag_reply)
         elif self.path == "/internal/growbot/calls":
             self._reply(204 if authed else 401, b"")
         else:
@@ -308,6 +312,7 @@ def fake() -> Iterator[str]:
     _Fake.seen = []
     _Fake.models = [{"id": "text-only", "vision": False}, {"id": "qwen3-vl-30b", "vision": True}]
     _Fake.stt_reply = b"{}"
+    _Fake.tag_reply = (404, b"{}")
     _Fake.tts_status = 200
     _Fake.llm_status = 200
     _Fake.riders = {}
@@ -1248,30 +1253,134 @@ def test_the_doors_are_not_queued_behind_brain_calls(run: _Running, gb: types.Mo
             future.result(5)
 
 
-def test_a_sound_to_name_is_answered_as_heard_nothing(run: _Running) -> None:
+def _tagged(*tags: tuple[str, float]) -> tuple[int, bytes]:
+    return 200, json.dumps({"tags": [list(t) for t in tags]}).encode()
+
+
+def _ear(run: _Running, part: dict[str, Any], *, stream: bool = False) -> str:
+    content = [{"type": "text", "text": "Listen. Name the sound."}, part]
+    body = json.dumps({"model": "x", "messages": [{"role": "user", "content": content}]})
+    path = "/api/llm-stream" if stream else "/api/llm"
+    resp = run.request("POST", path + "?target=openrouter", body.encode())
+    assert resp.status == 200
+    if not stream:
+        return str(json.loads(resp.read())["choices"][0]["message"]["content"])
+    text = resp.read().decode()
+    assert text.endswith("data: [DONE]\n\n")
+    delta = json.loads(text.split("\n")[0][len("data: ") :])["choices"][0]["delta"]
+    assert delta["role"] == "assistant"
+    return str(delta["content"])
+
+
+def _clip_part(clip: bytes) -> dict[str, Any]:
+    data = base64.b64encode(clip).decode()
+    return {"type": "input_audio", "input_audio": {"data": data, "format": "wav"}}
+
+
+def _brain_calls() -> int:
+    return len([s for s in _Fake.seen if s["path"].endswith("/chat/completions")])
+
+
+def test_a_sound_to_name_is_named_by_the_tagger_never_the_brain(run: _Running) -> None:
     """Field, 2026-11-13: no model on the box hears audio, so the ear's clip reached the
     creature's model stripped to "name this sound", which said SPEECH every time and took its
-    slot. Now the sidecar answers empty and the model is never called."""
-    before = len([s for s in _Fake.seen if s["path"].endswith("/chat/completions")])
+    slot. The speech service's sound tagger names it now, and the brain is never called."""
+    before = _brain_calls()
+    clip = _wav(1.0)
+    _Fake.tag_reply = _tagged(("Bark", 0.37), ("Dog", 0.36), ("Animal", 0.34))
+    assert _ear(run, _clip_part(clip)) == "bark, dog"
+    assert _ear(run, _clip_part(clip), stream=True) == "bark, dog"
+    tag = [s for s in _Fake.seen if s["path"] == "/tag"][-1]
+    assert tag["body"] == clip and tag["ctype"] == "audio/wav"
+    # A person talking is handed back to whisper by the page's own SPEECH: rescue.
+    _Fake.tag_reply = _tagged(("Inside", 0.7), ("Speech", 0.62), ("Music", 0.2))
+    assert _ear(run, _clip_part(clip)) == "SPEECH: someone is talking"
+    assert _brain_calls() == before
+
+
+def test_an_unnamed_sound_is_heard_as_nothing(run: _Running) -> None:
+    """An empty name is the ear's silence: no toast and no strike, where a guess would put a
+    sound in the creature's head that never happened."""
+    before = _brain_calls()
+    tags_before = len([s for s in _Fake.seen if s["path"] == "/tag"])
+    clip = _clip_part(_wav(1.0))
+    # No tagger on the box (an image without the weights answers 503; here, 404).
+    assert _ear(run, clip) == ""
+    _Fake.tag_reply = (200, b"not json")
+    assert _ear(run, clip) == ""
+    # Nothing it is sure of.
+    _Fake.tag_reply = _tagged(("Clicking", 0.23), ("Plop", 0.12))
+    assert _ear(run, clip) == ""
+    assert _ear(run, clip, stream=True) == ""
+    tagged = len([s for s in _Fake.seen if s["path"] == "/tag"])
+    # A URL is never fetched, and a part that is not a WAV is never sent.
     for part in (
-        {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
         {"type": "audio_url", "audio_url": {"url": "http://x/a.wav"}},
+        {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
+        {"type": "input_audio", "input_audio": {"data": "not base64!", "format": "wav"}},
     ):
-        content = [{"type": "text", "text": "Listen. Name the sound."}, part]
-        body = json.dumps({"model": "x", "messages": [{"role": "user", "content": content}]})
-        resp = run.request("POST", "/api/llm?target=openrouter", body.encode())
-        assert resp.status == 200
-        assert json.loads(resp.read())["choices"][0]["message"]["content"] == ""
-        stream = run.request("POST", "/api/llm-stream?target=openrouter", body.encode())
-        assert stream.status == 200
-        text = stream.read().decode()
-        assert text.endswith("data: [DONE]\n\n")
-        assert json.loads(text.split("\n")[0][len("data: ") :])["choices"][0]["delta"] == {
-            "role": "assistant",
-            "content": "",
-        }
-    after = len([s for s in _Fake.seen if s["path"].endswith("/chat/completions")])
-    assert after == before
+        assert _ear(run, part) == ""
+    assert len([s for s in _Fake.seen if s["path"] == "/tag"]) == tagged
+    assert tagged == tags_before + 4
+    assert _brain_calls() == before
+
+
+def test_the_ear_names_the_clearest_sounds_in_plain_words(gb: types.ModuleType) -> None:
+    name = gb.sound_name
+    # Family and place labels say nothing; a label inside one already said is not repeated.
+    assert name([("Animal", 0.9), ("Cat", 0.86), ("Domestic animals", 0.83)]) == "cat"
+    assert name([("Church bell", 0.7), ("Bell", 0.48)]) == "church bell"
+    assert name([("Alarm clock", 0.85), ("Clock", 0.69), ("Alarm", 0.52)]) == "alarm clock"
+    assert name([("Vehicle horn", 0.93), ("Vehicle", 0.74), ("Car", 0.43)]) == "vehicle horn, car"
+    # Two sounds at most, and nothing under the naming bar.
+    assert name([("Knock", 0.9), ("Door", 0.8), ("Wood", 0.7)]) == "knock, door"
+    assert name([("Knock", 0.29)]) == ""
+    assert name([]) == ""
+    # Speech only when it is the clearest sound, and clear enough not to trip the page's
+    # blind-judge latch on a laugh or a hum.
+    assert name([("Speech", 0.41), ("Laughter", 0.3)]) == "SPEECH: someone is talking"
+    assert name([("Speech", 0.35), ("Laughter", 0.3)]) == "laughter"
+    assert name([("Laughter", 0.51), ("Speech", 0.5)]) == "laughter"
+
+
+def test_a_sound_behind_words_rides_the_transcript(run: _Running) -> None:
+    """Owner, 2026-11-13: "if I whistle or a dog is barking or a piano is playing". The clip
+    is tagged alongside whisper and anything clear besides his voice comes back as gb_sounds."""
+    clip = _wav(2.0)
+    _Fake.stt_reply = json.dumps({"text": "play it again"}).encode()
+    _Fake.tag_reply = _tagged(
+        ("Speech", 0.92), ("Male speech", 0.6), ("Piano", 0.55), ("Inside", 0.5), ("Dog", 0.2)
+    )
+    body, ctype = _multipart({"model": "w"}, clip)
+    resp = run.request("POST", "/api/llm?target=groq-audio", body, {"Content-Type": ctype})
+    got = json.loads(resp.read())
+    assert got["text"] == "play it again" and got["gb_sounds"] == "piano"
+    assert [s for s in _Fake.seen if s["path"] == "/tag"][-1]["body"] == clip
+    (row,) = _logged("stt")
+    assert row["detail"]["sounds"] == "piano"
+
+    # His own voice is not news, a faint sound is not said, and no words means no turn to ride.
+    for reply, tags in (
+        ("play it again", _tagged(("Speech", 0.9), ("Shout", 0.7), ("Whispering", 0.6))),
+        ("play it again", _tagged(("Speech", 0.9), ("Dog", 0.39))),
+        ("", _tagged(("Piano", 0.9))),
+    ):
+        _Fake.stt_reply = json.dumps({"text": reply}).encode()
+        _Fake.tag_reply = tags
+        resp = run.request("POST", "/api/llm?target=groq-audio", body, {"Content-Type": ctype})
+        assert "gb_sounds" not in json.loads(resp.read())
+
+    # A clip that is not a WAV is never sent to the tagger, and a tagger that is down costs
+    # the transcript nothing.
+    tagged = len([s for s in _Fake.seen if s["path"] == "/tag"])
+    _Fake.stt_reply = json.dumps({"text": "hello"}).encode()
+    webm, wctype = _multipart({"model": "w"}, b"\x1aE\xdf\xa3" + bytes(64))
+    resp = run.request("POST", "/api/llm?target=groq-audio", webm, {"Content-Type": wctype})
+    assert json.loads(resp.read()) == {"text": "hello", "segments": []}
+    assert len([s for s in _Fake.seen if s["path"] == "/tag"]) == tagged
+    _Fake.tag_reply = (503, b"tagger unavailable")
+    resp = run.request("POST", "/api/llm?target=groq-audio", body, {"Content-Type": ctype})
+    assert json.loads(resp.read())["text"] == "hello"
 
 
 def test_llm_refuses_a_body_that_is_not_a_chat(run: _Running) -> None:

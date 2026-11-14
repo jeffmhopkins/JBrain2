@@ -3588,3 +3588,33 @@ def test_a_timer_follow_up_that_waits_past_its_second_tells_it_once() -> None:
         "thinks:thinks.length}));"
     )
     assert got == {"carry": "your timer went off: oven", "left": 0, "thinks": 0}
+
+
+def test_a_sound_behind_the_words_becomes_the_ears_newest_hearing() -> None:
+    """Owner, 2026-11-13: "if I whistle or a dog is barking or a piano is playing". The box
+    returns what else it heard as gb_sounds on the transcript; both transcribe lanes hand it to
+    gbAlsoHeard before the words, so the turn they start carries it on the ear's context line."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    lane = '_sttPhase("done"); gbAlsoHeard(d); heardText((d&&d.text||"").trim(),'
+    assert page.count(lane + "meta,d&&d.language);") == 2
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    start = page.index("function gbAlsoHeard(d){")
+    code = page[start : page.index("\n", start)]
+    script = (
+        "var _earHeard=null, logs=[]; function logEv(k,v){ logs.push([k,v]); }"
+        f"{code}\n"
+        "gbAlsoHeard({text:'hi'}); var none=_earHeard;"
+        "gbAlsoHeard({gb_sounds:' piano, dog '}); var got=_earHeard;"
+        "_earHeard={t:Date.now()+60000,txt:'newer'}; gbAlsoHeard({gb_sounds:'whistling'});"
+        "console.log(JSON.stringify({none:none,got:got,kept:_earHeard.txt,logs:logs}));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    got = json.loads(out.stdout)
+    assert got["none"] is None
+    assert got["got"]["txt"] == "behind your person's words: piano, dog"
+    assert got["got"]["src"] == "behind-words"
+    # An older clip never replaces newer hearing, the namer's own rule.
+    assert got["kept"] == "newer"
+    assert got["logs"] == [["listen", {"trig": "words", "n": "piano, dog"}]]
