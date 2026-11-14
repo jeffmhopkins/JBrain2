@@ -7,6 +7,8 @@ import asyncio
 
 import pytest
 
+from jlaunch_ctl import jobs as jobs_mod
+from jlaunch_ctl import specs as specs_mod
 from jlaunch_ctl.jobs import BusyError, JobError
 from jlaunch_ctl.specs import Phase
 from tests.conftest import wait_terminal
@@ -130,3 +132,85 @@ async def test_delete_kills_running_job(manager, register_spec) -> None:
     await manager.delete(job.id)
     with pytest.raises(JobError):
         manager.get(job.id)
+
+
+def test_job_files_with_bad_bytes_read_without_raising(tmp_path) -> None:
+    # A non-UTF-8 byte in a job-written file used to raise out of finalize, leaving the
+    # run "running" for good with nothing to kill.
+    lines = tmp_path / "headline.txt"
+    lines.write_bytes(b"hard primes: \xff\n")
+    assert jobs_mod._read_lines(lines) == ["hard primes: \ufffd"]
+    status = tmp_path / "status.json"
+    status.write_bytes(b"[1, 2]")  # valid JSON, not an object
+    assert jobs_mod._read_json(status) is None
+    times = tmp_path / "phase_times.jsonl"
+    times.write_bytes(b'{"phase": "a", "seconds": 1}\n3\n\xff\n')
+    assert jobs_mod._read_jsonl(times) == [{"phase": "a", "seconds": 1}]
+
+
+async def test_a_failing_finalize_still_ends_the_job(
+    manager, register_spec, monkeypatch
+) -> None:
+    register_spec("test_finboom", (Phase("gen", "true"),))
+
+    def boom(*_a: object) -> object:
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(manager, "_collect", boom)
+    job = await manager.start("test_finboom")
+    done = await wait_terminal(manager, job.id)
+    assert done.state == "failed"
+    assert "finalize failed: disk on fire" in (done.error or "")
+
+
+async def test_an_orphaned_run_is_reaped_and_frees_the_slot(
+    manager, register_spec
+) -> None:
+    # The run's terminal is gone but its end was never recorded (close() fires no
+    # on_exit): it must not stay "running", unkillable, holding the one-job slot.
+    register_spec("test_orphan", (Phase("sleep", "sleep 30"),))
+    job = await manager.start("test_orphan")
+    manager._registry._terms[job.id].close()
+    reaped = manager.get(job.id)
+    assert reaped.state == "failed"
+    assert "terminal was lost" in (reaped.error or "")
+    # The late on_exit finalize (or any other) changes nothing once it's recorded.
+    finished_at = reaped.finished_at
+    await manager._finalize(job.id, jobs_mod.get_spec("test_orphan"))
+    assert (manager.get(job.id).state, manager.get(job.id).finished_at) == (
+        "failed",
+        finished_at,
+    )
+    nxt = await manager.start("test_orphan")
+    assert manager.get(nxt.id).state == "running"
+    await manager.kill(nxt.id)
+    assert (await wait_terminal(manager, nxt.id)).state == "killed"
+
+
+async def test_kill_on_an_orphan_ends_it_as_killed(manager, register_spec) -> None:
+    register_spec("test_orphankill", (Phase("sleep", "sleep 30"),))
+    job = await manager.start("test_orphankill")
+    manager._killing.add(job.id)  # a kill was asked for, then the terminal went
+    manager._registry._terms[job.id].close()
+    done = await asyncio.wait_for(manager.kill(job.id), timeout=5)
+    assert done.state == "killed"
+
+
+async def test_a_run_whose_spec_is_gone_still_ends(
+    manager, register_spec, monkeypatch
+) -> None:
+    register_spec("test_specgone", (Phase("sleep", "sleep 30"),))
+    job = await manager.start("test_specgone")
+    monkeypatch.delitem(specs_mod.SPECS, "test_specgone")
+    manager._registry._terms[job.id].close()
+    done = manager.get(job.id)
+    assert done.state == "failed"
+    assert "no longer registered" in (done.error or "")
+
+
+def test_a_fifo_job_file_is_not_read(tmp_path) -> None:
+    import os
+
+    fifo = tmp_path / "headline.txt"
+    os.mkfifo(fifo)
+    assert jobs_mod._read_lines(fifo) == []  # returns at once instead of blocking

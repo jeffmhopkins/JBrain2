@@ -58,6 +58,8 @@ class JlaunchRun(Base):
     # owner's own note on what the run was for.
     revision: Mapped[int | None] = mapped_column(nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
+    # The training repo commit a repo job cloned (0271); empty for a built-in job.
+    commit: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -98,6 +100,7 @@ class JlaunchRunRow:
     last_active_at: str
     revision: int | None = None
     note: str = ""
+    commit: str = ""
 
     @classmethod
     def of(cls, row: JlaunchRun) -> JlaunchRunRow:
@@ -118,6 +121,7 @@ class JlaunchRunRow:
             artifact_bytes=row.artifact_bytes,
             revision=row.revision,
             note=row.note,
+            commit=row.commit,
             created_at=row.created_at.isoformat(),
             last_active_at=row.last_active_at.isoformat(),
         )
@@ -138,6 +142,7 @@ def _job_values(job: dict[str, Any]) -> dict[str, Any]:
         "phase_times": job.get("phase_times") or [],
         "error": job.get("error") or "",
         "artifact_name": job.get("artifact_name", ""),
+        "commit": str(job.get("commit") or ""),
     }
 
 

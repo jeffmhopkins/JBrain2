@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jlaunch_ctl.runner import build_script
-from jlaunch_ctl.specs import SPECS, JobSpec, get_spec
+from jlaunch_ctl.specs import JobSpec, get_spec
 
 if TYPE_CHECKING:
     from jlaunch_ctl.catalog import Catalog
@@ -66,6 +66,8 @@ LIVE_MAX_BYTES = 32 * 1024 * 1024
 # States: queued (never used at max_concurrent_jobs=1 unless busy), cloning/running are
 # live; succeeded/failed/killed are terminal.
 LIVE_STATES = ("cloning", "running")
+# How long a Start waits on re-reading the training repo before using the list it has.
+START_REFRESH_S = 15.0
 
 
 class JobError(RuntimeError):
@@ -166,6 +168,7 @@ class JobManager:
 
     def list(self) -> list[Job]:
         for job in self._jobs.values():
+            self._reap(job)
             self._refresh_phase(job)
         return list(self._jobs.values())
 
@@ -173,6 +176,7 @@ class JobManager:
         job = self._jobs.get(jid)
         if job is None:
             raise JobError(f"unknown job: {jid}")
+        self._reap(job)
         self._refresh_phase(job)
         return job
 
@@ -194,6 +198,9 @@ class JobManager:
         return self._catalog is not None and self._catalog.owns(name)
 
     def _live_count(self) -> int:
+        # Reaped first: a stuck orphan must not hold the one-job slot, refusing Start.
+        for job in self._jobs.values():
+            self._reap(job)
         return sum(1 for j in self._jobs.values() if j.state in LIVE_STATES)
 
     # -- lifecycle ---------------------------------------------------------------
@@ -204,7 +211,10 @@ class JobManager:
         if self._catalog is not None and self._catalog.owns(spec_name):
             # A config fix pushed a minute ago is what should train; an unreachable repo
             # falls back to the commit the list already shows.
-            await self._catalog.refresh_quietly()
+            # Bounded: the api gives up on a Start after 30 s, and a run that started
+            # after the caller gave up wouldn't reach its run list until the next poll.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._catalog.refresh_quietly(), START_REFRESH_S)
             if not self._catalog.owns(spec_name):
                 raise JobError(f"{spec_name} is no longer in the training repo's jobs")
         spec = get_spec(spec_name)
@@ -260,15 +270,48 @@ class JobManager:
         return hook
 
     async def _finalize(self, jid: str, spec: JobSpec) -> None:
+        self._finish(jid, spec)
+
+    def _finish(self, jid: str, spec: JobSpec | None, *, reaped: bool = False) -> None:
+        """Record a job's end. Synchronous, so it never interleaves with a poll, and it
+        always leaves the job out of the live states: a run whose finalize raised stayed
+        "running" with nothing to kill, undeletable (owner, 2026-11-14)."""
         job = self._jobs.get(jid)
         if job is None or job.state not in LIVE_STATES:
             return
-        state = self._state_root / jid
-        workspace = Path(job.workspace)
         was_killed = jid in self._killing
         self._killing.discard(jid)
         job.finished_at = _now()
+        try:
+            if spec is None:
+                raise JobError(f"spec {job.spec_name!r} is no longer registered")
+            rc = self._collect(job, spec)
+        except Exception as exc:  # any failure here must still end the job
+            _log.exception("job finalize failed id=%s", jid)
+            job.state = "killed" if was_killed else "failed"
+            job.error = job.error or f"finalize failed: {exc}"
+            return
+        if was_killed:
+            job.state = "killed"
+        elif rc == 0 and job.artifact_present and job.verify_ok:
+            job.state = "succeeded"
+        else:
+            job.state = "failed"
+            # A reaped run that never wrote its exit code ended without its script
+            # finishing: say so, rather than the bare "no artifact (rc=None)".
+            lost = reaped and rc is None
+            job.error = job.error or (
+                "the run's terminal was lost before it finished"
+                if lost
+                else _failure_reason(rc, job)
+            )
+        _log.info("job finish id=%s state=%s rc=%s", jid, job.state, rc)
 
+    def _collect(self, job: Job, spec: JobSpec) -> object:
+        """Read what the finished job left (phase, timings, headline, console, artifact)
+        onto it, and return its exit code (None when it never wrote one)."""
+        state = self._state_root / job.id
+        workspace = Path(job.workspace)
         # A killed job never writes status.json; this keeps the phase it was killed in.
         self._refresh_phase(job)
         status = _read_json(state / "status.json")
@@ -286,19 +329,18 @@ class JobManager:
             # Copy the deliverable out of the checkout so it survives independent of it.
             with contextlib.suppress(OSError):
                 self._artifact_root.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(artifact, self._artifact_dest(jid, spec))
+                shutil.copy2(artifact, self._artifact_dest(job.id, spec))
         job.verify_ok = _verify_ok(
             workspace / spec.verify_log, spec.verify_must_end_with
         )
+        return rc
 
-        if was_killed:
-            job.state = "killed"
-        elif rc == 0 and job.artifact_present and job.verify_ok:
-            job.state = "succeeded"
-        else:
-            job.state = "failed"
-            job.error = job.error or _failure_reason(rc, job)
-        _log.info("job finish id=%s state=%s rc=%s", jid, job.state, rc)
+    def _reap(self, job: Job) -> None:
+        """A live job whose terminal is gone has nothing left running it: its PTY exited
+        but the end was never recorded. Record it now, so it can't sit "running" with a
+        Kill that finds nothing to kill."""
+        if job.state in LIVE_STATES and self._registry.get(job.id) is None:
+            self._finish(job.id, get_spec(job.spec_name), reaped=True)
 
     async def stop(self, jid: str) -> Job:
         """Graceful stop: SIGTERM the job's process group; the PTY EOF finalizes it as
@@ -337,7 +379,7 @@ class JobManager:
         self._registry.remove(jid)
         shutil.rmtree(job.workspace, ignore_errors=True)
         shutil.rmtree(self._state_root / jid, ignore_errors=True)
-        spec = get_spec(job.spec_name) or SPECS.get(job.spec_name)
+        spec = get_spec(job.spec_name)
         if spec is not None:
             with contextlib.suppress(OSError):
                 self._artifact_dest(jid, spec).unlink(missing_ok=True)
@@ -442,24 +484,36 @@ def _live_name_ok(name: str) -> bool:
     return bool(_LIVE_NAME_RE.match(name)) and Path(name).suffix in LIVE_TYPES
 
 
+def _read_text(path: Path) -> str:
+    # The job writes these files: a stray non-UTF-8 byte must not raise out of finalize
+    # (which then never recorded the end, leaving the run "running" for good), and only
+    # a regular file is read, so a FIFO planted under the name can't stall a reap.
+    if not path.is_file() or path.is_symlink():
+        raise OSError(f"not a regular file: {path.name}")
+    return path.read_bytes().decode("utf-8", errors="replace")
+
+
 def _read_json(path: Path) -> dict[str, object] | None:
     with contextlib.suppress(OSError, json.JSONDecodeError):
-        return json.loads(path.read_text())
+        data = json.loads(_read_text(path))
+        return data if isinstance(data, dict) else None
     return None
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
     with contextlib.suppress(OSError):
-        for line in path.read_text().splitlines():
+        for line in _read_text(path).splitlines():
             with contextlib.suppress(json.JSONDecodeError):
-                out.append(json.loads(line))
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    out.append(row)
     return out
 
 
 def _read_lines(path: Path) -> list[str]:
     with contextlib.suppress(OSError):
-        return [ln for ln in path.read_text().splitlines() if ln.strip()]
+        return [ln for ln in _read_text(path).splitlines() if ln.strip()]
     return []
 
 

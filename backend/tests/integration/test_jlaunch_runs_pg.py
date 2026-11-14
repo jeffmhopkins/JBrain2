@@ -102,3 +102,12 @@ async def test_archived_job_types_are_owner_only(maker: async_sessionmaker) -> N
     async with scoped_session(maker, OWNER) as db:
         await _ARCHIVE.set(db, name, archived=False)
         assert name not in await _ARCHIVE.names(db)
+
+
+async def test_a_run_keeps_the_commit_it_cloned(maker: async_sessionmaker) -> None:
+    sha = "c" * 40
+    async with scoped_session(maker, OWNER) as db:
+        await _REPO.upsert(db, {**_job("cm1", "walk"), "commit": sha})
+        await _REPO.upsert(db, _job("cm2", "walk"))
+        rows = {r.id: r.commit for r in await _REPO.list(db) if r.id in {"cm1", "cm2"}}
+    assert rows == {"cm1": sha, "cm2": ""}

@@ -146,7 +146,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
         text:
           err instanceof ApiError && err.status === 422
             ? `jobs.toml has a problem, so the list is unchanged: ${err.message}`
-            : "Couldn't reach the training repo. The list is unchanged.",
+            : "Couldn't reach the training repo or the launcher. The list is unchanged.",
       });
     } finally {
       setPulling(false);

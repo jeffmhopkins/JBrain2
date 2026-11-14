@@ -200,7 +200,9 @@ describe("JlaunchScreen", () => {
     ).toBeTruthy();
     fireEvent.click(button);
     expect(
-      await screen.findByText("Couldn't reach the training repo. The list is unchanged."),
+      await screen.findByText(
+        "Couldn't reach the training repo or the launcher. The list is unchanged.",
+      ),
     ).toBeTruthy();
     expect(pull).toHaveBeenCalledTimes(2);
     expect(screen.getByText("GrowBot look")).toBeTruthy();

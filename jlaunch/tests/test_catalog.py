@@ -6,6 +6,9 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import os
+import re
+import subprocess
 from pathlib import Path
 
 import httpx
@@ -121,7 +124,8 @@ def test_a_builtin_spec_says_so() -> None:
     ("manifest", "why"),
     [
         (_job(name="Bad-Name"), "name must be"),
-        (_job(name="erdos_straus_1e12"), "built-in"),
+        (_job(name="stairs_walk"), "name must be growbot_"),
+        (_job(name="growbot_"), "name must be growbot_"),
         (_job() + _job(), "listed twice"),
         (_job(config="configs/../x.toml"), "configs/<name>.toml"),
         (_job(config="configs/a.toml; rm -rf /"), "configs/<name>.toml"),
@@ -169,7 +173,7 @@ async def test_refresh_lists_the_jobs_and_reports_what_changed(tmp_path) -> None
     assert first["added"] == ["growbot_heading_walk", "growbot_look"]
     assert first["removed"] == [] and first["commit"] == SHA1
     assert {s.name for s in listed_specs()} >= {"growbot_look", "erdos_straus_1e12"}
-    assert not (tmp_path / ".catalog-fetch").exists()
+    assert not list(tmp_path.iterdir()) or (tmp_path / "catalog.json").exists()
 
     repo.manifest, repo.commit = _job(name="growbot_new"), SHA2
     second = await cat.refresh()
@@ -332,6 +336,32 @@ async def test_start_runs_the_last_good_list_when_the_repo_is_down(
     await wait_terminal(manager, job.id)
 
 
+async def test_a_slow_repo_doesnt_hold_up_start(
+    tmp_path, quick_script, monkeypatch
+) -> None:
+    repo = FakeRepo()
+    cat = Catalog(str(tmp_path / "state"), fetch=repo)
+    await cat.refresh()
+    stall = asyncio.Event()
+
+    async def slow(dest: Path) -> Snapshot:
+        await stall.wait()
+        return Snapshot(MANIFEST, SHA2, CONFIGS)
+
+    cat._fetch = slow
+    monkeypatch.setattr(jobs_mod, "START_REFRESH_S", 0.05)
+    manager = _manager(tmp_path, cat)
+    job = await manager.start("growbot_look")
+    assert job.commit == SHA1  # the list it had; the refresh carries on behind it
+    stall.set()
+    await wait_terminal(manager, job.id)
+    for _ in range(100):
+        if cat.commit == SHA2:
+            break
+        await asyncio.sleep(0.01)
+    assert cat.commit == SHA2
+
+
 async def test_start_refuses_a_job_the_repo_dropped(tmp_path) -> None:
     repo = FakeRepo()
     cat = Catalog(str(tmp_path / "state"), fetch=repo)
@@ -423,40 +453,90 @@ async def test_startup_refreshes_in_the_background(tmp_path) -> None:
 # -- the real fetch -------------------------------------------------------------------
 
 
-async def test_git_fetch_reads_the_manifest_and_configs(tmp_path, monkeypatch) -> None:
-    calls: list[list[str]] = []
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True)
 
-    async def fake_run(argv, env):
-        calls.append(argv)
+
+@pytest.fixture
+def local_repo(tmp_path, monkeypatch) -> Path:
+    """A real repo standing in for GitHub: the fetch clones it with the real git, so
+    ls-tree and cat-file run for real. Only the clone's source is swapped (the transport
+    guard refuses local paths, which is the point of it)."""
+    src = tmp_path / "src"
+    (src / "configs" / "sub").mkdir(parents=True)
+    _git(src, "init", "-q", "-b", "main")
+    (src / "jobs.toml").write_text(MANIFEST)
+    for c in CONFIGS:
+        (src / c).write_text("")
+    (src / "configs" / "sub" / "deep.toml").write_text("")
+    os.symlink("/etc/passwd", src / "configs" / "link.toml")
+    _git(src, "add", "-A")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x")
+
+    real_run = catalog_mod._run
+
+    async def run(argv, env):
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         if "clone" in argv:
-            dest = Path(argv[-1])
-            (dest / "configs").mkdir(parents=True)
-            (dest / "jobs.toml").write_text(MANIFEST)
-            for c in CONFIGS:
-                (dest / c).write_text("")
-            (dest / "configs" / "notes.md").write_text("")
-            return ""
-        return SHA1 + "\n"
+            assert "protocol.ext.allow=never" in argv and "--no-checkout" in argv
+            assert argv[-2] == catalog_mod.REPO_URL
+            argv = ["git", "clone", "-q", "--no-checkout", f"file://{src}", argv[-1]]
+        return await real_run(argv, env)
 
-    monkeypatch.setattr(catalog_mod, "_run", fake_run)
+    monkeypatch.setattr(catalog_mod, "_run", run)
+    return src
+
+
+async def test_git_fetch_reads_plain_files_from_git_itself(tmp_path, local_repo):
     snap = await git_fetch(tmp_path / "f")
-    assert snap.commit == SHA1 and snap.configs == CONFIGS
-    assert "growbot_look" in snap.manifest
-    clone = calls[0]
-    assert "protocol.ext.allow=never" in clone and clone[-2] == catalog_mod.REPO_URL
+    assert re.fullmatch(r"[0-9a-f]{40}", snap.commit)
+    assert snap.manifest == MANIFEST
+    # The symlink and the nested file are not configs; nothing was checked out.
+    assert snap.configs == CONFIGS
+    assert not (tmp_path / "f" / "jobs.toml").exists()
 
 
-async def test_git_fetch_without_a_manifest(tmp_path, monkeypatch) -> None:
-    async def fake_run(argv, env):
-        if "clone" in argv:
-            Path(argv[-1]).mkdir(parents=True)
-        return SHA1
-
-    monkeypatch.setattr(catalog_mod, "_run", fake_run)
+async def test_git_fetch_without_a_manifest(tmp_path, local_repo):
+    _git(local_repo, "rm", "-q", "jobs.toml")
+    os.symlink("configs/look.toml", local_repo / "jobs.toml")
+    _git(local_repo, "add", "-A")
+    _git(local_repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "y")
     with pytest.raises(CatalogError, match=r"no jobs\.toml") as err:
         await git_fetch(tmp_path / "f")
     assert err.value.invalid
+
+
+async def test_git_fetch_refuses_a_huge_manifest(tmp_path, local_repo):
+    (local_repo / "jobs.toml").write_text("#" * (65 * 1024))
+    _git(local_repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "z")
+    with pytest.raises(CatalogError, match="over 64 KB"):
+        await git_fetch(tmp_path / "f")
+
+
+async def test_concurrent_refreshes_share_one_fetch(tmp_path) -> None:
+    repo = FakeRepo()
+    cat = Catalog(str(tmp_path), fetch=repo)
+    a, b = await asyncio.gather(cat.refresh(), cat.refresh())
+    assert repo.fetches == 1 and a == b
+    await cat.refresh()
+    assert repo.fetches == 2
+
+
+def test_a_tampered_saved_entry_is_dropped(tmp_path) -> None:
+    good = {"name": "growbot_ok", "title": "ok", "config": "configs/look.toml"}
+    bad = {"name": "growbot_bad", "title": "x", "config": "../../etc/x.toml"}
+    data = {
+        "listed": ["growbot_ok", "growbot_bad"],
+        "known": {
+            "growbot_ok": {"entry": good, "commit": SHA1},
+            "growbot_bad": {"entry": bad, "commit": SHA1},
+        },
+    }
+    (tmp_path / "catalog.json").write_text(json.dumps(data))
+    cat = Catalog(str(tmp_path))
+    cat.load()
+    assert cat.owns("growbot_ok") and not cat.owns("growbot_bad")
+    assert get_spec("growbot_bad") is None
 
 
 async def test_run_reports_a_failing_command() -> None:

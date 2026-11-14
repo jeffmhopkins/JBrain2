@@ -24,6 +24,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import tomllib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -42,7 +43,8 @@ CATEGORY = "Robot"
 
 # Everything below lands in a ``bash -c`` phase or a filename, so it is shape-checked
 # here and shell-quoted again by the runner. A config is a plain file in configs/.
-_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
+# growbot_: the Body tab's policy import only offers runs of jobs named so.
+_NAME_RE = re.compile(r"^growbot_[a-z0-9_]{1,56}$")
 _CONFIG_RE = re.compile(r"^configs/[A-Za-z0-9_-]{1,64}\.toml$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _KEYS = {"name", "title", "config", "est_hours", "notes", "disk_gb"}
@@ -51,6 +53,8 @@ _MAX_JOBS = 50
 _MAX_MANIFEST_BYTES = 64 * 1024
 _MAX_TEXT = {"title": 120, "est_hours": 20, "notes": 1000}
 _FETCH_TIMEOUT_S = 120.0
+# A stalled connection gives up after this long under 1 KB/s, well inside the timeout.
+_GIT_NET = ["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=15"]
 
 
 class CatalogError(RuntimeError):
@@ -142,8 +146,11 @@ def parse_manifest(snapshot: Snapshot) -> list[dict[str, object]]:
 
 
 def _check_entry(
-    item: object, i: int, seen: set[str], configs: frozenset[str]
+    item: object, i: int, seen: set[str], configs: frozenset[str] | None
 ) -> dict[str, object]:
+    """One manifest entry, checked. ``configs`` is None when re-checking a saved entry,
+    whose commit's tree isn't at hand; everything else is checked again."""
+
     def bad(why: str) -> CatalogError:
         return CatalogError(f"{MANIFEST} job {i}: {why}", invalid=True)
 
@@ -158,15 +165,13 @@ def _check_entry(
             raise bad(f"{key} must be text")
     name, config = item["name"], item["config"]
     if not _NAME_RE.fullmatch(name):
-        raise bad("name must be 3-64 of a-z, 0-9 and _, starting with a letter")
-    if name in specs_mod.SPECS:
-        raise bad(f"{name} is a built-in job's name")
+        raise bad("name must be growbot_ then up to 56 of a-z, 0-9 and _")
     if name in seen:
         raise bad(f"{name} is listed twice")
     seen.add(name)
     if not _CONFIG_RE.fullmatch(config):
         raise bad("config must be configs/<name>.toml")
-    if config not in configs:
+    if configs is not None and config not in configs:
         raise bad(f"{config} isn't in the repo")
     for key, limit in _MAX_TEXT.items():
         if len(str(item.get(key, ""))) > limit:
@@ -180,10 +185,11 @@ def _check_entry(
 
 
 async def git_fetch(dest: Path) -> Snapshot:
-    """Shallow-clone the repo's main into ``dest`` and read the manifest from it. Same
-    transport guard as a job's own clone; no prompts, so a bad network fails fast."""
-    shutil.rmtree(dest, ignore_errors=True)
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    """Shallow-clone the repo's main into ``dest`` WITHOUT a checkout and read the
+    manifest and the configs list from git's own objects. No working tree means no file
+    on disk a symlink or a swap could stand in for, and a big push can't fill the disk
+    with files nobody reads. Same transport guard as a job's own clone; no prompts, so a
+    bad network fails fast."""
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     await _run(
         [
@@ -192,8 +198,10 @@ async def git_fetch(dest: Path) -> Snapshot:
             "protocol.ext.allow=never",
             "-c",
             "protocol.file.allow=never",
+            *_GIT_NET,
             "clone",
             "--quiet",
+            "--no-checkout",
             "--depth",
             "1",
             "--branch",
@@ -204,18 +212,34 @@ async def git_fetch(dest: Path) -> Snapshot:
         ],
         env,
     )
-    commit = (await _run(["git", "-C", str(dest), "rev-parse", "HEAD"], env)).strip()
-    manifest_path = dest / MANIFEST
-    if manifest_path.is_symlink() or not manifest_path.is_file():
+    git = ["git", "-C", str(dest)]
+    commit = (await _run([*git, "rev-parse", "HEAD"], env)).strip()
+    # Only a plain file counts (mode 100644 blob): not a symlink, not a folder.
+    listed = await _run(
+        [*git, "ls-tree", "-z", commit, "--", MANIFEST, "configs/"], env
+    )
+    blobs = _plain_blobs(listed)
+    if MANIFEST not in blobs:
         raise CatalogError(f"the repo has no {MANIFEST} on {BRANCH}", invalid=True)
-    with manifest_path.open("rb") as fh:
-        manifest = fh.read(_MAX_MANIFEST_BYTES + 1).decode("utf-8", errors="replace")
+    size = int((await _run([*git, "cat-file", "-s", blobs[MANIFEST]], env)).strip())
+    if size > _MAX_MANIFEST_BYTES:
+        raise CatalogError(f"{MANIFEST} is over 64 KB", invalid=True)
+    manifest = await _run([*git, "cat-file", "blob", blobs[MANIFEST]], env)
     configs = frozenset(
-        f"configs/{p.name}"
-        for p in (dest / "configs").glob("*.toml")
-        if p.is_file() and not p.is_symlink()
+        path for path in blobs if path.startswith("configs/") and path.count("/") == 1
     )
     return Snapshot(manifest=manifest, commit=commit, configs=configs)
+
+
+def _plain_blobs(ls_tree_z: str) -> dict[str, str]:
+    """``git ls-tree -z`` output to {path: blob id}, regular files only."""
+    out: dict[str, str] = {}
+    for record in ls_tree_z.split("\0"):
+        meta, _, path = record.partition("\t")
+        parts = meta.split()
+        if len(parts) == 3 and parts[0] == "100644" and parts[1] == "blob":
+            out[path] = parts[2]
+    return out
 
 
 async def _run(argv: list[str], env: dict[str, str]) -> str:
@@ -227,9 +251,13 @@ async def _run(argv: list[str], env: dict[str, str]) -> str:
     )
     try:
         out, err = await asyncio.wait_for(proc.communicate(), _FETCH_TIMEOUT_S)
-    except TimeoutError as exc:
+    except (TimeoutError, asyncio.CancelledError) as exc:
+        # Cancelled too (shutdown): never leave a git child running or unreaped.
         with contextlib.suppress(ProcessLookupError):
             proc.kill()
+        await asyncio.shield(proc.wait())
+        if isinstance(exc, asyncio.CancelledError):
+            raise
         raise CatalogError("fetching the training repo timed out") from exc
     if proc.returncode != 0:
         tail = err.decode("utf-8", errors="replace").strip()[-300:]
@@ -243,9 +271,11 @@ class Catalog:
 
     def __init__(self, state_root: str, *, fetch: Fetcher = git_fetch) -> None:
         self._file = Path(state_root) / "catalog.json"
-        self._scratch = Path(state_root) / ".catalog-fetch"
         self._fetch = fetch
         self._lock = asyncio.Lock()
+        # A refresh already under way: a second caller shares its answer rather than
+        # queueing another clone behind it.
+        self._inflight: asyncio.Future[dict[str, object]] | None = None
         self.commit = ""
         self.fetched_at: str | None = None
         self.error: str | None = None
@@ -270,15 +300,20 @@ class Catalog:
 
     def load(self) -> None:
         """Restore the last good catalog from the work volume. A missing or damaged file
-        leaves it empty until the next refresh, and a stale entry that no longer passes
-        today's checks is dropped rather than trusted."""
+        leaves it empty until the next refresh, and an entry that fails a fresh entry's
+        checks is dropped rather than trusted."""
         with contextlib.suppress(OSError, json.JSONDecodeError, TypeError, ValueError):
             data = json.loads(self._file.read_text())
             known = {}
             for name, rec in dict(data.get("known", {})).items():
-                with contextlib.suppress(SpecError, KeyError, TypeError, ValueError):
-                    entry, commit = dict(rec["entry"]), str(rec["commit"])
-                    if _NAME_RE.fullmatch(name) and name == entry["name"]:
+                with contextlib.suppress(
+                    CatalogError, SpecError, KeyError, TypeError, ValueError
+                ):
+                    # The work volume is writable by a running job, so a saved entry
+                    # gets every check a fresh one does except the config's presence.
+                    entry = _check_entry(rec["entry"], 0, set(), None)
+                    commit = str(rec["commit"])
+                    if name == entry["name"]:
                         build_spec(entry, commit)
                         known[name] = (entry, commit)
             self._known = known
@@ -292,16 +327,24 @@ class Catalog:
     async def refresh(self) -> dict[str, object]:
         """Fetch the manifest and swap it in whole. On any failure the previous catalog
         stays and the error is recorded and raised."""
+        if self._inflight is None or self._inflight.done():
+            self._inflight = asyncio.ensure_future(self._refresh())
+        return await asyncio.shield(self._inflight)
+
+    async def _refresh(self) -> dict[str, object]:
         async with self._lock:
+            # Off the work volume: a running job can write there, and must not be able
+            # to stand in for the repo's files mid-read.
+            scratch = Path(tempfile.mkdtemp(prefix="jlaunch-catalog-"))
             try:
-                snapshot = await self._fetch(self._scratch)
+                snapshot = await self._fetch(scratch / "repo")
                 entries = parse_manifest(snapshot)
             except CatalogError as exc:
                 self.error = str(exc)
                 _log.warning("catalog refresh failed: %s", exc)
                 raise
             finally:
-                shutil.rmtree(self._scratch, ignore_errors=True)
+                shutil.rmtree(scratch, ignore_errors=True)
             before = set(self._listed)
             self._listed = {str(e["name"]): e for e in entries}
             for name, entry in self._listed.items():
