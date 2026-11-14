@@ -3897,6 +3897,9 @@ export interface GrowbotRobot {
   connected: boolean;
   /** Its rider's creature page is open and takes the Body tab's moves (absent: an older box). */
   creature?: boolean;
+  /** The named gestures that creature's body has, a soul's saved ones included (absent: an
+   *  older box). */
+  gestures?: string[];
 }
 
 /** What the box last found in the official GrowBot repo (jbrain.growbot.upstream):
@@ -3923,16 +3926,21 @@ export interface GrowbotUpstream {
   error: string;
 }
 
-/** What the Body tab can ask the creature wearing a robot to do: walks and spins run the
- *  creature's own policies on its phone's motion sensors, gestures are its named keyframes. */
+/** What the Body tab can ask the creature wearing a robot to do: walks and spins (escape
+ *  spins too) run the creature's own policies on its phone's motion sensors, stand_tall is its
+ *  tall pose, gestures are its named keyframes (`gesture` plays any of them by name). */
 export type GrowbotMove =
   | "forward"
   | "back"
   | "spin_left"
   | "spin_right"
+  | "spin_escape_left"
+  | "spin_escape_right"
+  | "stand_tall"
   | "wiggle"
   | "bow"
   | "sway"
+  | "gesture"
   | "stop";
 
 /** A walk trained by a Jobs GrowBot job, kept in the box's policy library. `contract` is what
@@ -8353,16 +8361,23 @@ export const api = {
 
   /** One move for the creature wearing `code`; `secs` (1-15, 0 for its own pick) for a walk
    *  or spin. Refused with words when nobody drives it or its page is not on screen. */
-  /** `policy`: a library walk to run this walk or spin with, steered by heading. */
+  /** `policy`: a library walk to run this walk or spin with, steered by heading. `name`: the
+   *  gesture a `gesture` move plays. */
   async moveGrowbotRobot(
     code: string,
     move: GrowbotMove,
     secs = 0,
     policy?: string,
+    name?: string,
   ): Promise<GrowbotMoveResult> {
     const response = await request(
       `/api/growbot/robots/${encodeURIComponent(code)}/move`,
-      jsonInit("POST", policy ? { move, secs, policy } : { move, secs }),
+      jsonInit("POST", {
+        move,
+        secs,
+        ...(policy ? { policy } : {}),
+        ...(name ? { name } : {}),
+      }),
     );
     return (await response.json()) as GrowbotMoveResult;
   },

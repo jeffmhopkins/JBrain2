@@ -1285,7 +1285,9 @@
    {"t":"box_move", rid, move, secs} runs through the creature's own runGait or moveLegs, as if
    its brain had asked, with the walk calibration this phone already has. It answers at once
    with {"t":"box_ack", rid, ok, state, why}: what it started, or the creature's own words for
-   why not. Only a visible page joins, since a hidden one stops every move anyway. */
+   why not. It also tells the box which named gestures its body has ({"t":"box_info", gestures}),
+   whenever that list changes, so the Body tab can offer a soul's own saved ones as tricks. Only
+   a visible page joins, since a hidden one stops every move anyway. */
 (function () {
   "use strict";
   if (location.pathname !== "/v3/next.html") return;
@@ -1295,11 +1297,32 @@
   var RETRY_MIN_MS = 2000, RETRY_MAX_MS = 60000;
   var POLICY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   var WALKS = /^(forward|back|spin_left|spin_right)$/;
-  var ws = null, retry = RETRY_MIN_MS, timer = 0, replaced = false;
+  // upstream's _gestName shape: the only names moveLegs can ever play.
+  var GESTURE_RE = /^[a-z0-9_-]+(?: [a-z0-9_-]+)*$/, GESTURES_MAX = 32, INFO_MS = 15000;
+  // The creature's own tall pose (next.html STAND_TALL), should this page not define it.
+  var TALL = { l: 50, r: 130, ms: 600 };
+  var ws = null, retry = RETRY_MIN_MS, timer = 0, replaced = false, info = 0, told = "";
 
   function gone() { return !!(window.__gbBoxSoul && window.__gbBoxSoul.away); }
 
-  function run(move, secs, policy) {
+  // The body's gesture names as the creature's prompt sees them (a soul's saved poses included).
+  function gestureNames() {
+    var lib = null;
+    try { lib = typeof body !== "undefined" && body && body.gestures; } catch (e) {}
+    if (!lib || typeof lib !== "object") return [];
+    return Object.keys(lib).filter(function (k) {
+      return k.length <= 16 && GESTURE_RE.test(k) && Array.isArray(lib[k]) && lib[k].length > 0;
+    }).sort().slice(0, GESTURES_MAX);
+  }
+
+  function tell() {
+    if (!ws || ws.readyState !== 1) return;
+    var names = gestureNames(), said = JSON.stringify(names);
+    if (said === told) return;
+    try { ws.send(JSON.stringify({ t: "box_info", gestures: names })); told = said; } catch (e) {}
+  }
+
+  function run(move, secs, policy, name) {
     var spec = null;
     if (policy) {
       if (typeof window.gbTrainedWalk !== "function") throw new Error("this page can't run a trained walk");
@@ -1310,26 +1333,32 @@
     else if (move === "back") spec = { dir: "back" };
     else if (move === "spin_left") spec = { gait: "spin_left", dir: "left" };
     else if (move === "spin_right") spec = { gait: "spin_right", dir: "right" };
+    else if (move === "spin_escape_left") spec = { gait: "spin_escape_left", dir: "left" };
+    else if (move === "spin_escape_right") spec = { gait: "spin_escape_right", dir: "right" };
     else if (move === "stop") spec = { dir: "stop" };
     if (spec) {
       if (typeof window.runGait !== "function") throw new Error("the creature has not loaded its legs yet");
       if (secs > 0 && move !== "stop") spec.secs = secs;
       window.runGait(spec);
-    } else if (move === "wiggle" || move === "bow" || move === "sway") {
+    } else if (move === "wiggle" || move === "bow" || move === "sway" || move === "gesture") {
       if (typeof window.moveLegs !== "function") throw new Error("the creature has not loaded its legs yet");
-      window.moveLegs({ gesture: move });
+      window.moveLegs({ gesture: move === "gesture" ? name : move });
+    } else if (move === "stand_tall") {
+      if (typeof window.moveLegs !== "function") throw new Error("the creature has not loaded its legs yet");
+      var t = typeof STAND_TALL !== "undefined" && STAND_TALL ? STAND_TALL : TALL;
+      window.moveLegs({ body: { steps: [{ l: t.l, r: t.r, ms: t.ms }] } });
     } else {
       throw new Error("not a move this creature knows");
     }
   }
 
-  function answer(rid, move, secs, policy) {
+  function answer(rid, move, secs, policy, name) {
     var err = document.getElementById("err");
     // setErr also retires a "try again" left under the old caption.
     if (typeof window.setErr === "function") window.setErr(""); else if (err) err.textContent = "";
     var before = window._moveLast, out = { t: "box_ack", rid: rid, ok: false, state: "", why: "" };
     try {
-      run(move, secs, policy);
+      run(move, secs, policy, name);
       if (move === "stop") {
         // runGait files a halt word as a move it never admitted; the legs did stop.
         out.ok = true;
@@ -1353,6 +1382,8 @@
   function close() {
     clearTimeout(timer);
     timer = 0;
+    clearInterval(info);
+    info = 0;
     if (ws) { var s = ws; ws = null; try { s.close(1000); } catch (e) {} }
   }
 
@@ -1375,6 +1406,11 @@
     s.onopen = function () {
       retry = RETRY_MIN_MS;
       try { s.send(JSON.stringify({ t: "hello", box: "moves" })); } catch (e) {}
+      // The soul (and so its saved gestures) may load after this, or change with a new pose.
+      told = "";
+      tell();
+      clearInterval(info);
+      info = setInterval(tell, INFO_MS);
     };
     s.onmessage = function (ev) {
       var m;
@@ -1386,11 +1422,19 @@
       var secs = typeof m.secs === "number" && m.secs >= 1 && m.secs <= 15 ? m.secs : 0;
       var move = String(m.move || "");
       var policy = typeof m.policy === "string" && POLICY_RE.test(m.policy) && WALKS.test(move) ? m.policy : "";
-      try { s.send(JSON.stringify(answer(m.rid, move, secs, policy))); } catch (e) {}
+      var name = move === "gesture" && typeof m.name === "string" && m.name.length <= 16 && GESTURE_RE.test(m.name) ? m.name : "";
+      if (move === "gesture" && !name) {
+        try { s.send(JSON.stringify({ t: "box_ack", rid: m.rid, ok: false, state: "", why: "not a gesture name this creature can play" })); } catch (e) {}
+        return;
+      }
+      try { s.send(JSON.stringify(answer(m.rid, move, secs, policy, name))); } catch (e) {}
+      tell();
     };
     s.onclose = function (ev) {
       if (ws !== s) return;
       ws = null;
+      clearInterval(info);
+      info = 0;
       // Another tab of this phone took the channel: it keeps it until this one is looked at.
       if (ev && ev.reason === "replaced") replaced = true;
       later();

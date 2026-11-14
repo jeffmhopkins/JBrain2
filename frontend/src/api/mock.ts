@@ -194,6 +194,7 @@ const mockGb = {
       last_seen_at: new Date(Date.now() - 20_000).toISOString(),
       connected: true,
       creature: true,
+      gestures: ["bow", "happy dance", "sway", "wiggle"],
     },
     {
       code: "gb-91d0e4",
@@ -965,7 +966,8 @@ async function mockGrowbot(
   const robots = () =>
     mockGb.robots.map((r) => {
       const on = up && r.connected && !r.revoked_at;
-      return { ...r, connected: on, creature: on && !!r.creature };
+      const creature = on && !!r.creature;
+      return { ...r, connected: on, creature, gestures: creature ? (r.gestures ?? []) : [] };
     });
   if (path === "/api/growbot/status" && method === "GET") {
     const list = robots();

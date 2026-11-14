@@ -310,6 +310,41 @@ def test_a_bad_move_never_reaches_the_sidecar(
     assert sidecar.sent == []
 
 
+@pytest.mark.parametrize("move", ["spin_escape_left", "spin_escape_right", "stand_tall"])
+def test_the_live_apps_tricks_go_to_the_sidecar(
+    tmp_path: Path, repo: FakeRepo, sidecar: Sidecar, move: str
+) -> None:
+    client = _mover(tmp_path, repo)
+    resp = client.post("/api/growbot/robots/gb-a1/move", json={"move": move, "secs": 4})
+    assert resp.status_code == 200
+    assert sidecar.sent == [{"code": "gb-a1", "move": move, "secs": 4}]
+
+
+def test_a_gesture_is_played_by_its_name(tmp_path: Path, repo: FakeRepo, sidecar: Sidecar) -> None:
+    client = _mover(tmp_path, repo)
+    body = {"move": "gesture", "name": "happy dance"}
+    assert client.post("/api/growbot/robots/gb-a1/move", json=body).status_code == 200
+    assert sidecar.sent == [{"code": "gb-a1", "move": "gesture", "secs": 0, "name": "happy dance"}]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"move": "gesture"},
+        {"move": "wiggle", "name": "wiggle"},
+        {"move": "gesture", "name": "Happy"},
+        {"move": "gesture", "name": "x" * 17},
+        {"move": "gesture", "name": "a  b"},
+    ],
+)
+def test_a_gesture_needs_a_name_it_could_play(
+    tmp_path: Path, repo: FakeRepo, sidecar: Sidecar, body: dict[str, Any]
+) -> None:
+    client = _mover(tmp_path, repo)
+    assert client.post("/api/growbot/robots/gb-a1/move", json=body).status_code == 422
+    assert sidecar.sent == []
+
+
 def test_an_unknown_or_revoked_robot_is_404(
     tmp_path: Path, repo: FakeRepo, sidecar: Sidecar
 ) -> None:
