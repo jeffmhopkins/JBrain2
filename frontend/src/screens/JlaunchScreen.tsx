@@ -413,7 +413,7 @@ function ResultPane({ job }: { job: JlaunchJob }): ReactNode {
     return (
       <div className="jl-body">
         <p className="jl-empty">
-          The headline + sharelink appear here once the run finishes with VERIFICATION OK.
+          The headline + sharelink appear here once the run finishes and passes verification.
         </p>
       </div>
     );
