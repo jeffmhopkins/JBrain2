@@ -128,3 +128,14 @@ def test_growbot_heading_walk_spec_registered() -> None:
     script = build_script(spec, "/tmp/state")
     assert "run_phase clone" in script
     assert "run_phase train" in script
+
+
+def test_growbot_camera_walk_is_the_heading_walk_with_its_own_config() -> None:
+    heading = get_spec("growbot_heading_walk")
+    camera = get_spec("growbot_camera_walk")
+    assert heading is not None and camera is not None
+    assert camera.repo_url == heading.repo_url and camera.live_dir == heading.live_dir
+    assert "--config configs/camera_walk.toml" in camera.phases[2].run
+    assert camera.phases[3].run.endswith(camera.artifact_path)
+    assert camera.artifact_path != heading.artifact_path
+    assert camera.verify_log == heading.verify_log
