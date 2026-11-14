@@ -3821,10 +3821,13 @@ def test_a_heading_only_walk_turns_around_to_go_back(move: str, yaw: float, fwd:
     assert got["fed"][0]["cmd"]["fwd"] == fwd
 
 
-def test_the_body_tabs_steering_retargets_the_walk_and_keeps_it_going() -> None:
-    still = {"accel": {"x": 0.0, "y": 0.0, "z": 9.8}, "rate": {"a": 0.0, "b": 0.0, "g": 0.0}}
-    steer = {"at": 1300, "heading": -45, "speed": 0.5, "pitch": -1}
-    got = _trained_walk("forward", still, steer=steer)
+_STILL = {"accel": {"x": 0.0, "y": 0.0, "z": 9.8}, "rate": {"a": 0.0, "b": 0.0, "g": 0.0}}
+_STEER = {"at": 1300, "drive": "d1ce0001", "heading": -45, "speed": 0.5, "pitch": -1}
+
+
+def test_the_body_tabs_steering_retargets_its_walk_and_keeps_it_going() -> None:
+    got = _trained_walk("forward", _STILL, steer=_STEER)
+    assert got["steered"] is True
     assert got["fed"][0]["cmd"]["yaw"] == 0
     # A heading-only policy: the heading steers it, the speed and height are not its to read.
     assert abs(got["tail"][-1]["cmd"]["yaw"] + 0.25) < 1e-9
@@ -3834,13 +3837,28 @@ def test_the_body_tabs_steering_retargets_the_walk_and_keeps_it_going() -> None:
     assert got["walkLog"][0]["ms"] == 1000 and sum(w["ms"] for w in got["walkLog"]) > 1500
 
 
-def test_the_page_ignores_a_steer_out_of_range() -> None:
-    still = {"accel": {"x": 0.0, "y": 0.0, "z": 9.8}, "rate": {"a": 0.0, "b": 0.0, "g": 0.0}}
-    got = _trained_walk(
-        "forward", still, steer={"at": 1300, "heading": 200, "speed": 0, "pitch": 0}
-    )
+@pytest.mark.parametrize(
+    "steer",
+    [
+        # Another drive's steering (an old tab's, or one in flight past a pad move).
+        {**_STEER, "drive": "0dd0dd00"},
+        # Out of range.
+        {**_STEER, "heading": 200},
+    ],
+)
+def test_a_walk_takes_only_its_own_drives_steering(steer: dict[str, Any]) -> None:
+    got = _trained_walk("forward", _STILL, steer=steer)
+    assert got["steered"] is False
     assert all(f["cmd"]["yaw"] == 0 for f in got["tail"])
     assert [w["ms"] for w in got["walkLog"]] == [1000]
+
+
+def test_steering_never_spends_duty_the_legs_lack() -> None:
+    got = _trained_walk("forward", _STILL, duty_ms=1200, steer=_STEER)
+    assert got["steered"] is True
+    # Retargeted, but not kept going: the budget can't pay for another 1.2 s.
+    assert [w["ms"] for w in got["walkLog"]] == [1000]
+    assert got["n"] < 32
 
 
 def test_the_trained_walk_keeps_upstreams_stops() -> None:

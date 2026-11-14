@@ -24,7 +24,7 @@ function serve(move: unknown = { ok: true, state: "started", why: "" }, steer = 
     const url = String(input);
     calls.push({ url, body: JSON.parse(String(init?.body)) });
     return url.endsWith("/steer")
-      ? new Response(steer === 202 ? null : JSON.stringify({ detail: "Nobody is driving it." }), {
+      ? new Response(steer === 202 ? null : JSON.stringify({ detail: "The walk ended." }), {
           status: steer,
           headers: { "Content-Type": "application/json" },
         })
@@ -62,21 +62,23 @@ describe("GrowbotDrive", () => {
     fireEvent.change(screen.getByLabelText("Camera height"), { target: { value: "-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Drive" }));
     await waitFor(() => expect(calls).toHaveLength(2));
+    const id = (calls[0]?.body as { drive: string }).drive;
+    expect(id).toMatch(/^[0-9a-f]{16}$/);
     expect(calls[0]).toEqual({
       url: "/api/growbot/robots/gb-3fa91c/move",
-      body: { move: "forward", secs: 2, policy: CAMERA.id },
+      body: { move: "forward", secs: 2, policy: CAMERA.id, drive: id },
     });
-    // Left on the slider is a positive heading for the creature.
+    // The steering names the walk its move started; left on the slider is a positive heading.
     expect(calls[1]).toEqual({
       url: "/api/growbot/robots/gb-3fa91c/steer",
-      body: { heading: 30, speed: 0.5, pitch: -1 },
+      body: { drive: id, heading: 30, speed: 0.5, pitch: -1 },
     });
     expect(props.onSaid).toHaveBeenCalledWith({ text: "Driving with Camera walk.", bad: false });
     fireEvent.change(screen.getByLabelText("Heading"), { target: { value: "45" } });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(calls.at(-1)?.body).toEqual({ heading: -45, speed: 0.5, pitch: -1 });
+    expect(calls.at(-1)?.body).toEqual({ drive: id, heading: -45, speed: 0.5, pitch: -1 });
     fireEvent.click(screen.getByRole("button", { name: "Stop driving" }));
     expect(props.onStop).toHaveBeenCalledOnce();
     const sent = calls.length;
@@ -119,12 +121,32 @@ describe("GrowbotDrive", () => {
     expect(calls).toHaveLength(sent);
   });
 
-  it("ends the drive when a steer is refused", async () => {
-    serve(undefined, 409);
+  it("never steers from a panel that went away while the walk was starting", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let answer: (r: Response) => void = () => undefined;
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return new Promise<Response>((res) => {
+        answer = res;
+      });
+    });
+    const { view } = drive();
+    fireEvent.click(screen.getByRole("button", { name: "Drive" }));
+    view.unmount();
+    answer(new Response(JSON.stringify({ ok: true, state: "started", why: "" })));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(calls).toEqual(["/api/growbot/robots/gb-3fa91c/move"]);
+  });
+
+  it("ends the drive when its walk has ended on the phone", async () => {
+    serve(undefined, 410);
     const { props } = drive();
     fireEvent.click(screen.getByRole("button", { name: "Drive" }));
     await waitFor(() =>
-      expect(props.onSaid).toHaveBeenLastCalledWith({ text: expect.any(String), bad: true }),
+      expect(props.onSaid).toHaveBeenLastCalledWith({ text: "The walk ended.", bad: true }),
     );
     expect(screen.getByRole("button", { name: "Drive" })).toBeInTheDocument();
   });

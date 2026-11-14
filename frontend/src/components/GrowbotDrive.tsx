@@ -3,13 +3,21 @@ import { type GrowbotPolicy, type GrowbotSteer, api } from "../api/client";
 
 // Continuous steering for a trained walk (owner, 2026-11-14: steer heading, speed and camera
 // height as it walks, not only the pad's fixed moves). Drive starts the picked walk for a
-// moment, then steers it a couple of times a second with the sliders' values; each steer keeps
-// the walk going 1.5 s past it (growbot-box.js gbSteer), so the walk stops soon after the tab
-// stops steering, whether by Stop driving, a closed tab or a dropped connection.
+// moment under a fresh drive id, then steers that walk (and no other) a couple of times a
+// second with the sliders' values; each steer keeps it going 1.5 s past it (growbot-box.js
+// gbSteer), so the walk stops soon after the tab stops steering, whether by Stop driving, a
+// closed tab or a dropped connection, and a walk that ended on the phone answers 410, which
+// ends the drive.
 
 const EVERY_MS = 500;
 
 export type DriveSaid = { text: string; bad: boolean };
+
+/** A fresh id for one drive, so only the walk it starts takes its steering. */
+function driveId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -42,7 +50,7 @@ export function GrowbotDrive({
   const [speed, setSpeed] = useState(1);
   const [pitch, setPitch] = useState(1);
   const [driving, setDriving] = useState(false);
-  const now = useRef<GrowbotSteer>({ heading: 0, speed: 1, pitch: 1 });
+  const now = useRef({ heading: 0, speed: 1, pitch: 1 });
   now.current = { heading: -turn, speed, pitch };
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   // A halt while the walk's start is still on its way must win over that start's answer.
@@ -56,6 +64,8 @@ export function GrowbotDrive({
   }
   useEffect(
     () => () => {
+      // Also retires a start still on its way, so it never sets a timer for a gone panel.
+      gen.current++;
       if (timer.current) clearInterval(timer.current);
     },
     [],
@@ -67,24 +77,38 @@ export function GrowbotDrive({
   async function start() {
     setDriving(true);
     const mine = ++gen.current;
+    const drive = driveId();
+    const live = () => mine === gen.current;
     try {
-      const out = await api.moveGrowbotRobot(code, "forward", 2, policy.id);
-      if (mine !== gen.current) return;
+      const out = await api.moveGrowbotRobot(code, "forward", 2, policy.id, undefined, drive);
+      if (!live()) return;
       if (!out.ok) {
         halt();
         onSaid({ text: out.why || "It didn't start the walk.", bad: true });
         return;
       }
       onSaid({ text: `Driving with ${policy.name}.`, bad: false });
-      const tick = () =>
-        api.steerGrowbotRobot(code, now.current).catch((e: unknown) => {
-          halt();
-          onSaid({ text: message(e), bad: true });
-        });
-      void tick();
-      timer.current = setInterval(() => void tick(), EVERY_MS);
+      // One steer at a time, so a slow answer never lands an older slider value last.
+      let sending = false;
+      const tick = () => {
+        if (sending || !live()) return;
+        sending = true;
+        const steer: GrowbotSteer = { drive, ...now.current };
+        api
+          .steerGrowbotRobot(code, steer)
+          .catch((e: unknown) => {
+            if (!live()) return;
+            halt();
+            onSaid({ text: message(e), bad: true });
+          })
+          .finally(() => {
+            sending = false;
+          });
+      };
+      tick();
+      timer.current = setInterval(tick, EVERY_MS);
     } catch (e) {
-      if (mine !== gen.current) return;
+      if (!live()) return;
       halt();
       onSaid({ text: message(e), bad: true });
     }

@@ -311,22 +311,44 @@ def test_a_bad_move_never_reaches_the_sidecar(
 
 
 def test_steering_goes_to_the_sidecar(tmp_path: Path, repo: FakeRepo, sidecar: Sidecar) -> None:
-    sidecar.status, sidecar.body = 202, {"sent": True}
+    sidecar.body = {"ok": True}
     client = _mover(tmp_path, repo)
     steer = "/api/growbot/robots/gb-a1/steer"
-    assert client.post(steer, json={"heading": -30, "speed": 0.5}).status_code == 202
-    assert sidecar.sent == [{"code": "gb-a1", "heading": -30, "speed": 0.5, "pitch": 1}]
-    resp = client.post("/api/debug/growbot/robots/gb-a1/steer", json={"heading": 10})
+    drive = {"drive": "d1ce0001"}
+    assert client.post(steer, json={**drive, "heading": -30, "speed": 0.5}).status_code == 202
+    assert sidecar.sent == [
+        {"code": "gb-a1", "drive": "d1ce0001", "heading": -30, "speed": 0.5, "pitch": 1}
+    ]
+    resp = client.post("/api/debug/growbot/robots/gb-a1/steer", json={**drive, "heading": 10})
     assert resp.status_code == 202 and sidecar.sent[-1]["heading"] == 10
-    for bad in ({"heading": 181}, {"heading": 0, "speed": 2}, {"heading": 0, "pitch": -1.5}, {}):
+    for bad in (
+        {**drive, "heading": 181},
+        {**drive, "heading": 0, "speed": 2},
+        {**drive, "heading": 0, "pitch": -1.5},
+        {"heading": 0},
+        {"drive": "NOPE", "heading": 0},
+        {},
+    ):
         assert client.post(steer, json=bad).status_code == 422, bad
-    assert client.post("/api/growbot/robots/gb-zz/steer", json={"heading": 0}).status_code == 404
-    sidecar.status = 409
-    assert client.post(steer, json={"heading": 0}).status_code == 409
-    sidecar.status = 500
-    assert client.post(steer, json={"heading": 0}).status_code == 502
+    one = {**drive, "heading": 0}
+    assert client.post("/api/growbot/robots/gb-zz/steer", json=one).status_code == 404
+    # The drive's walk has ended on the phone: the tab stops steering.
+    sidecar.body = {"ok": False}
+    assert client.post(steer, json=one).status_code == 410
+    for status, want in ((409, 409), (504, 504), (500, 502)):
+        sidecar.status = status
+        assert client.post(steer, json=one).status_code == want
     sidecar.down = True
-    assert client.post(steer, json={"heading": 0}).status_code == 503
+    assert client.post(steer, json=one).status_code == 503
+
+
+def test_a_drive_names_only_a_trained_walk(
+    tmp_path: Path, repo: FakeRepo, sidecar: Sidecar
+) -> None:
+    client = _mover(tmp_path, repo)
+    body = {"move": "forward", "secs": 2, "drive": "d1ce0001"}
+    assert client.post("/api/growbot/robots/gb-a1/move", json=body).status_code == 422
+    assert sidecar.sent == []
 
 
 @pytest.mark.parametrize("move", ["spin_escape_left", "spin_escape_right", "stand_tall"])
