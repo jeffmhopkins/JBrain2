@@ -761,7 +761,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-'
-        'tools2-quiet"' in page
+        'tools2-quiet-since"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -1448,7 +1448,7 @@ def test_the_talk_style_shapes_the_prompt() -> None:
     assert "_live.scratch.traces.slice(-4)" not in page
     assert page.count("if(_live.scratch.traces.length>GB_TALK_TRACE_KEEP)") == 2
     assert "_live.scratch.traces.length>8" not in page
-    assert "GB_TALK_TRACE_KEEP=16" in prompts
+    assert "GB_TALK_TRACE_KEEP=120" in prompts
 
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert re.search(r"\bgb_talk: 1\b", shim)
@@ -2472,7 +2472,7 @@ def test_a_dream_keeps_the_visit_once_even_across_a_reload() -> None:
         "for(var i=0;i<90;i++)gbVisitKeep({t:i,txt:'line '+i});"
         "r.kept=_live.scratch.visit.length;r.sess=gbDreamSession();"
         f"gbDreamKeep({{session_summary:{json.dumps(long + 'Then he went to work. Extra.')},"
-        "facts:['lunch: a taco','up to 5 short plain facts','None','a','b','c']});"
+        "facts:['lunch: a taco','up to 8 short plain facts','None','a','b','c','d','e','f']});"
         "r.after=gbDreamSession();r.visit=_live.scratch.visit;"
         "gbDreamKeep({session_summary:'OMIT'});"
         "r.log=_live.log;r.facts=facts;r.logs=logs;console.log(JSON.stringify(r));"
@@ -2485,8 +2485,9 @@ def test_a_dream_keeps_the_visit_once_even_across_a_reload() -> None:
     assert len(got["log"]) == 3 and all(x.startswith("📖 ") for x in got["log"])
     assert got["log"][2] == "📖 Then he went to work."
     assert all(len(x) < 140 for x in got["log"])
-    assert got["facts"] == ["lunch: a taco", "a", "b"]
-    assert got["logs"] == [["dream_keep", {"s": 3, "f": 3}], ["dream_keep", {"s": 0, "f": 0}]]
+    # Eight are offered and the junk among them is dropped, so "f" (the ninth) never lands.
+    assert got["facts"] == ["lunch: a taco", "a", "b", "c", "d", "e"]
+    assert got["logs"] == [["dream_keep", {"s": 3, "f": 6}], ["dream_keep", {"s": 0, "f": 0}]]
 
 
 @pytest.mark.parametrize(
@@ -2612,6 +2613,9 @@ var eyeBuf=[{t:Date.now()-2000,j:"AAA"},{t:Date.now()-1000,j:"BBB"}];
 var MEMLOG_ASK="\n\nMEMLOG", _stats=1, _tired="";
 function soulOwned(){ return true; } function llmCfg(){ return null; }
 function gbTalkTraces(t){ return t; } function traceMoment(u){ return u; }
+function gbTalkGrown(){ return false; }
+var _DAYS=["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+function _dayPart(){ return "evening"; }
 function buildSystem(){ buildSystem.live="\n\nLIVE"; return "SYS"; }
 function moveGuideText(){ moveGuideText.live=""; return ""; }
 function selfStats(){ selfStats.fixed=""; return "stats "+_stats; }
@@ -2903,45 +2907,124 @@ def test_the_page_warms_while_the_person_talks_and_the_turn_takes_it() -> None:
     assert think.count("function gbTraceReply") == 0 and "msgs=gbHist(now);" in think
 
 
-def test_the_history_reads_the_same_from_turn_to_turn() -> None:
-    """Field, 2026-11-13: only the system text was ever reused, because the window dropped an
-    exchange and every "[96s ago]" changed each turn, so each warm-up re-read the conversation.
-    The window now holds still until it is twice its size, and only the newest exchanges carry
-    their age, so turn N+1's history starts with turn N's, word for word."""
+def _history_in_node(body: str) -> dict:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     code = page[page.index("function gbTraceReply(t){") : page.index("function gbWarmKey(){")]
     script = (
-        "var N=4;function gbTalkTraces(a){ return a.slice(-N); }"
+        "var N=4, GROWN=false;function gbTalkTraces(a){ return a.slice(-N); }"
+        "function gbTalkGrown(){ return GROWN; }"
+        "var _DAYS=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];"
+        "function _dayPart(h){ return h<18?'afternoon':'evening'; }"
         "function traceMoment(u){ return u; }"
-        "var _live={scratch:{traces:[]}}, T=1000000, turns=[];"
+        "var _live={scratch:{traces:[]}}, T=new Date(2026,10,13,17,58,0).getTime(), turns=[];"
         f"{code}\n"
-        "function say(i){ _live.scratch.traces.push({u:'q'+i,a:'a'+i,t:T});"
-        " if(_live.scratch.traces.length>16) _live.scratch.traces.shift(); T+=30000;"
+        "function say(i,u){ _live.scratch.traces.push({u:u||'q'+i,a:'a'+i,t:T});"
+        " if(_live.scratch.traces.length>120) _live.scratch.traces.shift(); T+=30000;"
         " turns.push(gbHist(T).map(function(m){ return m.content; })); }"
-        "for(var i=0;i<14;i++) say(i);"
-        "var kept=[];"
-        "for(var j=1;j<turns.length;j++){ var a=turns[j-1], b=turns[j], k=0;"
-        " while(k<a.length&&k<b.length&&a[k]===b[k]) k++; kept.push(k); }"
-        "N=12;var grown=gbHist(T).length/2;"
-        "console.log(JSON.stringify({kept:kept,last:turns[turns.length-1],grown:grown,"
-        "lens:turns.map(function(t){ return t.length/2; })}));"
+        "function kept(){ var out=[]; for(var j=1;j<turns.length;j++){ var a=turns[j-1],"
+        " b=turns[j], k=0; while(k<a.length&&k<b.length&&a[k]===b[k]) k++; out.push(k); }"
+        " return out; }"
+        "function lens(){ return turns.map(function(t){ return t.length/2; }); }"
+        f"{body}"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
-    got = json.loads(out.stdout)
+    return json.loads(out.stdout)
+
+
+def test_the_history_reads_the_same_from_turn_to_turn() -> None:
+    """Field, 2026-11-13: only the system text was ever reused, because the window dropped an
+    exchange and every "[96s ago]" changed each turn, so each warm-up re-read the conversation.
+    Every exchange now carries the day and part of the day it happened, and kid talk's window
+    holds still until it is twice its size, so turn N+1's history starts with all of turn N's."""
+    got = _history_in_node(
+        "for(var i=0;i<14;i++) say(i);"
+        "var r={kept:kept(),last:turns[turns.length-1],lens:lens(),first:turns[0][0]};"
+        "GROWN=true;r.grown=gbHist(T).length/2;console.log(JSON.stringify(r));"
+    )
     assert got["lens"] == [1, 2, 3, 4, 5, 6, 7, 8, 4, 5, 6, 7, 8, 4]
-    # Everything but the last three exchanges (the two that carry an age, and the one that
-    # just lost it) is the same text as the turn before, except when the window jumps.
     for n, k in enumerate(got["kept"], start=1):
         if got["lens"][n] > got["lens"][n - 1]:
-            assert k >= 2 * max(0, got["lens"][n - 1] - 2) - 1, (n, k)
+            assert k == 2 * got["lens"][n - 1], (n, k)
     last = got["last"]
-    assert last[0] == "[earlier] q10" and last[1] == '{"say":"a10"}'
-    assert last[4] == "[60s ago] q12" and last[6] == "[30s ago] q13"
-    # A switch to grown-up talk gets its whole window at once, not one exchange a turn.
-    assert got["grown"] == 12
+    assert last[0] == "[friday evening, nov 13] q10" and last[1] == '{"say":"a10"}'
+    assert last[6] == "[friday evening, nov 13] q13"
+    assert got["first"] == "[friday afternoon, nov 13] q0"
+    # A switch to grown-up talk gets everything since the last dream (here: never), at once.
+    assert got["grown"] == 14
+
+
+def test_grown_up_talk_keeps_everything_since_it_last_slept() -> None:
+    """Owner, 2026-11-13: on the box, a 55-turn evening replayed whole recalled 19 of 19
+    details against 2 of 19 for the last 12 exchanges. A dream moves the start (keeping three
+    exchanges from before it), and past GB_HIST_TOK the older half goes in one step, so the
+    history only ever breaks the cache at those two moments."""
+    got = _history_in_node(
+        "GROWN=true;for(var i=0;i<20;i++) say(i);"
+        "_live.scratch.lastDream={t:T-1};for(i=20;i<26;i++) say(i);"
+        "var r={lens:lens(),kept:kept()};"
+        "var big=new Array(3001).join('x');turns=[];"
+        "for(i=26;i<60;i++) say(i,big);"
+        "r.capLens=lens();r.capKept=kept();r.tok=GB_HIST_TOK;r.end=gbHistTok(gbHistWindow(_live.scratch.traces));"
+        "console.log(JSON.stringify(r));"
+    )
+    lens = got["lens"]
+    assert lens[:20] == list(range(1, 21))
+    assert lens[20:] == [4, 5, 6, 7, 8, 9]
+    for n, k in enumerate(got["kept"], start=1):
+        if lens[n] > lens[n - 1]:
+            assert k == 2 * lens[n - 1], (n, k)
+    cap = got["capLens"]
+    drops = [n for n in range(1, len(cap)) if cap[n] < cap[n - 1]]
+    assert drops, cap
+    for n in drops:
+        assert cap[n] <= cap[n - 1] // 2 + 2, (n, cap)
+    for n, k in enumerate(got["capKept"], start=1):
+        if cap[n] > cap[n - 1]:
+            assert k == 2 * cap[n - 1], (n, k)
+    assert 0 < got["end"] <= got["tok"]
+
+
+def test_a_full_store_jumps_rather_than_slides() -> None:
+    """Review: with no dream in a full 120-trace store, each shift dropped the start, and the
+    window slid one exchange a turn, breaking the cache every turn. It now jumps by half, and a
+    dream stamped in the future (a clock set back) never empties the window."""
+    got = _history_in_node(
+        "GROWN=true;for(var i=0;i<160;i++) say(i);"
+        "var r={lens:lens(),kept:kept()};"
+        "_live.scratch.lastDream={t:Date.now()+86400000};turns=[];"
+        "for(i=160;i<164;i++) say(i);r.future=lens();"
+        "console.log(JSON.stringify(r));"
+    )
+    lens, kept = got["lens"], got["kept"]
+    slides = [n for n in range(1, len(lens)) if lens[n] <= lens[n - 1] and kept[n - 1] == 0]
+    assert len(slides) <= 2, slides
+    for n, k in enumerate(kept, start=1):
+        if lens[n] > lens[n - 1]:
+            assert k == 2 * lens[n - 1], (n, k)
+    assert min(got["future"]) > 3
+
+
+def test_a_reply_seals_the_history_it_grew() -> None:
+    """The engine resumes only from the start of a request's last message, so after each reply
+    the page sends the history alone, ending in a placeholder, to give the next warm-up a resume
+    point at its end (box, 2026-11-13: without it the warm-up re-read the whole history)."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert page.count("saveSoul(_live); gbSealSoon();") == 1
+    seal = page[page.index("function gbSeal(){") : page.index("function gbWarmFresh(){")]
+    warm = page[page.index("function gbWarmUp(){") : page.index("function gbSealSoon(){")]
+    build = re.compile(
+        r"var sys=buildSystem\(gbSoulView\(\),\{language:_convLang\}\).*?\+moveGuideText\(\);"
+    )
+    assert build.findall(seal) == build.findall(warm) and build.findall(seal)
+    fixed = re.compile(r"sys\+=\(typeof gaitList[^;]*;")
+    assert fixed.findall(seal) == fixed.findall(warm)
+    assert '[{role:"system",content:sys}].concat(hist,[{role:"user",content:"."}])' in seal
+    assert '"x-gb-warm":"1"' in seal and "_gbWarmBusy=true" in seal
+    # The history's stamps never change; how long ago the last exchange was rides the words.
+    assert 'gbLastSaid(Date.now())+"\\nmoment: "+event;' in page
 
 
 def test_the_warm_up_builds_the_system_text_as_the_turn_does() -> None:

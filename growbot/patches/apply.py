@@ -1143,15 +1143,17 @@ PATCHES += QUIET_PATCHES
 # keeps ~18-word lines, sees 4 exchanges and 5 diary lines, and an adult found it could not
 # hold a conversation (a meal named over ten minutes was gone when he asked). A persona's
 # gb_talk setting (growbot-box.js syncs it; JBrain's persona page sets it) of "grownup" gives
-# longer replies and 12 replayed exchanges, and asks it to log facts as it hears them; older
-# memory stays out of the turn (the owner wants it looked up, not carried). Kid, the default,
-# talks as upstream's creature does; the ring keeps 16 turns for both, so a switch to grown-up
-# has its 12 at once. Read every turn, so a change lands on the next thought; the grown-up block sits in the cached prefix, so the switch costs
+# longer replies and everything said since the last dream (gbHistWindow), and asks it to log
+# facts as it hears them; memory from before the last dream is looked up, not carried. Kid,
+# the default,
+# talks as upstream's creature does. The ring keeps 120 turns (owner, 2026-11-13: grown-up talk
+# now carries everything since the last dream, gbHistWindow; a 55-turn evening is ~5k tokens),
+# so a switch to grown-up has its window at once. Read every turn, so a change lands on the next thought; the grown-up block sits in the cached prefix, so the switch costs
 # one cold turn.
 _GB_TALK_JS = (
     "function gbTalkGrown(){ try{ return localStorage.getItem(\"gb_talk\")===\"grownup\"; }"
     "catch(e){ return false; } }\n"
-    "var GB_TALK_TRACES_KID=4, GB_TALK_TRACES_GROWN=12, GB_TALK_TRACE_KEEP=16;\n"
+    "var GB_TALK_TRACES_KID=4, GB_TALK_TRACES_GROWN=12, GB_TALK_TRACE_KEEP=120;\n"
     "function gbTalkTraces(all){ return (all||[]).slice(-(gbTalkGrown()?GB_TALK_TRACES_GROWN"
     ":GB_TALK_TRACES_KID)); }\n"
     "var GB_TALK_GROWN_BLOCK=\"\\n\\n== TALK STYLE: GROWN-UP ==\\nyour person is an adult who"
@@ -1163,7 +1165,9 @@ _GB_TALK_JS = (
     " where they went, who they saw, a plan, how they feel), record it in your fact field in"
     " that same reply, compactly, so you can recall it later; such a fact is never a"
     " routine moment. one line can hold several things.\\nvary what you notice: do not return to the same remark or the same feature of"
-    " your person turn after turn.\";\n"
+    " your person turn after turn.\\nwhen they ask about something from before that you cannot"
+    " see in the conversation above, look it up with recall: never tell them they did not tell"
+    " you, or that you do not know, before you have looked.\";\n"
 )
 
 TALK_PATCHES: list[tuple[str, str, str, int]] = [
@@ -1780,15 +1784,15 @@ function gbTiredLine(){
 function gbDreamSession(){
   var v=gbVisit(); if(!v.length) return "";
   return "\n\nIts conversation with its person since it last slept, oldest first:\n"+v.map(function(x){ return "- "+String(x&&x.txt||""); }).join("\n")+
-    "\n\nAlso put in your JSON: \"session_summary\":\"1-3 plain sentences for its diary: what mattered in that conversation (people, plans, things its person told it, what they did together)\",\"facts\":[\"up to 5 short plain facts its person told it that are worth keeping\"]";
+    "\n\nAlso put in your JSON: \"session_summary\":\"1-3 plain sentences for its diary: what mattered in that conversation (people, plans, things its person told it, what they did together)\",\"facts\":[\"up to 8 short plain facts its person told it that are worth keeping\"]";
 }
-var _GB_KEEP_JUNK=/^(omit|none|nothing|n\/a|null|1-3 plain|up to 5 short)\b/i;
+var _GB_KEEP_JUNK=/^(omit|none|nothing|n\/a|null|1-3 plain|up to 8 short)\b/i;
 function gbDreamKeep(o){ try{
   var sum=typeof o.session_summary==="string"?o.session_summary.replace(/\s+/g," ").trim():"", n=0, k=0;
   if(_GB_KEEP_JUNK.test(sum)) sum="";
   // soulLog keeps 140 characters a line, so a summary is filed a sentence at a time.
   if(sum) sum.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0,3).forEach(function(x){ soulLog(_live,"📖 "+x); k++; });
-  (Array.isArray(o.facts)?o.facts:[]).slice(0,5).forEach(function(f){ if(typeof f==="string"&&!_GB_KEEP_JUNK.test(f.trim())&&gbFactAdd(_live,f)) n++; });
+  (Array.isArray(o.facts)?o.facts:[]).slice(0,8).forEach(function(f){ if(typeof f==="string"&&!_GB_KEEP_JUNK.test(f.trim())&&gbFactAdd(_live,f)) n++; });
   if(_live&&_live.scratch) _live.scratch.visit=[];
   _gbSleepWhy="";
   logEv("dream_keep",{s:k,f:n});
@@ -2253,7 +2257,7 @@ PATCHES += [
     (
         "v3/next.html",
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye"',
-        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2-quiet"',
+        '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2-quiet-since"',
         1,
     ),
     # And the soul code that names a fresh persona (NAME_PATCHES).
@@ -2294,20 +2298,40 @@ function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.in
    words has to read the same from turn to turn. Upstream's last-N window dropped the oldest
    exchange every turn and stamped each one "[96s ago]", which changed every turn too, so only the
    system text was ever reused and every warm-up re-read the whole conversation (field,
-   2026-11-13: 2.4-3k tokens, 8-12 s, with real turns waiting behind it). Now the window starts
-   at a fixed exchange and grows before it jumps forward (kid talk 4 to 8 exchanges; grown-up 12
-   until the 16-trace store drops its first exchange), and only the newest exchanges carry their
-   age; older ones read "[earlier]". A window shorter than the talk style's (a switch to grown-up)
-   jumps at once. */
-var _gbHistFrom="", GB_HIST_AGED=2;
+   2026-11-13: 2.4-3k tokens, 8-12 s, with real turns waiting behind it). Every exchange now
+   carries the day and part of the day it happened ("[friday evening, nov 13]"), which never changes
+   (the exact hour stays a clock call, CLOCK_PATCHES), and the turn's own words say how long ago
+   the last exchange was, in the diary's plain words.
+   Grown-up talk keeps everything said since it last slept, plus the last few exchanges from
+   before that (owner, 2026-11-13: tested on the box over a 55-turn evening, it recalled 19 of
+   19 details this way against 2 of 19 with the last 12 exchanges, which told him "you never
+   mentioned a garage"). The start holds still until a dream moves it, or until the history
+   passes GB_HIST_TOK, when the older half goes in one step, so the cache breaks once rather than
+   every turn. Kid talk keeps its short window: it starts at a fixed exchange and grows to twice
+   its size before it jumps forward. A window shorter than the talk style's (a switch to
+   grown-up) jumps at once. */
+var _gbHistFrom="", _gbHistGrown=null, GB_HIST_TOK=16000, GB_HIST_BRIDGE=3;
 function gbHistKey(x){ return (x&&x.t||0)+"|"+String(x&&x.u||"").slice(0,80); }
-function gbHistWindow(all){ all=all||[]; var n=gbTalkTraces(all).length, i=-1, k;
+function gbHistStamp(t){ var d=new Date(t); return _DAYS[d.getDay()]+" "+_dayPart(d.getHours())+", "+["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"][d.getMonth()]+" "+d.getDate(); }
+function gbLastSaid(now){ var t=_live&&_live.scratch&&_live.scratch.traces, l=t&&t.length?+t[t.length-1].t:0, a=l?_ago(l,now):"";
+  return a?"\nyour last exchange: "+a:""; }
+function gbHistSince(all){ var ld=_live&&_live.scratch&&_live.scratch.lastDream, dt=(ld&&typeof ld==="object"&&+ld.t)||0, i=all.length;
+  if(dt>Date.now()) dt=0;   /* a dream stamped ahead of the clock (the clock was set back) is no start */
+  while(i>0&&(+all[i-1].t||0)>dt) i--;
+  return Math.max(0,i-GB_HIST_BRIDGE); }
+function gbHistTok(list){ var n=0, k; for(k=0;k<list.length;k++) n+=String(list[k].u||"").length+String(list[k].a||"").length+60; return n/3.5; }
+function gbHistWindow(all){ all=all||[]; var i=-1, k, n, g=gbTalkGrown();
+  if(g!==_gbHistGrown){ _gbHistFrom=""; _gbHistGrown=g; }
   if(_gbHistFrom) for(k=0;k<all.length;k++) if(gbHistKey(all[k])===_gbHistFrom){ i=k; break; }
-  if(i<0||all.length-i>2*n||all.length-i<n){ i=Math.max(0,all.length-n); _gbHistFrom=all.length?gbHistKey(all[i]):""; }
+  if(g){ k=gbHistSince(all);
+    if(i<0&&_gbHistFrom&&k<all.length) i=k+Math.ceil((all.length-k)/2);   /* the store shifted the start off: jump, never slide */
+    if(i<k) i=k;
+    while(all.length-i>1&&gbHistTok(all.slice(i))>GB_HIST_TOK) i+=Math.ceil((all.length-i)/2); }
+  else{ n=gbTalkTraces(all).length; if(i<0||all.length-i>2*n||all.length-i<n) i=Math.max(0,all.length-n); }
+  _gbHistFrom=i<all.length?gbHistKey(all[i]):"";
   return all.slice(i); }
 function gbHist(now){ var tr=gbHistWindow(_live.scratch.traces), msgs=[], i;
-  for (i=0;i<tr.length;i++){ var aged=i>=tr.length-GB_HIST_AGED;
-    msgs.push({role:"user",content:(tr[i].t?(aged?"["+Math.max(0,Math.round((now-tr[i].t)/1000))+"s ago] ":"[earlier] "):"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
+  for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?"["+gbHistStamp(tr[i].t)+"] ":"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
   return msgs; }
 function gbWarmKey(){ var t=(_live&&_live.scratch&&_live.scratch.traces)||[], l=t[t.length-1]; return t.length+":"+(l?(l.t||0)+":"+gbTraceReply(l):"")+":"+(camOn?1:0)+":"+camFacing; }
 function gbSoulView(){ var v=(MODE==="phone")?Object.assign({},_live,{body:null}):_live;
@@ -2350,6 +2374,41 @@ function gbWarmUp(){ var now=Date.now();
       .then(function(){ clearTimeout(fuse); _gbWarmBusy=false; });
   }catch(e){ _gbWarm=null; _gbWarmBusy=false; }
 }
+/* The seal. The engine keeps a resume point only at the start of a request's last message (above),
+   so after a turn its points sit at the end of the system text and at the start of the turn's
+   words; none marks the end of the history, and the next warm-up re-read the whole conversation
+   even when it read the same (box, 2026-11-13: cached tokens stayed at the system text's 8,634 for
+   12 turns in a row). After each reply the page sends the history alone, ending in a placeholder
+   and asking for one token: it reads only the newest exchange (~100 tokens, 1.6 s while the
+   creature is quiet), and the next warm-up resumes from it and reads only the turn's state and
+   frame (flat at ~4.9 s over 30 turns, against 4.8 s growing to 8.2 s without). It builds the
+   system text exactly as the warm-up does, and is skipped whenever a warm-up would be. */
+var _gbSealKey="", GB_SEAL_MS=400, GB_SEAL_FUSE_MS=90000;
+function gbSealSoon(){ setTimeout(gbSeal,GB_SEAL_MS); }
+function gbSeal(){
+  if(window._wakeGateUp||_gbWarmOff||_gbWarmBusy||typeof window.gbBoxLive!=="function") return;
+  if(inFlight||!orCfg||!_live||Date.now()<coolUntil||paused||document.hidden||dreaming||energyState==="asleep") return;
+  if(!soulOwned()||(typeof vmBusy==="function"&&vmBusy())||llmCfg()) return;
+  try{
+    var now=Date.now(), hist=gbHist(now), key=_gbHistFrom+"#"+gbWarmKey();
+    if(!hist.length||key===_gbSealKey) return;
+    var vmc=(typeof vmTurnContext==="function"&&typeof vmStreamSpeech==="function"&&typeof vmReplyGuard==="function")?{user:"·",asked:false}:null;
+    var sys=buildSystem(gbSoulView(),{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText();
+    if(typeof vmPrompt==="function") vmPrompt(vmc); selfStats();
+    sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||"");
+    var body=_mkBody(brainOverride(orCfg.active||orCfg.fast,false),1,[{role:"system",content:sys}].concat(hist,[{role:"user",content:"."}]));
+    var hdr={"content-type":"application/json","x-gb-warm":"1"}; if(pbDevTok) hdr["x-pb-device"]=pbDevTok;
+    /* After a dream, a halving or a style switch the seal reads the whole history once (~20 s); a
+       turn queued behind it then resumes from it, so it gets the long fuse rather than being cut. */
+    var ctl=window.AbortController?new AbortController():null, fuse=setTimeout(function(){ try{ if(ctl) ctl.abort(); }catch(e){} },GB_SEAL_FUSE_MS);
+    _gbSealKey=key; _gbWarmBusy=true;
+    try{ logEv("seal",{n:hist.length/2}); }catch(e){}
+    fetch("/api/llm?target=openrouter",{method:"POST",headers:hdr,body:JSON.stringify(body),signal:ctl?ctl.signal:undefined})
+      .then(function(r){ if(!r.ok){ _gbSealKey=""; if(r.status===409) _gbWarmOff=true; } return r.text(); })
+      .catch(function(){ _gbSealKey=""; })
+      .then(function(){ clearTimeout(fuse); _gbWarmBusy=false; });
+  }catch(e){ _gbWarmBusy=false; }
+}
 function gbWarmFresh(){ return !!(_gbWarm&&_gbWarm.utt===vadStartT&&Date.now()-_gbWarm.t<GB_WARM_MAX_MS); }
 function gbShape(s){ return String(s||"").replace(/\d+(?:\.\d+)?/g,"#"); }
 function gbWarmSkip(w,why){ try{ logEv("warm_skip",{w:why,age:Date.now()-w.t}); }catch(e){} return null; }
@@ -2375,6 +2434,20 @@ function gbWarmMsgs(w,live,liveN,userMsg){
 """
 WARM_PATCHES: list[tuple[str, str, str, int]] = [
     ("v3/next.html", "function think(event,kind,extra){", _GB_WARM_JS + "function think(event,kind,extra){", 1),
+    # Each reply ends in a seal of the history it just grew (gbSeal above).
+    (
+        "v3/next.html",
+        "callsSinceDream++; _live.scratch.csd=callsSinceDream; saveSoul(_live);",
+        "callsSinceDream++; _live.scratch.csd=callsSinceDream; saveSoul(_live); gbSealSoon();",
+        1,
+    ),
+    # History lines carry only the part of the day (gbHist); the age of the last one rides here.
+    (
+        "v3/next.html",
+        '+(_mstrip?"\\n"+_mstrip:"")+"\\nmoment: "+event;',
+        '+(_mstrip?"\\n"+_mstrip:"")+gbLastSaid(Date.now())+"\\nmoment: "+event;',
+        1,
+    ),
     # An autonomous thought sent while the person talks would overwrite the engine's warm-up.
     # Only while the utterance that started the warm-up is open, and warm-ups stop after three
     # utterances in a row that never became a turn: a television can start them too, and must
