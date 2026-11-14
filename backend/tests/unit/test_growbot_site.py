@@ -3372,20 +3372,22 @@ def test_truck_noise_clips_are_dropped_before_they_reach_the_creature() -> None:
     assert got["r"] == ["quiet", "quiet", "quiet", "", "", "", "", "lp", "", "", ""]
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     wired = (
-        'var _g=_sttGate(d); var _gbNz=_g.drop?"":gbNoiseClip(_sp,_sr);'
+        'var _g=_sttGate(d); var _gbNz=_g.drop?"":gbNoiseClip((meta&&meta.gbSnap)||_sp,_sr);'
         ' if(_gbNz){ try{ _listenStash=null; logEv("stt_noise",{w:_gbNz});'
         ' if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); }catch(_nz){}'
         ' _sttPhase("done"); return; }'
     )
     assert page.count(wired) == 2
     assert "lane:_sttLane}" in page
+    assert "if(_gbP) meta.gbPiece=_gbP; meta.gbSnap=_sttSnap;" in page
 
 
 def test_a_scene_line_he_already_said_is_not_said_again() -> None:
     """Field, 2026-11-13: "I see the dark road ahead and the green glow of the dashboard" in
-    many wordings opened 12 of 40 replies. A scene sentence close to one said in the last ten
-    minutes is cut; a new one, a short one, and any non-scene sentence are kept, so "say that
-    again" is still said again. A buffered reply is never cut to nothing."""
+    many wordings opened 12 of 40 replies. On his own beats, a scene sentence close to one said
+    in the last ten minutes is cut; a new one, a short one, and any non-scene sentence are kept,
+    and a reply to the person is never cut, so "say that again" is still said again. A buffered
+    reply is never cut to nothing."""
     got = _quiet_page(
         "gbSaidKeep('I see the dark road ahead and the green glow of the dashboard. Hi.');"
         "gbSaidKeep('Your friend Quorra likes the big wheel at the fair.');"
@@ -3397,6 +3399,10 @@ def test_a_scene_line_he_already_said_is_not_said_again() -> None:
         "r.e=gbNoRepeat('I see the green dashboard glow and the dark road.');"
         "r.keep=gbNoRepeat('I see the green dashboard glow and the dark road.',1);"
         "r.num=gbSentences('It is 2.5 miles. Then left! Okay');"
+        "gbSaidKeep('I see what you mean, your timer is set for ten minutes.');"
+        "r.plain=gbNoRepeat('I see what you mean, your timer is set for ten minutes.');"
+        "_gbHuman=true;r.asked=gbNoRepeat('I see the green dashboard glow and the dark road.');"
+        "_gbHuman=false;"
         "_gbSaid[0].t=Date.now()-GB_SAID_KEEP_MS-1;_gbSaid[1].t=_gbSaid[0].t;"
         "r.old=gbNoRepeat('I see the green dashboard and the dark road.');"
         "r.logs=logs;console.log(JSON.stringify(r));"
@@ -3408,6 +3414,8 @@ def test_a_scene_line_he_already_said_is_not_said_again() -> None:
     assert got["e"] == ""
     assert got["keep"] == "I see the green dashboard glow and the dark road."
     assert got["num"] == ["It is 2.5 miles.", "Then left!", "Okay"]
+    assert got["plain"] == "I see what you mean, your timer is set for ten minutes."
+    assert got["asked"] == "I see the green dashboard glow and the dark road."
     assert got["old"] == "I see the green dashboard and the dark road."
     assert got["logs"][0] == ["repeat_cut", {"n": 1}]
 
@@ -3415,7 +3423,8 @@ def test_a_scene_line_he_already_said_is_not_said_again() -> None:
 def test_he_finishes_his_line_unless_tapped() -> None:
     """Owner, 2026-11-13: "I almost prefer it to have him finish his thing before being able to
     record me". Yield and barge-in are opt-in per phone; a tap while his voice plays stops him and
-    holds the rest of that reply, except in a tap-counting game where taps are answers."""
+    holds the rest of this reply if it was this reply's voice, except in a tap-counting game where
+    taps are answers."""
     got = _quiet_page(
         "var r=[gbOptIn('gb_yield'),gbOptIn('gb_bargein')];_ls.gb_yield='1';"
         "r.push(gbOptIn('gb_yield'));r.push(_gbCut);"
@@ -3432,13 +3441,14 @@ def test_he_finishes_his_line_unless_tapped() -> None:
     assert (
         "    if((_voiceActive||_chainBusy)&&e.isPrimary!==false&&!(typeof tapCountingContext"
         '==="function"&&tapCountingContext())){ try{ logEv("tap_cut",{}); }catch(_tc){}'
-        " _gbCut=true; silence(); return; }" in page
+        " _gbCut=_streamSaid; silence(); return; }" in page
     )
-    assert "_yieldSaid=0; _gbCut=false;" in page
+    assert "_yieldSaid=0; _gbCut=false; _gbHuman=!!_hreqAtIssue;" in page
     assert "  var chunk=gbNoRepeat(v.slice(_streamSpoke.length,upto).trim());" in page
     assert (
-        "    if(o&&o.say){ try{ if(!_streamSaid) o.say=gbNoRepeat(o.say,1); gbSaidKeep(o.say); }"
-        "catch(_nr){} }\n    var said=(o.say&&o.say.trim())" in page
+        "    if(o&&o.say){ try{ if(!_streamSaid) o.say=gbNoRepeat(o.say,1);"
+        " if(!_gbCut&&_yieldSaid!==1&&!MUTED) gbSaidKeep(o.say); }catch(_nr){} }\n"
+        "    var said=(o.say&&o.say.trim())" in page
     )
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert (
