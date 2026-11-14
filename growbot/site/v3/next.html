@@ -8506,20 +8506,22 @@ function _runGait(spec,attempt){
 /* ---- THE FAST LOOP (slow table — LLM reasons over full memory, drives legs) ---- */
 var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
 function gbOpenDreamDue(){ return _gbDreamOnOpen&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
-var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000;
+var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000, GB_WARM_LOOK_MS=3000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 /* The box resumes a turn from the longest prefix it read before, so the history ahead of the new
    words has to read the same from turn to turn. Upstream's last-N window dropped the oldest
    exchange every turn and stamped each one "[96s ago]", which changed every turn too, so only the
    system text was ever reused and every warm-up re-read the whole conversation (field,
    2026-11-13: 2.4-3k tokens, 8-12 s, with real turns waiting behind it). Now the window starts
-   at a fixed exchange and grows to twice its size before it jumps forward, and only the newest
-   exchanges carry their age; older ones read "[earlier]". */
+   at a fixed exchange and grows before it jumps forward (kid talk 4 to 8 exchanges; grown-up 12
+   until the 16-trace store drops its first exchange), and only the newest exchanges carry their
+   age; older ones read "[earlier]". A window shorter than the talk style's (a switch to grown-up)
+   jumps at once. */
 var _gbHistFrom="", GB_HIST_AGED=2;
 function gbHistKey(x){ return (x&&x.t||0)+"|"+String(x&&x.u||"").slice(0,80); }
 function gbHistWindow(all){ all=all||[]; var n=gbTalkTraces(all).length, i=-1, k;
   if(_gbHistFrom) for(k=0;k<all.length;k++) if(gbHistKey(all[k])===_gbHistFrom){ i=k; break; }
-  if(i<0||all.length-i>2*n){ i=Math.max(0,all.length-n); _gbHistFrom=all.length?gbHistKey(all[i]):""; }
+  if(i<0||all.length-i>2*n||all.length-i<n){ i=Math.max(0,all.length-n); _gbHistFrom=all.length?gbHistKey(all[i]):""; }
   return all.slice(i); }
 function gbHist(now){ var tr=gbHistWindow(_live.scratch.traces), msgs=[], i;
   for (i=0;i<tr.length;i++){ var aged=i>=tr.length-GB_HIST_AGED;
@@ -8576,7 +8578,10 @@ function gbWarmTake(kind,extra,frames){
   if(now-w.t>GB_WARM_MAX_MS) return gbWarmSkip(w,"old");
   if(w.key!==gbWarmKey()) return gbWarmSkip(w,"moved");
   var look=typeof extra.visualUser==="string"&&typeof _GB_LOOK_WORDS!=="undefined"&&_GB_LOOK_WORDS.test(extra.visualUser);
-  if((w.nf>0)!==(frames.length>0)||((look||_rideOn||now<selfMoveUntil)&&w.nf<frames.length)) return gbWarmSkip(w,"frames");
+  if((w.nf>0)!==(frames.length>0)) return gbWarmSkip(w,"frames");
+  /* One frame a turn: words about looking ("what am I holding") need the picture from now, not
+     the one the warm-up took as they started talking. */
+  if(look&&w.nf&&(w.moved||now-w.ft>GB_WARM_LOOK_MS)) return gbWarmSkip(w,"look");
   if(w.nf&&now-w.ft>GB_WARM_MAX_MS) return gbWarmSkip(w,"stale");
   return w; }
 function gbWarmFits(w,c){

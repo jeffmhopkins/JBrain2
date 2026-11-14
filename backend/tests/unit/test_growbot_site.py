@@ -2706,13 +2706,12 @@ def test_a_warm_up_is_taken_once_and_only_when_nothing_moved() -> None:
         "var r={}; function again(){ _gbWarmT=0; _gbWarmBusy=false; gbWarmUp(); }"
         "again(); r.tick=!!gbWarmTake('tick',null,one); r.kept=!!_gbWarm;"
         "r.used=!!gbWarmTake('event',ask,one); r.twice=!!gbWarmTake('event',ask,one);"
-        "again(); r.three=!!gbWarmTake('event',ask,one.concat(one,one));"
-        "again(); r.look=!!gbWarmTake('event',{humanReq:{},visualUser:'look at this'},"
-        "one.concat(one,one));"
-        "again(); r.chat=!!gbWarmTake('event',{humanReq:{},visualUser:'hello'},"
-        "one.concat(one,one));"
-        "again(); selfMoveUntil=Date.now()+5000;"
-        "r.walking=!!gbWarmTake('event',ask,one.concat(one,one)); selfMoveUntil=0;"
+        "var lookAt={humanReq:{},visualUser:'look at this'};"
+        "again(); r.lookNow=!!gbWarmTake('event',lookAt,one);"
+        "again(); _gbWarm.ft-=GB_WARM_LOOK_MS+1; r.look=!!gbWarmTake('event',lookAt,one);"
+        "again(); _gbWarm.moved=true; r.lookMoved=!!gbWarmTake('event',lookAt,one);"
+        "again(); _gbWarm.ft-=GB_WARM_LOOK_MS+1;"
+        "r.chat=!!gbWarmTake('event',{humanReq:{},visualUser:'hello'},one);"
         "again(); r.blindTurn=!!gbWarmTake('event',ask,[]);"
         "again(); _gbWarm.ft-=GB_WARM_MAX_MS+1; r.stale=!!gbWarmTake('event',ask,one);"
         "again(); _live.scratch.traces.push({t:Date.now(),u:'x',a:'y'});"
@@ -2730,17 +2729,17 @@ def test_a_warm_up_is_taken_once_and_only_when_nothing_moved() -> None:
         "kept": True,
         "used": True,
         "twice": False,
-        "three": True,
+        "lookNow": True,
         "look": False,
+        "lookMoved": False,
         "chat": True,
-        "walking": False,
         "blindTurn": False,
         "stale": False,
         "moved": False,
         "old": False,
         "eye": False,
         "did": False,
-        "why": ["frames", "frames", "frames", "stale", "moved", "old", "moved", "moved"],
+        "why": ["look", "look", "frames", "stale", "moved", "old", "moved", "moved"],
     }
 
 
@@ -2926,7 +2925,8 @@ def test_the_history_reads_the_same_from_turn_to_turn() -> None:
         "var kept=[];"
         "for(var j=1;j<turns.length;j++){ var a=turns[j-1], b=turns[j], k=0;"
         " while(k<a.length&&k<b.length&&a[k]===b[k]) k++; kept.push(k); }"
-        "console.log(JSON.stringify({kept:kept,last:turns[turns.length-1],"
+        "N=12;var grown=gbHist(T).length/2;"
+        "console.log(JSON.stringify({kept:kept,last:turns[turns.length-1],grown:grown,"
         "lens:turns.map(function(t){ return t.length/2; })}));"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
@@ -2940,6 +2940,8 @@ def test_the_history_reads_the_same_from_turn_to_turn() -> None:
     last = got["last"]
     assert last[0] == "[earlier] q10" and last[1] == '{"say":"a10"}'
     assert last[4] == "[60s ago] q12" and last[6] == "[30s ago] q13"
+    # A switch to grown-up talk gets its whole window at once, not one exchange a turn.
+    assert got["grown"] == 12
 
 
 def test_the_warm_up_builds_the_system_text_as_the_turn_does() -> None:
