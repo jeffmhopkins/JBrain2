@@ -157,13 +157,23 @@ class JobManager:
     # -- queries -----------------------------------------------------------------
 
     def list(self) -> list[Job]:
+        for job in self._jobs.values():
+            self._refresh_phase(job)
         return list(self._jobs.values())
 
     def get(self, jid: str) -> Job:
         job = self._jobs.get(jid)
         if job is None:
             raise JobError(f"unknown job: {jid}")
+        self._refresh_phase(job)
         return job
+
+    def _refresh_phase(self, job: Job) -> None:
+        # Without this a running job showed "clone" its whole run, which read as stuck.
+        if job.state in LIVE_STATES:
+            with contextlib.suppress(OSError):
+                if phase := (self._state_root / job.id / "phase").read_text().strip():
+                    job.phase = phase
 
     def _live_count(self) -> int:
         return sum(1 for j in self._jobs.values() if j.state in LIVE_STATES)
@@ -231,6 +241,8 @@ class JobManager:
         self._killing.discard(jid)
         job.finished_at = _now()
 
+        # A killed job never writes status.json; this keeps the phase it was killed in.
+        self._refresh_phase(job)
         status = _read_json(state / "status.json")
         rc = status.get("rc") if status else None
         if status and "phase" in status:

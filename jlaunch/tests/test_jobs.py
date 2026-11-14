@@ -3,6 +3,8 @@ concurrency, reaper-exemption, artifact collection. Fast (each fake job is quick
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from jlaunch_ctl.jobs import BusyError, JobError
@@ -56,6 +58,22 @@ async def test_phase_failure_records_failing_phase(manager, register_spec) -> No
     done = await wait_terminal(manager, job.id)
     assert done.state == "failed"
     assert done.phase == "boom"
+
+
+async def test_a_running_job_reports_its_current_phase(manager, register_spec) -> None:
+    phases = (Phase("first", "true"), Phase("second", "sleep 30"))
+    register_spec("test_livephase", phases)
+    job = await manager.start("test_livephase")
+    for _ in range(100):
+        if manager.get(job.id).phase == "second":
+            break
+        await asyncio.sleep(0.05)
+    assert manager.get(job.id).phase == "second"
+    assert [j.phase for j in manager.list() if j.id == job.id] == ["second"]
+    await manager.kill(job.id)
+    done = await wait_terminal(manager, job.id)
+    assert done.state == "killed"
+    assert done.phase == "second"
 
 
 async def test_stop_marks_killed(manager, register_spec) -> None:
