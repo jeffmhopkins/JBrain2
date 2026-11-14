@@ -9,8 +9,9 @@ the code-defined spec registry holds, one job at a time, exactly as the PWA's St
 deleting a finished run (owner, 2026-11-14: "delete bad runs ... via debug token"), which
 refuses a live one; the owner's note on a run; archiving a job type; and refreshing the job
 types from the training repo's jobs.toml (owner, 2026-11-14: "send jobs to my server" with
-no update), which can only pick a config for the fixed GrowBot pipeline. Stopping a run
-stays with the owner.
+no update), which can only pick a config for the fixed GrowBot pipeline; and stopping a run
+(owner, 2026-11-14: "add the ability to stop runs to your debug token"), the PWA's graceful
+Stop, so a bad run can end without the owner. The hard Kill stays with the owner.
 The bytes come back exactly as the owner's routes serve them (`jlaunch.py`).
 """
 
@@ -42,10 +43,19 @@ async def jlaunch_start(
     return await jlaunch.start(request, body.spec, _OWNER_CTX)
 
 
+@router.post("/jobs/{jid}/stop")
+async def jlaunch_stop(jid: str, request: Request, _p: DebugDep) -> dict[str, Any]:
+    """**Stop a run**, as the PWA's Stop does: SIGTERM to its process group, after which it
+    finishes as `killed`. Returns the job; a finished one is left as it was. 404 for an
+    unknown job."""
+    request.state.debug_detail = f"jlaunch stop {jid}"
+    return await jlaunch.control(request, jid, "stop", _OWNER_CTX)
+
+
 @router.delete("/jobs/{jid}", status_code=204)
 async def jlaunch_delete(jid: str, request: Request, _p: DebugDep) -> None:
     """**Delete a finished run**: its checkout, scratch, result and share links, as the
-    PWA's Delete run does. 409 while the job is still live (stop it first, from the PWA)."""
+    PWA's Delete run does. 409 while the job is still live (stop it first)."""
     jlaunch._valid_id(jid)
     request.state.debug_detail = f"jlaunch delete {jid}"
     await jlaunch.delete(request, jid, _OWNER_CTX)
