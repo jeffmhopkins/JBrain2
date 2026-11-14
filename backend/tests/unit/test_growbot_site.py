@@ -3622,3 +3622,33 @@ def test_a_sound_behind_the_words_becomes_the_ears_newest_hearing() -> None:
     # An older clip never replaces newer hearing, the namer's own rule.
     assert got["kept"] == "newer"
     assert got["logs"] == [["listen", {"trig": "words", "n": "piano, dog"}]]
+
+
+def test_a_doubtful_name_folds_short_or_faint_into_its_own_doubt() -> None:
+    """The box names a sound as a likelihood; the ear's short and quiet wrappers would read
+    "a faint sound: a noise that might be dog", so a hedged name takes the word instead."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    start = page.index("var _hedge=")
+    end = page.index("\n", page.index('_shown="a faint sound: "+_shown;', start))
+    code = page[start:end]
+    script = (
+        "function shown(n,_short,_quiet){ var _shown=n; "
+        f"{code}\n return _shown; }}"
+        "console.log(JSON.stringify(["
+        "shown('a noise that might be dog',false,true),"
+        "shown('what sounds like click',true,false),"
+        "shown('a noise that might be dog',false,false),"
+        "shown('a click',true,false),"
+        "shown('a hum',false,true)]));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout) == [
+        "a faint noise that might be dog",
+        "a short sound like click",
+        "a noise that might be dog",
+        "a short sound (a click)",
+        "a faint sound: a hum",
+    ]

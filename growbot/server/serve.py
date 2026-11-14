@@ -2924,7 +2924,7 @@ def _sound_words(
             continue
         word = label.lower()
         words = _words(word)
-        if any(words <= _words(s) or _words(s) <= words for s in said):
+        if any(words <= heard or heard <= words for heard in map(_words, said)):
             continue
         said.append(word)
         top = max(top, score)
