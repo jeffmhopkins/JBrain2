@@ -711,7 +711,8 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   files with the jobs refresh (`jlaunch_ctl/policy_index.py`, checked against their git blob
   ids). The *Trained walks* sheet's Refresh (`POST /growbot/policies/refresh`, with a debug
   twin) makes the library match: it adds new entries, swaps changed weights in place, and
-  removes dropped entries. Walks added from a job are left alone.
+  removes dropped entries. Walks added from a job are left alone. A mistake in the index
+  keeps the last good walks and never holds up the Jobs list.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic. Its store
   landed early with the brain log (§2 "Brain log", migration 0262); reading it in the PWA and

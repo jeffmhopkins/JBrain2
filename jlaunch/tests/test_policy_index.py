@@ -4,6 +4,8 @@ and that a stored copy is served only while it still is the repo's blob."""
 from __future__ import annotations
 
 import json
+import os
+import shutil
 
 import httpx
 import pytest
@@ -15,7 +17,7 @@ from jlaunch_ctl.config import Settings
 from jlaunch_ctl.jobs import JobManager
 from jlaunch_ctl.policy_index import PolicyIndexError, blob_id, parse
 from jlaunch_ctl.terminal import TerminalRegistry
-from tests.test_catalog import FakeRepo
+from tests.test_catalog import FakeRepo, _job
 
 LOOK = b'{"obs_spec": [], "layers": [[1]]}'
 WALK = b'{"obs_spec": [], "layers": [[2]]}'
@@ -140,16 +142,34 @@ async def test_refresh_stores_the_policies_and_reads_each_blob_once(tmp_path) ->
     ]
 
 
-async def test_a_bad_index_fails_the_whole_refresh(tmp_path) -> None:
+async def test_a_bad_index_keeps_the_jobs_and_the_last_good_policies(tmp_path) -> None:
     repo = FakeRepo()
     repo.index, repo.files = INDEX, dict(FILES)
     cat = Catalog(str(tmp_path), fetch=repo)
     await cat.refresh()
     repo.index = _entry(file="policies/nope/policy_final.json")
-    with pytest.raises(CatalogError) as err:
-        await cat.refresh()
-    assert err.value.invalid and "isn't in the repo" in str(err.value)
+    repo.manifest, repo.commit = _job(name="growbot_new"), "b" * 40
+    got = await cat.refresh()
+    assert got["jobs"] == ["growbot_new"] and cat.commit == "b" * 40
+    assert "isn't in the repo" in str(got["policy_error"])
     assert [p["slug"] for p in cat.policies()] == ["look-v1", "walk-v2"]
+    assert cat.policy_bytes("walk-v2") == WALK
+    # Fixed in the repo: the error clears.
+    repo.index = INDEX
+    assert (await cat.refresh())["policy_error"] is None
+
+
+async def test_a_fetch_that_cant_read_blobs_keeps_the_jobs(tmp_path) -> None:
+    repo = FakeRepo()
+    repo.index, repo.files = INDEX, dict(FILES)
+
+    async def blind(dest):
+        snap = await FakeRepo.__call__(repo, dest)
+        return snap.__class__(**{**snap.__dict__, "read_blob": None})
+
+    cat = Catalog(str(tmp_path), fetch=blind)
+    got = await cat.refresh()
+    assert got["jobs"] and "can't read kept policies" in str(got["policy_error"])
 
 
 async def test_a_blob_that_reads_back_wrong_is_refused(tmp_path) -> None:
@@ -165,8 +185,8 @@ async def test_a_blob_that_reads_back_wrong_is_refused(tmp_path) -> None:
         return snap.__class__(**{**snap.__dict__, "read_blob": read})
 
     cat = Catalog(str(tmp_path), fetch=lying)
-    with pytest.raises(CatalogError, match="didn't read back"):
-        await cat.refresh()
+    got = await cat.refresh()
+    assert "didn't read back" in str(got["policy_error"])
     assert cat.policies() == []
 
 
@@ -184,6 +204,31 @@ async def test_a_tampered_copy_isnt_served(tmp_path) -> None:
     # The next refresh puts the repo's file back.
     await cat.refresh()
     assert cat.policy_bytes("look-v1") == LOOK
+
+
+async def test_a_job_cant_plant_a_link_or_fifo_in_the_store(tmp_path) -> None:
+    repo = FakeRepo()
+    repo.index, repo.files = INDEX, dict(FILES)
+    cat = Catalog(str(tmp_path), fetch=repo)
+    await cat.refresh()
+    store = tmp_path / "policies"
+    look = store / f"{blob_id(LOOK)}.json"
+    look.unlink()
+    os.mkfifo(look)
+    with pytest.raises(CatalogError, match="isn't on the box"):
+        cat.policy_bytes("look-v1")
+    look.unlink()
+    (tmp_path / "elsewhere").mkdir()
+    (tmp_path / "elsewhere" / "keep.txt").write_text("x")
+    look.symlink_to(tmp_path / "elsewhere" / "keep.txt")
+    with pytest.raises(CatalogError, match="isn't on the box"):
+        cat.policy_bytes("look-v1")
+    # The whole folder swapped for a link: it's replaced, never followed or pruned into.
+    shutil.rmtree(store)
+    store.symlink_to(tmp_path / "elsewhere")
+    await cat.refresh()
+    assert not store.is_symlink() and cat.policy_bytes("look-v1") == LOOK
+    assert (tmp_path / "elsewhere" / "keep.txt").exists()
 
 
 async def test_the_policies_survive_a_restart(tmp_path) -> None:
@@ -219,7 +264,7 @@ async def test_the_routes(tmp_path) -> None:
     ) as ac:
         assert (await ac.get("/catalog/policies")).status_code == 401
         listed = (await ac.get("/catalog/policies", headers=_AUTH)).json()
-        assert listed["commit"] == repo.commit
+        assert listed["commit"] == repo.commit and listed["error"] is None
         assert [p["slug"] for p in listed["policies"]] == ["look-v1", "walk-v2"]
         got = await ac.get("/catalog/policies/look-v1", headers=_AUTH)
         assert got.content == LOOK

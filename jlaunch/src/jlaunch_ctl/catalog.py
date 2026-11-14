@@ -13,6 +13,10 @@ records what it trained on. Starting a repo job refreshes first, so a config fix
 a minute ago is what runs. The last good catalog is kept on the work volume: a restart
 or a failed fetch never empties the Jobs list, and a job dropped from the manifest stays
 resolvable (retired) so its old runs' results and live folders still serve.
+
+The same fetch reads the kept policies (``policies/index.toml``, policy_index.py) and
+copies the files it lists onto the work volume, one per git blob id. A mistake there
+never holds up the jobs: the last good policies stay and the error is reported apart.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import tempfile
 import tomllib
 from collections.abc import Awaitable, Callable
@@ -80,6 +85,8 @@ class Snapshot:
     # every plain file under policies/ as {path: (blob id, size)}, and a reader for one
     # blob's bytes, valid only while the fetch's scratch clone exists.
     policy_index: str = ""
+    # Why the index couldn't even be read (it's too big); the jobs still are.
+    policy_problem: str = ""
     policy_blobs: dict[str, tuple[str, int]] = field(default_factory=dict)
     read_blob: Callable[[str], Awaitable[bytes]] | None = None
 
@@ -238,12 +245,13 @@ async def git_fetch(dest: Path) -> Snapshot:
     kept = _plain_blobs_sized(
         await _run([*git, "ls-tree", "-r", "-l", "-z", commit, "--", "policies/"], env)
     )
-    index = ""
+    index, problem = "", ""
     if policy_index.INDEX in kept:
         blob, isize = kept[policy_index.INDEX]
         if isize > policy_index.MAX_INDEX_BYTES:
-            raise CatalogError(f"{policy_index.INDEX} is over 64 KB", invalid=True)
-        index = await _run([*git, "cat-file", "blob", blob], env)
+            problem = f"{policy_index.INDEX} is over 64 KB"
+        else:
+            index = await _run([*git, "cat-file", "blob", blob], env)
 
     async def read_blob(blob: str) -> bytes:
         return await _run_bytes([*git, "cat-file", "blob", blob], env)
@@ -253,6 +261,7 @@ async def git_fetch(dest: Path) -> Snapshot:
         commit=commit,
         configs=configs,
         policy_index=index,
+        policy_problem=problem,
         policy_blobs=kept,
         read_blob=read_blob,
     )
@@ -324,6 +333,8 @@ class Catalog:
         self.commit = ""
         self.fetched_at: str | None = None
         self.error: str | None = None
+        # Why the last refresh couldn't take the repo's policies (its jobs still did).
+        self.policy_error: str | None = None
         self._listed: dict[str, dict[str, object]] = {}
         # Every entry ever listed, by name, with the commit it was last listed at — a
         # retired job still resolves so its runs keep their results.
@@ -344,6 +355,7 @@ class Catalog:
             "error": self.error,
             "jobs": sorted(self._listed),
             "policies": list(self._policies),
+            "policy_error": self.policy_error,
         }
 
     def policies(self) -> list[dict[str, object]]:
@@ -358,7 +370,7 @@ class Catalog:
             raise CatalogError(f"no kept policy {slug}")
         blob = str(entry["blob"])
         try:
-            data = (self._policy_dir / f"{blob}.json").read_bytes()
+            data = self._read_stored(blob)
         except OSError as exc:
             raise CatalogError(f"kept policy {slug} isn't on the box") from exc
         if policy_index.blob_id(data) != blob:
@@ -422,7 +434,7 @@ class Catalog:
             # to stand in for the repo's files mid-read.
             before = set(self._listed)
             try:
-                snapshot, entries, kept = await self._read()
+                snapshot, entries, kept, policy_error = await self._read()
                 listed = {str(e["name"]): e for e in entries}
                 known = {
                     **self._known,
@@ -431,7 +443,11 @@ class Catalog:
                 fetched_at = datetime.now(UTC).isoformat()
                 # Saved before it's swapped in: a full disk leaves memory and the file
                 # agreeing on the old list.
-                policies = {str(e["slug"]): e for e in kept}
+                policies = (
+                    self._policies
+                    if kept is None
+                    else {str(e["slug"]): e for e in kept}
+                )
                 self._save(snapshot.commit, fetched_at, listed, known, policies)
             except (CatalogError, OSError, ValueError) as exc:
                 err = exc if isinstance(exc, CatalogError) else CatalogError(str(exc))
@@ -440,6 +456,7 @@ class Catalog:
                 raise err from exc
             self._listed, self._known, self._policies = listed, known, policies
             self.commit, self.fetched_at, self.error = snapshot.commit, fetched_at, None
+            self.policy_error = policy_error
             self._publish()
             self._prune_policy_files()
             after = set(listed)
@@ -454,7 +471,11 @@ class Catalog:
 
     async def _read(
         self,
-    ) -> tuple[Snapshot, list[dict[str, object]], list[dict[str, object]]]:
+    ) -> tuple[
+        Snapshot, list[dict[str, object]], list[dict[str, object]] | None, str | None
+    ]:
+        """The commit, its jobs, and its kept policies with their files stored — or None
+        and why, when the policies can't be taken (the jobs still are)."""
         # Off the work volume: a running job can write there, and must not be able to
         # stand in for the repo's files mid-read.
         scratch = Path(tempfile.mkdtemp(prefix="jlaunch-catalog-"))
@@ -462,33 +483,67 @@ class Catalog:
             snapshot = await self._fetch(scratch / "repo")
             jobs = parse_manifest(snapshot)
             try:
+                if snapshot.policy_problem:
+                    raise policy_index.PolicyIndexError(snapshot.policy_problem)
                 kept = policy_index.parse(snapshot.policy_index, snapshot.policy_blobs)
-            except policy_index.PolicyIndexError as exc:
-                raise CatalogError(str(exc), invalid=True) from exc
-            for entry in kept:
-                await self._store_policy(snapshot, str(entry["blob"]))
-            return snapshot, jobs, kept
+                for entry in kept:
+                    await self._store_policy(snapshot, str(entry["blob"]))
+            except (policy_index.PolicyIndexError, CatalogError, OSError) as exc:
+                _log.warning("kept policies not refreshed: %s", exc)
+                return snapshot, jobs, None, str(exc)
+            return snapshot, jobs, kept, None
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 
+    def _read_stored(self, blob: str) -> bytes:
+        # The work volume is writable by a running job, so a stored copy is opened
+        # without following a link or blocking on a fifo, and read only if it's a
+        # regular file no bigger than a policy can be.
+        self._own_policy_dir()
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        fd = os.open(self._policy_dir / f"{blob}.json", flags)
+        with os.fdopen(fd, "rb") as fh:
+            st = os.fstat(fh.fileno())
+            if (
+                not stat.S_ISREG(st.st_mode)
+                or st.st_size > policy_index.MAX_POLICY_BYTES
+            ):
+                raise OSError(f"{blob}.json isn't a stored policy")
+            return fh.read(policy_index.MAX_POLICY_BYTES + 1)
+
+    def _own_policy_dir(self) -> None:
+        """The policies folder, as a real directory: a link a job put in its place is
+        removed rather than followed."""
+        if self._policy_dir.is_symlink() or (
+            self._policy_dir.exists() and not self._policy_dir.is_dir()
+        ):
+            self._policy_dir.unlink()
+        self._policy_dir.mkdir(parents=True, exist_ok=True)
+
     async def _store_policy(self, snapshot: Snapshot, blob: str) -> None:
-        dest = self._policy_dir / f"{blob}.json"
         with contextlib.suppress(OSError):
-            if policy_index.blob_id(dest.read_bytes()) == blob:
+            if policy_index.blob_id(self._read_stored(blob)) == blob:
                 return
         if snapshot.read_blob is None:
             raise CatalogError("the fetch can't read kept policies")
         data = await snapshot.read_blob(blob)
         if policy_index.blob_id(data) != blob:
             raise CatalogError("a kept policy didn't read back as the repo's file")
-        self._policy_dir.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(".tmp")
-        tmp.write_bytes(data)
-        tmp.replace(dest)
+        self._own_policy_dir()
+        fd, tmp = tempfile.mkstemp(dir=self._policy_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            os.replace(tmp, self._policy_dir / f"{blob}.json")
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
 
     def _prune_policy_files(self) -> None:
         keep = {f"{e['blob']}.json" for e in self._policies.values()}
         with contextlib.suppress(OSError):
+            self._own_policy_dir()
             for path in self._policy_dir.iterdir():
                 if path.name not in keep:
                     path.unlink(missing_ok=True)

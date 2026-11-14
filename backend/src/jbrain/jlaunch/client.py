@@ -207,6 +207,8 @@ class FakeJlaunchClient:
         self.live: dict[str, dict[str, tuple[bytes, str]]] = {}
         # The training repo's kept policies: (index entry, bytes) by slug.
         self.kept: dict[str, tuple[dict[str, Any], bytes]] = {}
+        # Why the launcher couldn't take the repo's index, as /catalog/policies says.
+        self.kept_error: str | None = None
         # What the next catalog refresh answers: a result, or an error to raise.
         self.refresh_result: dict[str, Any] | JlaunchError = {
             "commit": "a" * 40,
@@ -302,7 +304,11 @@ class FakeJlaunchClient:
         return found
 
     async def list_kept_policies(self) -> dict[str, Any]:
-        return {"commit": "a" * 40, "policies": [e for e, _b in self.kept.values()]}
+        return {
+            "commit": "a" * 40,
+            "policies": [e for e, _b in self.kept.values()],
+            "error": self.kept_error,
+        }
 
     async def get_kept_policy(self, slug: str) -> bytes:
         if slug not in self.kept:

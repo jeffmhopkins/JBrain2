@@ -94,7 +94,8 @@ def check_entry(item: object, i: int) -> dict[str, object]:
     if not isinstance(item, dict):
         raise bad("not a table")
     if set(item) - _KEYS - {"blob", "bytes"}:
-        raise bad(f"unknown key {', '.join(sorted(set(item) - _KEYS))}")
+        extra = set(item) - _KEYS - {"blob", "bytes"}
+        raise bad(f"unknown key {', '.join(sorted(extra))}")
     if _REQUIRED - set(item):
         raise bad(f"missing {', '.join(sorted(_REQUIRED - set(item)))}")
     for key in _KEYS:

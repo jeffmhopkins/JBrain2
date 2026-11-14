@@ -339,7 +339,7 @@ async def test_a_walk_names_a_library_policy_for_the_creature(
 
 
 def _keep(jl: FakeJlaunchClient, slug: str, title: str, body: bytes, job: str) -> None:
-    blob = hashlib.sha1(body, usedforsecurity=False).hexdigest()
+    blob = hashlib.sha1(b"blob %d\0" % len(body) + body, usedforsecurity=False).hexdigest()
     jl.kept[slug] = ({"slug": slug, "title": title, "job": job, "blob": blob}, body)
 
 
@@ -393,3 +393,48 @@ async def test_kept_policy_refresh_errors_and_debug_twin(tmp_path: Path) -> None
     jl.list_kept_policies = down  # type: ignore[method-assign]
     assert client.post("/api/growbot/policies/refresh").status_code == 502
     assert [r.name for r, _p in lib.rows.values()] == ["Look v1"]
+
+
+async def test_kept_sync_heals_races_and_odd_listings(tmp_path: Path) -> None:
+    client, lib, jl, _ = _app(tmp_path)
+    _keep(jl, "look-v1", "Look v1", FINAL, "growbot_look")
+    client.post("/api/growbot/policies/refresh")
+    # A second process's sync added the same kept walk again: the extra row goes.
+    ((row, body),) = lib.rows.values()
+    await lib.add(lib.contexts[0], "Look v1", body, row.bytes, row.source_job, row.source_spec)
+    assert len(lib.rows) == 2
+    client.post("/api/growbot/policies/refresh")
+    assert [r.name for r, _p in lib.rows.values()] == ["Look v1"]
+
+    # The launcher re-read the repo between the list and the read: skipped, not mis-tagged.
+    entry, _body = jl.kept["look-v1"]
+    newer = json.dumps(policy(facing="camera")).encode()
+    jl.kept["look-v1"] = ({**entry, "blob": "f" * 40}, newer)
+    got = client.post("/api/growbot/policies/refresh").json()
+    assert got["updated"] == [] and "changed while being read" in got["skipped"][0]
+
+    # A row deleted mid-sync isn't reported as updated.
+    async def gone(*_a: Any, **_k: Any) -> bool:
+        return False
+
+    _keep(jl, "look-v1", "Look v1", newer, "growbot_look")
+    lib.replace_policy = gone  # type: ignore[method-assign]
+    assert client.post("/api/growbot/policies/refresh").json()["updated"] == []
+
+    # A listing entry that breaks the launcher's own rules is ignored, and so its row goes.
+    jl.kept = {
+        "Bad Slug": (
+            {"slug": "Bad Slug", "title": "x", "job": "growbot_look", "blob": "a" * 40},
+            FINAL,
+        )
+    }
+    assert client.post("/api/growbot/policies/refresh").json()["removed"] == ["Look v1"]
+    assert lib.rows == {}
+
+
+async def test_a_bad_index_on_the_launcher_is_a_422(tmp_path: Path) -> None:
+    client, lib, jl, _ = _app(tmp_path)
+    jl.kept_error = "policies/index.toml policy 1: policies/x/y.json isn't in the repo"
+    bad = client.post("/api/growbot/policies/refresh")
+    assert bad.status_code == 422 and "isn't in the repo" in bad.json()["detail"]
+    assert lib.rows == {}

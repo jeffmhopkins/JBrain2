@@ -536,6 +536,15 @@ async def test_a_real_refresh_keeps_the_policies(tmp_path, local_repo):
     assert cat.policy_bytes("look-v1") == b'{"w": [1]}'
 
 
+async def test_a_huge_policy_index_keeps_the_jobs(tmp_path, local_repo):
+    (local_repo / "policies" / "index.toml").write_text("#" * (65 * 1024))
+    _git(local_repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "i")
+    cat = Catalog(str(tmp_path / "state"))
+    got = await cat.refresh()
+    assert got["jobs"] and got["policies"] == []
+    assert "over 64 KB" in str(got["policy_error"])
+
+
 async def test_git_fetch_without_a_manifest(tmp_path, local_repo):
     _git(local_repo, "rm", "-q", "jobs.toml")
     os.symlink("configs/look.toml", local_repo / "jobs.toml")

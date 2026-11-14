@@ -119,7 +119,11 @@ def create_app(
         """The kept policies the training repo's policies/index.toml lists."""
         if catalog is None:
             raise HTTPException(status_code=404, detail="no job catalog")
-        return {"commit": catalog.commit, "policies": catalog.policies()}
+        return {
+            "commit": catalog.commit,
+            "policies": catalog.policies(),
+            "error": catalog.policy_error,
+        }
 
     @authed.get("/catalog/policies/{slug}")
     def kept_policy(slug: str) -> Response:

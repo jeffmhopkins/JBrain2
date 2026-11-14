@@ -7,16 +7,20 @@ file into the library (`jbrain.growbot.policies`), so it outlives the job.
 
 - `router` — the owner: the library (list, add from a job, rename, delete) and the finished
   jobs it can add from.
-- `debug_router` — the same reads and the add, through the debug token (CLAUDE.md #10).
+- `debug_router` — the same reads, the add and the refresh, through the debug token
+  (CLAUDE.md #10).
 - Kept policies (owner, 2026-11-14: "finished policies should get saved to our training repo,
   and the growbot GUI ... should pull from that on a refresh"): the ones the training repo's
-  `policies/index.toml` lists, read by the launcher. A refresh syncs them into the library.
+  `policies/index.toml` lists, read by the launcher. A refresh syncs them into the library;
+  the index decides, so a kept walk deleted here comes back until the index drops it.
 - `internal_router` — the sidecar (`growbot.token`): one policy's JSON, which the creature
   page loads when the Body tab drives it.
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import re
 from datetime import datetime
 from typing import Annotated, Any, cast
@@ -102,6 +106,13 @@ _KEPT_PREFIX = "repo:"
 _KEPT_RE = re.compile(r"^repo:([a-z0-9][a-z0-9-]{0,47})@([0-9a-f]{40})$")
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 _BLOB_RE = re.compile(r"^[0-9a-f]{40}$")
+# One sync at a time in this process: two at once would both add a new kept walk. A second
+# process racing is still caught, as the next sync drops the extra row.
+_SYNC_LOCK = asyncio.Lock()
+
+
+def _git_blob_id(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
 
 
 class SourceOut(BaseModel):
@@ -198,18 +209,30 @@ async def _sync_kept(request: Request, ctx: SessionContext) -> KeptSyncOut:
     add new ones, swap in a changed file, remove the ones it dropped. A row's name and the
     owner's choices about it are never touched, and walks added from a job are left alone.
     One file that isn't a drivable policy is skipped, not fatal."""
+    async with _SYNC_LOCK:
+        return await _sync_kept_locked(request, ctx)
+
+
+async def _sync_kept_locked(request: Request, ctx: SessionContext) -> KeptSyncOut:
     client = jlaunch._client(request)
     await jlaunch.refresh_catalog(request)
     try:
         listing = await client.list_kept_policies()
     except JlaunchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if listing.get("error"):
+        # The launcher kept its last good policies; syncing those would hide the mistake.
+        raise HTTPException(status_code=422, detail=str(listing["error"]))
     repo = _repo(request)
     have: dict[str, tuple[PolicyRow, str]] = {}
     for row in await repo.list(ctx):
         m = _KEPT_RE.fullmatch(row.source_job)
-        if m:
-            have[m.group(1)] = (row, m.group(2))
+        if not m:
+            continue
+        if m.group(1) in have:
+            await repo.delete(ctx, row.id)
+            continue
+        have[m.group(1)] = (row, m.group(2))
     out = KeptSyncOut(
         commit=str(listing.get("commit") or ""), added=[], updated=[], removed=[], skipped=[]
     )
@@ -235,13 +258,17 @@ async def _sync_kept(request: Request, ctx: SessionContext) -> KeptSyncOut:
         except (JlaunchError, PolicyError) as exc:
             out.skipped.append(f"{title}: {exc}")
             continue
+        if _git_blob_id(raw) != blob:
+            # The launcher re-read the repo between the list and this read.
+            out.skipped.append(f"{title}: it changed while being read; refresh again")
+            continue
         tag = f"{_KEPT_PREFIX}{slug}@{blob}"
         if current is None:
             await repo.add(ctx, title, policy, len(raw), tag, family)
             out.added.append(title)
         else:
-            await repo.replace_policy(ctx, current[0].id, policy, len(raw), tag)
-            out.updated.append(current[0].name)
+            if await repo.replace_policy(ctx, current[0].id, policy, len(raw), tag):
+                out.updated.append(current[0].name)
     for slug, (row, _blob) in have.items():
         if slug not in listed and await repo.delete(ctx, row.id):
             out.removed.append(row.name)
