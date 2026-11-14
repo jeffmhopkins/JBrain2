@@ -43,6 +43,7 @@ async def jlaunch_start(
 async def jlaunch_delete(jid: str, request: Request, _p: DebugDep) -> None:
     """**Delete a finished run**: its checkout, scratch, result and share links, as the
     PWA's Delete run does. 409 while the job is still live (stop it first, from the PWA)."""
+    jlaunch._valid_id(jid)
     request.state.debug_detail = f"jlaunch delete {jid}"
     await jlaunch.delete(request, jid, _OWNER_CTX)
 

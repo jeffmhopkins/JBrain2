@@ -48,13 +48,19 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   const [deleting, setDeleting] = useState<string | null>(null);
   const foreground = useForeground();
 
+  // Only the newest refresh may land: a poll that started before a delete must not put
+  // the deleted row back when it finishes after the delete's own refresh.
+  const seq = useRef(0);
   const refresh = useCallback(async () => {
+    const mine = ++seq.current;
     try {
       const [specs, jobs] = await Promise.all([api.jlaunchSpecs(), api.jlaunchJobs()]);
-      setState({ kind: "ready", specs, jobs });
+      if (mine === seq.current) setState({ kind: "ready", specs, jobs });
     } catch (err) {
+      if (mine !== seq.current) return;
       if (err instanceof ApiError && err.status === 404) setState({ kind: "disabled" });
-      else setState({ kind: "error" });
+      // A blip during the live poll keeps the last good list; the next poll retries.
+      else setState((prev) => (prev.kind === "ready" ? prev : { kind: "error" }));
     }
   }, []);
 

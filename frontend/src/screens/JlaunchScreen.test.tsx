@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import type { JlaunchJob, JlaunchSpec } from "../jlaunch/types";
 import { JlaunchScreen } from "./JlaunchScreen";
 
@@ -56,5 +56,17 @@ describe("JlaunchScreen", () => {
     expect(screen.queryByRole("button", { name: "Delete run Run a1" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Delete run Run b2" }));
     await waitFor(() => expect(del).toHaveBeenCalledWith("b2"));
+  });
+
+  it("tells the owner to stop a run the server says is still live", async () => {
+    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC]);
+    vi.spyOn(api, "jlaunchJobs").mockResolvedValue([job("b2", "failed")]);
+    vi.spyOn(api, "jlaunchDelete").mockRejectedValue(new ApiError(409, "still running"));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
+    render(<JlaunchScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /Runs/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete run Run b2" }));
+    await waitFor(() => expect(alert).toHaveBeenCalledWith(expect.stringMatching(/stop it first/)));
   });
 });
