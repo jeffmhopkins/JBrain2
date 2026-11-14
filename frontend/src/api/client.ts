@@ -7255,7 +7255,7 @@ export const api = {
     return (await request("/api/jcode/share/redeem", jsonInit("POST", { token }))).json();
   },
 
-  // --- Math launcher (jlaunch). Owner-only; routes 404 when the launcher isn't enabled. ---
+  // --- Jobs launcher (jlaunch). Owner-only; routes 404 when the launcher isn't enabled. ---
 
   /** The registered job specs (also the launcher-tile enablement probe: 404 = disabled). */
   async jlaunchSpecs(): Promise<JlaunchSpec[]> {

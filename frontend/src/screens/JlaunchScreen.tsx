@@ -1,4 +1,4 @@
-// The Math launcher (jlaunch) — the self-contained full-screen overlay the "Math" tile
+// The Jobs launcher (jlaunch) — the self-contained full-screen overlay the "Jobs" tile
 // opens (like JcodeScreen/Tasks). It lists the registered computations + past runs; picking
 // one opens the tabbed job screen (Overview · Terminal · Result) with start/stop/kill, a live
 // xterm, a Live card for a job that keeps a live folder, and — once a run finishes — a
@@ -90,7 +90,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
           <ChevronLeftIcon size={22} />
         </button>
         <h2 className="jl-bar-title">
-          Math<span className="jl-dot">.</span>
+          Jobs<span className="jl-dot">.</span>
         </h2>
       </header>
       <EngineBanner />
@@ -105,12 +105,9 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
         <div className="jl-body">
           <div className="jl-lab">Computations</div>
           {specs.map((spec) => (
-            <button
-              key={spec.name}
-              type="button"
-              className="jl-spec"
-              onClick={() => void start(spec.name)}
-            >
+            // Only the Start button starts a run: a stray tap on the card while scrolling
+            // must not launch hours of work (owner, 2026-11-14).
+            <div key={spec.name} className="jl-spec">
               <span className="jl-spec-main">
                 <span className="jl-spec-title">{spec.title}</span>
                 <span className="jl-spec-meta">
@@ -119,8 +116,15 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                 </span>
                 <span className="jl-spec-note">{spec.notes}</span>
               </span>
-              <span className="jl-spec-start">Start →</span>
-            </button>
+              <button
+                type="button"
+                className="jl-spec-start"
+                onClick={() => void start(spec.name)}
+                aria-label={`Start ${spec.title}`}
+              >
+                Start →
+              </button>
+            </div>
           ))}
 
           <div className="jl-lab jl-lab-mt">Runs</div>

@@ -114,16 +114,21 @@ async def list_specs(_owner: OwnerDep, request: Request) -> list[dict[str, Any]]
 
 @router.post("/jlaunch/jobs", status_code=201)
 async def start_job(body: StartJobRequest, owner: OwnerDep, request: Request) -> dict[str, Any]:
+    return await start(request, body.spec, _owner_ctx(owner.id))
+
+
+async def start(request: Request, spec: str, ctx: SessionContext) -> dict[str, Any]:
+    """Start a registered spec (the owner's Start, or a debug token's) and record it."""
     client = _client(request)
     try:
-        job = await client.start_job(body.spec)
+        job = await client.start_job(spec)
     except JlaunchError as exc:
         if exc.status == 409:
             raise HTTPException(status_code=409, detail="a job is already running") from exc
         if exc.status == 404:
             raise HTTPException(status_code=404, detail="unknown job spec") from exc
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
+    async with scoped_session(_maker(request), ctx) as db:
         await _REPO.upsert(db, job)
     return job
 

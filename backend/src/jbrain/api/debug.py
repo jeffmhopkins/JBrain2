@@ -230,10 +230,12 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # Listed for the same reason as the rest: a morning task stuck in a loop held the
             # whole schedule for an hour while the session could only watch it.
             "tasks.stop",
-            # The job launcher, read-only (`/jlaunch/*`): runs, the console tail, a running
-            # job's live folder (progress, replay, latest weights) and the finished result
-            # as a download. Starting and stopping a run stay with the owner.
+            # The job launcher (`/jlaunch/*`): runs, the console tail, a running job's live
+            # folder (progress, replay, latest weights) and the finished result as a
+            # download; and starting a registered spec (`POST /jlaunch/jobs`), so a training
+            # run the owner asked for can start while they sleep. Stopping stays with them.
             "jlaunch.read",
+            "jlaunch.start",
         ],
     )
 

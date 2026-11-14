@@ -112,7 +112,9 @@ const TILES: Tile[] = [
   // Files sent out as public links: a picture, a video, a zipped site for someone else to open.
   { title: "JShare", icon: <LinkIcon size={24} />, target: "jshare" },
   { title: "Code", icon: <CodeIcon size={24} />, target: "jcode" },
-  { title: "Math", icon: <SigmaIcon size={24} />, target: "jlaunch" },
+  // Long one-shot jobs on the box: math computations and robot training runs alike, so the
+  // tile has a generic name (owner, 2026-11-14: it began as "Math").
+  { title: "Jobs", icon: <SigmaIcon size={24} />, target: "jlaunch" },
   { title: "Radio", icon: <RadioIcon size={24} />, target: "radio" },
   { title: "Ops", icon: <GaugeIcon size={24} />, target: "ops" },
   // The panels in the house, as one door: the messages they carry and the flasher that
@@ -189,7 +191,7 @@ function fetchImageEnabled(): Promise<boolean> {
   return imageEnabledPromise;
 }
 
-// The Math (jlaunch) tile is configuration-gated exactly like Image: the /jlaunch routes
+// The Jobs (jlaunch) tile is configuration-gated exactly like Image: the /jlaunch routes
 // 404 on a box without the launcher enabled, so probe /jlaunch/specs once per session and
 // hide the tile unless it resolves. Same session-cached promise + device-local hydration so
 // reopening never refetches or flashes; a fetch failure (incl. the 404) resolves to false.
@@ -317,7 +319,7 @@ export function Launcher({
   // count jump on open); null only on a device that has never resolved it, where
   // the tile stays hidden until the fetch below confirms enablement.
   const [imageEnabled, setImageEnabled] = useState<boolean | null>(loadImageEnabledCached);
-  // Config gate for the Math (jlaunch) tile — same pattern as Image.
+  // Config gate for the Jobs (jlaunch) tile — same pattern as Image.
   const [jlaunchEnabled, setJlaunchEnabled] = useState<boolean | null>(loadJlaunchEnabledCached);
   // Two gates quiet the poll: a backgrounded PWA, and a launcher buried under a
   // card. Returning to either re-runs this effect — an immediate refetch, then
@@ -651,8 +653,8 @@ export function Launcher({
             }
             // In edit mode a tap does nothing, as on a phone; Done leaves.
             if (editing) return;
-            // Stay open beneath the card: the card slides up over
-            // the launcher, and dismissing it reveals us again.
+            // The app closes the launcher as the card opens, so leaving the card
+            // lands on home (owner, 2026-11-14).
             onNavigate(target);
           }}
         >
