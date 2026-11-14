@@ -12,6 +12,7 @@ computation is a new entry here, no new plumbing.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
 
@@ -249,11 +250,41 @@ GROWBOT_HEADING_WALK = _validate(
 )
 
 
+# The second GrowBot walk (owner, 2026-11-14): tail first, toward what the phone's rear
+# camera sees, standing a little taller, and learning to get up from folded flat. Same
+# repo and pipeline as the heading walk; only the config differs.
+GROWBOT_CAMERA_WALK = _validate(
+    dataclasses.replace(
+        GROWBOT_HEADING_WALK,
+        name="growbot_camera_walk",
+        title="GrowBot camera walk (tail first, toward the camera's view)",
+        phases=(
+            Phase("install", "./install.sh"),
+            Phase("smoke", ".venv/bin/python -m pytest -q"),
+            Phase("train", "./run.sh jlaunch --config configs/camera_walk.toml"),
+            Phase(
+                "package",
+                "cp runs/jlaunch.tar.gz growbot_camera_walk_artifacts.tar.gz",
+            ),
+        ),
+        artifact_path="growbot_camera_walk_artifacts.tar.gz",
+        notes=(
+            "Trains the second walk (configs/camera_walk.toml): it walks tail first, "
+            "toward what the phone's camera sees, stands a few degrees taller, and "
+            "learns to get up from folded flat. The heading error it takes is the "
+            "camera's view of the target. Downloads and the Live card work as for the "
+            "heading walk."
+        ),
+    )
+)
+
+
 SPECS: dict[str, JobSpec] = {
     ERDOS_STRAUS_1E12.name: ERDOS_STRAUS_1E12,
     ERDOS_STRAUS_1E12_NATIVE.name: ERDOS_STRAUS_1E12_NATIVE,
     ERDOS_STRAUS_1E13_NATIVE.name: ERDOS_STRAUS_1E13_NATIVE,
     GROWBOT_HEADING_WALK.name: GROWBOT_HEADING_WALK,
+    GROWBOT_CAMERA_WALK.name: GROWBOT_CAMERA_WALK,
 }
 
 

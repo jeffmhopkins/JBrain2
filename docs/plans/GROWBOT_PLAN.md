@@ -674,6 +674,13 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   which the job screen's Live card shows while it trains (progress, time left, the walk's
   numbers, a 3D replay of the latest checkpoint, its weights), and the finished tarball
   downloads from the Result tab; a debug token reads the same through `/debug/jlaunch`.
+  ✅ The second walk (owner, 2026-11-14: *"stand up with the phone more upright and have him
+  waddle backwards which would be towards where the camera is looking … This way he would be
+  able to like follow faces"*): `configs/camera_walk.toml` in the training repo, run by the
+  Launcher's `growbot_camera_walk` job. It measures the heading error from the tail (the
+  camera's side), pays for standing a few degrees taller (the sim body tops out about 8°
+  above its resting pitch, so a phone wedge is the bigger lever), and starts 3 in 10
+  episodes folded flat so getting up is part of the walk rather than a separate policy.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic. Its store
   landed early with the brain log (§2 "Brain log", migration 0262); reading it in the PWA and
