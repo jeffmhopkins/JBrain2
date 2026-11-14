@@ -461,7 +461,7 @@ def _live_name_ok(name: str) -> bool:
 def _read_text(path: Path) -> str:
     # The job writes these files: a stray non-UTF-8 byte must not raise out of finalize
     # (which then never recorded the end, leaving the run "running" for good), and only
-    # a regular file is read, so a FIFO planted under the name can't stall a poll's reap.
+    # a regular file is read, so a FIFO planted under the name can't stall a reap.
     if not path.is_file() or path.is_symlink():
         raise OSError(f"not a regular file: {path.name}")
     return path.read_bytes().decode("utf-8", errors="replace")
