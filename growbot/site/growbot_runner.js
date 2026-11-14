@@ -11,7 +11,7 @@
 //
 // Scope:
 //   - dialects: flat (obs_spec.channels+frames) AND schema (obs_spec.segments[]).
-//   - channels: accel_x/y/z, gyro_x/y/z, euler_roll/pitch/yaw, prev_action_N, cmd_forward, cmd_yaw,
+//   - channels: accel_x/y/z, gyro_x/y/z, euler_roll/pitch/yaw, prev_action_N, cmd_forward, cmd_yaw, cmd_pitch,
 //     cmd_mode_*, cycle:<name> (a step-count clock at obs_spec.control_hz).
 //   - action_map: a0=right, a1=left by default; a policy may declare the swap.
 //   - order/layout: newest-first × frame-major ONLY (the only combo any real policy uses;
@@ -149,7 +149,7 @@ export class Walker {
 
     const all = this.spec.segments.flatMap((s) => s.channels);
     this.usesAccel = all.some((c) => c === 'accel_x' || c === 'accel_y' || c === 'accel_z');
-    this.usesCmd = all.some((c) => c === 'cmd_forward' || c === 'cmd_yaw');
+    this.usesCmd = all.some((c) => c === 'cmd_forward' || c === 'cmd_yaw' || c === 'cmd_pitch');
     this.modeChannels = all.filter((c) => /^cmd_mode_/.test(c));   // discrete one-hot joystick modes (Harsh steerable v3)
     this.usesMode = this.modeChannels.length > 0;
     this.modeIndex = {}; this.modeChannels.forEach((c, i) => { this.modeIndex[c] = i; });   // channel -> its one-hot slot; cmd.mode selects the active slot
@@ -206,7 +206,7 @@ export class Walker {
 
   // Refuse loudly on any contract mismatch — the net would otherwise silently eat NaN.
   _validate(pj, all) {
-    const KNOWN = new Set(['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z', 'cmd_forward', 'cmd_yaw',
+    const KNOWN = new Set(['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z', 'cmd_forward', 'cmd_yaw', 'cmd_pitch',
       'euler_roll', 'euler_pitch', 'euler_yaw']);   // euler channels (rad): Harsh's DR/RMA obs80 exports (0710)
     for (const c of all) {
       if (KNOWN.has(c)) continue;
@@ -221,7 +221,7 @@ export class Walker {
         continue;
       }
       if (/^cmd_mode_[a-z0-9_]+$/.test(c)) continue;   // discrete joystick mode one-hot slot (Harsh steerable)
-      throw new Error(`channel "${c}" not supported by this runner (accel_*/gyro_*/euler_*/prev_action_N/cmd_forward/cmd_yaw/cmd_mode_*/cycle:<name> only)`);
+      throw new Error(`channel "${c}" not supported by this runner (accel_*/gyro_*/euler_*/prev_action_N/cmd_forward/cmd_yaw/cmd_pitch/cmd_mode_*/cycle:<name> only)`);
     }
     const assembled = this.spec.segments.reduce((n, s) => n + s.channels.length * s.frames, 0);
     const n = pj.obs_size;
@@ -258,7 +258,8 @@ export class Walker {
     return (c.scale == null ? 1 : Number(c.scale)) * fn(arg);
   }
 
-  // accel/gyro: {x,y,z} ALREADY rotated into the body frame (caller applies the z-up Rx). cmd:{fwd,yaw} optional.
+  // accel/gyro: {x,y,z} ALREADY rotated into the body frame (caller applies the z-up Rx). cmd:{fwd,yaw,pitch} optional.
+  // pitch: the camera walk's camera-height command (-1 low .. +1 tall); absent reads 0.
   // euler: {roll,pitch,yaw} in rad (base-relative phone euler, same source as the classic obs16 path) —
   // only read by policies declaring euler_* channels; IMU_SIGN applies per-axis exactly as the classic walker.
   // Returns {l,r} servo degrees (0-180) + raw action.
@@ -277,7 +278,7 @@ export class Walker {
       accel_x: s[0] * A.x, accel_y: s[1] * A.y, accel_z: s[2] * A.z,
       gyro_x: s[0] * G.x, gyro_y: s[1] * G.y, gyro_z: s[2] * G.z,
       euler_roll: s[0] * E.roll, euler_pitch: s[1] * E.pitch, euler_yaw: s[2] * E.yaw,   // same per-axis bench signs as the classic obs16 walker
-      cmd_forward: cmd.fwd, cmd_yaw: cmd.yaw,
+      cmd_forward: cmd.fwd, cmd_yaw: cmd.yaw, cmd_pitch: cmd.pitch || 0,
     };
     const resolve = (ch) => {
       const v = src[ch];

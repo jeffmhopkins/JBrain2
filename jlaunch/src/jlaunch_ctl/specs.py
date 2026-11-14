@@ -250,9 +250,11 @@ GROWBOT_HEADING_WALK = _validate(
 )
 
 
-# The second GrowBot walk (owner, 2026-11-14): tail first, toward what the phone's rear
-# camera sees, standing a little taller, and learning to get up from folded flat. Same
-# repo and pipeline as the heading walk; only the config differs.
+# The second GrowBot walk (owner, 2026-11-14): tail first, toward what the phone's
+# rear camera sees, learning to get up from folded flat, and steered by three inputs
+# (heading, speed, camera height) so one policy covers walk, stop-and-look and back
+# away. Same repo and pipeline as the heading walk; only the config differs. Its 80M
+# steps run longer.
 GROWBOT_CAMERA_WALK = _validate(
     dataclasses.replace(
         GROWBOT_HEADING_WALK,
@@ -268,11 +270,40 @@ GROWBOT_CAMERA_WALK = _validate(
             ),
         ),
         artifact_path="growbot_camera_walk_artifacts.tar.gz",
+        est_hours="3-6 h",
         notes=(
-            "Trains the second walk (configs/camera_walk.toml): it walks tail first, "
-            "toward what the phone's camera sees, stands a few degrees taller, and "
-            "learns to get up from folded flat. The heading error it takes is the "
-            "camera's view of the target. Downloads and the Live card work as for the "
+            "Trains the face-following walk (configs/camera_walk.toml): it walks tail "
+            "first, toward what the phone's camera sees, and learns to get up from "
+            "folded flat. Three inputs steer it: the heading to the face, a speed "
+            "(walk up, stop and keep facing it, or back away) and a camera height "
+            "(stand tall, or lower to look up). Downloads and the Live card work as "
+            "for the heading walk."
+        ),
+    )
+)
+
+
+# The stationary specialist (owner, 2026-11-14): the camera walk at speed 0 already
+# turns on the spot, so this is only for when that wobbles: never walks, trained for a
+# steady camera and quick, big turns.
+GROWBOT_LOOK = _validate(
+    dataclasses.replace(
+        GROWBOT_CAMERA_WALK,
+        name="growbot_look",
+        title="GrowBot look (stay put, turn to face a direction)",
+        phases=(
+            Phase("install", "./install.sh"),
+            Phase("smoke", ".venv/bin/python -m pytest -q"),
+            Phase("train", "./run.sh jlaunch --config configs/look.toml"),
+            Phase("package", "cp runs/jlaunch.tar.gz growbot_look_artifacts.tar.gz"),
+        ),
+        artifact_path="growbot_look_artifacts.tar.gz",
+        est_hours="2-4 h",
+        notes=(
+            "Trains the stand-in-place look (configs/look.toml): it never walks, only "
+            "turns on the spot to face a heading and holds a camera height, trained "
+            "for a steady view. The camera walk at speed 0 does the same job; run "
+            "this one if that wobbles. Downloads and the Live card work as for the "
             "heading walk."
         ),
     )
@@ -285,6 +316,7 @@ SPECS: dict[str, JobSpec] = {
     ERDOS_STRAUS_1E13_NATIVE.name: ERDOS_STRAUS_1E13_NATIVE,
     GROWBOT_HEADING_WALK.name: GROWBOT_HEADING_WALK,
     GROWBOT_CAMERA_WALK.name: GROWBOT_CAMERA_WALK,
+    GROWBOT_LOOK.name: GROWBOT_LOOK,
 }
 
 

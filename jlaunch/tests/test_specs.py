@@ -139,3 +139,13 @@ def test_growbot_camera_walk_is_the_heading_walk_with_its_own_config() -> None:
     assert camera.phases[3].run.endswith(camera.artifact_path)
     assert camera.artifact_path != heading.artifact_path
     assert camera.verify_log == heading.verify_log
+
+
+def test_growbot_look_is_the_camera_walk_with_the_look_config() -> None:
+    camera = get_spec("growbot_camera_walk")
+    look = get_spec("growbot_look")
+    assert camera is not None and look is not None
+    assert look.repo_url == camera.repo_url and look.live_dir == camera.live_dir
+    assert "--config configs/look.toml" in look.phases[2].run
+    assert look.phases[3].run.endswith(look.artifact_path)
+    assert len({look.artifact_path, camera.artifact_path}) == 2
