@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jlaunch_ctl.runner import build_script
-from jlaunch_ctl.specs import SPECS, JobSpec, get_spec
+from jlaunch_ctl.specs import JobSpec, get_spec
 from jlaunch_ctl.terminal import (
     PtyTerminal,
     TerminalRegistry,
@@ -246,7 +246,7 @@ class JobManager:
     async def _finalize(self, jid: str, spec: JobSpec) -> None:
         self._finish(jid, spec)
 
-    def _finish(self, jid: str, spec: JobSpec | None) -> None:
+    def _finish(self, jid: str, spec: JobSpec | None, *, reaped: bool = False) -> None:
         """Record a job's end. Synchronous, so it never interleaves with a poll, and it
         always leaves the job out of the live states: a run whose finalize raised stayed
         "running" with nothing to kill, undeletable (owner, 2026-11-14)."""
@@ -271,7 +271,14 @@ class JobManager:
             job.state = "succeeded"
         else:
             job.state = "failed"
-            job.error = job.error or _failure_reason(rc, job)
+            # A reaped run that never wrote its exit code ended without its script
+            # finishing: say so, rather than the bare "no artifact (rc=None)".
+            lost = reaped and rc is None
+            job.error = job.error or (
+                "the run's terminal was lost before it finished"
+                if lost
+                else _failure_reason(rc, job)
+            )
         _log.info("job finish id=%s state=%s rc=%s", jid, job.state, rc)
 
     def _collect(self, job: Job, spec: JobSpec) -> object:
@@ -307,7 +314,7 @@ class JobManager:
         but the end was never recorded. Record it now, so it can't sit "running" with a
         Kill that finds nothing to kill."""
         if job.state in LIVE_STATES and self._registry.get(job.id) is None:
-            self._finish(job.id, get_spec(job.spec_name) or SPECS.get(job.spec_name))
+            self._finish(job.id, get_spec(job.spec_name), reaped=True)
 
     async def stop(self, jid: str) -> Job:
         """Graceful stop: SIGTERM the job's process group; the PTY EOF finalizes it as
@@ -346,7 +353,7 @@ class JobManager:
         self._registry.remove(jid)
         shutil.rmtree(job.workspace, ignore_errors=True)
         shutil.rmtree(self._state_root / jid, ignore_errors=True)
-        spec = get_spec(job.spec_name) or SPECS.get(job.spec_name)
+        spec = get_spec(job.spec_name)
         if spec is not None:
             with contextlib.suppress(OSError):
                 self._artifact_dest(jid, spec).unlink(missing_ok=True)
@@ -453,7 +460,10 @@ def _live_name_ok(name: str) -> bool:
 
 def _read_text(path: Path) -> str:
     # The job writes these files: a stray non-UTF-8 byte must not raise out of finalize
-    # (which then never recorded the end, leaving the run "running" for good).
+    # (which then never recorded the end, leaving the run "running" for good), and only
+    # a regular file is read, so a FIFO planted under the name can't stall a poll's reap.
+    if not path.is_file() or path.is_symlink():
+        raise OSError(f"not a regular file: {path.name}")
     return path.read_bytes().decode("utf-8", errors="replace")
 
 

@@ -8,6 +8,7 @@ import asyncio
 import pytest
 
 from jlaunch_ctl import jobs as jobs_mod
+from jlaunch_ctl import specs as specs_mod
 from jlaunch_ctl.jobs import BusyError, JobError
 from jlaunch_ctl.specs import Phase
 from tests.conftest import wait_terminal
@@ -170,8 +171,46 @@ async def test_an_orphaned_run_is_reaped_and_frees_the_slot(
     register_spec("test_orphan", (Phase("sleep", "sleep 30"),))
     job = await manager.start("test_orphan")
     manager._registry._terms[job.id].close()
-    assert manager.get(job.id).state == "failed"
+    reaped = manager.get(job.id)
+    assert reaped.state == "failed"
+    assert "terminal was lost" in (reaped.error or "")
+    # The late on_exit finalize (or any other) changes nothing once it's recorded.
+    finished_at = reaped.finished_at
+    await manager._finalize(job.id, jobs_mod.get_spec("test_orphan"))
+    assert (manager.get(job.id).state, manager.get(job.id).finished_at) == (
+        "failed",
+        finished_at,
+    )
     nxt = await manager.start("test_orphan")
     assert manager.get(nxt.id).state == "running"
     await manager.kill(nxt.id)
     assert (await wait_terminal(manager, nxt.id)).state == "killed"
+
+
+async def test_kill_on_an_orphan_ends_it_as_killed(manager, register_spec) -> None:
+    register_spec("test_orphankill", (Phase("sleep", "sleep 30"),))
+    job = await manager.start("test_orphankill")
+    manager._killing.add(job.id)  # a kill was asked for, then the terminal went
+    manager._registry._terms[job.id].close()
+    done = await asyncio.wait_for(manager.kill(job.id), timeout=5)
+    assert done.state == "killed"
+
+
+async def test_a_run_whose_spec_is_gone_still_ends(
+    manager, register_spec, monkeypatch
+) -> None:
+    register_spec("test_specgone", (Phase("sleep", "sleep 30"),))
+    job = await manager.start("test_specgone")
+    monkeypatch.delitem(specs_mod.SPECS, "test_specgone")
+    manager._registry._terms[job.id].close()
+    done = manager.get(job.id)
+    assert done.state == "failed"
+    assert "no longer registered" in (done.error or "")
+
+
+def test_a_fifo_job_file_is_not_read(tmp_path) -> None:
+    import os
+
+    fifo = tmp_path / "headline.txt"
+    os.mkfifo(fifo)
+    assert jobs_mod._read_lines(fifo) == []  # returns at once instead of blocking
