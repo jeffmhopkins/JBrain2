@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.growbot.policies import SqlPolicyRepo
+from jbrain.growbot.policies import PolicyError, SqlPolicyRepo
 from tests.conftest import docker_available
 from tests.integration.test_growbot_rls import NON_OWNERS
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -78,6 +78,16 @@ async def test_a_listing_reads_the_weights_only_as_present(maker: async_sessionm
             {"p": json.dumps({**POLICY, "layers": []})},
         )
     assert [r.id for r in await repo.list(OWNER)] == [good.id]
+    # Renaming that row by id is refused and leaves its name as it was.
+    async with scoped_session(maker, SYSTEM_OWNER) as session:
+        hollow = (
+            await session.execute(text("SELECT id FROM app.growbot_policies WHERE name = 'hollow'"))
+        ).scalar_one()
+    with pytest.raises(PolicyError):
+        await repo.rename(OWNER, str(hollow), "renamed")
+    async with scoped_session(maker, SYSTEM_OWNER) as session:
+        names = (await session.execute(text("SELECT name FROM app.growbot_policies"))).scalars()
+        assert sorted(names) == ["good", "hollow"]
 
 
 async def test_the_library_is_owner_only(maker: async_sessionmaker) -> None:

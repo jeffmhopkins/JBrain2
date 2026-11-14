@@ -251,7 +251,8 @@ class SqlPolicyRepo:
                     {"n": name, "i": pid},
                 )
             ).first()
-        return _row(r) if r is not None else None
+            # Read inside the transaction, so a row summary() refuses rolls the rename back.
+            return _row(r) if r is not None else None
 
     async def delete(self, ctx: SessionContext, pid: str) -> bool:
         async with scoped_session(self._maker, ctx) as session:
