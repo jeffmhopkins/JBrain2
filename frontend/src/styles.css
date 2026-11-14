@@ -26098,11 +26098,16 @@ button.task-band:active {
 .jl-spec-line .jl-shelf {
   border-left: 1px solid var(--border);
 }
-.jl-group-line .jl-shelf {
-  min-width: 36px;
-  padding: 0 6px 6px;
+.jl-group-line {
+  gap: 8px;
 }
-.jl-shelf:hover {
+.jl-group-line .jl-shelf {
+  min-width: 44px;
+  min-height: 44px;
+  margin: -10px 0 -6px;
+  padding: 0 6px;
+}
+.jl-shelf:hover:not(:disabled) {
   color: var(--amber);
 }
 .jl-shelf.restore {
@@ -26121,7 +26126,9 @@ button.task-band:active {
   color: var(--amber);
   background: none;
   border: 0;
-  padding: 0;
+  /* a 44px tap target without moving the line it sits in */
+  padding: 12px 10px;
+  margin: -12px -10px;
   cursor: pointer;
 }
 .jl-spec-runs:disabled {
@@ -26178,6 +26185,7 @@ button.task-band:active {
 }
 .jl-group-head .jl-tab-live {
   margin-left: 0;
+  flex: none;
 }
 .jl-group-head .jl-spec-chev {
   margin-left: auto;

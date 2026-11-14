@@ -1,7 +1,9 @@
 // The Jobs launcher (jlaunch) — the self-contained full-screen overlay the "Jobs" tile
 // opens (like JcodeScreen/Tasks). Three tabs: Jobs (the registered computations as compact
 // rows that expand to their notes and a Start button), Runs (past and current runs, a
-// finished one deletable in place) and Archived (job types put away, with their runs). Picking a run opens the tabbed job screen (Overview · Terminal · Result) with start/stop/kill, a live
+// finished one deletable in place) and Archived (job types put away, with their runs).
+// Picking a run opens the tabbed job screen (Overview · Terminal · Result) with
+// start/stop/kill, a live
 // xterm, a Live card for a job that keeps a live folder, and — once a run finishes — a
 // download and a public results sharelink. Variant C from the GUI gate (docs/mocks/jlaunch/);
 // the Live card is variant A of docs/mocks/jlaunch-live/. Owner-only; the tile is hidden
@@ -107,6 +109,10 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   const shelved = new Set(archived.map((s) => s.name));
   const current = jobs.filter((j) => isLive(j) || !shelved.has(j.spec_name));
   const shelf = tab === "archived" ? archived : active;
+  // The note stands only while its job is still archived and still on the launcher: a
+  // restore elsewhere, or a repo refresh that drops the job, makes its Undo a lie.
+  const shelvedSpec = shelvedNote && archived.find((s) => s.name === shelvedNote.name);
+  const liveSpecs = new Set(jobs.filter(isLive).map((j) => j.spec_name));
 
   // Keep a running job's phase and pill current on the Runs list, as the job screen does.
   useEffect(() => {
@@ -172,7 +178,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
     try {
       await api.jlaunchArchive(spec.name, on);
       setExpanded(null);
-      setShelvedNote(on ? spec : null);
+      setShelvedNote((prev) => (on ? spec : prev?.name === spec.name ? null : prev));
     } catch {
       alert(on ? "Couldn't archive the job type." : "Couldn't restore the job type.");
     } finally {
@@ -230,14 +236,14 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
       {pulled && state.kind === "ready" && (
         <output className={`jl-pulled${pulled.ok ? "" : " bad"}`}>{pulled.text}</output>
       )}
-      {shelvedNote && state.kind === "ready" && (
+      {shelvedSpec && state.kind === "ready" && (
         <output className="jl-pulled jl-shelved">
-          Archived “{shelvedNote.title}” and its finished runs — they're on the Archived tab.{" "}
+          Archived “{shelvedSpec.title}” and its finished runs — they're on the Archived tab.{" "}
           <button
             type="button"
             className="jl-shelved-undo"
-            disabled={archiving === shelvedNote.name}
-            onClick={() => void archive(shelvedNote, false)}
+            disabled={archiving === shelvedSpec.name}
+            onClick={() => void archive(shelvedSpec, false)}
           >
             Undo
           </button>
@@ -320,6 +326,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                               inside the card it went unfound (owner, 2026-11-14). */}
                             <ShelfButton
                               spec={spec}
+                              live={liveSpecs.has(spec.name)}
                               busy={archiving === spec.name}
                               onShelf={(on) => void archive(spec, on)}
                             />
@@ -397,10 +404,11 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                     onToggle={() => toggle(`r:${g.spec}`)}
                     action={
                       // Archiving is per job type, so it rides the job's header; a job
-                      // that's running, or one the launcher no longer has, offers none.
-                      g.specRow && !g.runs.some(isLive) ? (
+                      // the launcher no longer has offers none (the api would refuse it).
+                      g.specRow ? (
                         <ShelfButton
                           spec={g.specRow}
+                          live={liveSpecs.has(g.spec)}
                           busy={archiving === g.spec}
                           onShelf={(on) => {
                             if (g.specRow) void archive(g.specRow, on);
@@ -504,16 +512,21 @@ function Group({
   );
 }
 
-/** Archive a job type (an archive box), or restore an archived one (a labelled Restore). */
+/** Archive a job type (an archive box), or restore an archived one (a labelled Restore).
+ * A job with a run going offers no archive: shelving it mid-run would hide what's running
+ * from its own Jobs row. The placeholder keeps the column lined up. */
 function ShelfButton({
   spec,
+  live,
   busy,
   onShelf,
 }: {
   spec: JlaunchSpec;
+  live: boolean;
   busy: boolean;
   onShelf: (archived: boolean) => void;
 }): ReactNode {
+  if (live && !spec.archived) return <span className="jl-shelf none" aria-hidden="true" />;
   return spec.archived ? (
     <button
       type="button"

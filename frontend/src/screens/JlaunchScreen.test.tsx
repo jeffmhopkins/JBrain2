@@ -29,6 +29,18 @@ function job(id: string, state: string): JlaunchJob {
 
 afterEach(() => vi.restoreAllMocks());
 
+/** Specs whose archived flag follows the archive calls, as the api's would. */
+function archivingApi(specs: JlaunchSpec[]) {
+  const shelved = new Set(specs.filter((s) => s.archived).map((s) => s.name));
+  vi.spyOn(api, "jlaunchSpecs").mockImplementation(async () =>
+    specs.map((s) => ({ ...s, archived: shelved.has(s.name) })),
+  );
+  return vi.spyOn(api, "jlaunchArchive").mockImplementation(async (name, on) => {
+    if (on) shelved.add(name);
+    else shelved.delete(name);
+  });
+}
+
 describe("JlaunchScreen", () => {
   it("lists jobs compactly and starts a run only from the expanded Start button", async () => {
     vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC]);
@@ -118,12 +130,11 @@ describe("JlaunchScreen", () => {
 
   it("archives a job type to the Archived tab, hides its runs, and restores it", async () => {
     const OLD = { ...SPEC, name: "erdos", title: "Census", archived: true } as JlaunchSpec;
-    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC, OLD]);
+    const archive = archivingApi([SPEC, OLD]);
     vi.spyOn(api, "jlaunchJobs").mockResolvedValue([
       { ...job("c3", "succeeded"), spec_name: "erdos", title: "Census" } as JlaunchJob,
       job("b2", "succeeded"),
     ]);
-    const archive = vi.spyOn(api, "jlaunchArchive").mockResolvedValue();
     render(<JlaunchScreen onClose={() => {}} />);
     await screen.findByText("GrowBot look");
     expect(screen.queryByText("Census")).toBeNull();
@@ -146,13 +157,12 @@ describe("JlaunchScreen", () => {
   });
   it("archives a job from its runs' header, never one with a live run, and undoes it", async () => {
     const LIVE = { ...SPEC, name: "erdos", title: "Census" } as JlaunchSpec;
-    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC, LIVE]);
+    const archive = archivingApi([SPEC, LIVE]);
     vi.spyOn(api, "jlaunchJobs").mockResolvedValue([
       { ...job("c3", "running"), spec_name: "erdos", title: "Census" } as JlaunchJob,
       job("b2", "succeeded"),
       { ...job("d4", "succeeded"), spec_name: "gone", title: "Old job" } as JlaunchJob,
     ]);
-    const archive = vi.spyOn(api, "jlaunchArchive").mockResolvedValue();
     render(<JlaunchScreen onClose={() => {}} />);
     await screen.findByRole("tab", { name: /Runs/, selected: true });
     expect(screen.queryByRole("button", { name: "Archive Census" })).toBeNull();
@@ -163,6 +173,23 @@ describe("JlaunchScreen", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
     await waitFor(() => expect(archive).toHaveBeenCalledWith("growbot_look", false));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Undo" })).toBeNull());
+    // The running job offers no archive on its Jobs row either.
+    fireEvent.click(screen.getByRole("tab", { name: /^Jobs/ }));
+    expect(screen.queryByRole("button", { name: "Archive Census" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Archive GrowBot look" })).toBeTruthy();
+  });
+
+  it("drops the archived note once the job is restored somewhere else", async () => {
+    const archive = archivingApi([SPEC]);
+    vi.spyOn(api, "jlaunchJobs").mockResolvedValue([]);
+    vi.spyOn(api, "jlaunchRefreshSpecs").mockRejectedValue(new Error("offline"));
+    render(<JlaunchScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Archive GrowBot look" }));
+    expect(await screen.findByText(/on the Archived tab/)).toBeTruthy();
+    // Restored from another device: the next refresh shows it unarchived.
+    await archive.getMockImplementation()?.("growbot_look", false);
+    fireEvent.click(screen.getByRole("button", { name: "Check the training repo for new jobs" }));
+    await waitFor(() => expect(screen.queryByText(/on the Archived tab/)).toBeNull());
   });
 
   it("re-reads the training repo's jobs and says what changed", async () => {
