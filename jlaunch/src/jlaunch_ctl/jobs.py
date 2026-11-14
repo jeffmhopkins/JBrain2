@@ -170,9 +170,16 @@ class JobManager:
 
     def _refresh_phase(self, job: Job) -> None:
         # Without this a running job showed "clone" its whole run, which read as stuck.
-        if job.state in LIVE_STATES:
-            with contextlib.suppress(OSError):
-                if phase := (self._state_root / job.id / "phase").read_text().strip():
+        if job.state not in LIVE_STATES:
+            return
+        path = self._state_root / job.id / "phase"
+        # The job can write here, and this runs on every poll: only a regular file, and
+        # only a short read, so a FIFO or a huge file can't stall the event loop.
+        with contextlib.suppress(OSError):
+            if path.is_file() and not path.is_symlink():
+                with path.open("rb") as fh:
+                    phase = fh.read(64).decode("utf-8", errors="replace").strip()
+                if phase:
                     job.phase = phase
 
     def _live_count(self) -> int:
