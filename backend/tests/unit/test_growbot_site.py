@@ -2046,7 +2046,7 @@ def test_a_timer_is_set_shown_cancelled_and_told_when_due() -> None:
     assert ev.startswith('your timer for "flip the laundry" just went off')
     assert kind == "event" and extra == {"recallFollow": True}
     assert carried == "your timer went off: flip the laundry"
-    assert ["timer_due", {"late": 0}] in got["logs"] and got["empty"] == ""
+    assert ["timer_due", {"late": 0, "lead": 0}] in got["logs"] and got["empty"] == ""
 
 
 @pytest.mark.parametrize(
@@ -2158,6 +2158,43 @@ def test_a_due_timer_waits_while_this_tab_cannot_tell_it(setup: str) -> None:
         "console.log(JSON.stringify({left:_live.scratch.timers.length,n:timers.length}));"
     )
     assert got == {"left": 1, "n": 0}
+
+
+def test_a_timer_is_thought_about_early_and_said_on_its_second() -> None:
+    """Owner, 2026-11-13: the alert took seconds to think and voice, so it landed late. The
+    thought starts 12 s early, its voice is held to the timer's second, and the timer (and its
+    pill) stays until then without being offered to the model as still pending."""
+    got = _recall_page(
+        "var said=[],holds=[],cap='';var $=function(){ return {set textContent(v){ cap=v; }}; };"
+        "function speak(t){ said.push([t,Date.now()]); } var lastSpokeT=0;"
+        "var _th=think; think=function(a,b,c){ holds.push(_gbHoldNext); _th(a,b,c); };"
+        "var T=1794594060000;Date.now=function(){return T;};_live={scratch:{}};var r={};"
+        "gbTimerSet({minutes:1,about:'oven'},'event',{});var due=T+60000;"
+        "T=due-13000;gbTimerTick();r.early=thinks.length+timers.length;"
+        "T=due-11000;gbTimerTick();timers.shift()();r.held=holds[0]-due;"
+        "r.listed=_live.scratch.timers.length;r.line=gbTimersLine();"
+        "gbHoldSay('Your oven timer is up.','calm','en',due);r.before=said.length;"
+        "T=due;timers.shift()();r.at=said[0][1]-due;r.cap=cap;"
+        "gbTimerTick();r.after=_live.scratch.timers.length;console.log(JSON.stringify(r));"
+    )
+    assert got["early"] == 0 and got["held"] == 0
+    assert got["listed"] == 1 and got["line"] == ""
+    assert got["before"] == 0 and got["at"] == 0 and got["cap"] == "Your oven timer is up."
+    assert got["after"] == 0
+
+
+def test_a_held_reply_is_silent_until_the_second_and_a_late_one_is_not_held() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "var _gbHold=_gbHoldNext; _gbHoldNext=0;" in page
+    assert (
+        'if(Date.now()>=_gbHold&&(typeof vmStreamSpeech!=="function"||'
+        "vmStreamSpeech(full,_vmTurn)))onSayStream(full,_replyLang);"
+    ) in page
+    assert (
+        "else if(said&&Date.now()<_gbHold){ gbHoldSay(said,o.emotion,_replyLang,_gbHold); }"
+        ' else if(said){ $("say").textContent=said; speak(said,o.emotion,_replyLang,undefined,'
+    ) in page
+    assert page.index("var _gbHold=_gbHoldNext;") < page.index("vmStreamSpeech(full,_vmTurn)))")
 
 
 def test_a_told_timer_is_saved_off_the_soul() -> None:

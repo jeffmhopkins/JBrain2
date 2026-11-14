@@ -8601,7 +8601,7 @@ function think(event,kind,extra){
   var _recall=null; try{ if(_hreqAtIssue&&typeof diaryRecall==="function"&&extra&&typeof extra.visualUser==="string"&&extra.visualUser.trim()) _recall=diaryRecall(_live.log,extra.visualUser,now,[(_live.goals&&_live.goals.selfName)||"",typeof ownerTok==="function"?ownerTok():""]); }catch(e){ _recall=null; }   /* 1005 WHOLE-DIARY RECALL (prompts.js diaryRecall): a person's words can pull up to 3 OLDER diary lines into this prompt, only when they cue a memory or share 2+ rare words with a line. Human turns only; the creature's and owner's own names never count as a match (review: the creature's name was the top false trigger). */
   var sys=buildSystem(soulView,{language:_convLang})+"\n\nSPEECH STYLE: never use an em dash in what you say, write the pause as a comma or a period."+moveGuideText(), _gbVm=(typeof vmPrompt==="function"?vmPrompt(_vmTurn):""), _gbSS=selfStats(), _gbLive=(buildSystem.live||"")+(moveGuideText.live||"")+"\n\n"+_gbSS+_gbVm, _gbLiveN=_gbLive.length;    // + short-term self-knowledge (introspection); speech-style rule appended HERE because buildSystem/constitution live in /v3/prompts.js (Brit 0726, item 5)
   if(_imitationAtIssue&&_imitationCtl)_gbLive+=_imitationCtl.guide(_imitationAtIssue);
-  _gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; if(_gbBrainCarried){ _gbBrainQuiet=true; _gbBrainCarried=false; } } else if(_hreqAtIssue) _gbLive+=gbRecallKept(); var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false; if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(_gw&&gbWarmFits(_gw,{sys:sys,bl:buildSystem.live||"",mg:moveGuideText.live||"",ss:_gbSS,vm:_gbVm,blind:parts.length-1!==frames.length*2})){ msgs=gbWarmMsgs(_gw,_gbLive,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
+  _gbLive+=gbTiredLine()+gbTimersLine(); if(_gbRecallCarry){ _gbLive+="\n\n== WHAT YOU JUST LOOKED UP ==\n"+_gbRecallCarry; _gbRecallCarry=""; if(_gbBrainCarried){ _gbBrainQuiet=true; _gbBrainCarried=false; } } else if(_hreqAtIssue) _gbLive+=gbRecallKept(); var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false; var _gbHold=_gbHoldNext; _gbHoldNext=0; if(_hreqAtIssue&&typeof MEMLOG_ASK==="string") _gbLive+=MEMLOG_ASK; if(_recall&&_recall.text) _gbLive+=_recall.text; sys+=(typeof gaitList==="function"&&gaitList.fixed||"")+(typeof selfStats==="function"&&selfStats.fixed||"")+(typeof vmPrompt==="function"&&vmPrompt.fixed||""); if(_gw&&gbWarmFits(_gw,{sys:sys,bl:buildSystem.live||"",mg:moveGuideText.live||"",ss:_gbSS,vm:_gbVm,blind:parts.length-1!==frames.length*2})){ msgs=gbWarmMsgs(_gw,_gbLive,_gbLiveN,userMsg); try{ logEv("warm_use",{age:Date.now()-_gw.t,nf:_gw.nf}); }catch(_we){} }
   else if(typeof window.gbBoxLive!=="function"||!window.gbBoxLive(msgs,_gbLive)) sys+=_gbLive;   // 1005: its own statement, after the assembled prompt (the line above is sliced verbatim by the prompt harnesses). The "always log a name" ask rides person turns only, never ticks or beats.
   var slug=brainOverride((kind==="tick")?orCfg.fast:(orCfg.active||orCfg.fast),false);   // [credit screen] honor the chosen brain: free mode or an explicit dial pick
   var _decisionTokens=typeof vmHeadroomTokens==="function"?vmHeadroomTokens(_vmTurn,kind,slug):512;
@@ -8626,7 +8626,7 @@ function think(event,kind,extra){
   _visStripped=false;                                    // 0812: cleared per flight; callModel raises it if this turn's images are stripped (404 blind retry, or a local brain without vision). v3 runs one think at a time, so a single flag is sufficient here.
   var _u0=(typeof _sessUsd==="number")?_sessUsd:0;   /* 0914 F-75 (MGR): session spend before this flight; the think event logs the delta beside the slug. model_usage already logs every call, but F-71 took seven files to prove "never on Grok" — the THOUGHT should name its brain and its cost in one line. */
   var _p = (_STREAM && kind!=="tick")                                                     /* THE DEFAULT LANE: _STREAM (:339) is true unless someone passes ?stream=0, so every non-tick think — every turn the creature SPEAKS — goes streaming, and only idle ticks go buffered. The old wording here ("?stream=1: speak sentences as they arrive") read as an opt-in and is the same stale phrase that cost three authors three bugs; see the callModelStream header. Change payload/error/telemetry in BOTH lanes. */
-    ? callModelStream(sys,msgs,slug,_decisionTokens,90000,function(full,complete){ if(_gen!==_flightGen) return; if(_agen!==actGen) return; if(typeof complete==="boolean"){ _burstComplete=complete; return; } if(typeof vmStreamSpeech!=="function"||vmStreamSpeech(full,_vmTurn))onSayStream(full,_replyLang); },undefined,_replyMeta).catch(function(e){ if(_gen!==_flightGen) throw e;
+    ? callModelStream(sys,msgs,slug,_decisionTokens,90000,function(full,complete){ if(_gen!==_flightGen) return; if(_agen!==actGen) return; if(typeof complete==="boolean"){ _burstComplete=complete; return; } if(Date.now()>=_gbHold&&(typeof vmStreamSpeech!=="function"||vmStreamSpeech(full,_vmTurn)))onSayStream(full,_replyLang); },undefined,_replyMeta).catch(function(e){ if(_gen!==_flightGen) throw e;
         if(_imitationAtIssue&&(!_imitationCtl||!_imitationCtl.valid(_imitationAtIssue)))throw e;
         if(_agen!==actGen) throw e;   // 0908: the activity this turn was for has ENDED — a failed stream must not buy a second, buffered call for it. Rethrowing keeps the outer .catch, which is where inFlight and the flight timer are cleared, so cancelling still tidies the request up   // K3 0808: a stream that outlives the watchdog must NOT buy a buffered retry whose answer the stale-bailing .then would discard — throw instead; the outer .catch bails on the same stale check, so the orphan costs nothing
         if(_streamSaid||e.charged||e.gateFail||(e&&e.name==="AbortError")||e.status===401||e.status===402||e.status===429) throw e;   // 0920 log read #3: a dead BYOK key (401) looped every 14s and each try hit the server TWICE (stream, then this fallback) — a refused key is not "cost nothing", it is refused
@@ -8745,7 +8745,7 @@ function think(event,kind,extra){
         if(_ph&&said) $("say").textContent=said; phoneMove(o.walk,(_streamSaid||_ph)?"":said,_replyLang,!!((typeof _expressionBench!=="undefined"&&_expressionBench||_imitated)&&_replyAudio)); lastSpokeT=Date.now(); }   // K3 0808: this branch ran BEFORE the yield and phoneMove voices unconditionally — in phone mode a movement reply still talked over a mid-utterance. The MOVE itself proceeds (motion is not noise); only the voice waits, caption lands
       else if(_streamSaid){ if(said){ $("say").textContent=said; lastSpokeT=Date.now(); } }   // streaming already spoke — settle caption ONLY if there were words (no "(quiet)" dead-air flash — 0708 field)
       else if(said&&_yieldNow()){ $("say").textContent=said; if(window.gbTalk) gbTalk.held(); lastSpokeT=Date.now(); }   // 0808 YIELD: they are mid-sentence — caption + burst land, the voice holds its tongue. The queued turn answers the whole thought; a listener that talks over you is the least natural thing a listener can do
-      else if(said){ $("say").textContent=said; speak(said,o.emotion,_replyLang,undefined,!!((typeof _expressionBench!=="undefined"&&_expressionBench||_imitated)&&_replyAudio)); lastSpokeT=Date.now(); }   // Same-reply words queue behind the composed phrase instead of cancelling it as stale speech.
+      else if(said&&Date.now()<_gbHold){ gbHoldSay(said,o.emotion,_replyLang,_gbHold); } else if(said){ $("say").textContent=said; speak(said,o.emotion,_replyLang,undefined,!!((typeof _expressionBench!=="undefined"&&_expressionBench||_imitated)&&_replyAudio)); lastSpokeT=Date.now(); }   // Same-reply words queue behind the composed phrase instead of cancelling it as stale speech.
       if(!_streamBurst&&_burstEligible&&!document.hidden&&!window._wakeGateUp){
         _streamBurst=true; var _b=replyBurst(raw,!!said||!!phoneDir,emotion); if(_b) doBurst(_b);
       }   /* One reply expression, including silence. Explicit none/invalid stays dark; mute affects only audio. */
@@ -8952,14 +8952,15 @@ function gbRecallAsk(q,kind,extra){
 }
 /* What a tool found is answered by one follow-up thought. Two tools asked in one reply (a search
    and the clock) share that thought rather than queue a second one behind it. */
-var _gbFollow=null, _gbFollowN=0;
+var _gbFollow=null, _gbFollowN=0, _gbHoldNext=0;
 /* True when this call started the follow-up (so its line is the one said while it works); a
    call that joins one already waiting says nothing of its own. Every call counts in
    _gbFollowN, so a reply handler can tell a follow-up of its own from one left waiting. */
-function gbToolFollow(tag,found,ev){
+/* hold: an instant the follow-up's voice waits for (a timer's own second); see gbHoldSay. */
+function gbToolFollow(tag,found,ev,hold){
   gbToolPill(tag); _gbFollowN++;
   if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); _gbFollow.pills.push(_gbToolPills[tag]); return false; }
-  var f=_gbFollow={found:found,ev:ev,tags:[tag],pills:[_gbToolPills[tag]]}, tries=0;
+  var f=_gbFollow={found:found,ev:ev,tags:[tag],pills:[_gbToolPills[tag]],hold:hold||0}, tries=0;
   function done(){ if(_gbFollow===f) _gbFollow=null; f.tags.forEach(function(k,i){ gbToolPillEnd(k,f.pills[i]); }); }
   /* Appended, never overwritten: a note that did not save, or another find, may be waiting. */
   function carry(why){ if(_gbRecallCarry.indexOf(f.found)<0) _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found; if(f.tags.indexOf("brain")>=0) _gbBrainCarried=true; logEv(f.tags[0]+"_carry",{why:why}); done(); }
@@ -8969,7 +8970,7 @@ function gbToolFollow(tag,found,ev){
     if(busy){ if(++tries<120) setTimeout(go,250); else carry("timeout"); return; }
     _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found;
     if(f.tags.indexOf("brain")>=0) _gbBrainQuiet=true;
-    think(f.ev,"event",{recallFollow:true});
+    _gbHoldNext=f.hold; think(f.ev,"event",{recallFollow:true}); _gbHoldNext=0;
     if(!inFlight) carry("refused"); else done();
   }
   setTimeout(go,0);
@@ -9104,7 +9105,8 @@ function gbCalcAsk(v,kind,extra){
    ride the soul (scratch.timers), so a reload keeps them; the page checks every 5 s and a due one
    is told in a thought of its own, through the same follow-up a search uses. A phone that was
    locked or closed past the time tells it late, and says so. */
-var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=5000, GB_TIMER_LATE_MS=120000,
+var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=1000, GB_TIMER_LATE_MS=120000,
+  GB_TIMER_LEAD_MS=12000, _gbTimerTold=[],
   GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,time:1,one:1,about:1,all:1};
 function gbTimers(){ var sc=_live&&_live.scratch; if(!sc) return []; return Array.isArray(sc.timers)?sc.timers:(sc.timers=[]); }
 function gbTimerAbout(v){ return String(v||"").replace(/\s+/g," ").trim().slice(0,80); }
@@ -9166,27 +9168,40 @@ function gbTimerSet(v,kind,extra){
 }
 function gbTimerLeft(ms){ var mn=Math.round(ms/60000); return mn<1?"under a minute":mn<90?mn+" min":Math.round(mn/6)/10+" h"; }
 function gbTimersLine(){
-  var list=gbTimers(), now=Date.now();
+  var list=gbTimers().filter(function(x){ return _gbTimerTold.indexOf(x)<0; }), now=Date.now();
   if(!list.length) return "";
   /* The time now rides with them, so "how long until" is read off, not remembered or guessed. */
   return "\n\n== YOUR TIMERS (you set these for your person; it is "+gbClockShort(now)+" now) ==\n"+list.map(function(x){ return "- "+x.about+": "+(x.at>now?"at "+gbClockShort(x.at)+", in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
 }
 function gbTimerTick(){ try{
-  var list=gbTimers(), now=Date.now(), due=[];
-  if(!list.length||_gbFollow) return;
+  var list=gbTimers(), now=Date.now(), due=[], gone=0;
+  if(!list.length) return;
+  /* A timer already told leaves the list (and its pill) at its own second, not before. */
+  for(var k=list.length-1;k>=0;k--) if(_gbTimerTold.indexOf(list[k])>=0&&list[k].at<=now){ _gbTimerTold.splice(_gbTimerTold.indexOf(list[k]),1); list.splice(k,1); gone++; }
+  if(_gbFollow){ if(gone&&typeof saveSoul==="function") saveSoul(_live); return; }
   /* Only the tab that holds the creature, and only when it can speak: a stale tab or a locked
      phone leaves the timer pending, so it is told (late, saying so) once it can be. */
   if((typeof soulOwned==="function"&&!soulOwned())||paused||document.hidden||energyState==="asleep") return;
-  for(var i=list.length-1;i>=0;i--) if(list[i].at<=now) due.unshift(list.splice(i,1)[0]);
+  /* Owner, 2026-11-13: the thought that tells a timer takes seconds, so it starts GB_TIMER_LEAD_MS
+     early and its voice is held for the timer's own second (gbHoldSay). The timer stays listed,
+     marked told in this tab only, so a reload in that window tells it again rather than never. */
+  for(var i=0;i<list.length;i++) if(_gbTimerTold.indexOf(list[i])<0&&list[i].at-GB_TIMER_LEAD_MS<=now) due.push(list[i]);
+  var hold=due.reduce(function(h,x){ return Math.max(h,x.at); },0);
   due.forEach(function(x){
     var late=now-x.at>GB_TIMER_LATE_MS?" (it was due "+gbTimerLeft(now-x.at)+" ago, while you were away)":"";
-    logEv("timer_due",{late:late?1:0});
+    if(x.at<=now){ list.splice(list.indexOf(x),1); gone++; } else _gbTimerTold.push(x);
+    logEv("timer_due",{late:late?1:0,lead:Math.max(0,x.at-now)});
     gbToolFollow("timer","your timer went off: "+x.about+late,
-      "your timer for \""+x.about+"\" just went off (it is under WHAT YOU JUST LOOKED UP). tell your person now, plainly, in your own voice.");
+      "your timer for \""+x.about+"\" just went off (it is under WHAT YOU JUST LOOKED UP). tell your person now, plainly, in your own voice.",hold);
   });
-  if(due.length&&typeof saveSoul==="function") saveSoul(_live);
+  if(gone&&typeof saveSoul==="function") saveSoul(_live);
 }catch(e){} }
 if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
+/* The voice of a reply started early for a timer waits for the timer's second. A person who
+   speaks first is answered as ever: their turn is not held, and the timer is told in it. */
+function gbHoldSay(said,emo,lang,at){
+  setTimeout(function(){ try{ $("say").textContent=said; speak(said,emo,lang); lastSpokeT=Date.now(); logEv("timer_said",{late:Date.now()-at}); }catch(e){} },Math.max(0,at-Date.now()));
+}
 /* The status strip draws a pill for each pending timer (growbot-status.js) and reads them here. */
 try{ window.gbTimers=gbTimers; window.gbClockShort=gbClockShort; }catch(e){}
 /* The owner's notes (owner, 2026-11-13): a persona the owner turned brain access on for, on his

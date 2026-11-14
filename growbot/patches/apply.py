@@ -1297,14 +1297,15 @@ function gbRecallAsk(q,kind,extra){
 }
 /* What a tool found is answered by one follow-up thought. Two tools asked in one reply (a search
    and the clock) share that thought rather than queue a second one behind it. */
-var _gbFollow=null, _gbFollowN=0;
+var _gbFollow=null, _gbFollowN=0, _gbHoldNext=0;
 /* True when this call started the follow-up (so its line is the one said while it works); a
    call that joins one already waiting says nothing of its own. Every call counts in
    _gbFollowN, so a reply handler can tell a follow-up of its own from one left waiting. */
-function gbToolFollow(tag,found,ev){
+/* hold: an instant the follow-up's voice waits for (a timer's own second); see gbHoldSay. */
+function gbToolFollow(tag,found,ev,hold){
   gbToolPill(tag); _gbFollowN++;
   if(_gbFollow){ _gbFollow.found+="\n"+found; _gbFollow.ev+=" "+ev; _gbFollow.tags.push(tag); _gbFollow.pills.push(_gbToolPills[tag]); return false; }
-  var f=_gbFollow={found:found,ev:ev,tags:[tag],pills:[_gbToolPills[tag]]}, tries=0;
+  var f=_gbFollow={found:found,ev:ev,tags:[tag],pills:[_gbToolPills[tag]],hold:hold||0}, tries=0;
   function done(){ if(_gbFollow===f) _gbFollow=null; f.tags.forEach(function(k,i){ gbToolPillEnd(k,f.pills[i]); }); }
   /* Appended, never overwritten: a note that did not save, or another find, may be waiting. */
   function carry(why){ if(_gbRecallCarry.indexOf(f.found)<0) _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found; if(f.tags.indexOf("brain")>=0) _gbBrainCarried=true; logEv(f.tags[0]+"_carry",{why:why}); done(); }
@@ -1314,7 +1315,7 @@ function gbToolFollow(tag,found,ev){
     if(busy){ if(++tries<120) setTimeout(go,250); else carry("timeout"); return; }
     _gbRecallCarry=(_gbRecallCarry?_gbRecallCarry+"\n":"")+f.found;
     if(f.tags.indexOf("brain")>=0) _gbBrainQuiet=true;
-    think(f.ev,"event",{recallFollow:true});
+    _gbHoldNext=f.hold; think(f.ev,"event",{recallFollow:true}); _gbHoldNext=0;
     if(!inFlight) carry("refused"); else done();
   }
   setTimeout(go,0);
@@ -1449,7 +1450,8 @@ function gbCalcAsk(v,kind,extra){
    ride the soul (scratch.timers), so a reload keeps them; the page checks every 5 s and a due one
    is told in a thought of its own, through the same follow-up a search uses. A phone that was
    locked or closed past the time tells it late, and says so. */
-var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=5000, GB_TIMER_LATE_MS=120000,
+var GB_TIMERS_MAX=8, GB_TIMER_MAX_MIN=1440, GB_TIMER_TICK_MS=1000, GB_TIMER_LATE_MS=120000,
+  GB_TIMER_LEAD_MS=12000, _gbTimerTold=[],
   GB_TIMER_STOP={the:1,and:1,for:1,my:1,your:1,that:1,this:1,timer:1,timers:1,reminder:1,time:1,one:1,about:1,all:1};
 function gbTimers(){ var sc=_live&&_live.scratch; if(!sc) return []; return Array.isArray(sc.timers)?sc.timers:(sc.timers=[]); }
 function gbTimerAbout(v){ return String(v||"").replace(/\s+/g," ").trim().slice(0,80); }
@@ -1511,27 +1513,40 @@ function gbTimerSet(v,kind,extra){
 }
 function gbTimerLeft(ms){ var mn=Math.round(ms/60000); return mn<1?"under a minute":mn<90?mn+" min":Math.round(mn/6)/10+" h"; }
 function gbTimersLine(){
-  var list=gbTimers(), now=Date.now();
+  var list=gbTimers().filter(function(x){ return _gbTimerTold.indexOf(x)<0; }), now=Date.now();
   if(!list.length) return "";
   /* The time now rides with them, so "how long until" is read off, not remembered or guessed. */
   return "\n\n== YOUR TIMERS (you set these for your person; it is "+gbClockShort(now)+" now) ==\n"+list.map(function(x){ return "- "+x.about+": "+(x.at>now?"at "+gbClockShort(x.at)+", in "+gbTimerLeft(x.at-now):"due now"); }).join("\n");
 }
 function gbTimerTick(){ try{
-  var list=gbTimers(), now=Date.now(), due=[];
-  if(!list.length||_gbFollow) return;
+  var list=gbTimers(), now=Date.now(), due=[], gone=0;
+  if(!list.length) return;
+  /* A timer already told leaves the list (and its pill) at its own second, not before. */
+  for(var k=list.length-1;k>=0;k--) if(_gbTimerTold.indexOf(list[k])>=0&&list[k].at<=now){ _gbTimerTold.splice(_gbTimerTold.indexOf(list[k]),1); list.splice(k,1); gone++; }
+  if(_gbFollow){ if(gone&&typeof saveSoul==="function") saveSoul(_live); return; }
   /* Only the tab that holds the creature, and only when it can speak: a stale tab or a locked
      phone leaves the timer pending, so it is told (late, saying so) once it can be. */
   if((typeof soulOwned==="function"&&!soulOwned())||paused||document.hidden||energyState==="asleep") return;
-  for(var i=list.length-1;i>=0;i--) if(list[i].at<=now) due.unshift(list.splice(i,1)[0]);
+  /* Owner, 2026-11-13: the thought that tells a timer takes seconds, so it starts GB_TIMER_LEAD_MS
+     early and its voice is held for the timer's own second (gbHoldSay). The timer stays listed,
+     marked told in this tab only, so a reload in that window tells it again rather than never. */
+  for(var i=0;i<list.length;i++) if(_gbTimerTold.indexOf(list[i])<0&&list[i].at-GB_TIMER_LEAD_MS<=now) due.push(list[i]);
+  var hold=due.reduce(function(h,x){ return Math.max(h,x.at); },0);
   due.forEach(function(x){
     var late=now-x.at>GB_TIMER_LATE_MS?" (it was due "+gbTimerLeft(now-x.at)+" ago, while you were away)":"";
-    logEv("timer_due",{late:late?1:0});
+    if(x.at<=now){ list.splice(list.indexOf(x),1); gone++; } else _gbTimerTold.push(x);
+    logEv("timer_due",{late:late?1:0,lead:Math.max(0,x.at-now)});
     gbToolFollow("timer","your timer went off: "+x.about+late,
-      "your timer for \""+x.about+"\" just went off (it is under WHAT YOU JUST LOOKED UP). tell your person now, plainly, in your own voice.");
+      "your timer for \""+x.about+"\" just went off (it is under WHAT YOU JUST LOOKED UP). tell your person now, plainly, in your own voice.",hold);
   });
-  if(due.length&&typeof saveSoul==="function") saveSoul(_live);
+  if(gone&&typeof saveSoul==="function") saveSoul(_live);
 }catch(e){} }
 if(typeof setInterval==="function"&&typeof document!=="undefined"&&document.addEventListener) setInterval(gbTimerTick,GB_TIMER_TICK_MS);
+/* The voice of a reply started early for a timer waits for the timer's second. A person who
+   speaks first is answered as ever: their turn is not held, and the timer is told in it. */
+function gbHoldSay(said,emo,lang,at){
+  setTimeout(function(){ try{ $("say").textContent=said; speak(said,emo,lang); lastSpokeT=Date.now(); logEv("timer_said",{late:Date.now()-at}); }catch(e){} },Math.max(0,at-Date.now()));
+}
 /* The status strip draws a pill for each pending timer (growbot-status.js) and reads them here. */
 try{ window.gbTimers=gbTimers; window.gbClockShort=gbClockShort; }catch(e){}
 /* The owner's notes (owner, 2026-11-13): a persona the owner turned brain access on for, on his
@@ -1900,7 +1915,22 @@ CLOCK_PATCHES: list[tuple[str, str, str, int]] = [
         " else if(_hreqAtIssue) _gbLive+=gbRecallKept();"
         # Taken by this flight and cleared at once: a flight that fails or is abandoned must not
         # leave the person's next turn quiet.
-        " var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false;",
+        " var _gbQuiet=_gbBrainQuiet; _gbBrainQuiet=false; var _gbHold=_gbHoldNext; _gbHoldNext=0;",
+        1,
+    ),
+    # A reply started early for a timer streams in silence until the timer's second (gbHoldSay).
+    (
+        "v3/next.html",
+        'if(typeof vmStreamSpeech!=="function"||vmStreamSpeech(full,_vmTurn))onSayStream(full,_replyLang);',
+        'if(Date.now()>=_gbHold&&(typeof vmStreamSpeech!=="function"||vmStreamSpeech(full,_vmTurn)))'
+        "onSayStream(full,_replyLang);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'else if(said){ $("say").textContent=said; speak(said,o.emotion,_replyLang,undefined,',
+        "else if(said&&Date.now()<_gbHold){ gbHoldSay(said,o.emotion,_replyLang,_gbHold); }"
+        ' else if(said){ $("say").textContent=said; speak(said,o.emotion,_replyLang,undefined,',
         1,
     ),
     (
