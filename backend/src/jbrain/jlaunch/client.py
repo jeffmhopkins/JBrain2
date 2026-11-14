@@ -22,11 +22,22 @@ _ARTIFACT_TIMEOUT = httpx.Timeout(30.0, read=None)
 class JlaunchError(RuntimeError):
     """A control-server call failed — surfaced to the route as a clean message. ``status``
     carries the upstream HTTP status when the failure was a response (else None), so a route
-    can map a 409 (busy) / 404 (unknown) distinctly from a transport error."""
+    can map a 409 (busy) / 404 (unknown) distinctly from a transport error. ``detail`` is
+    the control server's own short reason, when it gave one."""
 
-    def __init__(self, message: str, *, status: int | None = None) -> None:
+    def __init__(self, message: str, *, status: int | None = None, detail: str = "") -> None:
         super().__init__(message)
         self.status = status
+        self.detail = detail
+
+
+def _detail(resp: httpx.Response) -> str:
+    # FastAPI's {"detail": "..."}; anything else (a proxy's HTML page) is no reason.
+    try:
+        detail = resp.json().get("detail")
+    except (ValueError, AttributeError):
+        return ""
+    return detail[:200] if isinstance(detail, str) else ""
 
 
 class JlaunchApi(Protocol):
@@ -89,7 +100,9 @@ class JlaunchClient:
                 return resp.json() if resp.content else None
         except httpx.HTTPStatusError as exc:
             raise JlaunchError(
-                f"jlaunch control server error: {exc}", status=exc.response.status_code
+                f"jlaunch control server error: {exc}",
+                status=exc.response.status_code,
+                detail=_detail(exc.response),
             ) from exc
         except httpx.HTTPError as exc:
             raise JlaunchError(f"jlaunch control server error: {exc}") from exc

@@ -145,11 +145,14 @@ class Job:
     # Copied from the spec at start, so a live run's claim on the box holds after its
     # spec leaves the list.
     shares_box: bool = False
+    # The core share a shared run is pinned to (its index among max_concurrent_jobs);
+    # -1 for an unpinned run.
+    cpu_slot: int = -1
 
     def public(self) -> dict[str, object]:
         data = asdict(self)
         # Internal, not part of the control API.
-        for key in ("workspace", "live_dir", "artifact_path", "shares_box"):
+        for key in ("workspace", "live_dir", "artifact_path", "shares_box", "cpu_slot"):
             data.pop(key, None)
         return data
 
@@ -288,8 +291,20 @@ class JobManager:
             raise BusyError(
                 "a job that needs the whole machine is running or asked for"
             )
+        # Two live runs of one spec would race for the same run number in the api's
+        # mirror, and never help: a variant to compare is its own job in jobs.toml.
+        if any(j.spec_name == spec.name for j in live):
+            raise BusyError(f"{spec.name} is already running")
         if self._max > 0 and len(live) >= self._max:
             raise BusyError(f"{len(live)} jobs are already running")
+
+    def _free_slot(self) -> int:
+        taken = {
+            j.cpu_slot
+            for j in self._jobs.values()
+            if j.state in LIVE_STATES and j.cpu_slot >= 0
+        }
+        return next(i for i in range(max(1, self._max)) if i not in taken)
 
     # -- lifecycle ---------------------------------------------------------------
 
@@ -333,6 +348,7 @@ class JobManager:
             live_dir=spec.live_dir or "",
             artifact_path=spec.artifact_path,
             shares_box=spec.shares_box,
+            cpu_slot=self._free_slot() if spec.shares_box else -1,
         )
         self._jobs[jid] = job
         self._save(job)
@@ -343,6 +359,8 @@ class JobManager:
         # unchanged (kill-by-group still works) and the PTY EOFs — firing on_exit — the
         # moment the job finishes.
         term = PtyTerminal(str(workspace))
+        if job.cpu_slot >= 0:
+            self._pin(job, term.pid)
         self._registry.remove(jid)
         self._registry._terms[jid] = term  # we own this registry (same package)
         term.on_exit = self._on_exit(jid, spec)
@@ -350,6 +368,20 @@ class JobManager:
         await term.write(f"exec bash {shlex.quote(str(state / 'job.sh'))}\n".encode())
         _log.info("job start id=%s spec=%s pid=%d", jid, spec.name, term.pid)
         return job
+
+    def _pin(self, job: Job, pid: int) -> None:
+        """Pin a shared run to its own cores, before it starts: every process the job
+        forks inherits them, so side-by-side runs never contend for a core, and a run
+        that sizes itself to the cores it may use sizes itself to its share."""
+        cpus = cpu_share(job.cpu_slot, max(1, self._max))
+        try:
+            os.sched_setaffinity(pid, cpus)
+        except OSError:
+            _log.warning("job not pinned id=%s", job.id, exc_info=True)
+            return
+        job.machine["pinned_cpus"] = cpu_list(cpus)
+        job.machine["pinned_cores"] = len(cpus)
+        self._save(job)
 
     def _on_exit(self, jid: str, spec: JobSpec):
         def hook() -> None:
@@ -698,6 +730,7 @@ def _job_from_record(
         error=opt_text("error"),
         artifact_present=data.get("artifact_present") is True,
         shares_box=data.get("shares_box") is True,
+        cpu_slot=_slot(data.get("cpu_slot")),
         artifact_bytes=size
         if isinstance(size, int) and not isinstance(size, bool)
         else None,
@@ -770,3 +803,46 @@ def _failure_reason(rc: object, job: Job) -> str:
     if job.verify_ok is False:
         return f"verification did not pass (rc={rc})"
     return f"job exited with rc={rc}"
+
+
+def _slot(value: object) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 64:
+        return value
+    return -1
+
+
+def _sibling_groups(cpus: set[int]) -> list[list[int]]:
+    """The usable CPUs grouped by physical core (a core's SMT threads together), in
+    order, so a share never splits a core with another run."""
+    groups: dict[str, list[int]] = {}
+    for cpu in sorted(cpus):
+        path = f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
+        try:
+            with open(path) as fh:
+                key = fh.read().strip()
+        except OSError:
+            key = str(cpu)
+        groups.setdefault(key, []).append(cpu)
+    return sorted(groups.values(), key=lambda g: g[0])
+
+
+def cpu_share(slot: int, slots: int) -> set[int]:
+    """Slot ``slot`` of ``slots`` equal, disjoint shares of this process's CPUs, split
+    on whole cores. A machine with fewer cores than slots gives every slot one core."""
+    groups = _sibling_groups(os.sched_getaffinity(0))
+    n = len(groups)
+    if n < slots:
+        return set(groups[slot % n])
+    lo, hi = slot * n // slots, (slot + 1) * n // slots
+    return {cpu for group in groups[lo:hi] for cpu in group}
+
+
+def cpu_list(cpus: set[int]) -> str:
+    """``{0,1,2,16,17}`` as ``0-2,16-17``, the form taskset and cpuset read."""
+    out: list[str] = []
+    for cpu in sorted(cpus):
+        if out and int(out[-1].split("-")[-1]) == cpu - 1:
+            out[-1] = f"{out[-1].split('-')[0]}-{cpu}"
+        else:
+            out.append(str(cpu))
+    return ",".join(out)

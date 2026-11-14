@@ -103,7 +103,36 @@ def test_start_busy_is_409(_no_db: None, monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(fake, "start_job", _busy)
     client = TestClient(_app(OWNER, jlaunch_client=fake))
-    assert client.post("/api/jlaunch/jobs", json={"spec": "x"}).status_code == 409
+    got = client.post("/api/jlaunch/jobs", json={"spec": "x"})
+    assert got.status_code == 409
+    assert got.json()["detail"] == "no room to start: another job is running"
+
+
+def test_start_busy_says_which_limit(_no_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeJlaunchClient()
+
+    async def _busy(_spec: str) -> dict:
+        raise JlaunchError("busy", status=409, detail="3 jobs are already running")
+
+    monkeypatch.setattr(fake, "start_job", _busy)
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    got = client.post("/api/jlaunch/jobs", json={"spec": "x"})
+    assert got.json()["detail"] == "no room to start: 3 jobs are already running"
+
+
+async def test_client_keeps_the_control_servers_reason() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/jobs":
+            return httpx.Response(409, json={"detail": "growbot_look is already running"})
+        return httpx.Response(409, text="<html>busy</html>")
+
+    client = JlaunchClient("http://jl", "tok", transport=httpx.MockTransport(handler))
+    with pytest.raises(JlaunchError) as busy:
+        await client.start_job("growbot_look")
+    assert busy.value.status == 409 and busy.value.detail == "growbot_look is already running"
+    with pytest.raises(JlaunchError) as html:
+        await client.stop("j1")
+    assert html.value.detail == ""
 
 
 def test_malformed_id_is_404(_no_db: None) -> None:

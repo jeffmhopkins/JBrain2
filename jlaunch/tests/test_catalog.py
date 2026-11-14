@@ -127,6 +127,8 @@ def test_a_manifest_job_is_the_fixed_pipeline_with_its_config() -> None:
     assert look.verify_log == "runs/jlaunch/export_verify.log"
     assert look.live_dir == "runs/jlaunch/live"
     assert look.disk_gb == 4 and look.all_cores is True
+    # Training runs share the box; were this lost they'd silently run one at a time.
+    assert look.shares_box is True
     pub = look.public()
     assert pub["source"] == "repo" and pub["commit"] == SHA1
     assert pub["category"] == "Robot" and pub["config"] == "configs/look.toml"
@@ -136,6 +138,7 @@ def test_a_builtin_spec_says_so() -> None:
     pub = specs_mod.SPECS["erdos_straus_1e12"].public()
     assert pub["source"] == "builtin" and pub["commit"] == ""
     assert "category" not in pub
+    assert specs_mod.SPECS["erdos_straus_1e12"].shares_box is False
 
 
 @pytest.mark.parametrize(

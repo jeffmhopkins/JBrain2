@@ -39,7 +39,8 @@ class Settings(BaseSettings):
 
     # How many runs may go at once. Only training-repo runs share the box: one leaves
     # most cores idle while its learner steps (owner, 2026-11-14: "only running at
-    # like 20%"), so a few side by side finish sooner overall. A built-in census still
+    # like 20%"), so a few side by side finish sooner overall. Each is pinned to its
+    # own 1/N of the cores, which it sizes its simulators to. A built-in census still
     # runs alone, since it sizes its worker pool to the whole machine's RAM.
     max_concurrent_jobs: int = 3
 
