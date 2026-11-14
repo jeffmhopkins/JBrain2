@@ -94,4 +94,24 @@ describe("JlaunchScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: /Show all/ }));
     expect(screen.getByRole("button", { name: "Open v2 of Census" })).toBeTruthy();
   });
+
+  it("saves a trimmed note on a run", async () => {
+    const run = { ...job("b2", "succeeded"), repo: "r", phase_times: [] } as unknown as JlaunchJob;
+    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC]);
+    vi.spyOn(api, "jlaunchJobs").mockResolvedValue([run]);
+    vi.spyOn(api, "jlaunchGetJob").mockResolvedValue(run);
+    vi.spyOn(api, "jlaunchLiveFiles").mockRejectedValue(new ApiError(404, "none"));
+    const save = vi
+      .spyOn(api, "jlaunchSetNote")
+      .mockResolvedValue({ ...run, note: "lower lr" } as JlaunchJob);
+    render(<JlaunchScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /Runs/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Open v2 of Run b2" }));
+    const input = await screen.findByRole("textbox", { name: "Run note" });
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    fireEvent.change(input, { target: { value: "lower lr" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith("b2", "lower lr"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Save" })).toBeNull());
+  });
 });

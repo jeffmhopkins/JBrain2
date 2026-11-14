@@ -7311,7 +7311,6 @@ export const api = {
     ).json();
   },
 
-  /** Delete a finished run: its checkout, scratch, and mirror row (409 while it's live). */
   /** Set the owner's note on a run (what it was for); returns the run with it. */
   async jlaunchSetNote(id: string, note: string): Promise<JlaunchJob> {
     return (
@@ -7323,6 +7322,7 @@ export const api = {
     ).json();
   },
 
+  /** Delete a finished run: its checkout, scratch, and mirror row (409 while it's live). */
   async jlaunchDelete(id: string): Promise<void> {
     await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
   },

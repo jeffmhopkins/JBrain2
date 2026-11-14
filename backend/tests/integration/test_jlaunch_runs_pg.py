@@ -1,5 +1,6 @@
-"""Migration 0269 against real Postgres: each job's runs are numbered v1, v2, … for good,
-a lost run is failed, and the owner's note lands — all on the owner-only RLS mirror."""
+"""Migration 0269 against real Postgres: each job's runs are numbered v1, v2, … and keep
+their number when an older run goes, a lost run is failed, and the owner's note lands — all
+on the owner-only RLS mirror."""
 
 import uuid
 from collections.abc import AsyncIterator

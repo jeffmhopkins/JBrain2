@@ -105,6 +105,15 @@ async def _live_jobs(request: Request) -> dict[str, dict[str, Any]] | None:
     return {job["id"]: job for job in jobs}
 
 
+async def _forgotten(request: Request, jid: str) -> bool:
+    """True only when the control server answers that it has no such job."""
+    try:
+        await _client(request).get_job(jid)
+    except JlaunchError as exc:
+        return exc.status == 404
+    return False
+
+
 # A job in one of these still owns its checkout and live folder.
 _LIVE_STATES = frozenset({"queued", "cloning", "running"})
 
@@ -161,9 +170,12 @@ async def list_jobs(owner: OwnerDep, request: Request) -> list[dict[str, Any]]:
                 await _REPO.upsert(db, job)
             # The control server keeps its jobs in memory, so a restart mid-run leaves the
             # mirror showing a run "running" forever, with no delete (a ghost camera walk
-            # stuck at "clone", 2026-11-14). It answered and doesn't know the run: it's lost.
+            # stuck at "clone", 2026-11-14). A live row missing from the snapshot is asked
+            # about by id before it is failed: a run started after the snapshot was taken
+            # is in the mirror but not the snapshot, and only a 404 means it's truly gone.
             for row in await _REPO.list(db):
-                if row.state in _LIVE_STATES and row.id not in live:
+                stale = row.state in _LIVE_STATES and row.id not in live
+                if stale and await _forgotten(request, row.id):
                     await _REPO.mark_lost(db, row.id)
         rows = await _REPO.list(db)
     return [row.__dict__ for row in rows]

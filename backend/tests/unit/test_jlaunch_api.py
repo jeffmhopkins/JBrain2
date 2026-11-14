@@ -348,6 +348,27 @@ def test_a_run_the_launcher_forgot_is_marked_lost(_rows: dict[str, _Row]) -> Non
     assert states == {live: "running", "ghost1": "failed", "old1": "succeeded"}
 
 
+def test_a_restarted_launcher_with_no_jobs_fails_the_live_row(_rows: dict[str, _Row]) -> None:
+    _rows["ghost3"] = _Row("ghost3", "running")
+    client = TestClient(_app(OWNER, jlaunch_client=FakeJlaunchClient()))
+    assert client.get("/api/jlaunch/jobs").json()[0]["state"] == "failed"
+
+
+def test_a_run_started_after_the_snapshot_is_not_lost(_rows: dict[str, _Row]) -> None:
+    import asyncio
+
+    fake = FakeJlaunchClient()
+    jid = asyncio.run(fake.start_job("erdos_straus_1e12"))["id"]
+    _rows[jid] = _Row(jid, "cloning")
+
+    async def stale() -> list[dict[str, object]]:
+        return []  # the snapshot taken just before this run started
+
+    fake.list_jobs = stale  # type: ignore[method-assign]
+    client = TestClient(_app(OWNER, jlaunch_client=fake))
+    assert client.get("/api/jlaunch/jobs").json()[0]["state"] == "cloning"
+
+
 def test_an_unreachable_launcher_marks_nothing_lost(_rows: dict[str, _Row]) -> None:
     fake = FakeJlaunchClient()
 

@@ -231,6 +231,11 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                                 disabled={runs === 0}
                                 onClick={() => {
                                   setFocus(spec.name);
+                                  setShut((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(`r:${spec.name}`);
+                                    return next;
+                                  });
                                   setTab("runs");
                                 }}
                                 aria-label={`View runs of ${spec.title}`}
@@ -263,7 +268,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                     label={g.title}
                     count={g.runs.length}
                     live={g.runs.some(isLive)}
-                    open={focus === g.spec || !shut.has(`r:${g.spec}`)}
+                    open={!shut.has(`r:${g.spec}`)}
                     onToggle={() => toggle(`r:${g.spec}`)}
                   >
                     <div className="jl-rows">
@@ -561,7 +566,9 @@ function OverviewPane({
             <div>started · {relative(job.started_at || job.created_at || null)}</div>
           )}
         </div>
-        <NoteField job={job} onSaved={onNoted} />
+        {/* Keyed by the saved note, so a newly saved one (this save, or a debug token's
+            the poll brings back) starts a fresh draft. */}
+        <NoteField key={job.note ?? ""} job={job} onSaved={onNoted} />
       </div>
 
       <div className="jl-card">
@@ -595,9 +602,6 @@ function NoteField({
   const saved = job.note ?? "";
   const [draft, setDraft] = useState(saved);
   const [saving, setSaving] = useState(false);
-  // A newly saved note (this save, or one from a debug token the job poll brings back)
-  // becomes the draft.
-  useEffect(() => setDraft(saved), [saved]);
 
   async function save() {
     setSaving(true);
