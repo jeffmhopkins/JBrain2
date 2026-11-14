@@ -10,11 +10,14 @@
 // The tricks are what the live app's creature does for its own brain besides walking (owner,
 // 2026-11-14: "the live app also has other policies for doing tricks"): its stock gestures and
 // tall stance, the escape spin it falls back to when a spin stalls, and any gesture its soul has
-// saved, which the creature reports to the box.
+// saved, which the creature reports to the box. The library's own switches (on or off, walk,
+// turn or trick, one per family: GrowbotPoliciesSheet `offered`) decide what is shown: walks
+// under "Walk with", turns under "Turn with" for the left and right keys, tricks as buttons
+// that hold the policy facing ahead for the picked seconds.
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotMove, type GrowbotPolicy, type GrowbotRobot, api } from "../api/client";
-import { GrowbotPoliciesSheet, walkKind } from "./GrowbotPoliciesSheet";
+import { GrowbotPoliciesSheet, offered, offeredFor, walkKind } from "./GrowbotPoliciesSheet";
 import { ChevronDownIcon, ChevronUpIcon, RotateCcwIcon, RotateCwIcon, StopIcon } from "./icons";
 
 type Policy = "forward" | "back" | "spin_right" | "spin_left";
@@ -79,24 +82,26 @@ const DOING: Record<GrowbotMove, string> = {
   bow: "Bowing",
   sway: "Swaying",
   gesture: "Playing it",
+  look: "Holding it",
   stop: "Stopped",
 };
 
 type Said = { text: string; bad: boolean };
 
-// Which walk this phone last drove a robot with: a per-viewer convenience, so storage may fail.
-function storedWalk(code: string): string {
+// Which walk (or turn) this phone last drove a robot with: a per-viewer convenience, so storage
+// may fail.
+function storedWalk(code: string, kind = "walk"): string {
   try {
-    return localStorage.getItem(`gb-walk-with:${code}`) ?? "";
+    return localStorage.getItem(`gb-${kind}-with:${code}`) ?? "";
   } catch {
     return "";
   }
 }
 
-function storeWalk(code: string, id: string): void {
+function storeWalk(code: string, id: string, kind = "walk"): void {
   try {
-    if (id) localStorage.setItem(`gb-walk-with:${code}`, id);
-    else localStorage.removeItem(`gb-walk-with:${code}`);
+    if (id) localStorage.setItem(`gb-${kind}-with:${code}`, id);
+    else localStorage.removeItem(`gb-${kind}-with:${code}`);
   } catch {
     // A private window keeps the pick for this visit only.
   }
@@ -135,15 +140,19 @@ export function GrowbotMovePanel({
   const [secs, setSecs] = useState<number>(DEFAULT_SECS);
   const [busy, setBusy] = useState(false);
   // What runs now, for the lit pad button and the bar draining under it; `n` restarts the bar.
-  const [running, setRunning] = useState<{ move: GrowbotMove; secs: number; n: number } | null>(
-    null,
-  );
+  const [running, setRunning] = useState<{
+    move: GrowbotMove;
+    secs: number;
+    n: number;
+    policy?: string | undefined;
+  } | null>(null);
   // Only the latest press speaks and frees the buttons: a slow walk's answer must not land
   // over a Stop pressed after it.
   const latest = useRef(0);
   const [said, setSaid] = useState<Said | null>(null);
   const [policies, setPolicies] = useState<GrowbotPolicy[]>([]);
   const [walkWith, setWalkWith] = useState(() => storedWalk(robot.code));
+  const [turnWith, setTurnWith] = useState(() => storedWalk(robot.code, "turn"));
   const [library, setLibrary] = useState(false);
   const mounted = useRef(true);
   const done = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -167,36 +176,54 @@ export function GrowbotMovePanel({
   }, []);
   const blocked = moveBlocked(robot);
   const name = robot.name || robot.code;
-  const trained = policies.find((p) => p.id === walkWith) ?? null;
+  const walks = offered(policies, "walk");
+  const turns = offered(policies, "turn");
+  const tricks = offered(policies, "trick");
+  const trained = offeredFor(policies, walks, walkWith);
+  const turner = offeredFor(policies, turns, turnWith);
   const pad = trained ? trainedPad(trained) : null;
+  const turnPad = turner ? trainedPad(turner) : null;
+  // The policy each pad key runs: a picked turn takes the left and right keys from the walk.
+  const keyPolicy = (k: Policy): GrowbotPolicy | null =>
+    (k === "spin_left" || k === "spin_right") && turner ? turner : trained;
+  const keyPad = (k: Policy) =>
+    (k === "spin_left" || k === "spin_right") && turnPad ? turnPad : pad;
 
   function pick(id: string) {
     setWalkWith(id);
     storeWalk(robot.code, id);
   }
+
+  function pickTurn(id: string) {
+    setTurnWith(id);
+    storeWalk(robot.code, id, "turn");
+  }
   // The pad's Stop works whenever the chip is on: a shared Stop also stops the chip itself,
   // creature or not.
   const canStop = onStop ? robot.connected && !robot.revoked_at : !blocked;
 
-  function finish(move: GrowbotMove, s: number, mine: number) {
+  function finish(move: GrowbotMove, s: number, mine: number, policy?: string) {
     if (done.current) clearTimeout(done.current);
-    setRunning({ move, secs: s, n: mine });
+    setRunning({ move, secs: s, n: mine, policy });
     done.current = setTimeout(() => {
       if (mounted.current && mine === latest.current) setRunning(null);
     }, s * 1000);
   }
 
-  async function send(move: GrowbotMove, s = 0, gesture?: string) {
+  async function send(move: GrowbotMove, s = 0, gesture?: string, trick?: GrowbotPolicy) {
     const mine = ++latest.current;
     setBusy(true);
     const live = () => mounted.current && mine === latest.current;
     try {
-      const walk = trained && pad && move in pad ? trained : null;
+      const key = PAD.some((p) => p.id === move) ? (move as Policy) : null;
+      const walk = trick ?? (key ? keyPolicy(key) : null);
+      const words = key ? keyPad(key) : null;
       const out = await api.moveGrowbotRobot(robot.code, move, s, walk?.id, gesture);
       if (!live()) return;
-      const doing =
-        walk && pad
-          ? `${pad[move as Policy].doing} with ${walk.name}`
+      const doing = trick
+        ? `Running ${trick.name}`
+        : walk && words && key
+          ? `${words[key].doing} with ${walk.name}`
           : gesture
             ? `Playing ${gesture}`
             : DOING[move];
@@ -205,7 +232,7 @@ export function GrowbotMovePanel({
           ? { text: `${doing}${s ? ` for ${s} s` : ""}.`, bad: false }
           : { text: out.why || `${name} didn't start it.`, bad: true },
       );
-      if (out.ok && s) finish(move, s, mine);
+      if (out.ok && s) finish(move, s, mine, walk?.id);
       else setRunning(null);
     } catch (e) {
       if (live()) {
@@ -245,7 +272,7 @@ export function GrowbotMovePanel({
         >
           Its own walks
         </button>
-        {policies.map((p) => (
+        {walks.map((p) => (
           <button
             key={p.id}
             type="button"
@@ -260,6 +287,30 @@ export function GrowbotMovePanel({
           {policies.length ? "Trained walks…" : "Add a trained walk…"}
         </button>
       </fieldset>
+      {turns.length > 0 && (
+        <fieldset className="gb-chips gb-walk-with">
+          <legend className="gb-move-h">Turn with</legend>
+          <button
+            type="button"
+            className={`gb-chip${turner ? "" : " on"}`}
+            aria-pressed={!turner}
+            onClick={() => pickTurn("")}
+          >
+            {trained ? "The walk's turns" : "Its own spins"}
+          </button>
+          {turns.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={`gb-chip${turner?.id === p.id ? " on" : ""}`}
+              aria-pressed={turner?.id === p.id}
+              onClick={() => pickTurn(p.id)}
+            >
+              {p.name}
+            </button>
+          ))}
+        </fieldset>
+      )}
 
       <p className={`gb-move-tip${blocked ? " blocked" : ""}`}>
         {blocked ??
@@ -274,12 +325,12 @@ export function GrowbotMovePanel({
             key={p.id}
             type="button"
             className={`gb-pad-b ${p.at}${lit === p.id ? " on" : ""}`}
-            aria-label={`${pad ? pad[p.id].run : p.run} ${secs} s`}
+            aria-label={`${keyPad(p.id)?.[p.id].run ?? p.run} ${secs} s`}
             disabled={off}
             onClick={() => void send(p.id, secs)}
           >
             {p.icon}
-            <span aria-hidden="true">{pad ? pad[p.id].label : p.label}</span>
+            <span aria-hidden="true">{keyPad(p.id)?.[p.id].label ?? p.label}</span>
           </button>
         ))}
         <button
@@ -345,6 +396,18 @@ export function GrowbotMovePanel({
             onClick={() => void send(g.id, secs)}
           >
             {g.label}
+          </button>
+        ))}
+        {tricks.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={`gb-chip trick${lit === "look" && running?.policy === p.id ? " on" : ""}`}
+            aria-label={`${p.name} ${secs} s`}
+            disabled={off}
+            onClick={() => void send("look", secs, undefined, p)}
+          >
+            {p.name}
           </button>
         ))}
       </div>

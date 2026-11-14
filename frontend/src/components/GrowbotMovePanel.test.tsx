@@ -119,7 +119,10 @@ describe("GrowbotMovePanel", () => {
 
   it("hands Stop to the card's shared one, and shows its answer", async () => {
     const fetch = serve(json({ ok: true, state: "started", why: "" }));
-    const onStop = vi.fn(async () => ({ text: "Stopped. The legs are limp.", bad: false }));
+    const onStop = vi.fn(async () => ({
+      text: "Stopped. The legs are limp.",
+      bad: false,
+    }));
     render(<GrowbotMovePanel robot={robot()} onStop={onStop} />);
     fireEvent.click(screen.getByRole("button", { name: "Walk forward 5 s" }));
     await screen.findByText("Walking forward for 5 s.");
@@ -139,7 +142,10 @@ describe("GrowbotMovePanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "10 s" }));
     fireEvent.click(screen.getByRole("button", { name: "Escape spin right 10 s" }));
     await screen.findByText("Escape-spinning right for 10 s.");
-    expect(sent(fetch, 1).body).toEqual({ move: "spin_escape_right", secs: 10 });
+    expect(sent(fetch, 1).body).toEqual({
+      move: "spin_escape_right",
+      secs: 10,
+    });
   });
 
   it("offers the soul's own saved gestures, played by name", async () => {
@@ -149,7 +155,11 @@ describe("GrowbotMovePanel", () => {
     expect(screen.getAllByRole("button", { name: "Bow" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "happy dance" }));
     await screen.findByText("Playing happy dance.");
-    expect(sent(fetch).body).toEqual({ move: "gesture", secs: 0, name: "happy dance" });
+    expect(sent(fetch).body).toEqual({
+      move: "gesture",
+      secs: 0,
+      name: "happy dance",
+    });
   });
 
   it("shows no saved-gestures row when the soul has none of its own", () => {
@@ -205,11 +215,63 @@ describe("GrowbotMovePanel", () => {
     expect(screen.getByRole("button", { name: "Turn around 5 s" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Turn left 5 s" }));
     await screen.findByText("Turning left with Quick trot for 5 s.");
-    expect(sent(fetch).body).toEqual({ move: "spin_left", secs: 5, policy: QUICK.id });
+    expect(sent(fetch).body).toEqual({
+      move: "spin_left",
+      secs: 5,
+      policy: QUICK.id,
+    });
     // Tricks stay the creature's own.
     fireEvent.click(screen.getByRole("button", { name: "Wiggle" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     expect(sent(fetch, 1).body).toEqual({ move: "wiggle", secs: 0 });
+  });
+
+  it("turns with a turn policy and runs a trick policy, hiding the ones switched off", async () => {
+    localStorage.clear();
+    const SPIN = {
+      ...QUICK,
+      id: "s-1",
+      name: "Tight spin",
+      source_spec: "spin",
+      motion: "turn",
+    };
+    const LOOK = {
+      ...QUICK,
+      id: "l-1",
+      name: "Look ahead",
+      source_spec: "look",
+      motion: "trick",
+    };
+    const GONE = {
+      ...QUICK,
+      id: "g-1",
+      name: "Old look",
+      source_spec: "old",
+      motion: "trick",
+      enabled: false,
+    };
+    const fetch = serve(json({ ok: true, state: "started", why: "" }), [SPIN, LOOK, GONE]);
+    render(<GrowbotMovePanel robot={robot()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Tight spin" }));
+    expect(localStorage.getItem("gb-turn-with:gb-3fa91c")).toBe("s-1");
+    // The turn takes the left and right keys; forward stays the creature's own.
+    expect(screen.getByRole("button", { name: "Walk forward 5 s" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Turn left 5 s" }));
+    await screen.findByText("Turning left with Tight spin for 5 s.");
+    expect(sent(fetch).body).toEqual({
+      move: "spin_left",
+      secs: 5,
+      policy: "s-1",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Look ahead 5 s" }));
+    await screen.findByText("Running Look ahead for 5 s.");
+    expect(sent(fetch, 1).body).toEqual({
+      move: "look",
+      secs: 5,
+      policy: "l-1",
+    });
+    expect(screen.queryByRole("button", { name: /Old look/ })).toBeNull();
   });
 
   it("remembers the walk per robot and falls back when it's gone", async () => {

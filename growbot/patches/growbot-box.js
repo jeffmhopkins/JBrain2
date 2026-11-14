@@ -1296,7 +1296,7 @@
   if (q.get("mode") !== "legs" || !/^gb-[A-Za-z0-9]{1,32}$/.test(code)) return;
   var RETRY_MIN_MS = 2000, RETRY_MAX_MS = 60000;
   var POLICY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-  var WALKS = /^(forward|back|spin_left|spin_right)$/;
+  var WALKS = /^(forward|back|spin_left|spin_right|look)$/;
   // upstream's _gestName shape: the only names moveLegs can ever play.
   var GESTURE_RE = /^[a-z0-9_-]+(?: [a-z0-9_-]+)*$/, GESTURES_MAX = 32, INFO_MS = 15000;
   // The creature's own tall pose (next.html STAND_TALL), should this page not define it.
@@ -1329,6 +1329,7 @@
       window.gbTrainedWalk(policy, move, secs);
       return;
     }
+    if (move === "look") throw new Error("a trick runs a trained policy, and none was named");
     if (move === "forward") spec = { dir: "fwd" };
     else if (move === "back") spec = { dir: "back" };
     else if (move === "spin_left") spec = { gait: "spin_left", dir: "left" };
@@ -1554,6 +1555,8 @@
   // What the pad's move asks of a heading policy: a target (deg, counter-clockwise from where
   // the facing end points at the start) and a speed.
   function command(move, hasSpeed) {
+    // A trick: hold it facing ahead, in place when it takes a speed; a heading-only one walks.
+    if (move === "look") return { target: 0, fwd: hasSpeed ? 0 : 1 };
     if (move === "spin_left") return { target: 90, fwd: hasSpeed ? 0 : 1 };
     if (move === "spin_right") return { target: -90, fwd: hasSpeed ? 0 : 1 };
     if (move === "back") return hasSpeed ? { target: 0, fwd: -1 } : { target: 180, fwd: 1, around: true };

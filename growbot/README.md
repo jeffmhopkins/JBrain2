@@ -279,7 +279,7 @@ them: `growbot-box.js` joins `/d/<code>-agent` with `hello` while the page wears
 visible (the rider check keeps it to the rider), and leaves when hidden, since a hidden page
 stops every move. `POST /internal/robots/move` `{code, move, secs, name?}` (`move` one of
 `forward`, `back`, `spin_left`, `spin_right`, the escape spins `spin_escape_left` and
-`spin_escape_right`, `stand_tall`, `wiggle`, `bow`, `sway`, `gesture`, `stop`; `secs` 0 or
+`spin_escape_right`, `stand_tall`, `look`, `wiggle`, `bow`, `sway`, `gesture`, `stop`; `secs` 0 or
 1-15; `name`, for `gesture` only, a gesture name in upstream's `_gestName` shape) sends
 `{"t":"box_move", rid, move, secs, name?}` to that page, which runs it through its own
 `runGait` or `moveLegs` with this phone's walk calibration and answers `{"t":"box_ack", rid, ok,
@@ -297,7 +297,7 @@ The sidecar passes it in the `box_move` frame and serves the JSON at `GET /api/b
 The page's `gbTrainedWalk` then loads the runner (`/growbot_runner.js`) and drives it the way
 GrowBot_Training trained it: legs neutral and a 1 s settle, the measured gravity rotated to +z,
 heading integrated from the levelled gyro, and `cmd_yaw` the wrapped heading error over 180
-each tick (forward holds heading; the spins aim ±90°; back backs away when the walk takes
+each tick (forward and the `look` trick hold heading; the spins aim ±90°; back backs away when the walk takes
 `cmd_forward`, else turns left until it faces behind). It spends the legs' duty budget as a
 stock walk does, and keeps the stock walks' stops: a tip or a grab, a pause, a hidden page, a
 dream, or the relay dropping. The library refuses a policy with an input the runner can't feed.

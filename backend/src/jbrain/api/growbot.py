@@ -283,7 +283,8 @@ async def _list_robots(request: Request, ctx: SessionContext) -> list[RobotOut]:
 # What the Body tab can ask the creature wearing a robot to do (growbot/server/serve.py MOVES).
 # Walks and spins (escape spins too) run the creature's own policies on its phone's motion
 # sensors; stand_tall is its tall pose; the gestures are its body's named keyframes, `gesture`
-# any of them by `name`; stop halts whatever runs.
+# any of them by `name`; `look` runs a library policy (a trick) facing ahead, in place when it
+# takes a speed; stop halts whatever runs.
 Move = Literal[
     "forward",
     "back",
@@ -296,11 +297,12 @@ Move = Literal[
     "bow",
     "sway",
     "gesture",
+    "look",
     "stop",
 ]
 
 
-_WALKS = frozenset({"forward", "back", "spin_left", "spin_right"})
+_WALKS = frozenset({"forward", "back", "spin_left", "spin_right", "look"})
 
 
 # upstream's gesture-name shape (next.html _gestName): the only names its creature can play.
@@ -342,6 +344,8 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
         raise HTTPException(status_code=404, detail="no such robot")
     if (body.move == "gesture") != (body.name is not None):
         raise HTTPException(status_code=422, detail="a gesture move, and only that, takes a name")
+    if body.move == "look" and body.policy is None:
+        raise HTTPException(status_code=422, detail="a trick runs a library policy: name one")
     sent: dict[str, object] = {"code": code, "move": body.move, "secs": body.secs}
     if body.name is not None:
         sent["name"] = body.name

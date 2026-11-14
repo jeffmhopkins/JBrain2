@@ -6,9 +6,11 @@ leaves `policy_final.json` in its live folder (GrowBot_Training's export); addin
 file into the library (`jbrain.growbot.policies`), so it outlives the job.
 
 - `router` — the owner: the library (list, add from a job, rename, delete) and the finished
-  jobs it can add from.
-- `debug_router` — the same reads, the add and the refresh, through the debug token
-  (CLAUDE.md #10).
+  jobs it can add from, and each policy's switches (owner, 2026-11-14: "in manage we should
+  be able to change policy availability ... or set motion types"): on or off for the pad, its
+  motion (walk, turn or trick), and which one of its family the pad offers (migration 0272).
+- `debug_router` — the same reads, the add, the switches and the refresh, through the debug
+  token (CLAUDE.md #10).
 - Kept policies (owner, 2026-11-14: "finished policies should get saved to our training repo,
   and the growbot GUI ... should pull from that on a refresh"): the ones the training repo's
   `policies/index.toml` lists, read by the launcher. A refresh syncs them into the library;
@@ -23,10 +25,10 @@ import asyncio
 import hashlib
 import re
 from datetime import datetime
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 
 from jbrain.api import jlaunch
 from jbrain.api.deps import DebugDep, OwnerDep
@@ -74,6 +76,12 @@ class PolicyOut(BaseModel):
     bytes: int
     created_at: datetime
     contract: ContractOut
+    # Offered on the Body tab's pad; off keeps it in the library, unused.
+    enabled: bool
+    # What the pad does with it: walk (its four keys), turn (left and right), trick (a button).
+    motion: Literal["walk", "turn", "trick"]
+    # The one of its family (source_spec) the pad offers; with none, the newest enabled one.
+    active: bool
 
 
 class AddIn(BaseModel):
@@ -83,10 +91,25 @@ class AddIn(BaseModel):
     _name = field_validator("name")(_clean_name)
 
 
-class RenameIn(BaseModel):
-    name: str = Field(min_length=1, max_length=60)
+class UpdateIn(BaseModel):
+    """A rename, the owner's switches, or both; at least one."""
 
-    _name = field_validator("name")(_clean_name)
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    enabled: StrictBool | None = None
+    motion: Literal["walk", "turn", "trick"] | None = None
+    # Only true is a choice: a family's active one is replaced by picking another.
+    active: Literal[True] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str | None) -> str | None:
+        return v if v is None else _clean_name(v)
+
+    @model_validator(mode="after")
+    def _something(self) -> UpdateIn:
+        if self.name is None and self.enabled is None and self.motion is None and not self.active:
+            raise ValueError("nothing to change")
+        return self
 
 
 class KeptSyncOut(BaseModel):
@@ -146,6 +169,9 @@ def _out(row: PolicyRow) -> PolicyOut:
         contract=ContractOut(
             facing=c.facing, speed=c.speed, pitch=c.pitch, control_hz=c.control_hz
         ),
+        enabled=row.enabled,
+        motion=cast(Any, row.motion),
+        active=row.active,
     )
 
 
@@ -302,17 +328,31 @@ async def add_policy(request: Request, owner: OwnerDep, body: AddIn) -> PolicyOu
     return await _add(request, _owner_ctx(owner), body)
 
 
-@router.patch("/policies/{pid}")
-async def rename_policy(
-    request: Request, owner: OwnerDep, pid: PolicyId, body: RenameIn
-) -> PolicyOut:
+async def _update(request: Request, ctx: SessionContext, pid: str, body: UpdateIn) -> PolicyOut:
+    repo = _repo(request)
     try:
-        row = await _repo(request).rename(_owner_ctx(owner), pid, body.name)
+        row = await repo.update(
+            ctx,
+            pid,
+            name=body.name,
+            enabled=body.enabled,
+            motion=body.motion,
+            active=body.active,
+        )
     except PolicyError as exc:
         raise HTTPException(status_code=409, detail=f"that walk can't be driven: {exc}") from exc
     if row is None:
         raise HTTPException(status_code=404, detail="no such policy")
     return _out(row)
+
+
+@router.patch("/policies/{pid}")
+async def update_policy(
+    request: Request, owner: OwnerDep, pid: PolicyId, body: UpdateIn
+) -> PolicyOut:
+    """Rename a policy, or set its switches: `enabled`, `motion`, and `active` (true makes it
+    the one of its family the pad offers). 404 when there is no such policy."""
+    return await _update(request, _owner_ctx(owner), pid, body)
 
 
 @router.delete("/policies/{pid}", status_code=204)
@@ -337,6 +377,14 @@ async def debug_list_sources(request: Request, _p: DebugDep) -> list[SourceOut]:
 async def debug_add_policy(request: Request, _p: DebugDep, body: AddIn) -> PolicyOut:
     request.state.debug_detail = f"growbot add policy from {body.job_id}"
     return await _add(request, _DEBUG_OWNER, body)
+
+
+@debug_router.patch("/policies/{pid}")
+async def debug_update_policy(
+    request: Request, _p: DebugDep, pid: PolicyId, body: UpdateIn
+) -> PolicyOut:
+    request.state.debug_detail = f"growbot update policy {pid}"
+    return await _update(request, _DEBUG_OWNER, pid, body)
 
 
 @debug_router.post("/policies/refresh")

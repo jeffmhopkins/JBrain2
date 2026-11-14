@@ -4,6 +4,7 @@ SQL (add, list, rename, delete, the sidecar's JSON read) does what the api assum
 The mandatory RLS isolation test for the new table (CLAUDE.md rule 3).
 """
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -62,6 +63,53 @@ async def test_the_library_round_trips(maker: async_sessionmaker) -> None:
     assert not await repo.delete(OWNER, row.id)
     assert await repo.get_json(OWNER, row.id) is None
     assert not await repo.exists(OWNER, row.id)
+
+
+async def test_the_switches_keep_one_active_per_family_and_motion(
+    maker: async_sessionmaker,
+) -> None:
+    repo = SqlPolicyRepo(maker)
+    a = await repo.add(OWNER, "A", POLICY, 10, "job1", "growbot_camera_walk")
+    b = await repo.add(OWNER, "B", POLICY, 10, "job2", "growbot_camera_walk")
+    t = await repo.add(OWNER, "T", POLICY, 10, "job3", "growbot_camera_walk")
+    c = await repo.add(OWNER, "C", POLICY, 10, "job4", "growbot_look")
+    assert (a.enabled, a.motion, a.active) == (True, "walk", False)
+    await repo.update(OWNER, a.id, active=True)
+    await repo.update(OWNER, c.id, active=True)
+    # Picking the family's turn keeps its walk's pick.
+    await repo.update(OWNER, t.id, motion="turn", active=True)
+    picked = {r.name: r.active for r in await repo.list(OWNER)}
+    assert picked == {"A": True, "B": False, "T": True, "C": True}
+    # Picking B unpicks A, its family's walk; renamed and switched in the same transaction.
+    got = await repo.update(OWNER, b.id, name="Brisk", active=True, enabled=False)
+    assert got is not None and (got.name, got.active, got.enabled) == ("Brisk", True, False)
+    picked = {r.name: r.active for r in await repo.list(OWNER)}
+    assert picked == {"A": False, "Brisk": True, "T": True, "C": True}
+    # A picked row that changes motion leaves its pick behind.
+    moved = await repo.update(OWNER, t.id, motion="trick")
+    assert moved is not None and (moved.motion, moved.active) == ("trick", False)
+    # Nothing given changes nothing.
+    same = await repo.update(OWNER, c.id)
+    assert same is not None and (same.active, same.motion, same.enabled) == (True, "walk", True)
+    assert await repo.update(OWNER, "00000000-0000-0000-0000-000000000000", enabled=False) is None
+    with pytest.raises(ValueError, match="motion"):
+        await repo.update(OWNER, a.id, motion="dance")
+    async with scoped_session(maker, OWNER) as session:
+        with pytest.raises(DBAPIError):
+            await session.execute(
+                text(
+                    "UPDATE app.growbot_policies SET active = true, motion = 'walk'"
+                    " WHERE source_spec = 'growbot_camera_walk'"
+                )
+            )
+
+
+async def test_two_picks_at_once_both_land_cleanly(maker: async_sessionmaker) -> None:
+    """The family lock queues the second pick, which then unpicks the first."""
+    repo = SqlPolicyRepo(maker)
+    rows = [await repo.add(OWNER, n, POLICY, 10, n, "growbot_camera_walk") for n in "ABCD"]
+    await asyncio.gather(*(repo.update(OWNER, r.id, active=True) for r in rows))
+    assert sum(r.active for r in await repo.list(OWNER)) == 1
 
 
 async def test_a_listing_reads_the_weights_only_as_present(maker: async_sessionmaker) -> None:

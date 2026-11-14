@@ -31,6 +31,7 @@ import type {
   GrowbotPhase,
   GrowbotPhone,
   GrowbotPolicy,
+  GrowbotPolicyPatch,
   GrowbotRobot,
   GrowbotSoul,
   HomeNetQuery,
@@ -226,6 +227,9 @@ const mockGb = {
       bytes: 41_822,
       created_at: "2026-11-14T03:30:00Z",
       contract: { facing: "nose", speed: false, pitch: false, control_hz: 25 },
+      enabled: true,
+      motion: "walk",
+      active: false,
     },
   ] as GrowbotPolicy[],
   policySources: [
@@ -1008,6 +1012,9 @@ async function mockGrowbot(
         pitch: camera,
         control_hz: 25,
       },
+      enabled: true,
+      motion: "walk",
+      active: false,
     };
     mockGb.policies.unshift(made);
     return json(made, 201);
@@ -1021,10 +1028,23 @@ async function mockGrowbot(
       return new Response(null, { status: 204 });
     }
     if (method === "PATCH") {
-      const { name } = JSON.parse(String(init?.body ?? "{}")) as { name?: string };
+      const patch = JSON.parse(String(init?.body ?? "{}")) as GrowbotPolicyPatch;
       const p = mockGb.policies[at];
-      if (!p || !name?.trim()) return json({ detail: "a name is needed" }, 422);
-      p.name = name.trim();
+      if (!p) return json({ detail: "no such policy" }, 404);
+      if (patch.name !== undefined) {
+        if (!patch.name.trim()) return json({ detail: "a name is needed" }, 422);
+        p.name = patch.name.trim();
+      }
+      if (patch.enabled !== undefined) p.enabled = patch.enabled;
+      if (patch.motion !== undefined && patch.motion !== p.motion) {
+        p.motion = patch.motion;
+        p.active = false;
+      }
+      if (patch.active) {
+        for (const q of mockGb.policies) {
+          if (q.source_spec === p.source_spec && q.motion === p.motion) q.active = q === p;
+        }
+      }
       return json(p);
     }
   }

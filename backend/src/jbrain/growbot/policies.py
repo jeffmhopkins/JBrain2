@@ -12,12 +12,17 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, get_args
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+
+# What the pad does with a policy (migration 0272): `walk` drives its four keys, `turn` its
+# left and right keys, `trick` is a trick button that holds it facing ahead.
+Motion = Literal["walk", "turn", "trick"]
+MOTIONS: tuple[str, ...] = get_args(Motion)
 
 # The largest library policy: the trained MLPs are tens of KB, upstream's biggest stock walk
 # about 600 KB; the creature parses it whole on the phone.
@@ -71,6 +76,9 @@ class PolicyRow:
     bytes: int
     created_at: datetime
     contract: Contract
+    enabled: bool = True
+    motion: str = "walk"
+    active: bool = False
 
 
 def summary(policy: Any) -> Contract:
@@ -145,6 +153,9 @@ def _row(r: Any) -> PolicyRow:
         bytes=r.bytes,
         created_at=r.created_at,
         contract=summary(r.policy),
+        enabled=bool(r.enabled),
+        motion=str(r.motion),
+        active=bool(r.active),
     )
 
 
@@ -162,6 +173,19 @@ class PolicyRepo(Protocol):
     ) -> PolicyRow: ...
 
     async def rename(self, ctx: SessionContext, pid: str, name: str) -> PolicyRow | None: ...
+
+    async def update(
+        self,
+        ctx: SessionContext,
+        pid: str,
+        *,
+        name: str | None = None,
+        enabled: bool | None = None,
+        motion: str | None = None,
+        active: bool | None = None,
+    ) -> PolicyRow | None:
+        """Set the owner's switches; making one active clears its family's other one."""
+        ...
 
     async def replace_policy(
         self,
@@ -190,7 +214,7 @@ def _stub(key: str) -> str:
 
 
 _COLS = (
-    "id, name, source_job, source_spec, bytes, created_at,"
+    "id, name, source_job, source_spec, bytes, created_at, enabled, motion, active,"
     " jsonb_build_object('obs_spec', policy->'obs_spec', "
     + ", ".join(_stub(k) for k in ("mean", "std", "layers"))
     + ") AS policy"
@@ -261,6 +285,62 @@ class SqlPolicyRepo:
                 )
             ).first()
             # Read inside the transaction, so a row summary() refuses rolls the rename back.
+            return _row(r) if r is not None else None
+
+    async def update(
+        self,
+        ctx: SessionContext,
+        pid: str,
+        *,
+        name: str | None = None,
+        enabled: bool | None = None,
+        motion: str | None = None,
+        active: bool | None = None,
+    ) -> PolicyRow | None:
+        """None when there is no such policy; PolicyError as rename(). One transaction, so a
+        rename with switches lands whole or not at all."""
+        if motion is not None and motion not in MOTIONS:
+            raise ValueError(f"not a motion: {motion!r}")
+        async with scoped_session(self._maker, ctx) as session:
+            if active:
+                # Lock the family first: two picks at once then queue, and the second's clear
+                # sees the first's pick instead of tripping the one-active index.
+                await session.execute(
+                    text(
+                        "SELECT id FROM app.growbot_policies WHERE source_spec = (SELECT"
+                        " source_spec FROM app.growbot_policies WHERE id = CAST(:i AS uuid))"
+                        " FOR UPDATE"
+                    ),
+                    {"i": pid},
+                )
+                # Unpick the rest of the family's motion the row will have, before the row's
+                # own update, so the index never sees two.
+                await session.execute(
+                    text(
+                        "UPDATE app.growbot_policies o SET active = false FROM"
+                        " app.growbot_policies p WHERE p.id = CAST(:i AS uuid)"
+                        " AND o.active AND o.id <> p.id AND o.source_spec = p.source_spec"
+                        " AND o.motion = COALESCE(CAST(:m AS text), p.motion)"
+                    ),
+                    {"i": pid, "m": motion},
+                )
+            r = (
+                await session.execute(
+                    text(
+                        "UPDATE app.growbot_policies SET"
+                        " name = COALESCE(CAST(:n AS text), name),"
+                        " enabled = COALESCE(CAST(:e AS boolean), enabled),"
+                        # A row that changes motion leaves its old pick behind unless picked anew.
+                        " active = CASE WHEN CAST(:a AS boolean) THEN true"
+                        " WHEN CAST(:m AS text) IS NOT NULL AND CAST(:m AS text) <> motion"
+                        " THEN false ELSE active END,"
+                        " motion = COALESCE(CAST(:m AS text), motion)"
+                        f" WHERE id = CAST(:i AS uuid) RETURNING {_COLS}"
+                    ),
+                    {"n": name, "e": enabled, "m": motion, "a": bool(active), "i": pid},
+                )
+            ).first()
+            # Read inside the transaction, so a row summary() refuses rolls it all back.
             return _row(r) if r is not None else None
 
     async def replace_policy(
