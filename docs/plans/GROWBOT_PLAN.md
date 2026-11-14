@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** In progress · **Last verified:** 2026-11-13 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
+> **Status:** In progress · **Last verified:** 2026-11-14 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -652,6 +652,19 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   any, and shows them on the Body tab's *Walks and spins* card (GUI gate passed: mock A,
   `docs/mocks/growbot-policies/a-body-card.html`). Bringing them in is still a sync PR, and the
   card says so. See `growbot/README.md` "Upstream and patches".
+- **Training our own walks (owner, 2026-11-13): *"the training repo is where we set up the
+  actual environment … and then in my jbrain2 repo, we make a task that can run from there
+  like I was doing my math stuff"*.** ✅ for the training side. The environment, reward, config
+  and kept weights live in `github.com/jeffmhopkins/GrowBot_Training` (MuJoCo + PPO on the CPU;
+  a slow walk steered by one heading-error input, exported in the runner's `segments` format
+  with the error on `cmd_yaw`). The Launcher's `growbot_heading_walk` job
+  (`jlaunch/src/jlaunch_ctl/specs.py`) trains it on the box and hands back the run as a
+  tarball with the policy JSON and a browser 3D `replay.html`. ◻️ Not yet done: the creature
+  has no heading source or gait entry for it (the training README's "Getting a policy onto the
+  robot" lists what the app needs), and bringing a trained policy into `growbot/site` is a sync
+  PR. That last step and opening the replay from a phone both need the tarball unpacked, a
+  terminal step to design out (CLAUDE.md #10): the job should also offer the replay and the
+  policy as their own downloads.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic. Its store
   landed early with the brain log (§2 "Brain log", migration 0262); reading it in the PWA and

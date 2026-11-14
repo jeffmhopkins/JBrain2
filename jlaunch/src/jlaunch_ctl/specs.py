@@ -6,8 +6,8 @@ is verified. Specs are CODE-DEFINED (never owner-supplied URLs), so the repo is 
 trusted constant — but the clone still runs with git's ext/file transports denied and
 the URL shape validated, defense in depth.
 
-Erdos-Straus 1e12 is the first spec; adding a computation for a later paper is a new
-entry here, no new plumbing.
+Erdos-Straus 1e12 was the first spec; a GrowBot policy training run is another. Adding a
+computation is a new entry here, no new plumbing.
 """
 
 from __future__ import annotations
@@ -197,10 +197,52 @@ ERDOS_STRAUS_1E12_NATIVE = _native_spec("1e12", "12", "1000000000000", "2-5 h", 
 ERDOS_STRAUS_1E13_NATIVE = _native_spec("1e13", "13", "10000000000000", "1-2 days", 20)
 
 
+# A GrowBot walking policy trained on the box's CPU cores
+# (github.com/jeffmhopkins/GrowBot_Training): MuJoCo + Stable-Baselines3 PPO, one
+# simulator per core. The repo owns the environment, reward and config; this spec only
+# runs it. run.sh trains, exports the app-format policy JSON (checked against the
+# trained network: export_verify.log must end "EXPORT OK"), evaluates it and writes a
+# browser 3D replay page; the run folder ships as one tarball. CPU-only torch keeps the
+# install small, and nothing needs the GPU or a display.
+GROWBOT_HEADING_WALK = _validate(
+    JobSpec(
+        name="growbot_heading_walk",
+        title="GrowBot heading walk (train a walking policy)",
+        repo_url="https://github.com/jeffmhopkins/GrowBot_Training",
+        branch="main",
+        phases=(
+            Phase("install", "./install.sh"),
+            Phase("smoke", ".venv/bin/python -m pytest -q"),
+            Phase("train", "./run.sh jlaunch"),
+            Phase(
+                "package",
+                "cp runs/jlaunch.tar.gz growbot_heading_walk_artifacts.tar.gz",
+            ),
+        ),
+        artifact_path="growbot_heading_walk_artifacts.tar.gz",
+        artifact_media_type="application/gzip",
+        verify_log="runs/jlaunch/export_verify.log",
+        verify_must_end_with="EXPORT OK",
+        headline_markers=("eval summary:", "max |json - network|:"),
+        est_hours="1-3 h",
+        disk_gb=3,
+        all_cores=True,
+        notes=(
+            "Trains the slow heading-following walk with the repo's default config "
+            "(configs/heading_walk.toml) on every core. The download is the run "
+            "folder: the policy JSON the app loads, replay.html (open it in a browser "
+            "to watch the walks in 3D), the evaluation, checkpoints and TensorBoard "
+            "logs."
+        ),
+    )
+)
+
+
 SPECS: dict[str, JobSpec] = {
     ERDOS_STRAUS_1E12.name: ERDOS_STRAUS_1E12,
     ERDOS_STRAUS_1E12_NATIVE.name: ERDOS_STRAUS_1E12_NATIVE,
     ERDOS_STRAUS_1E13_NATIVE.name: ERDOS_STRAUS_1E13_NATIVE,
+    GROWBOT_HEADING_WALK.name: GROWBOT_HEADING_WALK,
 }
 
 
