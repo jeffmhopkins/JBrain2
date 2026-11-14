@@ -1,6 +1,8 @@
 // tests/unit/test_growbot_site.py runs growbot-box.js's trained walk here, in node, against
 // stubs of the next.html globals it drives. Arguments: the runner's file URL, growbot-box.js,
-// the pad's move, the phone's IMU as JSON, and optionally the legs' duty left (ms).
+// the pad's move, the phone's IMU as JSON, optionally the legs' duty left (ms), and optionally
+// the Body tab's steering as JSON ({at, drive, heading, speed, pitch}: sent `at` ms after a move
+// whose Drive id is "d1ce0001").
 import { register } from "node:module";
 const RUNNER = process.argv[2], BOX = process.argv[3], MOVE = process.argv[4];
 const PHONE = JSON.parse(process.argv[5]);
@@ -24,7 +26,8 @@ g.phoneTiltDegrees = () => 0; g.setErr = (m) => errs.push(m);
 g.calNow = () => ({ L_OFF: 4, R_OFF: -2, L_SIGN: -1, R_SIGN: 1, IMU_SIGN: [1, -1, 1], gain: 0.7 });
 g.$ = () => ({ textContent: "" });
 // The legs' duty budget, as next.html keeps it: a run is granted no more than what is left.
-g._walkLog = []; g.dutyLeftMs = () => Number(process.argv[6] || 60000);
+g._walkLog = [];
+g.dutyLeftMs = () => Math.max(0, Number(process.argv[6] || 60000) - g._walkLog.reduce((t, w) => t + w.ms, 0));
 g.policySeconds = (v, fallback, ms) => Math.min(Number(v) > 0 ? Math.max(1, Number(v)) : fallback, ms / 1000);
 let seq = 0;
 g._moveRequest = (name) => ({ id: ++seq, action: name, state: "requested" });
@@ -41,7 +44,10 @@ const POLICY = {
 g.fetch = async (url) => ({ ok: url.startsWith("/api/box/policy?id="), status: 200, json: async () => POLICY });
 const src = fs.readFileSync(BOX, "utf8");
 (0, eval)(src.slice(src.indexOf("/* Trained walks from JBrain's policy library")));
-g.gbTrainedWalk("0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, 1);
+const STEER = process.argv[7] ? JSON.parse(process.argv[7]) : null;
+g.gbTrainedWalk("0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, 1, STEER ? "d1ce0001" : "");
 const accepted = reports[0];
-await new Promise((r) => setTimeout(r, 2400));
-console.log(JSON.stringify({ accepted, reports, walkLog: g._walkLog, fed: fed.slice(0, 3), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
+let steered = null;
+if (STEER) setTimeout(() => { steered = g.gbSteer(STEER); }, STEER.at);
+await new Promise((r) => setTimeout(r, STEER ? 3600 : 2400));
+console.log(JSON.stringify({ accepted, steered, reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));

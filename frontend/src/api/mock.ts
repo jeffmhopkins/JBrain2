@@ -1092,6 +1092,13 @@ async function mockGrowbot(
       },
     });
   }
+  const steer = /^\/api\/growbot\/robots\/([^/]+)\/steer$/.exec(path);
+  if (steer && method === "POST") {
+    const r = robots().find((x) => x.code === decodeURIComponent(steer[1] ?? ""));
+    if (!r || r.revoked_at) return json({ detail: "no such robot" }, 404);
+    if (!r.creature) return json({ detail: "Nobody is driving it." }, 409);
+    return new Response(null, { status: 202 });
+  }
   const move = /^\/api\/growbot\/robots\/([^/]+)\/move$/.exec(path);
   if (move && method === "POST") {
     const r = robots().find((x) => x.code === decodeURIComponent(move[1] ?? ""));

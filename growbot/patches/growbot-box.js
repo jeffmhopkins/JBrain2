@@ -1286,8 +1286,10 @@
    its brain had asked, with the walk calibration this phone already has. It answers at once
    with {"t":"box_ack", rid, ok, state, why}: what it started, or the creature's own words for
    why not. It also tells the box which named gestures its body has ({"t":"box_info", gestures}),
-   whenever that list changes, so the Body tab can offer a soul's own saved ones as tricks. Only
-   a visible page joins, since a hidden one stops every move anyway. */
+   whenever that list changes, so the Body tab can offer a soul's own saved ones as tricks. And
+   {"t":"box_steer", rid, drive, heading, speed, pitch} steers the trained walk that a box_move
+   with the same `drive` started, answered with a box_ack saying whether that walk still runs
+   (gbSteer, below). Only a visible page joins, since a hidden one stops every move anyway. */
 (function () {
   "use strict";
   if (location.pathname !== "/v3/next.html") return;
@@ -1297,6 +1299,7 @@
   var RETRY_MIN_MS = 2000, RETRY_MAX_MS = 60000;
   var POLICY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   var WALKS = /^(forward|back|spin_left|spin_right|look)$/;
+  var DRIVE_RE = /^[0-9a-f]{8,32}$/;
   // upstream's _gestName shape: the only names moveLegs can ever play.
   var GESTURE_RE = /^[a-z0-9_-]+(?: [a-z0-9_-]+)*$/, GESTURES_MAX = 32, INFO_MS = 15000;
   // The creature's own tall pose (next.html STAND_TALL), should this page not define it.
@@ -1322,11 +1325,11 @@
     try { ws.send(JSON.stringify({ t: "box_info", gestures: names })); told = said; } catch (e) {}
   }
 
-  function run(move, secs, policy, name) {
+  function run(move, secs, policy, name, drive) {
     var spec = null;
     if (policy) {
       if (typeof window.gbTrainedWalk !== "function") throw new Error("this page can't run a trained walk");
-      window.gbTrainedWalk(policy, move, secs);
+      window.gbTrainedWalk(policy, move, secs, drive);
       return;
     }
     if (move === "look") throw new Error("a trick runs a trained policy, and none was named");
@@ -1353,13 +1356,13 @@
     }
   }
 
-  function answer(rid, move, secs, policy, name) {
+  function answer(rid, move, secs, policy, name, drive) {
     var err = document.getElementById("err");
     // setErr also retires a "try again" left under the old caption.
     if (typeof window.setErr === "function") window.setErr(""); else if (err) err.textContent = "";
     var before = window._moveLast, out = { t: "box_ack", rid: rid, ok: false, state: "", why: "" };
     try {
-      run(move, secs, policy, name);
+      run(move, secs, policy, name, drive);
       if (move === "stop") {
         // runGait files a halt word as a move it never admitted; the legs did stop.
         out.ok = true;
@@ -1416,6 +1419,13 @@
     s.onmessage = function (ev) {
       var m;
       try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m && m.t === "box_steer" && typeof m.rid === "string") {
+        if (gone()) { close(); return; }
+        // Answered, so a Drive whose walk has ended (a tip, Stop from elsewhere) hears so.
+        var steering = !!(window.gbSteer && window.gbSteer(m));
+        try { s.send(JSON.stringify({ t: "box_ack", rid: m.rid, ok: steering, state: steering ? "steering" : "not_driving", why: "" })); } catch (e) {}
+        return;
+      }
       if (!m || m.t !== "box_move" || typeof m.rid !== "string") return;
       // A page that has since gone away (opened on another phone) takes no more moves.
       if (gone()) { close(); return; }
@@ -1423,12 +1433,14 @@
       var secs = typeof m.secs === "number" && m.secs >= 1 && m.secs <= 15 ? m.secs : 0;
       var move = String(m.move || "");
       var policy = typeof m.policy === "string" && POLICY_RE.test(m.policy) && WALKS.test(move) ? m.policy : "";
+      // The Body tab's Drive names its walk, so only that walk takes its steering.
+      var drive = policy && typeof m.drive === "string" && DRIVE_RE.test(m.drive) ? m.drive : "";
       var name = move === "gesture" && typeof m.name === "string" && m.name.length <= 16 && GESTURE_RE.test(m.name) ? m.name : "";
       if (move === "gesture" && !name) {
         try { s.send(JSON.stringify({ t: "box_ack", rid: m.rid, ok: false, state: "", why: "not a gesture name this creature can play" })); } catch (e) {}
         return;
       }
-      try { s.send(JSON.stringify(answer(m.rid, move, secs, policy, name))); } catch (e) {}
+      try { s.send(JSON.stringify(answer(m.rid, move, secs, policy, name, drive))); } catch (e) {}
       tell();
     };
     s.onclose = function (ev) {
@@ -1524,6 +1536,11 @@
    - The pad's moves are targets: forward 0 at full speed, left +90 and right -90 (standing to
      turn when it takes a speed), back -1 speed where it takes one, else a turn around (180),
      which keeps turning left: at ±180 exactly the error's sign would flip with the noise.
+   - The Body tab's steering (box_steer, a few a second while it drives) replaces the pad's
+     target, speed and camera height of the walk its Drive started (the same `drive` id; no
+     other walk, a pad move or one from elsewhere, ever takes it), and keeps the walk
+     going STEER_HOLD_MS past the latest one, up to DRIVE_MAX_MS, spending the duty budget as
+     it goes: the drive ends a moment after the tab stops steering, whatever ends the tab.
    - Every stop upstream's walks have: Stop and any newer move (stopMotion / carryLegMotion own
      _motion), pause, hide, a dream, a lost relay, a tip or a grab, the tip cool-off, and the
      legs' duty budget (dutyLeftMs / policySeconds / _walkLog, as runGait grants it). */
@@ -1532,6 +1549,17 @@
   // The page keeps a policy as long as the box does (serve.py POLICY_CACHE_S), so one deleted
   // from the library stops walking within a minute rather than at the next reload.
   var D = Math.PI / 180, PREP_MS = 1000, KEEP_MS = 60000, cache = {};
+  var STEER_HOLD_MS = 1500, DRIVE_MAX_MS = 120000, steer = null;
+
+  // True when the walk this steer's drive started still runs here (and so takes it).
+  window.gbSteer = function (m) {
+    function ok(v, lim) { return typeof v === "number" && isFinite(v) && Math.abs(v) <= lim; }
+    if (!m || !ok(m.heading, 180) || !ok(m.speed, 1) || !ok(m.pitch, 1)) return false;
+    var M = _motion;
+    if (!M || !M.drive || M.drive !== m.drive) return false;
+    steer = { drive: m.drive, heading: m.heading, speed: m.speed, pitch: m.pitch, t: Date.now() };
+    return true;
+  };
 
   function load(pid) {
     var ref = "/api/box/policy?id=" + encodeURIComponent(pid), hit = cache[pid];
@@ -1595,7 +1623,7 @@
     setErr(words);
   }
 
-  function start(pid, move, secs, attempt) {
+  function start(pid, move, secs, attempt, drive) {
     if (_wheels) { refuse(attempt, "no_legs", "a trained walk needs legs, and this body rolls"); return; }
     if (!window._body || !window._body.ready) { refuse(attempt, "connection_unavailable", "no robot connected to walk — its legs aren't here"); return; }
     if (!_bodyAlive()) { refuse(attempt, "connection_unavailable", "robot not answering"); return; }
@@ -1606,7 +1634,7 @@
     if (left < 800) { refuse(attempt, "duty_limit", "resting its legs a moment (duty limit)"); return; }
     var dflt = move === "forward" || move === "back" ? 8 : 4, walkS = policySeconds(secs, dflt, left);
     carryLegMotion();
-    var gen = _motionGen, M = { kind: "walk", loading: true, report: attempt };
+    var gen = _motionGen, M = { kind: "walk", loading: true, report: attempt, drive: drive || "" };
     _motion = M;
     _moveReport(attempt, "accepted", "loading_policy");
     $("brainTxt").textContent = "loading my trained walk…";
@@ -1622,7 +1650,9 @@
       var cal = Object.assign({}, calNow(), { IMU_SIGN: [1, 1, 1], gain: 1, turn: 0 });
       var walker = new mod.Walker(policy, cal), hz = Number(sp.control_hz) || 25;
       walker.setFrame("zup");
-      var cmd = command(move, channels(policy).indexOf("cmd_forward") >= 0);
+      var hasSpeed = channels(policy).indexOf("cmd_forward") >= 0;
+      var hasPitch = channels(policy).indexOf("cmd_pitch") >= 0;
+      var cmd = command(move, hasSpeed), pitch = 1, walkT = 0;
       var L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0;
       var prepEnd = Date.now() + PREP_MS, grav = { x: 0, y: 0, z: 0, n: 0 };
       var R = null, heading = 0, lastT = 0, endT = 0, upB = null, tipN = 0, jerkN = 0;
@@ -1663,14 +1693,25 @@
         if (!R) { stopMotion(); setErr("couldn't read which way is up — is motion allowed?"); return; }
         upB = { b: ori.b, g: ori.g };
         walker.reset();
-        lastT = performance.now(); endT = Date.now() + walkS * 1000;
+        lastT = performance.now(); walkT = Date.now(); endT = walkT + walkS * 1000;
         try { logEv("walk_start", { gait: "trained", policy: pid, dir: move, target: cmd.target, fwd: cmd.fwd, granted: walkS }); } catch (e) {}
         $("brainTxt").textContent = "walking…";
         step();
       });
       var step = guarded(function () {
         if (gone()) return;
-        var t0 = performance.now();
+        var t0 = performance.now(), live = M.drive && steer && steer.drive === M.drive ? steer : null;
+        if (live) {
+          // At exactly ±180 the error's sign would flip with the noise, as for the pad's back.
+          cmd = { target: live.heading, fwd: hasSpeed ? live.speed : 1, around: Math.abs(live.heading) === 180 };
+          pitch = hasPitch ? live.pitch : 1;
+          var want = Math.min(live.t + STEER_HOLD_MS, walkT + DRIVE_MAX_MS);
+          if (want > endT && dutyLeftMs() >= want - endT) {
+            _walkLog.push({ t: Date.now(), ms: want - endT });
+            endT = want;
+            selfMoveUntil = Math.max(selfMoveUntil, endT + 3500);
+          }
+        }
         if (Date.now() >= endT) {
           _imuWhy = "done";
           carryLegMotion({ l: 90, r: 90 });
@@ -1696,7 +1737,7 @@
         heading += G.z * dt;
         var err = wrap180(cmd.target - heading / D);
         if (cmd.around && Math.abs(err) > 90) err = Math.abs(err);
-        var out = walker.step(A, G, { fwd: cmd.fwd, yaw: err / 180, pitch: 1 });
+        var out = walker.step(A, G, { fwd: cmd.fwd, yaw: err / 180, pitch: pitch });
         try { send(out.l, out.r); } catch (e) { stopMotion(); return; }
         M.loopIv = setTimeout(step, Math.max(0, 1000 / hz - (performance.now() - t0)));
       });
@@ -1710,9 +1751,9 @@
   }
 
   // As runGait: one move request, and a move it never admitted reads as blocked.
-  window.gbTrainedWalk = function (pid, move, secs) {
+  window.gbTrainedWalk = function (pid, move, secs, drive) {
     var attempt = _moveRequest("walk:trained:" + String(move).slice(0, 16));
-    try { start(pid, move, +secs || 0, attempt); }
+    try { start(pid, move, +secs || 0, attempt, drive); }
     finally { if (attempt.state === "requested") _moveReport(attempt, "blocked", "not_admitted"); }
   };
 })();

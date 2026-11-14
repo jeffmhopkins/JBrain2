@@ -2644,6 +2644,55 @@ def test_a_trick_names_a_library_policy_for_the_creature(run: _Running) -> None:
     page.shut()
 
 
+def test_steering_reaches_its_drives_walk_and_hears_if_it_still_runs(run: _Running) -> None:
+    steer = "/internal/robots/steer"
+    body = {"code": "gb-abc123", "drive": "d1ce0001", "heading": 45, "speed": 0.5, "pitch": -0.25}
+    raw = json.dumps(body).encode()
+    assert _internal(run, "POST", steer, raw)[0] == 409
+    assert _internal(run, "POST", steer, raw, token="wrong")[0] == 401
+    assert _internal(run, "GET", steer)[0] == 405
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    for ok in (True, False):
+
+        def answer(ok: bool = ok) -> None:
+            msg = page.message()
+            sent = {k: v for k, v in body.items() if k != "code"}
+            assert msg == {"t": "box_steer", "rid": msg["rid"], **sent}
+            page.text({"t": "box_ack", "rid": msg["rid"], "ok": ok})
+
+        t = threading.Thread(target=answer)
+        t.start()
+        assert _internal(run, "POST", steer, raw) == (200, {"ok": ok})
+        t.join(5)
+    for bad in ({"heading": 181}, {"speed": True}, {"pitch": "up"}, {"code": "x"}, {"drive": "Z"}):
+        got = _internal(run, "POST", steer, json.dumps({**body, **bad}).encode())
+        assert got[0] == 400, bad
+    page.shut()
+
+
+def test_a_drive_names_only_a_trained_walk(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    move = {"code": "gb-abc123", "move": "forward", "secs": 2, "drive": "d1ce0001"}
+    assert _move(run, move)[0] == 400
+    moved: list[dict[str, Any]] = []
+
+    def answer() -> None:
+        msg = page.message()
+        moved.append(msg)
+        page.text({"t": "box_ack", "rid": msg["rid"], "ok": True, "state": "accepted"})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    assert _move(run, {**move, "policy": _PID})[0] == 200
+    t.join(5)
+    assert moved[0]["drive"] == "d1ce0001" and moved[0]["policy"] == _PID
+    page.shut()
+
+
 def test_a_move_without_a_policy_sends_none(run: _Running) -> None:
     page = _phone(run, "/d/gb-abc123-agent")
     page.text({"t": "hello"})
