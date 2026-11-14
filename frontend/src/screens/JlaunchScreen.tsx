@@ -120,10 +120,11 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
   // A run archived under an archived job type stays with that type (its View runs), so
   // unarchiving the run can't send it nowhere: the Runs list still hides the type's runs.
   const archivedRuns = jobs.filter((j) => j.archived && !isLive(j) && !shelved.has(j.spec_name));
-  // A focused job (its View runs) shows all its runs, even an archived type's, but never
-  // one archived on its own: that one lives on the Archived tab.
+  // A focused job (its View runs) shows its runs but not one archived on its own, which
+  // lives on the Archived tab; an archived type's View runs is where all of its runs live,
+  // archived ones included, so none of them is left with nowhere to show.
   const runsOf = (spec: string) =>
-    jobs.filter((j) => j.spec_name === spec && (isLive(j) || !j.archived));
+    jobs.filter((j) => j.spec_name === spec && (isLive(j) || !j.archived || shelved.has(spec)));
   const runRows = focus ? runsOf(focus) : current;
   const liveSpecs = new Set(jobs.filter(isLive).map((j) => j.spec_name));
   const shelf = tab === "archived" ? archived : active;
@@ -500,12 +501,6 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                 </>
               )}
             </>
-          ) : runRows.length === 0 ? (
-            <p className="jl-empty">
-              {jobs.length > 0
-                ? "Every run is archived — find them on the Archived tab."
-                : "No runs yet — start one from the Jobs tab."}
-            </p>
           ) : (
             <>
               {focus && (
@@ -513,7 +508,17 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
                   Showing one job's runs · <span className="jl-filter-x">Show all</span>
                 </button>
               )}
-              {runList(runRows, "r")}
+              {runRows.length === 0 ? (
+                <p className="jl-empty">
+                  {jobs.length === 0
+                    ? "No runs yet — start one from the Jobs tab."
+                    : focus
+                      ? "None of this job's runs are left here — archived ones are on the Archived tab."
+                      : "Every run is archived — find them on the Archived tab."}
+                </p>
+              ) : (
+                runList(runRows, "r")
+              )}
             </>
           )}
         </div>

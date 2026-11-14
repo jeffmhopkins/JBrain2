@@ -200,6 +200,11 @@ describe("JlaunchScreen", () => {
     // The Census run is under an archived type: the type holds it, not "Archived runs".
     fireEvent.click(await screen.findByRole("tab", { name: /Archived/ }));
     expect(screen.queryByText("Archived runs")).toBeNull();
+    // ...and it shows, with its unarchive, under the type's own View runs.
+    fireEvent.click(screen.getByText("Census"));
+    fireEvent.click(screen.getByRole("button", { name: "View runs of Census" }));
+    swipe(screen.getByRole("button", { name: "Open v2 of Census" }));
+    expect(screen.getByRole("button", { name: "unarchive" })).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: /^Jobs/ }));
     fireEvent.click(screen.getByText("GrowBot look"));
     fireEvent.click(screen.getByRole("button", { name: "View runs of GrowBot look" }));
