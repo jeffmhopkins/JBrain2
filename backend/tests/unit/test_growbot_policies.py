@@ -173,6 +173,8 @@ async def test_a_job_that_is_not_a_finished_walk_adds_nothing(tmp_path: Path) ->
     ("raw", "why"),
     [
         (b"not json", "isn't JSON"),
+        (b"[" * 100_000, "isn't JSON"),
+        (b'{"mean": [NaN]}', "isn't JSON"),
         (b"[]", "not a policy"),
         (json.dumps({"mean": [1]}).encode(), "obs_spec"),
         (json.dumps(policy(["accel_x", "gyro_z"])).encode(), "takes no heading"),

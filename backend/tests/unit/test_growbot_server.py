@@ -2866,8 +2866,10 @@ def test_the_creature_loads_a_library_policy_through_the_box(run: _Running) -> N
 def test_a_policy_read_wants_an_id_a_get_and_a_session(run: _Running) -> None:
     assert _policy_get(run, "?id=../x")[0] == 400
     assert _policy_get(run, "")[0] == 400
-    # The api has no such policy (deleted, or never was).
+    # The api has no such policy (deleted, or never was), and the box remembers that briefly.
     assert _policy_get(run, f"?id={_PID}")[0] == 404
+    assert _policy_get(run, f"?id={_PID}")[0] == 404
+    assert len([r for r in _Fake.seen if "/policies/" in r["path"]]) == 1
     resp = run.request("POST", f"/api/box/policy?id={_PID}", b"{}")
     resp.read()
     assert resp.status == 405

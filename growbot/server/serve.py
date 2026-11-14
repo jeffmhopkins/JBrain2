@@ -1777,11 +1777,17 @@ class GrowBot:
             up = await self._call(
                 http_call, url, None, self._auth(), "GET", 10.0, pool=self._cal_pool
             )
-            if up.status != 200 or _parse(up.body) is None:
-                return json_response(404, {"error": "no such policy"}, headers)
+            ok = up.status == 200 and _parse(up.body) is not None
             if len(self._policies) > 16:
                 self._policies.clear()
-            hit = self._policies[pid] = (now, up.body)
+            # The api's 404 is kept too (as empty), so a page asking for ids that don't
+            # exist can't hold the cal pool's threads, which the legs' polls share.
+            if ok or up.status == 404:
+                hit = self._policies[pid] = (now, up.body if ok else b"")
+            if not ok:
+                return json_response(404, {"error": "no such policy"}, headers)
+        if not hit or not hit[1]:
+            return json_response(404, {"error": "no such policy"}, headers)
         return Response(200, hit[1], "application/json", headers=headers)
 
     async def soul_route(self, req: Request) -> Response:

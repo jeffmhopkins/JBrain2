@@ -96,13 +96,18 @@ def summary(policy: Any) -> Contract:
     )
 
 
+def _no_constant(name: str) -> Any:
+    raise ValueError(f"{name} isn't a number JSON allows")
+
+
 def parse(raw: bytes) -> tuple[dict[str, Any], Contract]:
     if len(raw) > MAX_POLICY_BYTES:
         raise PolicyError("the policy file is too large")
     try:
-        policy = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise PolicyError("the file isn't JSON") from exc
+        # NaN/Infinity would pass json.loads only for Postgres's jsonb to refuse them (a 500).
+        policy = json.loads(raw, parse_constant=_no_constant)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+        raise PolicyError("the file isn't JSON a policy can hold") from exc
     return policy, summary(policy)
 
 
