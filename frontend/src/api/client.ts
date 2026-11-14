@@ -3963,6 +3963,10 @@ export interface GrowbotPolicy {
   active?: boolean;
 }
 
+/** Live steering for a trained walk: heading (deg, left positive, from where the walk
+ *  started), speed (-1 back .. 1 ahead) and camera height (-1 low .. 1 tall). */
+export type GrowbotSteer = { heading: number; speed: number; pitch: number };
+
 export type GrowbotMotion = "walk" | "turn" | "trick";
 
 /** The owner's switches for one library policy. */
@@ -8398,6 +8402,11 @@ export const api = {
       }),
     );
     return (await response.json()) as GrowbotMoveResult;
+  },
+
+  /** Steer the trained walk running now, and keep it going a moment (the Body tab's Drive). */
+  async steerGrowbotRobot(code: string, steer: GrowbotSteer): Promise<void> {
+    await request(`/api/growbot/robots/${encodeURIComponent(code)}/steer`, jsonInit("POST", steer));
   },
 
   async growbotPolicies(): Promise<GrowbotPolicy[]> {

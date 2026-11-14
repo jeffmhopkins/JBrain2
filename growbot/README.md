@@ -288,7 +288,12 @@ state, why}`, 409 `no_creature` when no page listens and 504 `no_answer` after 3
 that arrives while no move waits is bridged to the agents like any other frame. The page also
 sends `{"t":"box_info", gestures}`, its body's gesture names (a soul's saved ones included),
 whenever they change; `GET /internal/robots` passes them on as each robot's `gestures`, for the
-Body tab's trick buttons, and they go when the page does.
+Body tab's trick buttons, and they go when the page does. `POST /internal/robots/steer` `{code, heading, speed, pitch}`
+(degrees left positive from where the walk began, -1..1, -1..1) sends `{"t":"box_steer", heading,
+speed, pitch}` to that page without waiting for an answer (202, or 409 `no_creature`): the Body
+tab's Drive sends one twice a second to steer the trained walk running now, and each keeps that
+walk going 1.5 s past it (up to two minutes, paid from the duty budget), so the walk ends soon
+after the steering does.
 
 **Trained walks.** A walk move may also carry `policy`, the id of a walk in the box's policy
 library (`app.growbot_policies`, added on the Body tab from a finished GrowBot training job).

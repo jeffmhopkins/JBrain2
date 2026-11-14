@@ -257,7 +257,7 @@ class Sidecar:
     def handler(self, request: httpx.Request) -> httpx.Response:
         if self.down:
             raise httpx.ConnectError("down")
-        assert request.url.path == "/internal/robots/move"
+        assert request.url.path in ("/internal/robots/move", "/internal/robots/steer")
         self.sent.append(json.loads(request.content))
         return httpx.Response(self.status, json=self.body)
 
@@ -308,6 +308,25 @@ def test_a_bad_move_never_reaches_the_sidecar(
     assert client.post("/api/growbot/robots/gb-a1/move", json=body).status_code == 422
     assert client.post("/api/growbot/robots/nope/move", json={"move": "stop"}).status_code == 422
     assert sidecar.sent == []
+
+
+def test_steering_goes_to_the_sidecar(tmp_path: Path, repo: FakeRepo, sidecar: Sidecar) -> None:
+    sidecar.status, sidecar.body = 202, {"sent": True}
+    client = _mover(tmp_path, repo)
+    steer = "/api/growbot/robots/gb-a1/steer"
+    assert client.post(steer, json={"heading": -30, "speed": 0.5}).status_code == 202
+    assert sidecar.sent == [{"code": "gb-a1", "heading": -30, "speed": 0.5, "pitch": 1}]
+    resp = client.post("/api/debug/growbot/robots/gb-a1/steer", json={"heading": 10})
+    assert resp.status_code == 202 and sidecar.sent[-1]["heading"] == 10
+    for bad in ({"heading": 181}, {"heading": 0, "speed": 2}, {"heading": 0, "pitch": -1.5}, {}):
+        assert client.post(steer, json=bad).status_code == 422, bad
+    assert client.post("/api/growbot/robots/gb-zz/steer", json={"heading": 0}).status_code == 404
+    sidecar.status = 409
+    assert client.post(steer, json={"heading": 0}).status_code == 409
+    sidecar.status = 500
+    assert client.post(steer, json={"heading": 0}).status_code == 502
+    sidecar.down = True
+    assert client.post(steer, json={"heading": 0}).status_code == 503
 
 
 @pytest.mark.parametrize("move", ["spin_escape_left", "spin_escape_right", "stand_tall"])

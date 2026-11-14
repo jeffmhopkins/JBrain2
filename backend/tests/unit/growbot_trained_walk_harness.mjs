@@ -1,6 +1,7 @@
 // tests/unit/test_growbot_site.py runs growbot-box.js's trained walk here, in node, against
 // stubs of the next.html globals it drives. Arguments: the runner's file URL, growbot-box.js,
-// the pad's move, the phone's IMU as JSON, and optionally the legs' duty left (ms).
+// the pad's move, the phone's IMU as JSON, optionally the legs' duty left (ms), and optionally
+// the Body tab's steering as JSON ({at, heading, speed, pitch}: sent `at` ms after the move).
 import { register } from "node:module";
 const RUNNER = process.argv[2], BOX = process.argv[3], MOVE = process.argv[4];
 const PHONE = JSON.parse(process.argv[5]);
@@ -41,7 +42,9 @@ const POLICY = {
 g.fetch = async (url) => ({ ok: url.startsWith("/api/box/policy?id="), status: 200, json: async () => POLICY });
 const src = fs.readFileSync(BOX, "utf8");
 (0, eval)(src.slice(src.indexOf("/* Trained walks from JBrain's policy library")));
+const STEER = process.argv[7] ? JSON.parse(process.argv[7]) : null;
 g.gbTrainedWalk("0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, 1);
 const accepted = reports[0];
-await new Promise((r) => setTimeout(r, 2400));
-console.log(JSON.stringify({ accepted, reports, walkLog: g._walkLog, fed: fed.slice(0, 3), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
+if (STEER) setTimeout(() => g.gbSteer(STEER), STEER.at);
+await new Promise((r) => setTimeout(r, STEER ? 3600 : 2400));
+console.log(JSON.stringify({ accepted, reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));

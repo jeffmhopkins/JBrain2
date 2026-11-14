@@ -2644,6 +2644,21 @@ def test_a_trick_names_a_library_policy_for_the_creature(run: _Running) -> None:
     page.shut()
 
 
+def test_steering_reaches_the_creature_without_waiting(run: _Running) -> None:
+    steer = "/internal/robots/steer"
+    body = {"code": "gb-abc123", "heading": 45, "speed": 0.5, "pitch": -0.25}
+    assert _internal(run, "POST", steer, json.dumps(body).encode())[0] == 409
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    assert _internal(run, "POST", steer, json.dumps(body).encode())[0] == 202
+    assert page.message() == {"t": "box_steer", "heading": 45, "speed": 0.5, "pitch": -0.25}
+    for bad in ({"heading": 181}, {"speed": True}, {"pitch": "up"}, {"code": "x"}):
+        got = _internal(run, "POST", steer, json.dumps({**body, **bad}).encode())
+        assert got[0] == 400, bad
+    page.shut()
+
+
 def test_a_move_without_a_policy_sends_none(run: _Running) -> None:
     page = _phone(run, "/d/gb-abc123-agent")
     page.text({"t": "hello"})

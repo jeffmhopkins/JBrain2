@@ -17,6 +17,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotMove, type GrowbotPolicy, type GrowbotRobot, api } from "../api/client";
+import { GrowbotDrive } from "./GrowbotDrive";
 import { GrowbotPoliciesSheet, offered, offeredFor, walkKind } from "./GrowbotPoliciesSheet";
 import { ChevronDownIcon, ChevronUpIcon, RotateCcwIcon, RotateCwIcon, StopIcon } from "./icons";
 
@@ -154,6 +155,7 @@ export function GrowbotMovePanel({
   const [walkWith, setWalkWith] = useState(() => storedWalk(robot.code));
   const [turnWith, setTurnWith] = useState(() => storedWalk(robot.code, "turn"));
   const [library, setLibrary] = useState(false);
+  const [halted, setHalted] = useState(0);
   const mounted = useRef(true);
   const done = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -211,6 +213,7 @@ export function GrowbotMovePanel({
   }
 
   async function send(move: GrowbotMove, s = 0, gesture?: string, trick?: GrowbotPolicy) {
+    setHalted((n) => n + 1);
     const mine = ++latest.current;
     setBusy(true);
     const live = () => mounted.current && mine === latest.current;
@@ -245,6 +248,7 @@ export function GrowbotMovePanel({
   }
 
   function stop() {
+    setHalted((n) => n + 1);
     if (!onStop) {
       void send("stop");
       return;
@@ -372,6 +376,17 @@ export function GrowbotMovePanel({
           </button>
         ))}
       </fieldset>
+
+      {trained && (
+        <GrowbotDrive
+          code={robot.code}
+          policy={trained}
+          disabled={!!blocked}
+          halted={halted}
+          onSaid={setSaid}
+          onStop={stop}
+        />
+      )}
 
       <div className="gb-move-h">Tricks</div>
       <div className="gb-chips">

@@ -1484,6 +1484,32 @@ class GrowBot:
             },
         )
 
+    def steer(self, req: Request) -> Response:
+        """The Body tab's continuous steering: the heading (deg, left positive, from where the
+        walk started), speed and camera height for the trained walk the creature runs. Sent
+        without waiting: the tab steers a few times a second, and each one also keeps that
+        walk going a moment longer, so a lost one only ends the drive sooner."""
+        if not self._internal_ok(req):
+            return json_response(401, {"error": "unauthorized"})
+        if req.method != "POST":
+            return json_response(405, {"error": "post only"})
+        msg = _parse(req.body) or {}
+        code = msg.get("code")
+        if not isinstance(code, str) or not CODE_RE.fullmatch(code):
+            return json_response(400, {"error": "code"})
+        frame: dict[str, Any] = {"t": "box_steer"}
+        for key, lo, hi in (("heading", -180, 180), ("speed", -1, 1), ("pitch", -1, 1)):
+            v = msg.get(key)
+            if isinstance(v, bool) or not isinstance(v, int | float) or not lo <= v <= hi:
+                return json_response(400, {"error": key})
+            frame[key] = v
+        chan = self.channels.get(f"{code}-agent")
+        creature = chan.body if chan is not None else None
+        if creature is None:
+            return json_response(409, {"error": "no_creature"})
+        creature.send_json(frame)
+        return json_response(202, {"sent": True})
+
     def _same_origin(self, req: Request) -> bool:
         """A request a browser sent from another origin (the PWA on :443 is same-site, so
         SameSite=Strict alone lets its cookie through) is refused for anything that acts."""
@@ -1551,6 +1577,8 @@ class GrowBot:
             return await self.root_cert_route(req)
         if req.path == "/internal/robots/move":
             return await self.move(req)
+        if req.path == "/internal/robots/steer":
+            return self.steer(req)
         if req.path.startswith("/internal/"):
             return self.internal(req)
         if req.path in PUBLIC_PATHS and req.method in ("GET", "HEAD"):

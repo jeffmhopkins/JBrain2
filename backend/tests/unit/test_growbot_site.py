@@ -3745,7 +3745,12 @@ def test_a_doubtful_name_folds_short_or_faint_into_its_own_doubt() -> None:
 _TRAINED_HARNESS = Path(__file__).with_name("growbot_trained_walk_harness.mjs")
 
 
-def _trained_walk(move: str, phone: dict[str, Any], duty_ms: int = 60000) -> dict[str, Any]:
+def _trained_walk(
+    move: str,
+    phone: dict[str, Any],
+    duty_ms: int = 60000,
+    steer: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -3758,6 +3763,7 @@ def _trained_walk(move: str, phone: dict[str, Any], duty_ms: int = 60000) -> dic
             move,
             json.dumps(phone),
             str(duty_ms),
+            *([json.dumps(steer)] if steer else []),
         ],
         capture_output=True,
         text=True,
@@ -3813,6 +3819,28 @@ def test_a_heading_only_walk_turns_around_to_go_back(move: str, yaw: float, fwd:
     got = _trained_walk(move, still)
     assert abs(abs(got["fed"][0]["cmd"]["yaw"]) - yaw) < 1e-9
     assert got["fed"][0]["cmd"]["fwd"] == fwd
+
+
+def test_the_body_tabs_steering_retargets_the_walk_and_keeps_it_going() -> None:
+    still = {"accel": {"x": 0.0, "y": 0.0, "z": 9.8}, "rate": {"a": 0.0, "b": 0.0, "g": 0.0}}
+    steer = {"at": 1300, "heading": -45, "speed": 0.5, "pitch": -1}
+    got = _trained_walk("forward", still, steer=steer)
+    assert got["fed"][0]["cmd"]["yaw"] == 0
+    # A heading-only policy: the heading steers it, the speed and height are not its to read.
+    assert abs(got["tail"][-1]["cmd"]["yaw"] + 0.25) < 1e-9
+    assert got["tail"][-1]["cmd"]["fwd"] == 1 and got["tail"][-1]["cmd"]["pitch"] == 1
+    # Walking 1.5 s past the steer instead of the 1 s it was granted, paid from the duty budget.
+    assert got["n"] > 40 and got["last"] == ["rest"]
+    assert got["walkLog"][0]["ms"] == 1000 and sum(w["ms"] for w in got["walkLog"]) > 1500
+
+
+def test_the_page_ignores_a_steer_out_of_range() -> None:
+    still = {"accel": {"x": 0.0, "y": 0.0, "z": 9.8}, "rate": {"a": 0.0, "b": 0.0, "g": 0.0}}
+    got = _trained_walk(
+        "forward", still, steer={"at": 1300, "heading": 200, "speed": 0, "pitch": 0}
+    )
+    assert all(f["cmd"]["yaw"] == 0 for f in got["tail"])
+    assert [w["ms"] for w in got["walkLog"]] == [1000]
 
 
 def test_the_trained_walk_keeps_upstreams_stops() -> None:
