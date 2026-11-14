@@ -39,8 +39,9 @@ import { useForeground } from "../visibility";
 
 const LIVE = new Set(["queued", "cloning", "running"]);
 const POLL_MS = 3000;
-// The live folder changes once per training batch at most; no need to chase it faster.
-const LIVE_POLL_MS = 10000;
+// The live card's steps and speed are what the owner watches a run by, so it keeps up
+// every few seconds (owner, 2026-11-14: "needs a live refresh"), not every training batch.
+const LIVE_POLL_MS = 4000;
 
 function isLive(job: JlaunchJob): boolean {
   return LIVE.has(job.state);
@@ -625,6 +626,11 @@ function JlaunchJobScreen({ jobId, onClose }: { jobId: string; onClose: () => vo
     void load();
   }, [load]);
 
+  // Coming back to the app catches up at once rather than on the next tick.
+  useEffect(() => {
+    if (foreground) void load();
+  }, [foreground, load]);
+
   // Poll while the job is live so state/phase/headline stay current without a manual refresh.
   useEffect(() => {
     if (!job || !isLive(job) || !foreground) return;
@@ -898,6 +904,7 @@ export function LiveCard({ job }: { job: JlaunchJob }): ReactNode {
 
   useEffect(() => {
     if (!live || !foreground || none) return;
+    void load(); // a return to the app catches up at once
     const t = setInterval(() => void load(), LIVE_POLL_MS);
     return () => clearInterval(t);
   }, [live, foreground, none, load]);
