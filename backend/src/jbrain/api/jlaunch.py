@@ -93,7 +93,7 @@ def _owner_ctx(principal_id: str) -> SessionContext:
 
 
 def _valid_id(jid: str) -> None:
-    if not _ID_RE.match(jid):
+    if not _ID_RE.fullmatch(jid):
         raise HTTPException(status_code=404, detail="unknown job")
 
 
@@ -140,12 +140,17 @@ async def list_specs(owner: OwnerDep, request: Request) -> list[dict[str, Any]]:
         specs = await _client(request).list_specs()
     except JlaunchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
-        archived = await _ARCHIVE.names(db)
+    archived = await archived_names(request, _owner_ctx(owner.id))
     return [
         {**spec, "category": _category(spec), "archived": spec.get("name") in archived}
         for spec in specs
     ]
+
+
+async def archived_names(request: Request, ctx: SessionContext) -> set[str]:
+    """The job types the owner archived (the PWA's specs list, or a debug token's)."""
+    async with scoped_session(_maker(request), ctx) as db:
+        return await _ARCHIVE.names(db)
 
 
 class ArchiveSpecRequest(BaseModel):
@@ -159,12 +164,17 @@ async def archive_spec(
     await set_archived(request, name, body.archived, _owner_ctx(owner.id))
 
 
+def valid_spec_name(name: str) -> None:
+    # fullmatch, not match: `$` would let a trailing newline through.
+    if not _SPEC_RE.fullmatch(name):
+        raise HTTPException(status_code=404, detail="unknown job spec")
+
+
 async def set_archived(request: Request, name: str, archived: bool, ctx: SessionContext) -> None:
     """Archive or restore a job type (the owner's, or a debug token's). Only a spec the
     launcher has can be archived; restoring takes any name, so one the launcher has since
     dropped can still be cleared. A job type's runs are left as they are."""
-    if not _SPEC_RE.match(name):
-        raise HTTPException(status_code=404, detail="unknown job spec")
+    valid_spec_name(name)
     client = _client(request)
     if archived:
         try:

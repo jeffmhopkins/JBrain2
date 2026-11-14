@@ -66,15 +66,15 @@ async def jlaunch_archive(
 ) -> None:
     """**Archive or restore a job type** (`{"archived": true|false}`), as the PWA's Archive
     and Restore do: it moves between the Jobs and Archived tabs; its runs are untouched."""
-    if not jlaunch._SPEC_RE.match(name):
-        raise HTTPException(status_code=404, detail="unknown job spec")
+    jlaunch.valid_spec_name(name)
     request.state.debug_detail = f"jlaunch archive {name} {body.archived}"
     await jlaunch.set_archived(request, name, body.archived, _OWNER_CTX)
 
 
 @router.get("")
 async def jlaunch_overview(request: Request, _p: DebugDep) -> dict[str, Any]:
-    """The runnable specs and every job the control server knows, newest first. A job here
+    """The runnable specs (each with the owner's `archived` flag) and every job the control
+    server knows, newest first. A job here
     carries its state, phase, headline and finish reason; `GET /jobs/{id}` adds the
     console tail."""
     request.state.debug_detail = "jlaunch overview"
@@ -85,6 +85,8 @@ async def jlaunch_overview(request: Request, _p: DebugDep) -> dict[str, Any]:
     except JlaunchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     jobs = sorted(jobs, key=lambda j: str(j.get("started_at") or ""), reverse=True)
+    archived = await jlaunch.archived_names(request, _OWNER_CTX)
+    specs = [{**spec, "archived": spec.get("name") in archived} for spec in specs]
     return {"specs": specs, "jobs": jobs}
 
 

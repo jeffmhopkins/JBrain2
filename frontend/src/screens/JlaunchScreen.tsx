@@ -206,9 +206,11 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
           {tab !== "runs" ? (
             shelf.length === 0 ? (
               <p className="jl-empty">
-                {tab === "jobs"
-                  ? "Every job type is archived — restore one from the Archived tab."
-                  : "Nothing archived. Open a job and tap Archive to move it here."}
+                {tab === "archived"
+                  ? "Nothing archived. Open a job and tap Archive to move it here."
+                  : archived.length > 0
+                    ? "Every job type is archived — restore one from the Archived tab."
+                    : "The launcher has no job types."}
               </p>
             ) : (
               groupBy(shelf, (spec) => spec.category || "Other").map(([category, group]) => (
@@ -307,7 +309,11 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
               ))
             )
           ) : (focus ? jobs : current).length === 0 ? (
-            <p className="jl-empty">No runs yet — start one from the Jobs tab.</p>
+            <p className="jl-empty">
+              {jobs.length > 0
+                ? "Only archived jobs' runs — open one from the Archived tab to see them."
+                : "No runs yet — start one from the Jobs tab."}
+            </p>
           ) : (
             <>
               {focus && (

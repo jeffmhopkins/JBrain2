@@ -94,6 +94,11 @@ async def test_archived_job_types_are_owner_only(maker: async_sessionmaker) -> N
         with pytest.raises(DBAPIError):
             async with scoped_session(maker, other) as db:
                 await _ARCHIVE.set(db, f"x-{name}", archived=True)
+        # A non-owner's restore is a DELETE RLS filters to nothing: the owner's row stays.
+        async with scoped_session(maker, other) as db:
+            await _ARCHIVE.set(db, name, archived=False)
+        async with scoped_session(maker, OWNER) as db:
+            assert name in await _ARCHIVE.names(db)
     async with scoped_session(maker, OWNER) as db:
         await _ARCHIVE.set(db, name, archived=False)
         assert name not in await _ARCHIVE.names(db)

@@ -40,7 +40,10 @@ def test_needs_a_token(debug_client: tuple[TestClient, str]) -> None:  # noqa: F
         assert client.get(f"/api/debug/jlaunch{path}").status_code == 401
 
 
-def test_lists_runs_and_reads_a_live_folder(debug_client: tuple[TestClient, str]) -> None:  # noqa: F811
+def test_lists_runs_and_reads_a_live_folder(
+    debug_client: tuple[TestClient, str],  # noqa: F811
+    _no_db: None,  # noqa: F811
+) -> None:
     client, key = debug_client
     _, jid = _launcher(client)
     over = client.get("/api/debug/jlaunch", headers=_auth(key)).json()
@@ -162,6 +165,8 @@ def test_archives_a_job_type(
     url = "/api/debug/jlaunch/specs/erdos_straus_1e12/archive"
     assert client.put(url, json={"archived": True}).status_code == 401
     assert client.put(url, json={"archived": True}, headers=_auth(key)).status_code == 204
+    over = client.get("/api/debug/jlaunch", headers=_auth(key)).json()
+    assert {s["name"]: s["archived"] for s in over["specs"]}["erdos_straus_1e12"] is True
     assert client.put(url, json={"archived": False}, headers=_auth(key)).status_code == 204
     bad = client.put(
         "/api/debug/jlaunch/specs/bad.name/archive", json={"archived": True}, headers=_auth(key)
