@@ -63,8 +63,7 @@ LIVE_TYPES = {
 }
 LIVE_MAX_BYTES = 32 * 1024 * 1024
 
-# States: queued (never used at max_concurrent_jobs=1 unless busy), cloning/running are
-# live; succeeded/failed/killed are terminal.
+# States: cloning/running are live; succeeded/failed/killed are terminal.
 LIVE_STATES = ("cloning", "running")
 # How long a Start waits on re-reading the training repo before using the list it has.
 START_REFRESH_S = 15.0
@@ -82,7 +81,8 @@ class JobError(RuntimeError):
 
 
 class BusyError(JobError):
-    """A job is already running and max_concurrent_jobs is reached."""
+    """No room for this run: one that needs the whole box is live, this one needs it, or
+    max_concurrent_jobs runs are already going."""
 
 
 def _now() -> str:
@@ -142,11 +142,14 @@ class Job:
     # finished run still serves them after its spec has changed or left the list.
     live_dir: str = ""
     artifact_path: str = ""
+    # Copied from the spec at start, so a live run's claim on the box holds after its
+    # spec leaves the list.
+    shares_box: bool = False
 
     def public(self) -> dict[str, object]:
         data = asdict(self)
-        # Internal paths, not part of the control API.
-        for key in ("workspace", "live_dir", "artifact_path"):
+        # Internal, not part of the control API.
+        for key in ("workspace", "live_dir", "artifact_path", "shares_box"):
             data.pop(key, None)
         return data
 
@@ -161,7 +164,7 @@ class JobManager:
         artifact_root: str,
         registry: TerminalRegistry,
         *,
-        max_concurrent_jobs: int = 1,
+        max_concurrent_jobs: int = 3,
         catalog: Catalog | None = None,
     ) -> None:
         self._workspace_root = Path(workspace_root)
@@ -274,17 +277,26 @@ class JobManager:
     def _listed(self, name: str) -> bool:
         return self._catalog is not None and self._catalog.owns(name)
 
-    def _live_count(self) -> int:
-        # Reaped first: a stuck orphan must not hold the one-job slot, refusing Start.
+    def _check_room(self, spec: JobSpec) -> None:
+        # Reaped first: a stuck orphan must not hold a slot, refusing Start.
         for job in self._jobs.values():
             self._reap(job)
-        return sum(1 for j in self._jobs.values() if j.state in LIVE_STATES)
+        live = [j for j in self._jobs.values() if j.state in LIVE_STATES]
+        if not live:
+            return
+        if not spec.shares_box or not all(j.shares_box for j in live):
+            raise BusyError(
+                "a job that needs the whole machine is running or asked for"
+            )
+        if self._max > 0 and len(live) >= self._max:
+            raise BusyError(f"{len(live)} jobs are already running")
 
     # -- lifecycle ---------------------------------------------------------------
 
     async def start(self, spec_name: str) -> Job:
-        if self._max > 0 and self._live_count() >= self._max:
-            raise BusyError("a job is already running")
+        known = get_spec(spec_name)
+        if known is not None:
+            self._check_room(known)
         if self._catalog is not None and self._catalog.owns(spec_name):
             # A config fix pushed a minute ago is what should train; an unreachable repo
             # falls back to the commit the list already shows.
@@ -298,8 +310,7 @@ class JobManager:
         if spec is None or (spec.commit and not self._listed(spec_name)):
             raise JobError(f"unknown spec: {spec_name}")
         # The refresh above awaited: a second Start may have got in meanwhile.
-        if self._max > 0 and self._live_count() >= self._max:
-            raise BusyError("a job is already running")
+        self._check_room(spec)
 
         jid = secrets.token_hex(4)
         workspace = self._workspace_root / jid
@@ -321,6 +332,7 @@ class JobManager:
             commit=spec.commit,
             live_dir=spec.live_dir or "",
             artifact_path=spec.artifact_path,
+            shares_box=spec.shares_box,
         )
         self._jobs[jid] = job
         self._save(job)
@@ -685,6 +697,7 @@ def _job_from_record(
         phase_times=rows("phase_times"),
         error=opt_text("error"),
         artifact_present=data.get("artifact_present") is True,
+        shares_box=data.get("shares_box") is True,
         artifact_bytes=size
         if isinstance(size, int) and not isinstance(size, bool)
         else None,

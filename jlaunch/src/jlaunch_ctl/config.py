@@ -37,9 +37,11 @@ class Settings(BaseSettings):
     # `git clean`/reset and is served independent of the checkout's lifetime.
     artifact_root: str = "/artifacts"
 
-    # An all-core, multi-hour job must never overlap another (they would fight for every
-    # core and the disk). One at a time; a second start 409s until the first ends.
-    max_concurrent_jobs: int = 1
+    # How many runs may go at once. Only training-repo runs share the box: one leaves
+    # most cores idle while its learner steps (owner, 2026-11-14: "only running at
+    # like 20%"), so a few side by side finish sooner overall. A built-in census still
+    # runs alone, since it sizes its worker pool to the whole machine's RAM.
+    max_concurrent_jobs: int = 3
 
     # Log verbosity for the control server (standard level names). DEBUG surfaces the
     # per-job lifecycle detail the owner debug console pulls.

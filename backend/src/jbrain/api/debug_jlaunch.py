@@ -39,7 +39,8 @@ async def jlaunch_start(
     body: jlaunch.StartJobRequest, request: Request, _p: DebugDep
 ) -> dict[str, Any]:
     """**Start a run** of a registered spec (names from `GET /debug/jlaunch`), as the PWA's
-    Start does. 404 for an unknown spec, 409 while another job is running."""
+    Start does. 404 for an unknown spec, 409 when there is no room: up to three
+    training-repo runs go side by side, and a built-in math job runs alone."""
     request.state.debug_detail = f"jlaunch start {body.spec}"
     return await jlaunch.start(request, body.spec, _OWNER_CTX)
 

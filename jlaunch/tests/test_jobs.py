@@ -4,6 +4,7 @@ concurrency, reaper-exemption, artifact collection. Fast (each fake job is quick
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 
 import pytest
 
@@ -109,6 +110,73 @@ async def test_max_concurrent_jobs_blocks_second(manager, register_spec) -> None
     assert second.id != first.id
     await manager.kill(second.id)
     await wait_terminal(manager, second.id)
+
+
+@pytest.fixture
+def sharing_spec(register_spec, monkeypatch):
+    def _register(name: str) -> None:
+        spec = register_spec(name, (Phase("sleep", "sleep 30"),))
+        monkeypatch.setitem(
+            specs_mod.SPECS, name, dataclasses.replace(spec, shares_box=True)
+        )
+
+    return _register
+
+
+async def _kill_all(manager, ids) -> None:
+    for jid in ids:
+        await manager.kill(jid)
+        await wait_terminal(manager, jid)
+
+
+async def test_runs_that_share_go_side_by_side_up_to_the_limit(
+    manager, sharing_spec
+) -> None:
+    sharing_spec("test_share_a")
+    sharing_spec("test_share_b")
+    started = [
+        (await manager.start("test_share_a")).id,
+        (await manager.start("test_share_b")).id,
+        (await manager.start("test_share_a")).id,
+    ]
+    assert all(manager.get(j).state == "running" for j in started)
+    assert "shares_box" not in manager.get(started[0]).public()
+    with pytest.raises(BusyError, match="3 jobs"):
+        await manager.start("test_share_b")
+    await manager.kill(started[0])
+    await wait_terminal(manager, started[0])
+    started.append((await manager.start("test_share_b")).id)
+    await _kill_all(manager, started[1:])
+
+
+async def test_a_whole_machine_run_never_overlaps_a_shared_one(
+    manager, register_spec, sharing_spec
+) -> None:
+    sharing_spec("test_share")
+    register_spec("test_alone", (Phase("sleep", "sleep 30"),))
+    shared = await manager.start("test_share")
+    with pytest.raises(BusyError, match="whole machine"):
+        await manager.start("test_alone")
+    await _kill_all(manager, [shared.id])
+    alone = await manager.start("test_alone")
+    with pytest.raises(BusyError, match="whole machine"):
+        await manager.start("test_share")
+    await _kill_all(manager, [alone.id])
+
+
+async def test_a_reloaded_record_keeps_its_claim_on_the_box(
+    tmp_path, sharing_spec
+) -> None:
+    from jlaunch_ctl.jobs import JobManager
+    from jlaunch_ctl.terminal import TerminalRegistry
+
+    sharing_spec("test_share_rec")
+    roots = [str(tmp_path / d) for d in ("work", "state", "artifacts")]
+    first = JobManager(roots[0], roots[1], roots[2], TerminalRegistry())
+    job = await first.start("test_share_rec")
+    await _kill_all(first, [job.id])
+    again = JobManager(roots[0], roots[1], roots[2], TerminalRegistry())
+    assert again.get(job.id).shares_box is True
 
 
 async def test_unknown_spec_raises(manager) -> None:

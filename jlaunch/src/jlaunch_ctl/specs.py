@@ -68,6 +68,9 @@ class JobSpec:
     commit: str = ""
     config: str = ""
     category: str = ""
+    # May run beside other runs that share. Off for the built-ins, which size themselves
+    # to the whole machine.
+    shares_box: bool = False
 
     def public(self) -> dict[str, object]:
         return {
