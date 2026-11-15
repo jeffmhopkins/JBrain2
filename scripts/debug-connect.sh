@@ -261,12 +261,26 @@ except Exception: sys.stdout.write(d)'; }
 #
 # The body still prints — a 422 detail is the most useful thing on screen — and the status
 # goes to stderr with a non-zero exit so `set -e` and any `||` guard actually catch it.
+#
+# The box stamps a warning header on every response once the token has under a day left
+# (api/debug_expiry.py); it goes to stderr here so a long unattended session sees its own
+# access running out in time to ask for a fresh token, not as a 401 at 04:00.
 _call() { # METHOD PATH [JSON_BODY]
-  local method="$1" path="$2" body="${3:-}"
-  local args=(-sS -X "$method" -H "Authorization: Bearer $KEY" -w '\n%{http_code}')
+  local method="$1" path="$2" body="${3:-}" hdr
+  hdr="$(mktemp)"
+  local args=(-sS -X "$method" -H "Authorization: Bearer $KEY" -D "$hdr" -w '\n%{http_code}')
   [ -n "$body" ] && args+=(-H "Content-Type: application/json" -d "$body")
   local out code
-  out="$(curl "${args[@]}" "$BASE$path")" || { echo "$out"; echo "curl failed: $method $path" >&2; return 1; }
+  out="$(curl "${args[@]}" "$BASE$path")" || { rm -f "$hdr"; echo "$out"; echo "curl failed: $method $path" >&2; return 1; }
+  grep -i '^x-debug-token-warning:' "$hdr" | cut -d: -f2- | tr -d '\r' | sed 's/^ */WARNING: /' >&2 || true
+  # Under 12 h is the owner's line for overnight work: a token that won't see the morning
+  # has to be replaced before they go to bed, because nobody is awake to hand one over.
+  local left
+  left="$(grep -i '^x-debug-token-expires-in:' "$hdr" | cut -d: -f2- | tr -dc '0-9' || true)"
+  if [ -n "$left" ] && [ "$left" -lt 43200 ]; then
+    echo "WARNING: debug token has under 12h left — it will not last the night; ask the owner for a new one now" >&2
+  fi
+  rm -f "$hdr"
   code="${out##*$'\n'}"       # the -w status on the last line
   printf '%s' "${out%$'\n'*}" # ...stripped back off the body
   case "$code" in

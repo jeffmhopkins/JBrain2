@@ -120,6 +120,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        if "expiring" in self.path:
+            self.send_header("X-Debug-Token-Warning", "debug token expires in 3h 0m")
+            self.send_header("X-Debug-Token-Expires-In", "10800")
+        elif "/version" in self.path:
+            self.send_header("X-Debug-Token-Expires-In", "86400")
         self.end_headers()
         self.wfile.write(body)
 
@@ -175,6 +180,18 @@ def test_a_successful_call_still_exits_zero_and_prints_only_the_body(box: str) -
     # The status code rides on curl's `-w` and must be stripped back off, or every consumer
     # that parses this output as JSON breaks.
     assert json.loads(result.stdout)["git_sha"] == "abc123"
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_a_token_near_expiry_warns_on_stderr_and_leaves_stdout_parseable(box: str) -> None:
+    # A token lapsed under an unattended run with nothing said beforehand; the box now
+    # warns in a header, and the harness has to put that where a session will see it.
+    warned = _run(box, "raw", "GET", "/api/debug/expiring")
+    assert warned.returncode == 0, warned.stderr
+    assert "WARNING: debug token expires in 3h 0m" in warned.stderr
+    assert "under 12h left" in warned.stderr
+    assert json.loads(warned.stdout)["git_sha"] == "abc123"
+    assert "WARNING" not in _run(box, "raw", "GET", "/api/debug/version").stderr
 
 
 @pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")

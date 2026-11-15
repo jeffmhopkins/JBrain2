@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-11-13 — `task-stop <task_id>` added (stops a running task, `POST /api/debug/tasks/{task_id}/stop`). Prior: `disk-clean [--apply] [actions]` added (frees build cache, unused non-stack images, the allowlisted orphan volume; dry run by default) and `disk` now reports `host_dirs`. Prior: `disk [--refresh]` added (host disk usage breakdown, `GET /api/debug/disk`).
+> **Status:** Living · **Last verified:** 2026-11-15 — `whoami` reports the token's expiry, and every call warns on stderr once under 24 h remain. Prior: `task-stop <task_id>` added (stops a running task, `POST /api/debug/tasks/{task_id}/stop`). Prior: `disk-clean [--apply] [actions]` added (frees build cache, unused non-stack images, the allowlisted orphan volume; dry run by default) and `disk` now reports `host_dirs`. Prior: `disk [--refresh]` added (host disk usage breakdown, `GET /api/debug/disk`).
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -76,7 +76,16 @@ scripts/debug-connect.sh whoami
 ```
 
 - A JSON body with `kind: "capability_token"` and the token's scopes → you're in.
-- `401` → the token is wrong, revoked, or expired; ask for a fresh one.
+  **Read `expires_at` / `expires_in_seconds` now.** If the work you were asked for
+  (a training run, an overnight job) will outlast the token, tell the owner up front
+  and ask for a longer-lived one; don't find out from a 401 mid-run. Inside the last
+  24 h every call also prints `WARNING: debug token expires in …` to stderr (the box's
+  `X-Debug-Token-Warning` header), and under 12 h a second line says it will not
+  last the night — act on it when you see it. **Overnight work:** the owner's
+  standing rule is that the token must last until their morning; if it won't, ask
+  for a new one before they go to bed (`DEBUG_ACCESS.md` → Token lifecycle).
+- `401` → the token is wrong, revoked, or expired; ask for a fresh one. An expired
+  token says so: `debug token expired at <time>`.
 - `404` → the feature flag is off on the server (step 1).
 - A connection/timeout error → **reachability**: your sandbox's network egress
   can't reach the box's public host. The token is fine, but you can't connect

@@ -29,6 +29,10 @@ class PrincipalInfo:
     # other kind). The jcode access gate checks this against the route's session id
     # so a share grant can never reach another session.
     jcode_session_id: str = ""
+    # When the credential lapses (None = never). Carried so the debug surface can tell
+    # the token's holder how long it has left: a token that dies unannounced strands
+    # whatever unattended work was leaning on it.
+    expires_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,8 @@ class AuthRepo(Protocol):
     ) -> CapabilityToken: ...
 
     async def find_active_capability_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
+
+    async def find_lapsed_capability_expiry(self, key_hash: str) -> datetime | None: ...
 
     async def has_active_capability(self) -> bool: ...
 
@@ -267,6 +273,15 @@ async def authenticate_capability(repo: AuthRepo, key: str) -> PrincipalInfo | N
     if not key:
         return None
     return await repo.find_active_capability_by_key_hash(keys.hash_token(key))
+
+
+async def lapsed_capability_expiry(repo: AuthRepo, key: str) -> datetime | None:
+    """When a debug key that no longer authenticates ran out, or None if expiry is not
+    why it fails (unknown, revoked, suspended). Lets the 401 say "expired at X" instead
+    of "invalid": only the key's holder can ask, so it reveals nothing they lack."""
+    if not key:
+        return None
+    return await repo.find_lapsed_capability_expiry(keys.hash_token(key))
 
 
 async def mint_jcode_share(
