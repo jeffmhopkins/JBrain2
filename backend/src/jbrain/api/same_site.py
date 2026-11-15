@@ -12,6 +12,7 @@ Requests without a session cookie, and non-browser clients that send neither hea
 """
 
 import json
+import re
 from typing import cast
 
 from starlette.datastructures import Headers, MutableHeaders
@@ -26,6 +27,11 @@ _DEFAULT_PORTS = frozenset({"80", "443"})
 # Routes an outside site redirects the owner's browser to, so they arrive as a cross-site
 # navigation carrying the Lax cookie: Google's OAuth consent → the Gmail callback.
 NAVIGATION_CALLBACKS = frozenset({"/api/settings/gmail/callback"})
+# A jlaunch live file is served under a `sandbox` CSP, so its page has an opaque origin and
+# its own `location.reload()` (the live 3D replay refreshes itself every couple of minutes)
+# goes out as a cross-site navigation. The GET only reads a file and the response lands in
+# a sandbox again, so a forged navigation onto it gains nothing.
+_SANDBOXED_RELOAD = re.compile(r"/api/jlaunch/jobs/[^/]+/live/[^/]+")
 
 
 def normalize_authority(value: str) -> str | None:
@@ -88,13 +94,12 @@ def refusal_reason(headers: Headers, method: str | None, path: str) -> str | Non
         # outside service redirects the browser to. Same-site gets no exemption at all: a
         # preview page can open a popup onto a side-effecting GET just as easily.
         navigates = headers.get("sec-fetch-mode", "").lower() == "navigate"
-        if (
-            site == "cross-site"
-            and method in ("GET", "HEAD")
-            and navigates
-            and path in NAVIGATION_CALLBACKS
-        ):
-            return None
+        if site == "cross-site" and method in ("GET", "HEAD") and navigates:
+            if path in NAVIGATION_CALLBACKS:
+                return None
+            top_level = headers.get("sec-fetch-dest", "").lower() == "document"
+            if top_level and _SANDBOXED_RELOAD.fullmatch(path):
+                return None
         return f"sec-fetch-site={site}"
     origin = headers.get("origin")
     if origin is None:

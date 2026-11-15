@@ -65,6 +65,8 @@ class Contract:
     # It takes a camera-height command (cmd_pitch).
     pitch: bool
     control_hz: int
+    # The skills it can serve in a skill set (growbot-drive.js): look, forward, back.
+    modes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -120,13 +122,46 @@ def summary(policy: Any) -> Contract:
         hz = 0
     if not 1 <= hz <= 100:
         raise PolicyError("its control rate (obs_spec.control_hz) is missing or out of range")
+    side = "camera" if facing == "camera" else "nose"
     return Contract(
-        facing="camera" if facing == "camera" else "nose",
+        facing=side,
         heading=True,
         speed="cmd_forward" in channels,
         pitch="cmd_pitch" in channels,
         control_hz=hz,
+        modes=_modes(policy, side, spec, "cmd_forward" in channels),
     )
+
+
+SKILL_MODES: tuple[str, ...] = ("look", "forward", "back")
+
+
+def _modes(
+    policy: dict[str, Any], facing: str, spec: dict[str, Any], speed: bool
+) -> tuple[str, ...]:
+    """Which skills a file serves, from its own declarations, so a new checkpoint of a known
+    kind needs no app change. A top-level `modes` list wins (the master policy will carry
+    one). Otherwise a still file is a look; a nose-first walk backs away (it walks away from
+    the front camera's view, still facing it); a camera-first walk goes forward, and also
+    looks (it can stand) with a speed command, and backs when that command goes below 0."""
+    declared = policy.get("modes")
+    if isinstance(declared, list):
+        return tuple(m for m in SKILL_MODES if m in declared)
+    training = policy.get("training")
+    if isinstance(training, dict) and training.get("speed") == "still":
+        return ("look",)
+    if facing == "nose":
+        return ("back",)
+    if not speed:
+        return ("forward",)
+    fwd = spec.get("cmd_forward")
+    low = (
+        fwd.get("range", [-1])[0]
+        if isinstance(fwd, dict) and isinstance(fwd.get("range"), list) and fwd["range"]
+        else -1
+    )
+    backs = isinstance(low, int | float) and not isinstance(low, bool) and low < 0
+    return ("look", "forward", "back") if backs else ("look", "forward")
 
 
 def _no_constant(name: str) -> Any:

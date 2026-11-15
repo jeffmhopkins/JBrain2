@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-11-14 — leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
+> **Status:** Living · **Last verified:** 2026-11-15 — the Jobs Runs list keeps spawn order (newest on top) instead of jumping on every update. Prior: the Ops vitals gain a CPU busy % tile, and the load average reads as threads, not a percent. Prior: leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -881,8 +881,11 @@ replaces the 2026-era stack of collapsible cards, mock
 `docs/mocks/ops-redesign/ops-redesign-b3-system-open.html`, which had grown past a phone's
 worth of scrolling). The same pattern as the Settings grid:
 
-- **Always open, in this order**: the **vitals** card (GPU, memory, power, disk — current
-  value plus meter, with load, uptime and Refresh in its footer); a **problem banner** that
+- **Always open, in this order**: the **vitals** card (CPU, GPU, memory, power, disk —
+  current value plus meter, an odd last tile spanning the row; CPU is whole-box busy % of
+  every thread, shown only when the supervisor reports it; the footer carries the load
+  average worded as threads running or waiting, never a percentage, plus uptime and
+  Refresh); a **problem banner** that
   exists only while a service is down or degraded, names the services, and opens Services;
   the **one Update** (tap, *Tap again to update*, the log, *Reload app* — the only update
   control on the screen); the **History** graphs with their range picker.
@@ -1667,7 +1670,8 @@ arrange the grid themselves):
   the exception** (owner, 2026-11-14): leaving it (arrow or back gesture) reopens the
   launcher, since a run is watched, left and checked again from the grid; its tile carries
   an amber dot and "running" while a launcher run is live, and the screen opens on Runs
-  then, the running run first.
+  then. **Runs keep spawn order** (owner, 2026-11-15): newest spawned run on top, and the
+  job groups by their newest run's spawn, so a live poll never reorders rows under a finger.
 - **The owner arranges it like a phone home screen.** A long-press enters edit
   mode (tiles wiggle; a **Done** button joins the head). Edit mode is its own
   back layer, as on an Android home screen: back (and Escape) leaves edit mode

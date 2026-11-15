@@ -1021,7 +1021,7 @@ def test_a_silent_last_piece_is_not_a_failure() -> None:
         'dropped(0,"empty"); now+=200000; run();'
     )
     assert got["toasts"] == [] and got["sent"] == []
-    head = page[page.index("function heardText(txt,meta,detectedLang){") :][:120]
+    head = page[page.index("function heardText(txt,meta,detectedLang){") :][:200]
     assert "var toast=(meta&&meta.gbPiece)?function(){}:window.toast;" in head
 
 
@@ -4146,7 +4146,26 @@ def _trained_walk(
     phone: dict[str, Any],
     duty_ms: int = 60000,
     steer: dict[str, Any] | None = None,
+    skills: dict[str, str] | None = None,
+    estop_at: int | None = None,
+    follow: str = "",
+    faces: list[dict[str, float]] | None = None,
+    wait_ms: int = 0,
+    cam: str = "user",
 ) -> dict[str, Any]:
+    env = {
+        **os.environ,
+        "GB_DRIVE": (_SITE / "growbot-drive.js").as_uri(),
+        "GB_FOLLOW_JS": (_SITE / "growbot-follow.js").as_uri(),
+        "GB_FOLLOW": follow,
+        "GB_FACES": json.dumps(faces or []),
+        "GB_WAIT": str(wait_ms),
+        "GB_CAM": cam,
+    }
+    if skills:
+        env["GB_SKILLS"] = json.dumps(skills)
+    if estop_at is not None:
+        env["GB_ESTOP_AT"] = str(estop_at)
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -4165,6 +4184,7 @@ def _trained_walk(
         text=True,
         check=True,
         timeout=30,
+        env=env,
     )
     return json.loads(out.stdout.strip().splitlines()[-1])
 
@@ -4255,6 +4275,194 @@ def test_steering_never_spends_duty_the_legs_lack() -> None:
     # Retargeted, but not kept going: the budget can't pay for another 1.2 s.
     assert [w["ms"] for w in got["walkLog"]] == [1000]
     assert got["n"] < 32
+
+
+# A skill set of the harness's stand-ins (growbot_trained_walk_harness.mjs FILES).
+_LOOK_F, _TALL_F, _NOSE_F = (
+    "gyro_z,cmd_yaw,cmd_pitch",
+    "gyro_z,cmd_yaw",
+    "gyro_z,cmd_yaw,cmd_forward",
+)
+_SET = {
+    "look": "11111111-1111-4111-8111-111111111111",
+    "forward": "22222222-2222-4222-8222-222222222222",
+    "back": "33333333-3333-4333-8333-333333333333",
+}
+
+
+def test_a_skill_set_walks_forward_with_the_tall_walk() -> None:
+    got = _trained_walk("forward", _STILL, skills=_SET)
+    assert set(got["files"]) == {_TALL_F}
+    assert all(c["fwd"] == 1 and c["yaw"] == 0 for c in got["cmds"])
+    # A new file starts from a still stance: legs neutral before its first tick.
+    assert got["poses"][:2] == [[94, 88], [94, 88]]
+    assert got["errs"] == [] and got["last"] == ["rest"]
+
+
+def test_a_skill_set_backs_away_nose_first_without_turning_round() -> None:
+    """The owner's frame (2026-11-15): backing travels opposite the front camera, so the nose
+    walk is fed its own forward and the camera's heading unflipped: no half turn, ever."""
+    got = _trained_walk("back", _STILL, skills=_SET)
+    assert set(got["files"]) == {_NOSE_F}
+    assert all(c["fwd"] == 1 and c["yaw"] == 0 for c in got["cmds"])
+
+
+def test_a_skill_set_stands_and_face_tracks_at_speed_zero() -> None:
+    steer = {**_STEER, "at": 1800, "heading": -45, "speed": 0, "pitch": -0.5}
+    got = _trained_walk("forward", _STILL, steer=steer, skills=_SET)
+    assert got["steered"] is True
+    # Walking, then the steer: speed 0 is the look, turning right 45 degrees and tilting.
+    assert got["files"][0] == _TALL_F and got["files"][-1] == _LOOK_F
+    assert got["cmds"][-1] == {"fwd": 0, "yaw": -0.25, "pitch": -0.5}
+
+
+def test_a_skill_set_turned_round_exactly_keeps_turning_left() -> None:
+    # The gyro reads nothing, so the error stays exactly 180, where a wrap would flip it right.
+    steer = {**_STEER, "at": 1800, "heading": 180, "speed": 0, "pitch": 1}
+    got = _trained_walk("forward", _STILL, steer=steer, skills=_SET)
+    assert got["files"][-1] == _LOOK_F and got["cmds"][-1]["yaw"] > 0.99
+
+
+def test_stop_stop_halts_a_skill_set_at_once_and_one_stop_does_not() -> None:
+    got = _trained_walk("forward", _STILL, skills=_SET, estop_at=1700)
+    assert got["estopped"] == [False, True]
+    assert got["n"] == got["estopAt"]
+    # Not finished on time: released by the stop, never stood in its rest pose.
+    assert got["last"] != ["rest"]
+
+
+def _walking_away(start: float, factor: float, n: int, x: float = 0.5) -> list[dict[str, float]]:
+    """A face seen every 100 ms from 200 ms in, its width scaled by `factor` each time."""
+    return [{"at": 200 + 100 * i, "x": x, "w": start * factor**i} for i in range(n)]
+
+
+def test_following_walks_after_someone_who_walks_away() -> None:
+    """growbot-follow.js: the distance at the lock is kept; a face shrinking in the frame is the
+    person getting further, so it walks tall toward them, straight on while they're centred."""
+    got = _trained_walk(
+        "look",
+        _STILL,
+        skills=_SET,
+        follow="walk",
+        faces=_walking_away(0.15, 0.98, 40),
+        wait_ms=4500,
+    )
+    assert "follow_lock" in got["logs"]
+    # It stands with the look until its averaged distance holds a second of readings (one
+    # long reading mid-waddle never starts a walk), then walks.
+    assert got["files"][0] == _LOOK_F and got["files"][-1] == _TALL_F
+    assert got["cmds"][-1]["fwd"] == 1 and abs(got["cmds"][-1]["yaw"]) < 0.01
+    assert "following" in got["screen"]
+
+
+def test_following_backs_away_from_someone_who_comes_close() -> None:
+    got = _trained_walk(
+        "look", _STILL, skills=_SET, follow="walk", faces=_walking_away(0.15, 1.05, 20)
+    )
+    # Too close: the nose walk backs away, still facing them (its heading unflipped).
+    assert got["files"][-1] == _NOSE_F
+    assert got["cmds"][-1]["fwd"] > 0 and abs(got["cmds"][-1]["yaw"]) < 0.01
+
+
+def test_following_turns_toward_someone_off_to_the_left() -> None:
+    """The front camera's frames aren't mirrored: a face right of the frame's centre is on the
+    robot's left, so it turns left (positive yaw), standing with the look."""
+    got = _trained_walk(
+        "look", _STILL, skills=_SET, follow="walk", faces=_walking_away(0.15, 1, 20, x=0.8)
+    )
+    assert set(got["files"]) == {_LOOK_F}
+    assert got["cmds"][-1]["yaw"] == pytest.approx(19.1 / 180, abs=0.01)
+    assert got["cmds"][-1]["fwd"] == 0
+
+
+def test_following_nobody_stops_and_says_so() -> None:
+    got = _trained_walk("look", _STILL, skills=_SET, follow="walk", wait_ms=7500)
+    assert "I can't see anyone to follow." in got["errs"]
+    assert got["last"] == ["rest"] and "follow_end" in got["logs"]
+
+
+def test_following_needs_the_front_camera() -> None:
+    """A face the back eye sees is behind it, its signs reversed: never followed."""
+    got = _trained_walk(
+        "look",
+        _STILL,
+        skills=_SET,
+        follow="walk",
+        faces=_walking_away(0.15, 0.95, 5),
+        cam="environment",
+    )
+    assert got["accepted"] == ["blocked", "no_front_camera"] and got["n"] == 0
+
+
+def test_a_dry_run_shows_the_command_and_moves_no_legs() -> None:
+    got = _trained_walk(
+        "look", _STILL, skills=_SET, follow="dry", faces=_walking_away(0.15, 1, 10, x=0.8)
+    )
+    assert got["poses"] == [] and got["n"] == 0
+    # The arrow points the way it would turn: left, on the creature's screen.
+    assert "dry run" in got["screen"] and "rotate(-19deg)" in got["screen"]
+    assert "look" in got["screen"]
+
+
+def test_stop_stop_ends_a_dry_run() -> None:
+    got = _trained_walk(
+        "look",
+        _STILL,
+        skills=_SET,
+        follow="dry",
+        faces=_walking_away(0.15, 1, 5),
+        estop_at=1000,
+    )
+    assert got["estopped"] == [False, True] and "follow_end" in got["logs"]
+
+
+def test_the_emergency_stop_needs_the_word_twice() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    estop = box[box.index("/* The emergency stop") :]
+    said = [
+        "stop stop",
+        "Stop. Stop!",
+        "stop, stop",
+        "STOP — stop",
+        "stop",
+        "don't stop",
+        "the bus stop stops here",
+        "stopstop",
+        "stop it, please stop",
+    ]
+    script = (
+        "var stopped=0, _motion=null, window=globalThis;"
+        "function stopMotion(){ stopped++; _motion=null; } function logEv(){} function setErr(){}"
+        f"{estop}"
+        f"console.log(JSON.stringify({json.dumps(said)}.map(function(t){{"
+        " _motion={kind:'walk'}; return gbEStop(t); })));"
+    )
+    run = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    assert json.loads(run.stdout) == [True, True, True, True, False, False, False, False, False]
+    # Shouted as two clips, each a lone "stop": the second within 2.5 s stops it, a later one
+    # starts over, and a lone stop never stops on its own.
+    paired = (
+        "var stopped=0, _motion=null, window=globalThis, t=0; Date.now=function(){ return t; };"
+        "function stopMotion(){ stopped++; _motion=null; } function logEv(){} function setErr(){}"
+        f"{estop}"
+        "var said=[[0,'Stop!'],[1000,'Stop.'],[2000,'stop'],[5000,'stop'],[6000,'go on'],"
+        "[6500,'stop'],[7000,'stop the car'],[7200,'stop']];"
+        "console.log(JSON.stringify(said.map(function(p){ t=p[0]; _motion={kind:'walk'};"
+        " return gbEStop(p[1]); })));"
+    )
+    run = subprocess.run([node, "-e", paired], capture_output=True, text=True, check=True)
+    assert json.loads(run.stdout) == [False, True, False, False, False, True, False, False]
+    # Nothing moving: nothing to stop.
+    assert "if (!M) return false" in estop
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    # Every transcript reaches it first, before the turn.
+    assert (
+        "function heardText(txt,meta,detectedLang){ try{ if(window.gbEStop) window.gbEStop(txt);"
+        in page
+    )
 
 
 def test_the_trained_walk_keeps_upstreams_stops() -> None:

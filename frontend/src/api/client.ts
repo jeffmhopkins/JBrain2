@@ -1272,6 +1272,10 @@ export interface OpsMetrics {
   uptime_seconds: number;
   /** iGPU/dGPU utilization 0-100, or null when the host exposes no GPU telemetry. */
   gpu_busy_percent: number | null;
+  /** Whole-box CPU busy 0-100 across every hardware thread, over a short window; and
+   * the thread count. Absent from an older supervisor; null when unreadable. */
+  cpu_busy_percent?: number | null;
+  cpu_threads?: number | null;
   /** Fan speeds in RPM keyed by sensor label, or null when the host exposes no fan telemetry. */
   fan_rpm: Record<string, number> | null;
   /** APU/SoC package power in watts (amdgpu power1_average), or null when absent. */
@@ -3954,7 +3958,14 @@ export interface GrowbotPolicy {
   source_spec: string;
   bytes: number;
   created_at: string;
-  contract: { facing: "nose" | "camera"; speed: boolean; pitch: boolean; control_hz: number };
+  contract: {
+    facing: "nose" | "camera";
+    speed: boolean;
+    pitch: boolean;
+    control_hz: number;
+    /** The skills it serves in a skill set (absent: an older box, none). */
+    modes?: GrowbotSkill[];
+  };
   /** Offered on the pad; off keeps it in the library, unused (absent: an older box, on). */
   enabled?: boolean;
   /** What the pad does with it: walk drives its four keys, turn its left and right keys,
@@ -3970,6 +3981,14 @@ export interface GrowbotPolicy {
 export type GrowbotSteer = { drive: string; heading: number; speed: number; pitch: number };
 
 export type GrowbotMotion = "walk" | "turn" | "trick";
+
+/** A skill set's skills (growbot-drive.js): stand and look, walk camera first, back away
+ *  nose first while still facing ahead. */
+export type GrowbotSkill = "look" | "forward" | "back";
+export type GrowbotSkillSet = Partial<Record<GrowbotSkill, string>>;
+/** What a skill set's look may do instead (growbot-follow.js): follow the face it sees, a
+ *  legs-off dry run of that, or set the creature camera's 1 m distance or frame direction. */
+export type GrowbotFollow = "walk" | "dry" | "calibrate" | "flip";
 
 /** The owner's switches for one library policy. */
 export interface GrowbotPolicyPatch {
@@ -8405,6 +8424,8 @@ export const api = {
     policy?: string,
     name?: string,
     drive?: string,
+    skills?: GrowbotSkillSet,
+    follow?: GrowbotFollow,
   ): Promise<GrowbotMoveResult> {
     const response = await request(
       `/api/growbot/robots/${encodeURIComponent(code)}/move`,
@@ -8414,6 +8435,8 @@ export const api = {
         ...(policy ? { policy } : {}),
         ...(name ? { name } : {}),
         ...(drive ? { drive } : {}),
+        ...(skills ? { skills } : {}),
+        ...(follow ? { follow } : {}),
       }),
     );
     return (await response.json()) as GrowbotMoveResult;

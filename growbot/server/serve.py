@@ -175,6 +175,11 @@ POLICY_PATH = "/api/box/policy"
 # The id the Body tab's Drive gives the walk it starts, so only that walk takes its steering.
 DRIVE_RE = re.compile(r"[0-9a-f]{8,32}")
 POLICY_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+# The skills a skill set names (growbot-drive.js): stand and look, walk camera first, back away.
+SKILL_MODES = frozenset({"look", "forward", "back"})
+# What a skill set's look may do instead (growbot-follow.js): follow the face it sees, a
+# legs-off dry run of that, or set the camera's 1 m distance or which way its frames run.
+FOLLOW = frozenset({"walk", "dry", "calibrate", "flip"})
 # A library policy never changes under its id, so one read serves a run of walks; a deleted
 # one stops loading within this.
 POLICY_CACHE_S = 60.0
@@ -1068,6 +1073,18 @@ def _gesture_name(name: Any) -> bool:
     return isinstance(name, str) and len(name) <= GESTURE_MAX and bool(GESTURE_RE.fullmatch(name))
 
 
+def _skill_set(skills: Any) -> bool:
+    """A skill set: one to three of look, forward and back, each a library policy id."""
+    return (
+        isinstance(skills, dict)
+        and 0 < len(skills) <= len(SKILL_MODES)
+        and all(
+            k in SKILL_MODES and isinstance(v, str) and POLICY_ID_RE.fullmatch(v)
+            for k, v in skills.items()
+        )
+    )
+
+
 def _gesture_names(names: Any) -> tuple[str, ...]:
     """A creature's reported gesture names, keeping only ones it could play, deduplicated."""
     if not isinstance(names, list):
@@ -1490,13 +1507,24 @@ class GrowBot:
             policy and (what not in WALKS or not POLICY_ID_RE.fullmatch(policy))
         ):
             return json_response(400, {"error": "policy"})
-        if what == "look" and not policy:
+        # Or a skill set (growbot-drive.js): a library policy for each of look, forward, back.
+        skills = msg.get("skills") if msg else None
+        if skills is not None and (policy or what not in WALKS or not _skill_set(skills)):
+            return json_response(400, {"error": "skills"})
+        if what == "look" and not policy and not skills:
             return json_response(400, {"error": "policy"})
         drive = msg.get("drive", "") if msg else ""
         if not isinstance(drive, str) or (
-            drive and (not policy or not DRIVE_RE.fullmatch(drive))
+            drive and (not (policy or skills) or not DRIVE_RE.fullmatch(drive))
         ):
             return json_response(400, {"error": "drive"})
+        # The face follower (growbot-follow.js): a skill set's look, followed, dry run, or one
+        # of its camera settings.
+        follow = msg.get("follow", "") if msg else ""
+        if not isinstance(follow, str) or (
+            follow and (follow not in FOLLOW or not skills or what != "look" or drive)
+        ):
+            return json_response(400, {"error": "follow"})
         name = msg.get("name", "") if msg else ""
         if (what == "gesture") != bool(name) or (name and not _gesture_name(name)):
             return json_response(400, {"error": "name"})
@@ -1511,8 +1539,12 @@ class GrowBot:
             frame: dict[str, Any] = {"t": "box_move", "rid": rid, "move": what, "secs": secs}
             if policy:
                 frame["policy"] = policy
+            if skills:
+                frame["skills"] = skills
             if drive:
                 frame["drive"] = drive
+            if follow:
+                frame["follow"] = follow
             if name:
                 frame["name"] = name
             creature.send_json(frame)

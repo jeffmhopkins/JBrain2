@@ -92,6 +92,7 @@ from jbrain.api import (
     chat_share,
     debug,
     debug_cast,
+    debug_expiry,
     debug_jlaunch,
     debug_minecraft,
     debug_panel,
@@ -2013,6 +2014,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     client=request.headers.get("x-debug-client", ""),
                     detail=getattr(request.state, "debug_detail", ""),
                 )
+            # Set only once the bearer authenticated, so a failed-auth response never
+            # gains these; an authenticated route's own 4xx still does.
+            expiry = getattr(request.state, "debug_token_expiry", None)
+            if expiry is not None:
+                response.headers.update(debug_expiry.expiry_headers(expiry))
             return response
 
     # Every owner-site /api request and socket must come from an enrolled, unrevoked phone

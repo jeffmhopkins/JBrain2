@@ -118,6 +118,7 @@ def test_origin_matches_host_ignores_scheme_and_default_ports() -> None:
 
 _CALLBACK = "/api/settings/gmail/callback"
 _NAV = {"sec-fetch-mode": "navigate", "sec-fetch-dest": "document"}
+_LIVE = "/api/jlaunch/jobs/j1/live/replay.html"
 
 
 @pytest.mark.parametrize(
@@ -139,6 +140,19 @@ _NAV = {"sec-fetch-mode": "navigate", "sec-fetch-dest": "document"}
         ({"sec-fetch-site": "cross-site", **_NAV}, "GET", "/api/settings/gmail/connect", True),
         ({"sec-fetch-site": "cross-site", **_NAV}, "POST", _CALLBACK, True),
         ({"sec-fetch-site": "cross-site", "sec-fetch-mode": "cors"}, "GET", _CALLBACK, True),
+        # A sandboxed live replay reloading itself: its opaque origin makes it cross-site.
+        ({"sec-fetch-site": "cross-site", **_NAV}, "GET", _LIVE, False),
+        ({"sec-fetch-site": "same-site", **_NAV}, "GET", _LIVE, True),
+        ({"sec-fetch-site": "cross-site", "sec-fetch-mode": "cors"}, "GET", _LIVE, True),
+        ({"sec-fetch-site": "cross-site", **_NAV, "sec-fetch-dest": "iframe"}, "GET", _LIVE, True),
+        ({"sec-fetch-site": "cross-site", **_NAV}, "POST", _LIVE, True),
+        ({"sec-fetch-site": "cross-site", **_NAV}, "GET", "/api/jlaunch/jobs/j1/live", True),
+        ({"sec-fetch-site": "cross-site", **_NAV}, "GET", _LIVE + "/x", True),
+        ({"sec-fetch-site": "cross-site", **_NAV}, "GET", "/api/jlaunch/jobs/j1/stop", True),
+        ({"sec-fetch-site": "cross-site", **_NAV}, "HEAD", _LIVE, False),
+        ({"sec-fetch-site": "cross-site", **_NAV}, "GET", _LIVE + "/", True),
+        ({"sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate"}, "GET", _LIVE, True),
+        ({"sec-fetch-site": "cross-site", **_NAV}, None, _LIVE, True),
         # A WS handshake never gets the navigation exemption.
         ({"sec-fetch-site": "cross-site", **_NAV}, None, _CALLBACK, True),
         ({"origin": "https://h.example", "host": "h.example"}, "POST", "/api/x", False),
@@ -198,6 +212,23 @@ def test_navigation_is_exempt_only_cross_site_onto_a_callback(
         "/api/settings/gmail/connect",
         headers={**_cookie(token), "sec-fetch-site": "same-site", **_NAV},
         follow_redirects=False,
+    )
+    assert resp.status_code == 403 and resp.json() == _REFUSED
+
+
+def test_a_live_replay_reloading_itself_is_not_refused(
+    client: TestClient, repo: FakeAuthRepo
+) -> None:
+    # The sandboxed replay's location.reload() every couple of minutes used to land the
+    # owner on the guard's raw JSON. It must pass the guard and auth and reach the route,
+    # which has no launcher in the test app.
+    token = _owner_token(repo)
+    resp = client.get(_LIVE, headers={**_cookie(token), "sec-fetch-site": "cross-site", **_NAV})
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "the job launcher is not enabled"}
+    # Not a fetch from a foreign page, though.
+    resp = client.get(
+        _LIVE, headers={**_cookie(token), "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors"}
     )
     assert resp.status_code == 403 and resp.json() == _REFUSED
 

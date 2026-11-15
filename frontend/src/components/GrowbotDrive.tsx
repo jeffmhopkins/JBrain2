@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, type GrowbotPolicy, type GrowbotSteer, api } from "../api/client";
+import {
+  ApiError,
+  type GrowbotPolicy,
+  type GrowbotSkillSet,
+  type GrowbotSteer,
+  api,
+} from "../api/client";
 
 // Continuous steering for a trained walk (owner, 2026-11-14: steer heading, speed and camera
 // height as it walks, not only the pad's fixed moves). Drive starts the picked walk for a
@@ -8,6 +14,10 @@ import { ApiError, type GrowbotPolicy, type GrowbotSteer, api } from "../api/cli
 // gbSteer), so the walk stops soon after the tab stops steering, whether by Stop driving, a
 // closed tab or a dropped connection, and a walk that ended on the phone answers 410, which
 // ends the drive.
+//
+// With a skill set (growbot-drive.js, 2026-11-15) the creature picks the skill from the sliders:
+// speed 0 stands and turns with the look, ahead walks tall camera first, and back backs away
+// nose first still facing ahead, never turning round. The heading is the front camera's.
 
 const EVERY_MS = 500;
 
@@ -29,16 +39,28 @@ export function headingWords(turn: number): string {
   return `${Math.abs(turn)}° ${turn < 0 ? "left" : "right"}`;
 }
 
+/** The skills a set covers, in words: "look, forward and back". */
+export function skillWords(set: GrowbotSkillSet): string {
+  const names = (["look", "forward", "back"] as const).filter((k) => set[k]);
+  return names.length > 1
+    ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
+    : names.join("");
+}
+
 export function GrowbotDrive({
   code,
   policy,
+  skills,
   disabled,
   halted,
   onSaid,
   onStop,
 }: {
   code: string;
-  policy: GrowbotPolicy;
+  /** The pad's picked walk; null when only a skill set can be driven. */
+  policy: GrowbotPolicy | null;
+  /** The library's skill set, when it covers at least two skills (skillSet). */
+  skills?: GrowbotSkillSet | null;
   disabled: boolean;
   /** Bumped by the pad whenever it sends a move of its own, which ends the drive. */
   halted: number;
@@ -50,6 +72,9 @@ export function GrowbotDrive({
   const [speed, setSpeed] = useState(1);
   const [pitch, setPitch] = useState(1);
   const [driving, setDriving] = useState(false);
+  // A skill set when there is one: it is what the follower will drive.
+  const [withSet, setWithSet] = useState(true);
+  const set = skills && (withSet || !policy) ? skills : null;
   const now = useRef({ heading: 0, speed: 1, pitch: 1 });
   now.current = { heading: -turn, speed, pitch };
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -72,7 +97,7 @@ export function GrowbotDrive({
   );
   // A different walk, a robot nobody can drive, or a move from the pad ends the drive.
   // biome-ignore lint/correctness/useExhaustiveDependencies: halt reads only refs and setters.
-  useEffect(() => halt(), [policy.id, disabled, halted]);
+  useEffect(() => halt(), [policy?.id, set ? JSON.stringify(set) : "", disabled, halted]);
 
   async function start() {
     setDriving(true);
@@ -80,14 +105,23 @@ export function GrowbotDrive({
     const drive = driveId();
     const live = () => mine === gen.current;
     try {
-      const out = await api.moveGrowbotRobot(code, "forward", 2, policy.id, undefined, drive);
+      // A skill set starts standing (the look); the first steer, a moment later, moves it.
+      const out = set
+        ? await api.moveGrowbotRobot(code, "look", 2, undefined, undefined, drive, set)
+        : policy
+          ? await api.moveGrowbotRobot(code, "forward", 2, policy.id, undefined, drive)
+          : null;
+      if (!out) return;
       if (!live()) return;
       if (!out.ok) {
         halt();
         onSaid({ text: out.why || "It didn't start the walk.", bad: true });
         return;
       }
-      onSaid({ text: `Driving with ${policy.name}.`, bad: false });
+      onSaid({
+        text: set ? `Driving the skill set (${skillWords(set)}).` : `Driving with ${policy?.name}.`,
+        bad: false,
+      });
       // One steer at a time, so a slow answer never lands an older slider value last.
       let sending = false;
       const tick = () => {
@@ -126,9 +160,31 @@ export function GrowbotDrive({
   }
 
   const id = `gb-drive-${code}`;
+  const speedOn = set ? true : !!policy?.contract.speed;
+  const pitchOn = set ? true : !!policy?.contract.pitch;
   return (
     <fieldset className="gb-drive">
       <legend className="gb-move-h">Drive</legend>
+      {skills && policy && (
+        <div className="gb-chips">
+          <button
+            type="button"
+            className={`gb-chip${withSet ? " on" : ""}`}
+            aria-pressed={withSet}
+            onClick={() => setWithSet(true)}
+          >
+            Skill set: {skillWords(skills)}
+          </button>
+          <button
+            type="button"
+            className={`gb-chip${withSet ? "" : " on"}`}
+            aria-pressed={!withSet}
+            onClick={() => setWithSet(false)}
+          >
+            {policy.name}
+          </button>
+        </div>
+      )}
       <div className="gb-trim">
         <label htmlFor={`${id}-turn`}>Heading</label>
         <input
@@ -144,7 +200,7 @@ export function GrowbotDrive({
           {headingWords(turn)}
         </output>
       </div>
-      {policy.contract.speed && (
+      {speedOn && (
         <div className="gb-trim">
           <label htmlFor={`${id}-speed`}>Speed</label>
           <input
@@ -161,7 +217,7 @@ export function GrowbotDrive({
           </output>
         </div>
       )}
-      {policy.contract.pitch && (
+      {pitchOn && (
         <div className="gb-trim">
           <label htmlFor={`${id}-pitch`}>Camera height</label>
           <input

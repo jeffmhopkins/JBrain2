@@ -308,6 +308,29 @@ each tick (forward and the `look` trick hold heading; the spins aim ±90°; back
 stock walk does, and keeps the stock walks' stops: a tip or a grab, a pause, a hidden page, a
 dream, or the relay dropping. The library refuses a policy with an input the runner can't feed.
 
+**Skill sets.** A walk move may carry `skills` in place of `policy`: a library policy for each of
+`look`, `forward` and `back` (the box reads which skills a file serves from the file itself,
+`Contract.modes`). The page then loads each file once and `growbot-drive.js` picks the skill every
+tick from one command in the front camera's frame: speed 0 stands and face-tracks with the look,
+ahead walks tall camera first, and back backs away nose first, still facing ahead and never turning
+round. A sharp turn is stop, spin, then walk, and a new file starts from 400 ms of neutral legs. The
+Body tab's Drive offers the set once the library covers two skills. The design, and the waves still
+to come (voice commands, walk for X), is
+[`docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md`](../docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md).
+
+**Emergency stop.** "Stop stop" (the word twice, so a passing one doesn't count) halts whatever the
+legs are doing the moment its transcript lands: `apply.py` makes `heardText` call `gbEStop` first,
+before any model turn, so a slow model never stands between it and the legs.
+
+**Following a face.** A skill set's `look` move may carry `follow`: `walk` follows the nearest
+face the front camera sees and keeps the distance it was at, `dry` does the same with the legs
+left alone and shows the command as an arrow on the creature's screen, and `calibrate` (the person
+stands 1 m away) and `flip` (which way the frames run) set that phone's camera. The Body tab's
+Follow box sends all four. `growbot-follow.js` (copied in by `apply.py`, imported by
+`growbot-box.js`) turns `growbot-eyes.js`'s face boxes into a bearing and a distance, keeps one
+person through a crossing, and steers the skill set; it stands when it loses them and ends after
+8 s. "Stop stop", Stop and any other move end it.
+
 ## Leg calibration (the Body tab's Legs pane)
 
 Upstream keeps a robot's calibration (`gb_walk_cal`: the by-eye trims `L_OFF`/`R_OFF`, the
