@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>GrowBot body test — screens</title>
+<style>
+:root{--bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;--text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;
+--steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);--green:#8fbc9a;--green-tint:rgba(143,188,154,.13);--amber:#c9a36a;--amber-tint:rgba(201,163,106,.13);
+--rose:#cf8a8f;--rose-tint:rgba(207,138,143,.13);--violet:#a493c9;--violet-tint:rgba(164,147,201,.13);font-family:system-ui,-apple-system,Roboto,sans-serif;--mono:ui-monospace,Menlo,monospace}
+body{margin:0;background:#2a2c31;color:var(--text);padding:24px}
+.row{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:26px}
+.cap{width:300px;font-size:13px;color:#c8cbd0;margin:8px 2px 0;line-height:1.35}
+.cap b{color:#fff}
+.ph{width:300px;height:620px;border-radius:30px;border:3px solid #000;background:var(--bg);overflow:hidden;position:relative;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+.pwa{padding:14px 14px 0;font-size:14px}
+.hdr{display:flex;align-items:center;gap:8px;font-size:18px;font-weight:600;margin:4px 2px 10px}
+.seg{display:flex;gap:4px;background:var(--surface-2);border-radius:14px;padding:4px;margin-bottom:12px}
+.seg span{flex:1;text-align:center;padding:9px 0;border-radius:10px;color:var(--text-2);font-size:13px}
+.seg span.on{background:var(--steel-tint);color:var(--text)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 14px;margin-bottom:10px}
+.card h3{margin:0 0 4px;font-size:15px}
+.hint{color:var(--text-2);font-size:12.5px;line-height:1.4;margin:0}
+.tag{font-size:11px;border-radius:99px;padding:2px 9px;background:var(--green-tint);color:var(--green)}
+.tag.v{background:var(--violet-tint);color:var(--violet)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{border:1px solid var(--border);background:var(--surface-2);border-radius:99px;padding:7px 12px;font-size:12.5px}
+.btn{display:block;text-align:center;border:1px solid var(--border);background:var(--surface-2);border-radius:12px;padding:12px;font-size:14px;margin-top:8px}
+.btn.p{background:var(--steel-tint);border-color:var(--steel);font-weight:500}
+.btn.d{background:var(--rose-tint);border-color:transparent;color:var(--rose);font-weight:500}
+.leg{font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin:4px 0 0}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
+.pad span{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;height:34px;display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.hl{outline:2px solid var(--amber);outline-offset:3px}
+/* creature */
+.cr{background:#000;height:100%;display:flex;flex-direction:column;align-items:center;color:#fff}
+.eyes{display:flex;gap:44px;margin-top:40px}
+.eye{width:58px;height:78px;border-radius:50%;background:#e9f4ff;position:relative;box-shadow:0 0 22px rgba(170,210,255,.35)}
+.eye:after{content:"";position:absolute;width:24px;height:30px;border-radius:50%;background:#000;left:17px;top:26px}
+.eyes.sm{margin-top:18px;gap:30px}.eyes.sm .eye{width:34px;height:46px}.eyes.sm .eye:after{width:14px;height:18px;left:10px;top:15px}
+.wz{margin-top:auto;width:100%;padding:0 22px 26px;box-sizing:border-box}
+.dots{display:flex;gap:6px;justify-content:center;margin-bottom:14px}
+.dots i{width:8px;height:8px;border-radius:50%;background:#333}.dots i.on{background:#fff}.dots i.done{background:var(--green)}
+.big{font-size:27px;font-weight:700;line-height:1.15;text-align:center;margin:0 0 10px}
+.sub{font-size:14.5px;color:#b9bcc2;text-align:center;line-height:1.4;margin:0 0 16px}
+.wbtn{display:block;text-align:center;background:#fff;color:#000;border-radius:14px;padding:14px;font-weight:700;font-size:16px}
+.wbtn.g{background:#1c1d20;color:#ddd;font-weight:500;margin-top:8px}
+.status{display:flex;align-items:center;gap:8px;justify-content:center;font-size:14px;color:#d6d8dc;background:#121315;border-radius:12px;padding:10px;margin-bottom:12px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber)}.dot.g{background:var(--green);box-shadow:0 0 8px var(--green)}
+.cam{position:relative;width:256px;height:192px;border-radius:14px;overflow:hidden;background:linear-gradient(160deg,#3a3f47,#1d2025 60%,#2b2a26);border:1px solid #333}
+.cam .face{position:absolute;border:2px solid var(--green);border-radius:6px}
+.cam .person{position:absolute;width:70px;height:120px;left:96px;top:58px;border-radius:40px 40px 10px 10px;background:#4b4f57}
+.cam .head{position:absolute;width:40px;height:48px;border-radius:50%;background:#8a8076}
+.cam .cross{position:absolute;left:0;right:0;top:50%;border-top:1px dashed rgba(255,255,255,.25)}
+.cam .crossv{position:absolute;top:0;bottom:0;left:50%;border-left:1px dashed rgba(255,255,255,.25)}
+.cam .lbl{position:absolute;left:8px;top:6px;font:600 11px var(--mono);color:#fff;background:rgba(0,0,0,.55);padding:2px 6px;border-radius:6px}
+.cam .rec{position:absolute;right:8px;top:6px;font:600 11px var(--mono);color:#fff;background:rgba(207,60,60,.85);padding:2px 6px;border-radius:6px}
+.say{display:inline-block;background:#fff;color:#000;border-radius:10px;padding:2px 10px}
+.mic{font-size:13px;color:#9a9da3;text-align:center;margin-top:10px}
+.mic b{color:#fff}
+.run{padding:10px 12px 0;width:100%;box-sizing:border-box}
+.runhd{display:flex;justify-content:space-between;align-items:baseline;width:100%}
+.runhd .t{font-size:17px;font-weight:700}.runhd .c{font:600 13px var(--mono);color:#9a9da3}
+.ask{background:#fff;color:#000;border-radius:12px;padding:8px 12px;font-weight:700;font-size:16px;text-align:center;margin:8px 0}
+.tl{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font:12px/1.35 var(--mono);color:#cfd2d6;background:#0f1012;border-radius:12px;padding:8px 10px;margin-top:8px}
+.tl span{color:#7d8187}
+.steps{list-style:none;margin:8px 0 0;padding:0;font-size:12.5px;color:#9a9da3}
+.steps li{display:flex;gap:8px;padding:3px 0}
+.steps li b{width:16px;text-align:center}
+.steps li.ok b{color:var(--green)}.steps li.now{color:#fff}.steps li.now b{color:var(--amber)}.steps li.warn b{color:var(--amber)}
+.stop{position:absolute;left:12px;right:12px;bottom:12px;background:var(--rose);color:#000;text-align:center;border-radius:14px;padding:12px;font-weight:800;font-size:15px}
+.res{padding:18px 16px;width:100%;box-sizing:border-box}
+.res h2{margin:0 0 4px;font-size:22px}
+.ri{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid #1d1e21;font-size:13px}
+.ri b{width:18px}.ri .k{flex:1}.ri .k em{display:block;font-style:normal;color:#8d9096;font-size:12px;margin-top:2px}
+.ok{color:var(--green)}.wa{color:var(--amber)}.no{color:var(--rose)}
+.mini{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font:12px/1.4 var(--mono);color:var(--text-2);margin-top:8px}
+.mini b{color:var(--text);font-weight:500}
+.bar{height:6px;background:var(--surface-2);border-radius:4px;overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;width:46%;background:var(--steel)}
+</style></head><body>
+
+<div class="row">
+<div>
+<div class="ph"><div class="pwa">
+ <div class="hdr">GrowBot</div>
+ <div class="seg"><span>Personas</span><span class="on">Body</span><span>Phones</span></div>
+ <div class="card"><div style="display:flex;align-items:center;gap:8px"><h3 style="flex:1">Fish</h3><span class="tag">on · paired</span></div>
+  <p class="hint">Pip is wearing Fish, on the robot's phone.</p></div>
+ <div class="card">
+  <div class="seg" style="margin:0 0 8px"><span class="on">Move</span><span>Legs</span></div>
+  <div class="leg">Drive · Master v2</div>
+  <div class="pad"><span>↖</span><span>↑</span><span>↗</span><span>↺</span><span style="color:var(--rose)">■</span><span>↻</span><span></span><span>↓</span><span></span></div>
+  <div class="leg" style="margin-top:12px">Follow</div>
+  <div class="chips"><span class="chip">Follow me</span><span class="chip">Dry run</span><span class="chip">Measure 1 m</span><span class="chip">Flip frames</span></div>
+  <div class="leg" style="margin-top:12px">Test</div>
+  <div class="btn p hl">Body test…</div>
+  <p class="hint" style="margin-top:6px">Walks you through a scripted trial on the robot's phone and saves every reading to the box.</p>
+ </div>
+</div></div>
+<p class="cap"><b>1 · PWA Body tab.</b> A new <i>Test</i> row under Follow. Tapping it starts the guide on whichever phone is wearing the body (the robot's phone).</p>
+</div>
+
+<div>
+<div class="ph"><div class="cr">
+ <div class="eyes"><div class="eye"></div><div class="eye"></div></div>
+ <div class="wz"><div class="dots"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+  <p class="big">Place this phone on the body</p>
+  <p class="sub">Screen facing out, front camera at the top. Snap it into the cradle.</p>
+  <div class="wbtn">It's on</div><div class="wbtn g">Cancel test</div>
+  <p class="mic">or say <b>“ready”</b></p></div>
+</div></div>
+<p class="cap"><b>2 · Step 1, on the robot's phone.</b> Big text you can read from across the desk. Tap or say “ready”.</p>
+</div>
+
+<div>
+<div class="ph"><div class="cr">
+ <div class="eyes"><div class="eye"></div><div class="eye"></div></div>
+ <div class="wz"><div class="dots"><i class="done"></i><i class="on"></i><i></i><i></i><i></i></div>
+  <p class="big">Power on the body</p>
+  <p class="sub">Flip the switch. This moves on by itself once the legs answer.</p>
+  <div class="status"><span class="dot"></span> Waiting for the legs…</div>
+  <div class="status" style="opacity:.45"><span class="dot g"></span> Legs connected · battery 7.9 V</div>
+  <div class="wbtn g">Cancel test</div></div>
+</div></div>
+<p class="cap"><b>3 · Step 2.</b> No button: it advances when the robot's Pico connects and answers. (Faded row shows the connected state.)</p>
+</div>
+
+<div>
+<div class="ph"><div class="cr">
+ <div class="eyes"><div class="eye"></div><div class="eye"></div></div>
+ <div class="wz"><div class="dots"><i class="done"></i><i class="done"></i><i class="on"></i><i></i><i></i></div>
+  <p class="big">Say <span class="say">“stand up”</span></p>
+  <p class="sub">Hands off. It gets up if it's lying down, then stands tall so the camera sees you.</p>
+  <div class="status"><span class="dot"></span> Standing up… tilt 38° → upright</div>
+  <div class="wbtn">Stand up</div><div class="wbtn g">Cancel test</div></div>
+</div></div>
+<p class="cap"><b>3b · Step 3, new.</b> Your “stand up” (or the button) runs get-up if it's on its back, then the tall stance. Moves on once the phone reads upright and steady for 1 s.</p>
+</div>
+
+<div>
+<div class="ph"><div class="cr">
+ <div class="eyes sm"><div class="eye"></div><div class="eye"></div></div>
+ <div style="margin-top:14px" class="cam"><div class="person"></div><div class="head" style="left:111px;top:28px"></div><div class="face" style="left:107px;top:24px;width:46px;height:56px"></div><div class="cross"></div><div class="crossv"></div><div class="lbl">face 1.04 m (raw)</div></div>
+ <div class="wz" style="padding-bottom:20px"><div class="dots"><i class="done"></i><i class="done"></i><i class="done"></i><i class="on"></i><i></i></div>
+  <p class="big" style="font-size:24px">Stand 1 m away and say <span class="say">“1 meter”</span></p>
+  <p class="sub">Face the screen. I'll measure you, then the test starts by itself.</p>
+  <div class="status"><span class="dot g"></span> I can see you · listening</div>
+  <div class="wbtn g">Cancel test</div></div>
+</div></div>
+<p class="cap"><b>4 · Step 4.</b> Live front-camera view with the face box. Saying “1 meter” (or “one metre”) calibrates distance with no model turn, then a 3-2-1 count starts the run.</p>
+</div>
+</div>
+
+<div class="row">
+<div>
+<div class="ph"><div class="cr">
+ <div class="run">
+  <div class="runhd"><span class="t">4 / 9 · Turn left</span><span class="c">01:42</span></div>
+  <div class="ask">Stay where you are</div>
+  <div class="cam" style="width:100%;height:170px"><div class="person" style="left:60px"></div><div class="head" style="left:75px;top:28px"></div><div class="face" style="left:71px;top:24px;width:46px;height:56px"></div><div class="cross"></div><div class="crossv"></div><div class="lbl">bearing +21° · 1.02 m</div><div class="rec">● REC</div></div>
+  <div class="tl">
+   <div><span>skill </span>look</div><div><span>cmd </span>h+90 s0.00 p+0.4</div>
+   <div><span>heading </span>+68.4°</div><div><span>tilt </span>r2 p-11°</div>
+   <div><span>legs </span>L 71 R 118</div><div><span>gyro z </span>+41°/s</div>
+   <div><span>faces </span>1 · locked</div><div><span>log </span>2,914 rows ↑</div>
+  </div>
+  <ul class="steps">
+   <li class="ok"><b>✓</b>Left-right check (dry)</li>
+   <li class="ok"><b>✓</b>Camera tilt check (dry)</li>
+   <li class="ok"><b>✓</b>Look & hold, 10 s</li>
+   <li class="now"><b>●</b>Turn left 90°, right 90°</li>
+   <li><b>○</b>Hold still: creep after spins</li>
+   <li><b>○</b>Walk forward · Walk back · stop stop</li>
+  </ul>
+ </div>
+ <div class="stop">STOP · or say “stop stop”</div>
+</div></div>
+<p class="cap"><b>5 · Running.</b> Step and clock, the one thing it wants you to do, the camera with face box and bearing, live telemetry, and the checklist. Everything is logged and uploaded every 2 s.</p>
+</div>
+
+<div>
+<div class="ph"><div class="cr">
+ <div class="eyes sm"><div class="eye"></div><div class="eye"></div></div>
+ <div class="res">
+  <h2>Body test done</h2>
+  <p class="hint" style="color:#9a9da3">4 min 51 s · run #7 saved on the box · Claude can read it</p>
+  <div class="ri"><b class="ok">✓</b><div class="k">Left-right sign<em>you stepped right, bearing went −; frames OK</em></div></div>
+  <div class="ri"><b class="wa">!</b><div class="k">Camera tilt<em>face above centre, +pitch moved it up, not down; tilt reversed?</em></div></div>
+  <div class="ri"><b class="ok">✓</b><div class="k">Turn left / right<em>reached 84° and −88° in 6.1 s / 5.4 s</em></div></div>
+  <div class="ri"><b class="wa">!</b><div class="k">Creep after spins<em>drifted 4 cm and 6° in 15 s of hold</em></div></div>
+  <div class="ri"><b class="ok">✓</b><div class="k">Walk forward / back<em>−0.21 m / +0.09 m by face distance</em></div></div>
+  <div class="ri"><b class="no">✗</b><div class="k">“stop stop” while walking<em>clip dropped as self-noise; stopped by timeout</em></div></div>
+  <div class="ri"><b class="ok">✓</b><div class="k">Falls<em>none · 0 tips · 0 grabs</em></div></div>
+  <div class="wbtn" style="margin-top:10px">Done</div>
+ </div>
+</div></div>
+<p class="cap"><b>6 · Results.</b> A quick verdict per check, worked out on the phone from the log. The full log (telemetry ~20 Hz, commands, tracker, falls, a small camera still per step) is on the box for review.</p>
+</div>
+
+<div>
+<div class="ph"><div class="pwa">
+ <div class="hdr">GrowBot</div>
+ <div class="seg"><span>Personas</span><span class="on">Body</span><span>Phones</span></div>
+ <div class="card" style="border-color:var(--violet)">
+  <div style="display:flex;align-items:center;gap:8px"><h3 style="flex:1">Body test · running</h3><span class="tag v">live</span></div>
+  <p class="hint">On the robot's phone · step 4 of 9</p>
+  <div class="bar"><i></i></div>
+  <div class="mini"><span>step</span><b>Turn left 90°</b><span>clock</span><b>01:42</b><span>skill</span><b>look · h+90 s0.00</b><span>heading</span><b>+68°</b><span>face</span><b>1.02 m · +21°</b><span>falls</span><b>0</b></div>
+  <div class="btn d">Stop test</div>
+ </div>
+ <div class="card"><h3>Past body tests</h3>
+  <div class="mini"><span>#7</span><b>today 5:31 PM · 4:51 · 2 warnings</b><span>#6</span><b>today 4:58 PM · stopped at step 5</b></div>
+  <p class="hint" style="margin-top:8px">Saved on the box. Ask Claude to review a run by its number.</p></div>
+</div></div>
+<p class="cap"><b>7 · PWA while it runs.</b> A mirror of the run on your own phone (step, clock, key numbers) from the box, with a Stop, plus the list of past runs.</p>
+</div>
+</div>
+</body></html>
