@@ -118,8 +118,9 @@ fi
 # by hand. CI (.github/workflows/ci.yml) pins the same runtime and sets the env var.
 # supervisor/.python-version pins 3.13 too, and for a different reason: the sdr sidecar it
 # tests runs on Debian trixie's CPython 3.13 (deploy/Dockerfile.sdr), and with no pin uv took
-# the CI runner's system 3.14, for which the locked numpy has no wheel. The gcc-15 source build
-# it fell back to computed the demodulator's filters wrong (test_sdr_demod.py caught it).
+# the CI runner's system 3.14, for which the locked numpy has no wheel. The source build it fell
+# back to (gcc 15, on that runner) measured the demodulator's filters wrong; test_sdr_demod.py
+# caught it. The supervisor's own image is 3.12; pyright's 3.11 floor covers that gap.
 ensure_uv() {
   if ! command -v uv >/dev/null 2>&1; then
     log "installing uv"

@@ -337,8 +337,9 @@ def test_the_leak_measurement_sees_a_spike_that_is_there():
     -6 dB: the figure `listen.LISTEN_OFFSET_HZ` was chosen against. A numpy that
     computes the filters wrong reads that tens of dB low, and the offset comparison then
     fails as if the offset were at fault. That happened on CI when uv took a Python with
-    no numpy wheel and a gcc-15 source build read every figure as noise near -85 dB;
-    this fails first and names the arithmetic."""
+    no numpy wheel, and the source build it made (gcc 15) read even this spike as
+    noise near -85 dB. Only this figure tells a good build from a bad one, since most
+    of the others sit near -85 dB anyway; this fails first and names the arithmetic."""
     listen = importlib.import_module("listen")
     _, view = _dc_leak_db("wbfm", listen.LISTEN_CAPTURE_HZ, 240_000.0)
     assert view > -10.0, f"a known -6 dB spike measured {view:.1f} dB"
