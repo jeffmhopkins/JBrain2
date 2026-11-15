@@ -1210,7 +1210,10 @@ _GB_TALK_JS = (
     " connection to something they said earlier, a real opinion of your own. you know a lot"
     " about the world (science, engineering, machine learning, space, people, history); use"
     " it, and when the talk is about you, your body or how you learn, reason about it as the"
-    " thoughtful mind you are, not as a toy.\\nlength follows the topic: a substantial one gets"
+    " thoughtful mind you are, not as a toy.\\ndo not flatter them or just agree: no"
+    " openers like 'great question' or 'that is a smart concern'. when you see it differently,"
+    " or spot a problem or a better option, say so plainly and why; when you agree, give your"
+    " own reason.\\nlength follows the topic: a substantial one gets"
     " up to about 80 words, three to five sentences; a passing remark gets a line; silence is"
     " still fine when nothing needs saying.\\ndo not end every reply with a question. ask one"
     " only when you truly want to know; otherwise say your piece and let them lead. a question"
@@ -2403,8 +2406,8 @@ PATCHES += [
 # page's frame difference, the same test that lets an idle thought look, at any voiced moment
 # since the last one) or the warm-up is
 # half its life old: a still room would only send the model the same picture again.
-_GB_WARM_JS = r"""var _gbWokeT=0, GB_WOKE_HOLD_MS=30000;
-function gbOpenDreamDue(){ return _gbDreamOnOpen&&!_gbBoxAsk&&!_gbCanned&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS; }
+_GB_WARM_JS = r"""var _gbWokeT=0, GB_WOKE_HOLD_MS=30000, GB_OPEN_DREAM_QUIET_MS=180000;
+function gbOpenDreamDue(){ return _gbDreamOnOpen&&!_gbBoxAsk&&!_gbCanned&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS&&!(typeof _humanT==="number"&&_humanT>0&&Date.now()-_humanT<GB_OPEN_DREAM_QUIET_MS); }
 var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000, GB_WARM_LOOK_MS=3000;
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 /* The box resumes a turn from the longest prefix it read before, so the history ahead of the new
@@ -3608,6 +3611,99 @@ ESTOP_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += ESTOP_PATCHES
+
+# What the owner's 2026-11-15 drive showed (debug brain log, two sessions):
+# - Whisper looped one sentence into a dozen copies ("…pop-up trailers?" x11, "Tucson" x12) and
+#   the whole loop reached the brain as his words. Upstream only drops a clip that is NOTHING but
+#   a short loop, so a real question followed by its echo passed whole. Three or more identical
+#   sentences in a row, or six of a short phrase within one sentence, now collapse to one, and
+#   a cut-off tail of that sentence goes; anything else comes back untouched, and people do say
+#   a thing twice ("no, no, no" and "Bye bye. Bye bye." stay).
+# - "All right, because it's closed, I can't actually check it out" was dropped as a chatbot's
+#   refusal: upstream's meta test fires on "I can't", "I'm sorry" or "can you … send" alone. A
+#   refusal now needs both a refusal phrase and a word about audio, transcripts, uploads or
+#   being an AI, or is the stock "I can't help with that".
+# - He kept no idea where they were (he guessed Oregon from a passing mention). In grown-up talk
+#   he keeps a one-line note of where things stand, written in his reply's `now` field only when
+#   it changes. It rides at the end of each turn's message with the local time, never in the
+#   system text, so the box's cached prefix is untouched; its age is shown, and past
+#   GB_NOW_STALE_MS it is flagged as possibly out of date, past GB_NOW_DROP_MS (a new outing) gone.
+_GB_HEAR_NOW_JS = r"""var GB_LOOP_RUN=3, GB_NOW_STALE_MS=1800000, GB_NOW_DROP_MS=10800000, GB_NOW_MAX=160;
+function _gbLoopKey(x){ return String(x||"").toLowerCase().replace(/[^\p{L}\p{N}]+/gu," ").trim(); }
+function gbUnloop(t){ var s0=String(t||""), s, n0=s0.length, parts, groups=[], out=[], cut=false, i, k, g, last;
+  s=s0.replace(/(?<![\p{L}\p{N}'’-])((?:[\p{L}\p{N}'’-]+[\s,]+){0,4}?[\p{L}\p{N}'’-]+)(?:[\s,]+\1(?![\p{L}\p{N}'’-])){5,}/giu,"$1");
+  parts=s.split(/(?<=[.!?])\s+/);
+  for(i=0;i<parts.length;i++){ k=_gbLoopKey(parts[i]); if(!k) continue; last=groups[groups.length-1];
+    if(last&&last.k===k) last.n++; else groups.push({k:k,p:parts[i].trim(),n:1}); }
+  for(i=0;i<groups.length;i++){ g=groups[i];
+    if(i===groups.length-1&&i>0&&groups[i-1].n>=GB_LOOP_RUN&&!/[.!?]$/.test(g.p)&&groups[i-1].k.indexOf(g.k)===0){ cut=true; continue; }
+    if(g.n>=GB_LOOP_RUN){ cut=true; out.push(g.p); } else for(k=0;k<g.n;k++) out.push(g.p); }
+  if(cut) s=out.join(" "); else if(s===s0) return s0;
+  if(s.length<n0-1) try{ logEv("stt_unloop",{from:n0,to:s.length}); }catch(e){}
+  return s; }
+function _gbNowClean(v){ return String(v||"").replace(/[\n\r{}"<>|]+/g," ").replace(/moment:/gi,"moment").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,GB_NOW_MAX); }
+function gbNowSet(v){ if(typeof v!=="string"||typeof gbTalkGrown!=="function"||!gbTalkGrown()||!_live||!_live.scratch) return;
+  v=_gbNowClean(v); if(!v) return; _live.scratch.gbNow=v; _live.scratch.gbNowT=Date.now();
+  try{ logEv("now_set",{n:v.length}); }catch(e){} }
+function gbNowLine(now){ if(typeof gbTalkGrown!=="function"||!gbTalkGrown()) return "";
+  var sc=(_live&&_live.scratch)||{}, v=_gbNowClean(sc.gbNow), t=+sc.gbNowT||0, age=now-t, s="\nlocal time: "+gbClockShort(now);
+  if(v&&t>0&&age>=-60000&&age<GB_NOW_DROP_MS){
+    s+="\nwhere things stand (your note, "+(age<120000?"just now":Math.round(age/60000)+" min ago")+"): "+v;
+    if(age>=GB_NOW_STALE_MS) s+=" — this note is old and may be out of date: if anything says otherwise, trust that and write a new one in now"; }
+  else s+="\nwhere things stand: no note yet; once you know where you are or what you are doing together, write it in now";
+  return s; }
+"""
+HEAR_NOW_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "function looksLikeMeta(t){",
+        _GB_HEAR_NOW_JS + "function looksLikeMeta(t){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  return /\\b(audio|transcrib|attach|provide the|as an ai|language model|i don'?t see|i do"
+        " not see|i cannot|i can'?t|i'?m sorry|i am sorry|no (audio|speech|sound|file)|i don'?t"
+        " have|share the)\\b/.test(s)\n"
+        "    || /(could you|can you|please) .*(share|provide|send|upload)/.test(s); }",
+        "  return /\\bi (cannot|can'?t|am unable to|'?m unable to) (help|assist) with (that|this)\\b/.test(s)"
+        " || /\\b(audio|transcri\\w*|upload\\w*|as an ai|language model)\\b/.test(s)"
+        "\n    && (/\\b(i don'?t see|i do not see|i cannot|i can'?t|i'?m sorry|i am sorry|i'?m"
+        " unable|i am unable|i don'?t have|provide the|share the|no (audio|speech|sound|file))"
+        "\\b/.test(s)\n"
+        "    || /(could you|can you|please) .*(share|provide|send|upload)/.test(s)); }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  var nh=normSay(txt);",
+        "  txt=gbUnloop(txt);\n  var nh=normSay(txt);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'try{ if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact))',
+        'try{ gbNowSet(o.now); if(typeof o.fact==="string"&&gbFactAdd(_live,o.fact))',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '+gbLastSaid(Date.now())+"\\nmoment: "+event+gbDepthCue(extra);',
+        '+gbLastSaid(Date.now())+gbNowLine(Date.now())+"\\nmoment: "+event+gbDepthCue(extra);',
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        " a chalupa and a taco)\",' +\n",
+        " a chalupa and a taco)\",' +\n"
+        "    (gbTalkGrown() ? '\"now\":\"OMIT unless where you and your person are or what you are"
+        " doing together just changed, or your where-things-stand note is missing, wrong or old:"
+        " one short line to keep (at the truck dealership, looking at trucks; driving home,"
+        " talking about trailers)\",' : '') +\n",
+        1,
+    ),
+]
+PATCHES += HEAR_NOW_PATCHES
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
