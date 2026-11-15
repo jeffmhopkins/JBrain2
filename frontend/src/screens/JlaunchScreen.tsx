@@ -579,24 +579,32 @@ function groupBy<T>(items: T[], key: (item: T) => string): [string, T[]][] {
   return [...groups];
 }
 
-/** Runs grouped under their job, a job with a running run first, then the job with the
- * newest run (the api lists runs newest first, so first-seen order is that). A job title
- * comes from its spec when the launcher still has it, else from the run. */
+/** When a run was spawned, in ms: the mirror's first sighting, else the launcher's start. */
+function spawnedAt(job: JlaunchJob): number {
+  const t = Date.parse(job.created_at || job.started_at || "");
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/** Newest spawn first; the id breaks ties so equal times never swap between polls. */
+function bySpawnDesc(a: JlaunchJob, b: JlaunchJob): number {
+  return spawnedAt(b) - spawnedAt(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+}
+
+/** Runs grouped under their job, newest spawn first, and the groups by their newest run's
+ * spawn. Spawn time never changes, so a live poll can't reorder the list under the owner's
+ * finger (the api lists by last activity, and sorting live runs first did the same: rows
+ * jumped whenever a run reported or finished). A job title comes from its spec when the
+ * launcher still has it, else from the run. */
 function runGroups(
   jobs: JlaunchJob[],
   specs: JlaunchSpec[],
 ): { spec: string; title: string; runs: JlaunchJob[] }[] {
   const titles = new Map(specs.map((s) => [s.name, s.title]));
-  // A running run leads: its job's group first, and it first within the group (stable
-  // sorts, so the rest keep their newest-first order).
-  const live = (runs: JlaunchJob[]) => (runs.some(isLive) ? 0 : 1);
-  return groupBy(jobs, (j) => j.spec_name)
-    .map(([spec, runs]) => ({
-      spec,
-      title: titles.get(spec) ?? runs[0]?.title ?? spec,
-      runs: [...runs].sort((a, b) => live([a]) - live([b])),
-    }))
-    .sort((a, b) => live(a.runs) - live(b.runs));
+  return groupBy([...jobs].sort(bySpawnDesc), (j) => j.spec_name).map(([spec, runs]) => ({
+    spec,
+    title: titles.get(spec) ?? runs[0]?.title ?? spec,
+    runs,
+  }));
 }
 
 /** "v3", or "run" for a row from before runs were numbered. */

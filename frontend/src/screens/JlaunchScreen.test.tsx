@@ -305,9 +305,14 @@ describe("JlaunchScreen", () => {
     expect(screen.getByText("GrowBot look")).toBeTruthy();
   });
 
-  it("opens on Runs with the running run first, and back from a run returns to the list", async () => {
+  it("opens on Runs with the newest run first, and back from a run returns to the list", async () => {
     vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC]);
-    const live = { ...job("z9", "running"), spec_name: "erdos", title: "Census" } as JlaunchJob;
+    const live = {
+      ...job("z9", "running"),
+      spec_name: "erdos",
+      title: "Census",
+      created_at: "2026-11-14T10:00:00Z",
+    } as JlaunchJob;
     vi.spyOn(api, "jlaunchJobs").mockResolvedValue([job("b2", "succeeded"), live]);
     vi.spyOn(api, "jlaunchGetJob").mockResolvedValue({
       ...live,
@@ -326,5 +331,30 @@ describe("JlaunchScreen", () => {
     expect(closeTopModalLayer()).toBe(true);
     await screen.findByRole("tab", { name: /Runs/ });
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("orders runs and their groups by spawn time, never by activity or liveness", async () => {
+    vi.spyOn(api, "jlaunchSpecs").mockResolvedValue([SPEC]);
+    const at = (j: JlaunchJob, created_at: string, more: Partial<JlaunchJob> = {}) =>
+      ({ ...j, created_at, ...more }) as JlaunchJob;
+    // The api lists by last activity: the old live run that just reported comes first.
+    vi.spyOn(api, "jlaunchJobs").mockResolvedValue([
+      at(job("a1", "running"), "2026-11-14T01:00:00Z"),
+      at(job("c3", "succeeded"), "2026-11-14T05:00:00Z", {
+        spec_name: "erdos",
+        title: "Census",
+        revision: 7,
+      }),
+      at(job("b2", "succeeded"), "2026-11-14T03:00:00Z"),
+    ]);
+    render(<JlaunchScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /Runs/ }));
+    await screen.findByRole("button", { name: "Open v7 of Census" });
+    const labels = screen
+      .getAllByRole("button", { name: /^Open / })
+      .map((b) => b.getAttribute("aria-label"));
+    // Census's group leads on its newer run; within GrowBot look, v2 (spawned later) tops
+    // the still-running v1.
+    expect(labels).toEqual(["Open v7 of Census", "Open v2 of Run b2", "Open v1 of Run a1"]);
   });
 });
