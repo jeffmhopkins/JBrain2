@@ -330,6 +330,21 @@ def test_the_receivers_own_dc_spike_is_suppressed_in_every_mode():
         assert view < -40.0, f"{mode}: DC sits in the picture at {view:.1f} dBFS"
 
 
+def test_the_leak_measurement_sees_a_spike_that_is_there():
+    """The instrument the two tests around it rely on, checked against a known answer.
+
+    At the old 240 kHz offset the spike folds into wide FM's picture unattenuated, at
+    -6 dB: the figure `listen.LISTEN_OFFSET_HZ` was chosen against. A numpy that
+    computes the filters wrong reads that tens of dB low, and the offset comparison then
+    fails as if the offset were at fault. That happened on CI when uv took a Python with
+    no numpy wheel, and the source build it made (gcc 15) read even this spike as
+    noise near -85 dB. Only this figure tells a good build from a bad one, since most
+    of the others sit near -85 dB anyway; this fails first and names the arithmetic."""
+    listen = importlib.import_module("listen")
+    _, view = _dc_leak_db("wbfm", listen.LISTEN_CAPTURE_HZ, 240_000.0)
+    assert view > -10.0, f"a known -6 dB spike measured {view:.1f} dB"
+
+
 def test_the_shipped_offset_beats_the_one_it_replaced():
     """The claim the constant is chosen on, kept honest.
 
