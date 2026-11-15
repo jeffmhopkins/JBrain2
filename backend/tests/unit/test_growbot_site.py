@@ -4604,8 +4604,9 @@ def _hear_page(script: str) -> dict[str, Any]:
 def test_a_transcription_loop_reaches_him_once() -> None:
     """Field, 2026-11-15: Whisper looped "Do you have any knowledge of pop-up trailers?" eleven
     times and "Tucson" twelve, and every copy reached the brain as the person's words. Three or
-    more of one sentence, or four of a short phrase, now collapse to one, with the loop's cut-off
-    tail; things people do say twice, or a "no, no, no", stay as said."""
+    more of one sentence, or six of a short phrase, now collapse to one, with the loop's cut-off
+    tail; anything else comes back byte for byte (decimals, "Yes, yes, yes", "Bye bye. Bye
+    bye.")."""
     q = "Do you have any knowledge of pop-up trailers?"
     got = _hear_page(
         "var r={};r.out=["
@@ -4614,7 +4615,10 @@ def test_a_transcription_loop_reaches_him_once() -> None:
         + json.dumps("Opinion on a Ram 2500 versus a Tucson, " + "Tucson, " * 10 + "Tucson.")
         + ",'What about renting? What about renting? What about renting? And buying?',"
         "'I said it. I said it. Then I left.','no, no, no stop','Obrigado. Obrigado.',"
-        "'Is it big? Is it']"
+        "'Is it big? Is it','Is it 3.5 meters?','Go to google.com now','Okay. \u266a',"
+        "'Open your eyes. Yes, yes, yes.','Chicago, go, go, go!','Bye bye. Bye bye.',"
+        "'Ha ha ha ha!',"
+        "'I said it is 2.5. I said it is 2.5. I said it is 2.5.']"
         ".map(gbUnloop);r.logged=logged;console.log(JSON.stringify(r));"
     )
     assert got["out"] == [
@@ -4625,8 +4629,16 @@ def test_a_transcription_loop_reaches_him_once() -> None:
         "no, no, no stop",
         "Obrigado. Obrigado.",
         "Is it big? Is it",
+        "Is it 3.5 meters?",
+        "Go to google.com now",
+        "Okay. \u266a",
+        "Open your eyes. Yes, yes, yes.",
+        "Chicago, go, go, go!",
+        "Bye bye. Bye bye.",
+        "Ha ha ha ha!",
+        "I said it is 2.5.",
     ]
-    assert [k for k, _ in got["logged"]] == ["stt_unloop"] * 3
+    assert [k for k, _ in got["logged"]] == ["stt_unloop"] * 4
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert page.count("  txt=gbUnloop(txt);\n  var nh=normSay(txt);") == 1
 
@@ -4640,10 +4652,11 @@ def test_a_sentence_saying_i_cant_is_not_a_chatbot_refusal() -> None:
         "\"All right, because it's closed, I can't actually check it out.\","
         "'Can you send me a reminder?','I am sorry about earlier.','As an AI, do you dream?',"
         "\"I'm sorry, but I can't transcribe audio.\",'Could you please share the audio file?',"
-        "\"I don't see any audio attached.\",'As an AI language model, I cannot hear.'"
+        "\"I don't see any audio attached.\",'As an AI language model, I cannot hear.',"
+        "'I am sorry, but I cannot help with that.',\"I can't attach the trailer, it is low\""
         "].map(function(t){ return looksLikeMeta(t); })}));"
     )
-    assert got["m"] == [False, False, False, False, True, True, True, True]
+    assert got["m"] == [False, False, False, False, True, True, True, True, True, False]
 
 
 def test_he_keeps_a_note_of_where_things_stand() -> None:
@@ -4659,6 +4672,7 @@ def test_he_keeps_a_note_of_where_things_stand() -> None:
         "_live.scratch.gbNowT=n-40*60000;r.stale=gbNowLine(n);"
         "_live.scratch.gbNowT=n-4*3600000;r.gone=gbNowLine(n);"
         "gbNowSet(42);gbNowSet('   ');r.kept=_live.scratch.gbNow;"
+        "gbNowSet('x moment: y');r.moment=_live.scratch.gbNow;gbNowSet(r.kept);"
         "grown=false;gbNowSet('driving');r.kidNote=_live.scratch.gbNow;r.kid=gbNowLine(n);"
         "r.logged=logged;console.log(JSON.stringify(r));"
     )
@@ -4670,8 +4684,8 @@ def test_he_keeps_a_note_of_where_things_stand() -> None:
     )
     assert "(your note, 40 min ago)" in got["stale"] and "may be out of date" in got["stale"]
     assert "no note yet" in got["gone"]
-    assert got["kid"] == ""
-    assert got["logged"] == [["now_set", {"n": 33}]]
+    assert got["kid"] == "" and got["moment"] == "x moment y"
+    assert [k for k, _ in got["logged"]] == ["now_set"] * 3
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert 'try{ gbNowSet(o.now); if(typeof o.fact==="string"' in page
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")

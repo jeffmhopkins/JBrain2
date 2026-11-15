@@ -3616,12 +3616,13 @@ PATCHES += ESTOP_PATCHES
 # - Whisper looped one sentence into a dozen copies ("…pop-up trailers?" x11, "Tucson" x12) and
 #   the whole loop reached the brain as his words. Upstream only drops a clip that is NOTHING but
 #   a short loop, so a real question followed by its echo passed whole. Three or more identical
-#   sentences in a row, or four of a short phrase, now collapse to one, and a cut-off tail of
-#   that sentence goes; people do say a thing twice ("no, no, no" stays).
+#   sentences in a row, or six of a short phrase within one sentence, now collapse to one, and
+#   a cut-off tail of that sentence goes; anything else comes back untouched, and people do say
+#   a thing twice ("no, no, no" and "Bye bye. Bye bye." stay).
 # - "All right, because it's closed, I can't actually check it out" was dropped as a chatbot's
 #   refusal: upstream's meta test fires on "I can't", "I'm sorry" or "can you … send" alone. A
-#   refusal now needs both a refusal phrase and a word about audio, transcripts, attachments or
-#   being an AI.
+#   refusal now needs both a refusal phrase and a word about audio, transcripts, uploads or
+#   being an AI, or is the stock "I can't help with that".
 # - He kept no idea where they were (he guessed Oregon from a passing mention). In grown-up talk
 #   he keeps a one-line note of where things stand, written in his reply's `now` field only when
 #   it changes. It rides at the end of each turn's message with the local time, never in the
@@ -3629,18 +3630,18 @@ PATCHES += ESTOP_PATCHES
 #   GB_NOW_STALE_MS it is flagged as possibly out of date, past GB_NOW_DROP_MS (a new outing) gone.
 _GB_HEAR_NOW_JS = r"""var GB_LOOP_RUN=3, GB_NOW_STALE_MS=1800000, GB_NOW_DROP_MS=10800000, GB_NOW_MAX=160;
 function _gbLoopKey(x){ return String(x||"").toLowerCase().replace(/[^\p{L}\p{N}]+/gu," ").trim(); }
-function gbUnloop(t){ var s=String(t||""), n0=s.length, parts, groups=[], out=[], i, k, g, last;
-  s=s.replace(/((?:[\p{L}\p{N}'’-]+[\s,]+){0,4}?[\p{L}\p{N}'’-]+)(?:[\s,.!?]+\1(?![\p{L}\p{N}])){3,}/giu,"$1");
-  parts=s.match(/[^.!?]+(?:[.!?]+|$)/g)||[];
+function gbUnloop(t){ var s0=String(t||""), s, n0=s0.length, parts, groups=[], out=[], cut=false, i, k, g, last;
+  s=s0.replace(/(?<![\p{L}\p{N}'’-])((?:[\p{L}\p{N}'’-]+[\s,]+){0,4}?[\p{L}\p{N}'’-]+)(?:[\s,]+\1(?![\p{L}\p{N}'’-])){5,}/giu,"$1");
+  parts=s.split(/(?<=[.!?])\s+/);
   for(i=0;i<parts.length;i++){ k=_gbLoopKey(parts[i]); if(!k) continue; last=groups[groups.length-1];
     if(last&&last.k===k) last.n++; else groups.push({k:k,p:parts[i].trim(),n:1}); }
   for(i=0;i<groups.length;i++){ g=groups[i];
-    if(i===groups.length-1&&i>0&&groups[i-1].n>=GB_LOOP_RUN&&!/[.!?]$/.test(g.p)&&groups[i-1].k.indexOf(g.k)===0) continue;
-    if(g.n>=GB_LOOP_RUN) out.push(g.p); else for(k=0;k<g.n;k++) out.push(g.p); }
-  s=out.length?out.join(" "):s.trim();
+    if(i===groups.length-1&&i>0&&groups[i-1].n>=GB_LOOP_RUN&&!/[.!?]$/.test(g.p)&&groups[i-1].k.indexOf(g.k)===0){ cut=true; continue; }
+    if(g.n>=GB_LOOP_RUN){ cut=true; out.push(g.p); } else for(k=0;k<g.n;k++) out.push(g.p); }
+  if(cut) s=out.join(" "); else if(s===s0) return s0;
   if(s.length<n0-1) try{ logEv("stt_unloop",{from:n0,to:s.length}); }catch(e){}
   return s; }
-function _gbNowClean(v){ return String(v||"").replace(/[\n\r{}"<>|]+/g," ").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,GB_NOW_MAX); }
+function _gbNowClean(v){ return String(v||"").replace(/[\n\r{}"<>|]+/g," ").replace(/moment:/gi,"moment").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,GB_NOW_MAX); }
 function gbNowSet(v){ if(typeof v!=="string"||typeof gbTalkGrown!=="function"||!gbTalkGrown()||!_live||!_live.scratch) return;
   v=_gbNowClean(v); if(!v) return; _live.scratch.gbNow=v; _live.scratch.gbNowT=Date.now();
   try{ logEv("now_set",{n:v.length}); }catch(e){} }
@@ -3665,7 +3666,8 @@ HEAR_NOW_PATCHES: list[tuple[str, str, str, int]] = [
         " not see|i cannot|i can'?t|i'?m sorry|i am sorry|no (audio|speech|sound|file)|i don'?t"
         " have|share the)\\b/.test(s)\n"
         "    || /(could you|can you|please) .*(share|provide|send|upload)/.test(s); }",
-        "  return /\\b(audio|transcri\\w*|attach\\w*|upload\\w*|as an ai|language model)\\b/.test(s)"
+        "  return /\\bi (cannot|can'?t|am unable to|'?m unable to) (help|assist) with (that|this)\\b/.test(s)"
+        " || /\\b(audio|transcri\\w*|upload\\w*|as an ai|language model)\\b/.test(s)"
         "\n    && (/\\b(i don'?t see|i do not see|i cannot|i can'?t|i'?m sorry|i am sorry|i'?m"
         " unable|i am unable|i don'?t have|provide the|share the|no (audio|speech|sound|file))"
         "\\b/.test(s)\n"

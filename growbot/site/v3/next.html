@@ -2780,18 +2780,18 @@ function diTranscribe(blob,type,meta){ meta=meta||_languageRequest(0); var ext=t
       _sttOvl=Math.max(0,_sttOvl-1); if(meta&&meta.gbPiece) _gbPiece(meta.gbPiece,"",meta); _sttPhase("done"); toast(window.gbBoxEars?window.gbBoxEars(e):"my ears are down on my end. try again in a moment, or type."); }); }   /* di failed OR timed out -> groq backstop. GUARDED: only the PRIMARY hands off; when groq is primary, di IS the backstop and must TERMINATE here — 0829: it used to terminate SILENTLY (no phase close, no toast), leaving the thinking spinner up and the person unanswered (the :957 phase-leak). */
 var GB_LOOP_RUN=3, GB_NOW_STALE_MS=1800000, GB_NOW_DROP_MS=10800000, GB_NOW_MAX=160;
 function _gbLoopKey(x){ return String(x||"").toLowerCase().replace(/[^\p{L}\p{N}]+/gu," ").trim(); }
-function gbUnloop(t){ var s=String(t||""), n0=s.length, parts, groups=[], out=[], i, k, g, last;
-  s=s.replace(/((?:[\p{L}\p{N}'’-]+[\s,]+){0,4}?[\p{L}\p{N}'’-]+)(?:[\s,.!?]+\1(?![\p{L}\p{N}])){3,}/giu,"$1");
-  parts=s.match(/[^.!?]+(?:[.!?]+|$)/g)||[];
+function gbUnloop(t){ var s0=String(t||""), s, n0=s0.length, parts, groups=[], out=[], cut=false, i, k, g, last;
+  s=s0.replace(/(?<![\p{L}\p{N}'’-])((?:[\p{L}\p{N}'’-]+[\s,]+){0,4}?[\p{L}\p{N}'’-]+)(?:[\s,]+\1(?![\p{L}\p{N}'’-])){5,}/giu,"$1");
+  parts=s.split(/(?<=[.!?])\s+/);
   for(i=0;i<parts.length;i++){ k=_gbLoopKey(parts[i]); if(!k) continue; last=groups[groups.length-1];
     if(last&&last.k===k) last.n++; else groups.push({k:k,p:parts[i].trim(),n:1}); }
   for(i=0;i<groups.length;i++){ g=groups[i];
-    if(i===groups.length-1&&i>0&&groups[i-1].n>=GB_LOOP_RUN&&!/[.!?]$/.test(g.p)&&groups[i-1].k.indexOf(g.k)===0) continue;
-    if(g.n>=GB_LOOP_RUN) out.push(g.p); else for(k=0;k<g.n;k++) out.push(g.p); }
-  s=out.length?out.join(" "):s.trim();
+    if(i===groups.length-1&&i>0&&groups[i-1].n>=GB_LOOP_RUN&&!/[.!?]$/.test(g.p)&&groups[i-1].k.indexOf(g.k)===0){ cut=true; continue; }
+    if(g.n>=GB_LOOP_RUN){ cut=true; out.push(g.p); } else for(k=0;k<g.n;k++) out.push(g.p); }
+  if(cut) s=out.join(" "); else if(s===s0) return s0;
   if(s.length<n0-1) try{ logEv("stt_unloop",{from:n0,to:s.length}); }catch(e){}
   return s; }
-function _gbNowClean(v){ return String(v||"").replace(/[\n\r{}"<>|]+/g," ").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,GB_NOW_MAX); }
+function _gbNowClean(v){ return String(v||"").replace(/[\n\r{}"<>|]+/g," ").replace(/moment:/gi,"moment").replace(/==+/g,"=").replace(/\s+/g," ").trim().slice(0,GB_NOW_MAX); }
 function gbNowSet(v){ if(typeof v!=="string"||typeof gbTalkGrown!=="function"||!gbTalkGrown()||!_live||!_live.scratch) return;
   v=_gbNowClean(v); if(!v) return; _live.scratch.gbNow=v; _live.scratch.gbNowT=Date.now();
   try{ logEv("now_set",{n:v.length}); }catch(e){} }
@@ -2803,7 +2803,7 @@ function gbNowLine(now){ if(typeof gbTalkGrown!=="function"||!gbTalkGrown()) ret
   else s+="\nwhere things stand: no note yet; once you know where you are or what you are doing together, write it in now";
   return s; }
 function looksLikeMeta(t){ var s=t.toLowerCase();                                                  // a chat model's refusal masquerading as a transcript
-  return /\b(audio|transcri\w*|attach\w*|upload\w*|as an ai|language model)\b/.test(s)
+  return /\bi (cannot|can'?t|am unable to|'?m unable to) (help|assist) with (that|this)\b/.test(s) || /\b(audio|transcri\w*|upload\w*|as an ai|language model)\b/.test(s)
     && (/\b(i don'?t see|i do not see|i cannot|i can'?t|i'?m sorry|i am sorry|i'?m unable|i am unable|i don'?t have|provide the|share the|no (audio|speech|sound|file))\b/.test(s)
     || /(could you|can you|please) .*(share|provide|send|upload)/.test(s)); }
 function heardSegs(ph){ var out=[], parts=ph.split(/[.!?]+/), i, s;   // sentence-ish fragments only; commas stay INSIDE a fragment, so "obrigado, meu amigo" is one thought and "no, no, stop that" never reads as a loop
