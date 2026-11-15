@@ -146,7 +146,7 @@ export function Follower(opts) {
   this.seq = -1;
   this.reset();
 }
-// Forget the averaged distance: a reading from before they were lost is stale once found.
+// Forget the averaged distance: a reading from before a gap is stale once they're seen again.
 Follower.prototype.reset = function () {
   this.dist = null;   // the averaged distance
   this.n = 0;         // readings in it
@@ -175,6 +175,10 @@ Follower.prototype.command = function (track, heading, t) {
   // heading at that moment, so it never spins far on old speed (the step back when lost is at
   // most half a second of its turning).
   var q = track.predict(Math.min(t, p.t + this.o.staleMs)), err = wrap180(q.az - heading);
+  // A stale reading forgets the average too, as the trained follower's tracker does after
+  // half a second: a gap must not count toward the second of readings a walk waits for, nor
+  // let the next reading after it stand in for the whole average.
+  if (age > this.o.staleMs) this.reset();
   // Once per reading: the camera's height creeps toward the face, and the reading joins the
   // distance's average (a plain mean until it spans avgMs, then a moving one, so an early long
   // reading weighs no more than any other).

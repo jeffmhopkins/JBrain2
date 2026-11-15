@@ -95,8 +95,8 @@ The real-robot trials after P5 are GrowBot_Training's phase 6.
   the average holds a second of readings, more than 0.10 m too far with the person within 30° of
   the camera starts a walk at full speed (drive walks only above `SPEED_ON`), and it keeps
   walking until within 0.05 m (or 40° off), so a turn's drift is walked back rather than left in
-  the band. Too close backs away at 1.5 × the error beyond 0.15 m. Losing the person forgets the
-  average. Too close with the person more than 60° off, it turns to face them
+  the band. Too close backs away at 1.5 × the error beyond 0.15 m. Half a second without a
+  reading forgets the average, so the second-long wait starts over after any gap. Too close with the person more than 60° off, it turns to face them
   before it backs, since backing travels opposite the camera and would close on them. No reading for 0.5 s drops
   speed to 0. After 3 s it stands and turns toward where the person was last seen. A walk that
   never locks within 6 s, or loses the person for 8 s, ends with the legs released and says why.

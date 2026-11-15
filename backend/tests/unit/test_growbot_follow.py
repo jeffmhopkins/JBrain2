@@ -138,6 +138,22 @@ def test_one_long_reading_mid_waddle_does_not_start_a_walk() -> None:
     assert all(c["speed"] == 0 for c in got)
 
 
+def test_a_dropout_then_one_long_reading_does_not_start_a_walk() -> None:
+    """A gap in readings is not a second of readings: after one, the wait starts over, and the
+    first reading back doesn't stand in for the whole average."""
+    got = _node(
+        "const t = new f.Track(), fo = new f.Follower(); fo.start(1); const out = [];"
+        "const at = (d, ms) => {"
+        "  t.p = { az: 0, dist: d, size: 0.1, vaz: 0, vdist: 0, t: ms, up: 0 };"
+        "  t.seq++; return fo.command(t, 0, ms); };"
+        "for (let i = 0; i < 15; i++) at(1.0, i * 100);"
+        "fo.command(t, 0, 2000); fo.command(t, 0, 2800);"
+        "out.push(at(1.3, 2900)); for (let i = 1; i <= 3; i++) out.push(at(1.0, 2900 + i * 100));"
+        "return out;"
+    )
+    assert all(c["speed"] == 0 for c in got)
+
+
 def test_too_close_backs_away_past_the_band_at_once() -> None:
     got = _commands([0.9, 0.5])
     assert got[0]["speed"] == 0
