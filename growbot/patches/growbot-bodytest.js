@@ -49,15 +49,20 @@ export var T = {
   creepMs: 15000,
   walkMs: 4000,
   estopMs: 10000,
+  setupMaxMs: 600000,    // a test left in setup this long ends, rather than log forever
+  coolMs: 4500,          // a fall's cool-off (growbot-box.js _gaitCoolUntil, 4 s) before a walk
   nearStop: 0.45,        // a forward walk ends early this close to the person (m)
 };
 
 var WORDS = {
-  ready: /\b(ready|it'?s on|done|okay|ok)\b/i,
+  ready: /\b(ready|it'?s on|done)\b/i,
   stand: /\bstand(ing)?\s*up\b/i,
   metre: /\b(1|one|a)[\s-]*(m|meter|metre|meters|metres)\b/i,
   cancel: /\b(cancel|end|stop|quit)\s+(the\s+)?test\b/i,
   stop: /\bstop\b/i,
+  stop2: /\bstop\b[\s,.!?;:\u2026\u2013\u2014-]*\bstop\b/i,
+  // Whisper's stock lines for silence (next.html heardText drops these too, after this hook).
+  silence: /^[\s.!?]*(you|thank you|thanks for watching|thank you for watching)?[\s.!?]*$/i,
 };
 
 // What a heard line means to the test, or "" (the line itself is never logged unless it's one).
@@ -266,6 +271,7 @@ BodyTest.prototype.sample = function () {
 BodyTest.prototype.wait = async function (ms, tick) {
   var end = this.env.now() + ms, lastSteer = -Infinity;
   for (;;) {
+    if (this.phase === "setup" && this.elapsed() > T.setupMaxMs) this.dead = "setup_timeout";
     if (this.dead) throw new Cancelled(this.dead);
     if (this.fell) { var why = this.fell; this.fell = null; throw new Fell(why); }
     this.sample();
@@ -415,6 +421,9 @@ BodyTest.prototype.check = async function (i, fn) {
 // After a fall or an ended walk: wait until it's upright again (or the person says ready).
 BodyTest.prototype.recover = async function () {
   var e = this.env;
+  // A fall or a grab cools the legs off before any walk is admitted again.
+  this.setAsk("Catching my balance…");
+  await this.wait(T.coolMs);
   if (e.upright() === true) return;
   this.setAsk("I fell. Set me upright, then say “ready”");
   var upSince = null;
@@ -517,7 +526,7 @@ BodyTest.prototype.checks = async function () {
   });
 
   await this.check(7, async function () {
-    this.setAsk("Get ready to say “stop stop”");
+    this.setAsk("I'll back away, then ask you to say “stop stop”");
     await this.walk({ heading: 0, speed: 0, pitch: 0 });
     this.steer({ speed: -1 });
     await this.wait(1000);
@@ -571,10 +580,14 @@ BodyTest.prototype.tap = function (what) {
 // A transcript: true when the test took it (the creature's model never sees it then).
 BodyTest.prototype.heard = function (txt) {
   if (this.phase === "result") return false;
+  if (WORDS.silence.test(String(txt || ""))) return true;
   var w = heardWord(txt);
   this.heardN++;
   this.log("e", { e: "bt_heard", word: w, words: String(txt || "").split(/\s+/).filter(Boolean).length, txt: w ? String(txt).slice(0, 60) : undefined });
   if (w === "cancel") { this.cancel("voice"); return true; }
+  // "stop stop" with no walk to halt (setup, between checks, after a fall) still ends the test,
+  // as the screen promises; gbEStop only logs an estop when the legs were moving.
+  if (WORDS.stop2.test(String(txt || "")) && !this.expectStop) { this.cancel("stop stop"); return true; }
   if (this.waiting && w && this.waiting.indexOf(w) >= 0) this.got = w;
   return true;
 };

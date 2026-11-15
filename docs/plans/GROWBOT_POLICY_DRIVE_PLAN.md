@@ -135,7 +135,7 @@ line goes to the test, never a model turn ("stop stop" is still checked first an
 
 The phone shows the camera with its face box, live numbers and the checklist, then a verdict per
 check. It posts its log every 2 s (`/api/box/bodytest` → `/internal/growbot/bodytests`, migration
-0274, newest 50 runs kept): ~20 samples a second, its events, the page's diary rows during it, and
+0274, each robot's newest 50 runs kept, a run capped at 60,000 rows): ~20 samples a second, its events, the page's diary rows during it, and
 a camera still per step. The Body tab mirrors a running test (step, clock, skill, heading, face,
 falls) with Stop, and lists past runs with their JSON log; `GET /api/debug/growbot/bodytests[/{n}]`
 reads the same for review.

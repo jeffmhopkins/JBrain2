@@ -9,8 +9,8 @@ accelerometer, tilt, the walk's heading and command, leg poses, the face it sees
 `growbot_bodytests` is one row per run: its number (`id`, what the owner calls "run 7"), the
 phone's own run id, the robot, its status, and `summary`, the run's latest state, which the
 Body tab mirrors while it runs and which holds the verdicts at the end. `growbot_bodytest_chunks`
-is the log, one row per post, kept once by `(run_id, seq)`. Only the newest 50 runs are kept,
-pruned by the writer (`jbrain.growbot.bodytests`). Owner-only RLS like 0262's.
+is the log, one row per post, kept once by `(run_id, seq)`. Only each robot's newest 50 runs are
+kept, pruned by the writer (`jbrain.growbot.bodytests`). Owner-only RLS like 0262's.
 
 Revision ID: 0274
 Revises: 0273
@@ -62,7 +62,8 @@ def upgrade() -> None:
             " FOR ALL USING (app.is_owner()) WITH CHECK (app.is_owner())"
         )
     op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON app.growbot_bodytests TO jbrain_app")
-    op.execute("GRANT SELECT, INSERT, DELETE ON app.growbot_bodytest_chunks TO jbrain_app")
+    # Chunks go only with their run (ON DELETE CASCADE).
+    op.execute("GRANT SELECT, INSERT ON app.growbot_bodytest_chunks TO jbrain_app")
     op.execute("GRANT USAGE ON SEQUENCE app.growbot_bodytests_id_seq TO jbrain_app")
 
 

@@ -1971,6 +1971,10 @@ class GrowBot:
         )
         if up.status != 200:
             return json_response(502, {"ok": False, "status": up.status})
+        got = _parse(up.body)
+        # Refused by the api (a finished run's straggler, a run over its cap): said, not kept.
+        if not (isinstance(got, dict) and got.get("ok") is True):
+            return json_response(409, {"ok": False})
         return json_response(200, {"ok": True})
 
     async def policy_route(self, req: Request) -> Response:

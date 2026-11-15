@@ -1787,6 +1787,9 @@
      screen it draws on, and the box it posts its log to. The Body tab starts it as a skill set's
      look with follow "test"; any other move, "stop stop" or the screen's Stop ends it. */
   var bt = null, btLib = null, btUi = null, btVid = null, btLog = null;
+  // A start still loading its modules: a second start is refused, and a stop (any move, "stop
+  // stop", the Body tab's Stop) bumps btGen so the load never starts a test after it.
+  var btLoading = false, btGen = 0;
   function btR(v, k) { k = k || 10; return typeof v === "number" && isFinite(v) ? Math.round(v * k) / k : null; }
   function btFace() {
     if (!followLib || !btLib || !seen.boxes.length || !frontCamera()) return null;
@@ -1933,6 +1936,7 @@
   function btClose() {
     if (bt && bt.phase !== "result") return;
     bt = null;
+    btUnhook();
     if (btUi) { btUi.remove(); btUi = null; }
     if (btVid) { btVid.srcObject = null; btVid = null; }
   }
@@ -1944,12 +1948,16 @@
   window.gbBodyTest = {
     start: function (skills) {
       if (!skills) throw new Error("a body test needs a skill set");
-      if (bt && bt.phase !== "result") throw new Error("a body test is already running");
+      if (btLoading || (bt && bt.phase !== "result")) throw new Error("a body test is already running");
       btClose();
+      btLoading = true;
+      var gen = ++btGen;
       // Whatever the legs or the follower were doing stops first.
       window.gbFollow.stop("new_move");
       if (typeof _motion !== "undefined" && _motion) stopMotion();
       Promise.all([import("/growbot-bodytest.js"), followLoad()]).then(function (mods) {
+        btLoading = false;
+        if (gen !== btGen) return;
         var mod = mods[0];
         btLib = mods[1];
         var drawn = 0, env = {
@@ -2015,13 +2023,14 @@
         try { logEv("bodytest_start", { run: run.run_id }); } catch (e) {}
         return run.run().then(function () { if (bt === run) btUnhook(); });
       }).catch(function (e) {
+        btLoading = false;
         btUnhook();
         setErr("the body test didn't load (" + ((e && e.message) || e) + ")");
       });
       return "body_test";
     },
-    stop: function (why) { if (bt) bt.cancel(why || "stopped"); },
-    active: function () { return !!bt && bt.phase !== "result"; },
+    stop: function (why) { btGen++; if (bt) bt.cancel(why || "stopped"); },
+    active: function () { return btLoading || (!!bt && bt.phase !== "result"); },
     // A transcript: true when the test took it, so no model turn hears it.
     heard: function (txt) { return !!(bt && bt.phase !== "result" && bt.heard(txt)); },
   };

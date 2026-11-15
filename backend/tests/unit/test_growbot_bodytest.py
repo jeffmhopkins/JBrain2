@@ -190,3 +190,30 @@ def test_the_other_verdicts_thresholds() -> None:
         "fail",
         "warn",
     ]
+
+
+def test_stop_stop_with_the_legs_still_ends_it_too() -> None:
+    # gbEStop logs no estop with nothing moving, so the test hears it itself.
+    got = _run(sayIn={"stand": "Stop, stop!"})
+    assert got["status"] == "stopped" and got["stopped"] == ["stop stop"]
+    assert got["out"]["walks"] == 0
+
+
+def test_whispers_silence_lines_are_never_taken_as_words() -> None:
+    quiet = _run(sayIn={"power": "Thank you."})
+    plain = _run()
+    assert quiet["status"] == "done" and quiet["heardN"] == plain["heardN"]
+
+
+def test_a_test_left_in_setup_ends_rather_than_log_forever() -> None:
+    got = _run(neverReady=True)
+    assert got["status"] == "stopped" and got["stopped"] == ["setup_timeout"]
+    assert got["secs"] == pytest.approx(600, abs=1)
+
+
+def test_after_a_fall_it_waits_out_the_cool_off_before_walking_again() -> None:
+    got = _run(fallIn="forward")
+    # The page refuses a walk for 4 s after a tip or a grab, so the next check waits that out.
+    after = [t for t in got["walkAt"] if t > got["abortAt"][0]]
+    assert after[0] - got["abortAt"][0] >= 4000
+    assert got["results"]["back"]["v"] == "ok"

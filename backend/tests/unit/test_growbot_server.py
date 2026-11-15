@@ -3999,6 +3999,9 @@ def test_a_body_test_chunk_goes_to_the_api_with_its_robot(run: _Running) -> None
     _Fake.bodytest_reply = (503, b"{}")
     try:
         assert _bodytest(run, chunk) == (502, {"ok": False, "status": 503})
+        # Refused by the api (a finished run, a run over its cap): the page hears so.
+        _Fake.bodytest_reply = (200, b'{"ok":false,"number":null}')
+        assert _bodytest(run, chunk) == (409, {"ok": False})
     finally:
         _Fake.bodytest_reply = (200, b'{"ok":true,"number":1}')
 
@@ -4027,7 +4030,9 @@ def test_an_odd_body_test_chunk_is_refused(run: _Running, chunk: Any) -> None:
     assert not [r for r in _Fake.seen if r["path"] == "/internal/growbot/bodytests"]
 
 
-def test_the_body_test_log_wants_a_session_a_post_and_a_bounded_body(run: _Running) -> None:
+def test_the_body_test_log_wants_a_session_a_post_and_a_bounded_body(
+    run: _Running, gb: types.ModuleType
+) -> None:
     chunk = json.dumps({"run": _RUN, "robot": "gb-abc123", "seq": 0}).encode()
     resp = run.request("POST", "/api/box/bodytest", chunk, {"Origin": run.origin}, cookie=False)
     resp.read()
@@ -4035,7 +4040,9 @@ def test_the_body_test_log_wants_a_session_a_post_and_a_bounded_body(run: _Runni
     resp = run.request("GET", "/api/box/bodytest")
     resp.read()
     assert resp.status == 405
-    big = json.dumps({"run": _RUN, "robot": "gb-abc123", "rows": ["x" * 600_000]}).encode()
-    resp = run.request("POST", "/api/box/bodytest", big, {"Origin": run.origin})
-    resp.read()
-    assert resp.status == 413
+    # Refused from its head, before its upload.
+    head = (
+        f"POST /api/box/bodytest HTTP/1.1\r\nHost: {run.host}\r\nCookie: {run.cookie}\r\n"
+        f"Content-Length: {gb.MAX_BODYTEST_BODY + 1}\r\nExpect: 100-continue\r\n\r\n"
+    )
+    assert _raw(run, head.encode()).startswith(b"HTTP/1.1 413")

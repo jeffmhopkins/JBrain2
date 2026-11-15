@@ -9,6 +9,8 @@
 //   stopStopIn a check id in which "stop stop" halts the legs (the test must end)
 //   noFace     the camera never sees anyone during this check id
 //   upright    false: the robot never reads upright
+//   sayIn      {step: line}: the person says that line once during that step
+//   neverReady true: nobody ever answers the first step
 const m = await import(process.argv[2]);
 const sc = JSON.parse(process.argv[3] || "{}");
 let now = 1e6, heading = 0, cmd = { heading: 0, speed: 0, pitch: 0 }, walking = false, dist = 1.0, bearing = 0;
@@ -29,7 +31,9 @@ const env = {
     const ask = test.ask || "";
     if (/YOUR right/.test(ask)) bearing = Math.max(-20, Math.min(20, bearing + (sc.stepSign || 1)));
     else if (/middle/.test(ask)) bearing += bearing > 0 ? -1 : bearing < 0 ? 1 : 0;
-    const w = test.waiting;
+    const line = (sc.sayIn || {})[step()];
+    if (line && !said["say:" + step()]) { said["say:" + step()] = true; test.heard(line); }
+    const w = sc.neverReady && step() === "place" ? null : test.waiting;
     if (w) {
       if (w.includes("ready")) test.heard("I'm ready");
       else if (w.includes("stand")) test.heard("Stand up.");
@@ -70,6 +74,10 @@ console.log(JSON.stringify({
   seqs: posts.map((p) => p.seq), statuses: posts.map((p) => p.status),
   skills: posts.map((p) => p.skills || null), last: posts[posts.length - 1].summary,
   kinds, sampleHz: samples.length / ((samples[samples.length - 1].t - samples[0].t) / 1000),
+  walkAt: rows.filter((r) => r.e === "bt_walk").map((r) => r.t - 1e6),
+  abortAt: rows.filter((r) => r.e === "gait_abort").map((r) => r.t - 1e6),
+  stopped: rows.filter((r) => r.e === "bt_stopped").map((r) => r.why),
+  heardN: rows.filter((r) => r.e === "bt_heard").length,
   events: rows.filter((r) => r.k === "e" || r.k === "ev").map((r) => r.e),
   steps: rows.filter((r) => r.e === "bt_step").map((r) => r.step),
   stills: rows.filter((r) => r.k === "still").map((r) => r.step),

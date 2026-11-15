@@ -23,7 +23,11 @@ from jbrain.db.session import SessionContext, scoped_session
 ROWS_MAX: Final = 1000
 CHUNK_MAX: Final = 512 * 1024
 SUMMARY_MAX: Final = 16 * 1024
-SEQ_MAX: Final = 100_000
+# A run's own bound: a chunk every 2 s is 50 minutes, ~20 samples a second about 40 minutes,
+# so a page stuck posting stops growing its run (and a whole run reads back in one response).
+SEQ_MAX: Final = 1500
+RUN_ROWS_MAX: Final = 60_000
+# Per robot, so one phone's runs never evict another robot's.
 KEEP_RUNS: Final = 50
 STATUSES: Final = frozenset({"running", "done", "stopped", "failed"})
 
@@ -55,7 +59,10 @@ class Run:
 
 
 def _dump(value: Any) -> str:
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    # jsonb takes neither a NUL nor a lone surrogate (which can't even be encoded), so the NUL is
+    # dropped and the surrogate becomes "?": one odd string never costs a chunk.
+    text = json.dumps(value, separators=(",", ":"), ensure_ascii=False).replace("\\u0000", "")
+    return text.encode("utf-8", "replace").decode("utf-8")
 
 
 class BodyTests(Protocol):
@@ -113,6 +120,7 @@ class SqlBodyTests:
                     " status = EXCLUDED.status, summary = EXCLUDED.summary"
                     " WHERE app.growbot_bodytests.robot = EXCLUDED.robot"
                     " AND app.growbot_bodytests.status = 'running'"
+                    " AND app.growbot_bodytests.row_count < :cap"
                     " RETURNING id, (xmax = 0) AS made"
                 ),
                 {
@@ -122,6 +130,7 @@ class SqlBodyTests:
                     "status": chunk.status,
                     "skills": _dump(chunk.skills),
                     "summary": summary,
+                    "cap": RUN_ROWS_MAX,
                 },
             )
             row = got.mappings().first()
@@ -146,10 +155,11 @@ class SqlBodyTests:
             if row["made"]:
                 await session.execute(
                     text(
-                        "DELETE FROM app.growbot_bodytests WHERE id NOT IN"
-                        " (SELECT id FROM app.growbot_bodytests ORDER BY id DESC LIMIT :keep)"
+                        "DELETE FROM app.growbot_bodytests WHERE robot = :robot AND id NOT IN"
+                        " (SELECT id FROM app.growbot_bodytests WHERE robot = :robot"
+                        " ORDER BY id DESC LIMIT :keep)"
                     ),
-                    {"keep": KEEP_RUNS},
+                    {"robot": chunk.robot, "keep": KEEP_RUNS},
                 )
             return number
 

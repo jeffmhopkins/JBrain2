@@ -106,23 +106,38 @@ async def test_odd_chunks_are_refused(maker: async_sessionmaker) -> None:
     assert run is not None and run.summary == {}
 
 
-async def test_runs_list_newest_first_and_only_the_newest_are_kept(
+async def test_runs_list_newest_first_and_each_robot_keeps_its_newest(
     maker: async_sessionmaker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(bodytests_mod, "KEEP_RUNS", 3)
     bt = SqlBodyTests(maker)
-    made = []
-    for i in range(5):
-        robot = "gb-abc123" if i % 2 == 0 else "gb-other"
-        made.append(
-            await bt.record(SYSTEM_OWNER, _chunk(0, {"t": i}, run=f"bt-r{i}-x", robot=robot))
-        )
-    got = await bt.runs(OWNER)
-    assert [r.id for r in got] == made[:1:-1]
-    assert [r.run for r in await bt.runs(OWNER, robot="gb-abc123")] == ["bt-r4-x", "bt-r2-x"]
+    other = await bt.record(SYSTEM_OWNER, _chunk(0, {"t": 0}, run="bt-o0-x", robot="gb-other"))
+    made = [await bt.record(SYSTEM_OWNER, _chunk(0, {"t": i}, run=f"bt-r{i}-x")) for i in range(5)]
+    mine = await bt.runs(OWNER, robot="gb-abc123")
+    assert [r.run for r in mine] == ["bt-r4-x", "bt-r3-x", "bt-r2-x"]
+    # Another robot's runs are never evicted by this one's.
+    assert [r.id for r in await bt.runs(OWNER, robot="gb-other")] == [other]
+    assert [r.id for r in await bt.runs(OWNER)] == [*made[:1:-1], other]
     assert len(await bt.runs(OWNER, limit=1)) == 1
     # A pruned run's chunks go with it.
     assert await bt.rows(OWNER, made[0] or 0) == []
+
+
+async def test_a_run_stops_growing_past_its_cap(
+    maker: async_sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bodytests_mod, "RUN_ROWS_MAX", 3)
+    bt = SqlBodyTests(maker)
+    number = await bt.record(SYSTEM_OWNER, _chunk(0, {"t": 1}, {"t": 2}, {"t": 3}))
+    assert await bt.record(SYSTEM_OWNER, _chunk(1, {"t": 4})) is None
+    assert [r["t"] for r in await bt.rows(OWNER, number or 0)] == [1, 2, 3]
+
+
+async def test_a_nul_or_lone_surrogate_never_fails_the_write(maker: async_sessionmaker) -> None:
+    bt = SqlBodyTests(maker)
+    number = await bt.record(SYSTEM_OWNER, _chunk(0, {"t": 1, "x": "a\u0000b\ud800"}))
+    got = await bt.rows(OWNER, number or 0)
+    assert got[0]["x"].startswith("ab")
 
 
 async def test_both_tables_are_owner_only(maker: async_sessionmaker) -> None:
