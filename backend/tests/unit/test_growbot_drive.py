@@ -126,6 +126,13 @@ def test_speed_zero_face_tracks_and_back_never_turns_round() -> None:
     assert _modes([(10, -0.5, 0), (25, -0.5, 100)]) == ["back", "back"]
 
 
+def test_only_the_speeds_sign_picks_the_nose_walk_never_the_heading() -> None:
+    """Owner, 2026-11-15: a target behind at speed 0 or ahead is a spin, never backing; a
+    negative speed is the nose walk whatever the heading, steering as it goes."""
+    assert _modes([(170, 0, 0), (-150, 1, 100)]) == ["look", "look"]
+    assert _modes([(120, -0.5, 0), (-170, -0.5, 100)]) == ["back", "back"]
+
+
 def test_a_walk_waits_a_moment_after_stopping_and_never_flips_straight_over() -> None:
     got = _modes([(0, 1, 0), (0, 0, 100), (0, 1, 500), (0, 1, 1700), (0, -1, 1800), (0, -1, 3400)])
     assert got == ["forward", "look", "look", "forward", "look", "back"]

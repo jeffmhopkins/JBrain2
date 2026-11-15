@@ -17,7 +17,8 @@ with the owner in a Claude Doc on 2026-11-15, and this page carries them.
   target is counter-clockwise seen from above, so turn left. The tall walk travels the way the
   camera looks. The nose walk travels opposite it: it backs away while the camera keeps facing the
   person, and it never turns round.
-- **Sharp turns** are stop, spin with look, then walk.
+- **Sharp turns** are stop, spin with look, then walk. **Only the speed picks backing:** a negative
+  speed is the nose walk whatever the heading; a target behind is a spin, never a reason to back.
 - **At speed 0** it face-tracks: the look skill turns and tilts to keep a visible person centred.
 - **Follow distance** is whatever distance the person is at when they say "follow me". "Get closer"
   and "back up" move it 0.25 m, kept between 0.4 m and 3 m.
@@ -47,8 +48,9 @@ from its `obs_spec`, never from code that knows the skill:
 - **Ground speed** is the command times the file's `training.speed_cap_m_s`. It feeds the
   walk-for-X distance estimate, times a per-floor factor from a tape-measure calibration.
 
-**The selector** picks the skill each tick. A walk needs the target within 30° to start and stops
-past 45°. A speed inside ±0.15 to start (±0.05 to stop) stands and looks. Stopping is immediate,
+**The selector** picks the skill each tick. Only the speed's sign picks the walk (owner,
+2026-11-15): a negative speed is the nose walk whatever the heading, and a target behind is never
+a reason to back. A forward walk needs the target within 30° to start and stops past 45°. A speed inside ±0.15 to start (±0.05 to stop) stands and looks. Stopping is immediate,
 but a walk only starts once the current skill has held 1.5 s. A walk never turns straight into the
 other walk; it stops first. When a different file takes over, the legs go neutral for 400 ms and
 it starts from a fresh history, as it trained.
