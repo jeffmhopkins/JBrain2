@@ -66,6 +66,8 @@ class ContractOut(BaseModel):
     speed: bool
     pitch: bool
     control_hz: int
+    # The skills it serves in a skill set (look, forward, back); the Body tab builds one.
+    modes: list[str] = []
 
 
 class PolicyOut(BaseModel):
@@ -167,7 +169,11 @@ def _out(row: PolicyRow) -> PolicyOut:
         bytes=row.bytes,
         created_at=row.created_at,
         contract=ContractOut(
-            facing=c.facing, speed=c.speed, pitch=c.pitch, control_hz=c.control_hz
+            facing=c.facing,
+            speed=c.speed,
+            pitch=c.pitch,
+            control_hz=c.control_hz,
+            modes=list(c.modes),
         ),
         enabled=row.enabled,
         motion=cast(Any, row.motion),

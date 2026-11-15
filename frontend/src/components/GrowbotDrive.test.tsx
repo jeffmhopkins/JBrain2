@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GrowbotPolicy } from "../api/client";
-import { GrowbotDrive, headingWords } from "./GrowbotDrive";
+import type { GrowbotPolicy, GrowbotSkill } from "../api/client";
+import { GrowbotDrive, headingWords, skillWords } from "./GrowbotDrive";
+import { skillSet } from "./GrowbotPoliciesSheet";
 
 // Drive: the picked trained walk, started for a moment and then steered a couple of times a
 // second, each steer keeping it going.
@@ -157,5 +158,62 @@ describe("headingWords", () => {
     expect(headingWords(0)).toBe("straight on");
     expect(headingWords(-90)).toBe("90° left");
     expect(headingWords(180)).toBe("180° right");
+  });
+
+  it("drives a skill set by default, starting it standing, and can switch to the walk", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const calls = serve();
+    const set = { look: "11111111-1111-4111-8111-111111111111", back: CAMERA.id };
+    const heading: GrowbotPolicy = {
+      ...CAMERA,
+      contract: { ...CAMERA.contract, speed: false, pitch: false },
+    };
+    const { props } = drive({ policy: heading, skills: set });
+    expect(screen.getByRole("button", { name: "Skill set: look and back" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // A skill set takes speed and camera height, whatever the picked walk does.
+    fireEvent.change(screen.getByLabelText("Speed"), { target: { value: "-0.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Drive" }));
+    await waitFor(() => expect(calls).toHaveLength(2));
+    const id = (calls[0]?.body as { drive: string }).drive;
+    expect(calls[0]?.body).toEqual({ move: "look", secs: 2, drive: id, skills: set });
+    expect(calls[1]?.body).toEqual({ drive: id, heading: 0, speed: -0.5, pitch: 1 });
+    expect(props.onSaid).toHaveBeenCalledWith({
+      text: "Driving the skill set (look and back).",
+      bad: false,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Stop driving" }));
+    fireEvent.click(screen.getByRole("button", { name: CAMERA.name }));
+    expect(screen.queryByLabelText("Speed")).toBeNull();
+  });
+});
+
+describe("skillSet", () => {
+  const p = (id: string, modes: GrowbotSkill[], over = {}): GrowbotPolicy => ({
+    ...CAMERA,
+    id,
+    contract: { ...CAMERA.contract, modes },
+    ...over,
+  });
+
+  it("takes the active, else newest, enabled policy for each skill, and needs two", () => {
+    const look = p("a", ["look"]);
+    const old = p("b", ["forward"], { created_at: "2026-11-01T00:00:00Z" });
+    const fresh = p("c", ["forward"], { created_at: "2026-11-14T00:00:00Z" });
+    const off = p("d", ["back"], { enabled: false });
+    expect(skillSet([look, old, fresh, off])).toEqual({ look: "a", forward: "c" });
+    expect(skillSet([look, { ...old, active: true }, fresh])).toEqual({ look: "a", forward: "b" });
+    expect(skillSet([look, off])).toBeNull();
+    // Back goes to the nose walk even when a newer camera walk can reverse.
+    const nose = p("e", ["back"], {
+      contract: { ...CAMERA.contract, facing: "nose", modes: ["back"] },
+    });
+    const master = p("f", ["look", "forward", "back"], { created_at: "2026-11-15T00:00:00Z" });
+    expect(skillSet([nose, master])).toEqual({ look: "f", forward: "f", back: "e" });
+    // An older box sends no modes: no skill set.
+    expect(skillSet([CAMERA])).toBeNull();
+    expect(skillWords({ look: "a", forward: "b", back: "c" })).toBe("look, forward and back");
   });
 });

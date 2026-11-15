@@ -314,6 +314,9 @@ GESTURES_MAX = 32
 
 
 _DRIVE_PATTERN = r"^[0-9a-f]{8,32}$"
+_POLICY_ID = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+# What a skill set names, each a library policy (growbot-drive.js).
+SkillSet = dict[Literal["look", "forward", "back"], Annotated[str, Field(pattern=_POLICY_ID)]]
 
 
 class MoveIn(BaseModel):
@@ -324,13 +327,13 @@ class MoveIn(BaseModel):
     secs: int = Field(default=0, ge=0, le=15)
     # A trained walk from the policy library (growbot_policies.py) to run this walk or spin
     # with, steered by heading; None runs the creature's own.
-    policy: str | None = Field(
-        default=None,
-        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    )
+    policy: str | None = Field(default=None, pattern=_POLICY_ID)
     # The Body tab's Drive names the trained walk it starts, so only that walk takes its
     # steering (SteerIn.drive).
     drive: str | None = Field(default=None, pattern=_DRIVE_PATTERN)
+    # Or a skill set (growbot-drive.js): a library policy for each of look, forward and back,
+    # which the creature switches between as the command asks.
+    skills: SkillSet | None = Field(default=None, min_length=1)
 
 
 class MoveOut(BaseModel):
@@ -352,9 +355,12 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
         raise HTTPException(status_code=404, detail="no such robot")
     if (body.move == "gesture") != (body.name is not None):
         raise HTTPException(status_code=422, detail="a gesture move, and only that, takes a name")
-    if body.move == "look" and body.policy is None:
+    if body.policy is not None and body.skills is not None:
+        raise HTTPException(status_code=422, detail="a policy or a skill set, not both")
+    trained = body.policy is not None or body.skills is not None
+    if body.move == "look" and not trained:
         raise HTTPException(status_code=422, detail="a trick runs a library policy: name one")
-    if body.drive is not None and body.policy is None:
+    if body.drive is not None and not trained:
         raise HTTPException(status_code=422, detail="only a trained walk can be driven")
     sent: dict[str, object] = {"code": code, "move": body.move, "secs": body.secs}
     if body.drive is not None:
@@ -369,6 +375,18 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
         if not await library.exists(ctx, body.policy):
             raise HTTPException(status_code=404, detail="no such policy")
         sent["policy"] = body.policy
+    if body.skills is not None:
+        if body.move not in _WALKS:
+            raise HTTPException(status_code=422, detail="only a walk or a spin runs a skill set")
+        library = cast(PolicyRepo, request.app.state.growbot_policies)
+        modes = {r.id: r.contract.modes for r in await library.list(ctx)}
+        for skill, pid in body.skills.items():
+            if pid not in modes:
+                raise HTTPException(status_code=404, detail="no such policy")
+            # The page trusts the slot: a nose-first file put in forward would back away.
+            if skill not in modes[pid]:
+                raise HTTPException(status_code=422, detail=f"that policy can't {skill}")
+        sent["skills"] = dict(body.skills)
     resp = await _sidecar(request, "POST", "/internal/robots/move", sent)
     if resp is None:
         raise HTTPException(status_code=503, detail="GrowBot isn't running on the box.")
@@ -388,6 +406,7 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
         move=body.move,
         gesture=body.name,
         policy=body.policy,
+        skills=body.skills,
         ok=out.ok,
         state=out.state,
     )

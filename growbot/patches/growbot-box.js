@@ -1308,6 +1308,18 @@
 
   function gone() { return !!(window.__gbBoxSoul && window.__gbBoxSoul.away); }
 
+  // {look?, forward?, back?} of library policy ids, at least one, nothing else; or "".
+  function skillSet(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return "";
+    var out = {}, n = 0;
+    for (var k in v) {
+      if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+      if (!/^(look|forward|back)$/.test(k) || typeof v[k] !== "string" || !POLICY_RE.test(v[k])) return "";
+      out[k] = v[k]; n++;
+    }
+    return n ? out : "";
+  }
+
   // The body's gesture names as the creature's prompt sees them (a soul's saved poses included).
   function gestureNames() {
     var lib = null;
@@ -1437,6 +1449,8 @@
       var secs = typeof m.secs === "number" && m.secs >= 1 && m.secs <= 15 ? m.secs : 0;
       var move = String(m.move || "");
       var policy = typeof m.policy === "string" && POLICY_RE.test(m.policy) && WALKS.test(move) ? m.policy : "";
+      // Or a skill set (growbot-drive.js): a library policy for each of look, forward and back.
+      if (!policy && WALKS.test(move)) policy = skillSet(m.skills);
       // The Body tab's Drive names its walk, so only that walk takes its steering.
       var drive = policy && typeof m.drive === "string" && DRIVE_RE.test(m.drive) ? m.drive : "";
       var name = move === "gesture" && typeof m.name === "string" && m.name.length <= 16 && GESTURE_RE.test(m.name) ? m.name : "";
@@ -1554,6 +1568,8 @@
   // from the library stops walking within a minute rather than at the next reload.
   var D = Math.PI / 180, PREP_MS = 1000, KEEP_MS = 60000, cache = {};
   var STEER_HOLD_MS = 1500, DRIVE_MAX_MS = 120000, steer = null;
+  // A skill set's file swap: legs neutral this long first, as each file's episodes start.
+  var SETTLE_MS = 400;
 
   // True when the walk this steer's drive started still runs here (and so takes it).
   window.gbSteer = function (m) {
@@ -1627,7 +1643,32 @@
     setErr(words);
   }
 
+  // A skill set's command for the pad's move, in the front camera's frame (growbot-drive.js):
+  // the target heading (deg, counter-clockwise from where the camera points at the start) and a
+  // signed speed. Back backs away still facing ahead, never turning round (owner, 2026-11-15).
+  function setCommand(move) {
+    if (move === "forward") return { target: 0, speed: 1 };
+    if (move === "back") return { target: 0, speed: -1 };
+    if (move === "spin_left") return { target: 90, speed: 0 };
+    if (move === "spin_right") return { target: -90, speed: 0 };
+    return { target: 0, speed: 0 };
+  }
+
+  // A skill set's distinct files, loaded once each: {mode: pid} -> {mode: {pid, pj}}.
+  function loadSet(skills) {
+    var modes = Object.keys(skills), pids = [];
+    modes.forEach(function (m) { if (pids.indexOf(skills[m]) < 0) pids.push(skills[m]); });
+    return Promise.all(pids.map(load)).then(function (got) {
+      var out = {};
+      modes.forEach(function (m) { out[m] = { pid: skills[m], pj: got[pids.indexOf(skills[m])] }; });
+      return out;
+    });
+  }
+
   function start(pid, move, secs, attempt, drive) {
+    // `pid` is one library policy, or a skill set {look?, forward?, back?} of them.
+    var skills = pid && typeof pid === "object" ? pid : null;
+    var label = skills ? "set:" + Object.keys(skills).join("+") : pid;
     if (_wheels) { refuse(attempt, "no_legs", "a trained walk needs legs, and this body rolls"); return; }
     if (!window._body || !window._body.ready) { refuse(attempt, "connection_unavailable", "no robot connected to walk — its legs aren't here"); return; }
     if (!_bodyAlive()) { refuse(attempt, "connection_unavailable", "robot not answering"); return; }
@@ -1642,21 +1683,43 @@
     _motion = M;
     _moveReport(attempt, "accepted", "loading_policy");
     $("brainTxt").textContent = "loading my trained walk…";
-    var policy = null;
-    load(pid).then(function (pj) {
-      policy = pj;
-      return import("/growbot_runner.js");
-    }).then(function (mod) {
+    var policy = null, files = null, lib = null;
+    (skills ? loadSet(skills) : load(pid)).then(function (got) {
+      if (skills) files = got; else policy = got;
+      return Promise.all([import("/growbot_runner.js"), skills ? import("/growbot-drive.js") : null]);
+    }).then(function (mods) {
+      var mod = mods[0];
+      lib = mods[1];
       if (gen !== _motionGen || _motion !== M) return;
       if (paused || document.hidden || dreaming) { stopMotion(); return; }
-      var sp = policy.obs_spec || {}, yaw = sp.cmd_yaw || {};
-      if (yaw.meaning !== "heading_error") throw new Error("that policy isn't steered by a heading");
       var cal = Object.assign({}, calNow(), { IMU_SIGN: [1, 1, 1], gain: 1, turn: 0 });
-      var walker = new mod.Walker(policy, cal), hz = Number(sp.control_hz) || 25;
-      walker.setFrame("zup");
-      var hasSpeed = channels(policy).indexOf("cmd_forward") >= 0;
-      var hasPitch = channels(policy).indexOf("cmd_pitch") >= 0;
-      var cmd = command(move, hasSpeed), pitch = 1, walkT = 0;
+      var walker = null, hz = 25, set = null, sel = null, mode = "look", settleEnd = 0;
+      function walkerFor(pj) {
+        var w = new mod.Walker(pj, cal);
+        w.setFrame("zup");
+        return w;
+      }
+      if (skills) {
+        // One Walker per distinct file; a master policy serving every mode is one Walker.
+        var made = {}, has = {};
+        set = {};
+        Object.keys(files).forEach(function (m) {
+          var f = files[m];
+          if (!made[f.pid]) made[f.pid] = { w: walkerFor(f.pj), prof: lib.profile(f.pj) };
+          set[m] = made[f.pid];
+          has[m] = true;
+          hz = Number((f.pj.obs_spec || {}).control_hz) || hz;
+        });
+        sel = new lib.Selector(has, Date.now());
+      } else {
+        var sp = policy.obs_spec || {}, yaw = sp.cmd_yaw || {};
+        if (yaw.meaning !== "heading_error") throw new Error("that policy isn't steered by a heading");
+        walker = walkerFor(policy);
+        hz = Number(sp.control_hz) || 25;
+      }
+      var hasSpeed = !skills && channels(policy).indexOf("cmd_forward") >= 0;
+      var hasPitch = !skills && channels(policy).indexOf("cmd_pitch") >= 0;
+      var cmd = skills ? setCommand(move) : command(move, hasSpeed), pitch = 1, walkT = 0;
       var L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0;
       var prepEnd = Date.now() + PREP_MS, grav = { x: 0, y: 0, z: 0, n: 0 };
       var R = null, heading = 0, lastT = 0, endT = 0, upB = null, tipN = 0, jerkN = 0;
@@ -1689,16 +1752,16 @@
       var prep = guarded(function () {
         if (gone()) return;
         try { send(90 + L, 90 + Rr); } catch (e) { stopMotion(); return; }
-        if (!M.started) { M.started = true; _moveReport(attempt, "started", "stance_commands", { gait: "trained", policy: pid }); }
+        if (!M.started) { M.started = true; _moveReport(attempt, "started", "stance_commands", { gait: "trained", policy: label }); }
         // The stance's gravity, from its last 400 ms once the legs have settled.
         if (prepEnd - Date.now() <= 400) { var a = bodyAccel(); grav.x += a.x; grav.y += a.y; grav.z += a.z; grav.n++; }
         if (Date.now() < prepEnd) { M.loopIv = setTimeout(prep, 100); return; }
         R = grav.n ? levelling({ x: grav.x / grav.n, y: grav.y / grav.n, z: grav.z / grav.n }) : null;
         if (!R) { stopMotion(); setErr("couldn't read which way is up — is motion allowed?"); return; }
         upB = { b: ori.b, g: ori.g };
-        walker.reset();
+        if (walker) walker.reset();
         lastT = performance.now(); walkT = Date.now(); endT = walkT + walkS * 1000;
-        try { logEv("walk_start", { gait: "trained", policy: pid, dir: move, target: cmd.target, fwd: cmd.fwd, granted: walkS }); } catch (e) {}
+        try { logEv("walk_start", { gait: "trained", policy: label, dir: move, target: cmd.target, fwd: skills ? cmd.speed : cmd.fwd, granted: walkS }); } catch (e) {}
         $("brainTxt").textContent = "walking…";
         step();
       });
@@ -1707,8 +1770,14 @@
         var t0 = performance.now(), live = M.drive && steer && steer.drive === M.drive ? steer : null;
         if (live) {
           // At exactly ±180 the error's sign would flip with the noise, as for the pad's back.
-          cmd = { target: live.heading, fwd: hasSpeed ? live.speed : 1, around: Math.abs(live.heading) === 180 };
-          pitch = hasPitch ? live.pitch : 1;
+          if (skills) {
+            cmd = { target: live.heading, speed: live.speed, around: Math.abs(live.heading) === 180 };
+            pitch = live.pitch;
+          }
+          else {
+            cmd = { target: live.heading, fwd: hasSpeed ? live.speed : 1, around: Math.abs(live.heading) === 180 };
+            pitch = hasPitch ? live.pitch : 1;
+          }
           var want = Math.min(live.t + STEER_HOLD_MS, walkT + DRIVE_MAX_MS);
           if (want > endT && dutyLeftMs() >= want - endT) {
             _walkLog.push({ t: Date.now(), ms: want - endT });
@@ -1719,7 +1788,7 @@
         if (Date.now() >= endT) {
           _imuWhy = "done";
           carryLegMotion({ l: 90, r: 90 });
-          try { logEv("walk_end", { gait: "trained", policy: pid, why: "done", heading: Math.round(heading / D) }); } catch (e) {}
+          try { logEv("walk_end", { gait: "trained", policy: label, why: "done", heading: Math.round(heading / D) }); } catch (e) {}
           $("brainTxt").textContent = "awake";
           return;
         }
@@ -1730,7 +1799,7 @@
         if (tipN >= 5 || jerkN >= 6) {
           var why = tipN >= 5 ? "tipped" : "grabbed";
           _imuWhy = why; stopMotion(); _gaitCoolUntil = Date.now() + 4000;
-          try { logEv("gait_abort", { why: why, gait: "trained", policy: pid }); } catch (e) {}
+          try { logEv("gait_abort", { why: why, gait: "trained", policy: label }); } catch (e) {}
           setErr(why === "tipped" ? "I tipped over, so I stopped." : "easy — set me down gently.");
           $("brainTxt").textContent = "awake";
           return;
@@ -1739,11 +1808,34 @@
         var dt = Math.min(0.1, Math.max(0, (t0 - lastT) / 1000));
         lastT = t0;
         heading += G.z * dt;
-        var err = wrap180(cmd.target - heading / D);
-        if (cmd.around && Math.abs(err) > 90) err = Math.abs(err);
-        var out = walker.step(A, G, { fwd: cmd.fwd, yaw: err / 180, pitch: pitch });
+        var err = wrap180(cmd.target - heading / D), out;
+        if (skills) {
+          // Just under 180: inputs() wraps again, and +180 would wrap to -180, a right turn.
+          if (cmd.around && Math.abs(err) > 90) err = Math.min(Math.abs(err), 179.9);
+          // The heading is the gyro's, the same whichever end leads, so err is the front
+          // camera's error for every skill (growbot-drive.js, THE FRAME).
+          var c = { heading: err, speed: cmd.speed, pitch: pitch }, pick = sel.pick(c, Date.now());
+          if (pick.changed) {
+            var was = set[mode] || null, next = set[pick.mode] || null;
+            try { logEv("skill", { from: mode, to: pick.mode }); } catch (e) {}
+            mode = pick.mode;
+            // Another file takes over from a still stance with a fresh history, as it trained.
+            if (next && next !== was) { settleEnd = Date.now() + SETTLE_MS; next.w.reset(); }
+          }
+          var sk = set[mode] || null;
+          if (!sk || Date.now() < settleEnd) out = { l: 90 + L, r: 90 + Rr };
+          else {
+            var inp = lib.inputs(sk.prof, mode, c);
+            out = sk.w.step(A, G, { fwd: inp.fwd, yaw: inp.yaw, pitch: inp.pitch });
+          }
+        } else {
+          if (cmd.around && Math.abs(err) > 90) err = Math.abs(err);
+          out = walker.step(A, G, { fwd: cmd.fwd, yaw: err / 180, pitch: pitch });
+        }
         try { send(out.l, out.r); } catch (e) { stopMotion(); return; }
-        M.loopIv = setTimeout(step, Math.max(0, 1000 / hz - (performance.now() - t0)));
+        // Each file ticks at the rate it trained at: its clock and history count steps.
+        var rate = skills && set[mode] ? set[mode].prof.hz : hz;
+        M.loopIv = setTimeout(step, Math.max(0, 1000 / rate - (performance.now() - t0)));
       });
       prep();
     }).catch(function (e) {
@@ -1759,5 +1851,31 @@
     var attempt = _moveRequest("walk:trained:" + String(move).slice(0, 16));
     try { start(pid, move, +secs || 0, attempt, drive); }
     finally { if (attempt.state === "requested") _moveReport(attempt, "blocked", "not_admitted"); }
+  };
+})();
+
+/* The emergency stop (owner, 2026-11-15): "stop stop", the word twice in a row, halts whatever
+   the legs are doing the moment its transcript lands (apply.py ESTOP_PATCHES calls this first in
+   heardText, before any model turn), so a robot heading off a ledge stops however slow the box's
+   model is. Twice, so a "stop" said in passing or misheard doesn't. A trained walk or skill set
+   ends at its next tick (its gone() sees _motion change) with the legs released to neutral. */
+(function () {
+  "use strict";
+  var STOP2_RE = /\bstop\b[\s,.!?;:\u2026\u2013\u2014-]*\bstop\b/i;
+  // A shouted "Stop! ... Stop!" can land as two clips, each a lone "stop".
+  var STOP1_RE = /^[\s,.!?;:\u2026\u2013\u2014-]*stop[\s,.!?;:\u2026\u2013\u2014-]*$/i, PAIR_MS = 2500, lone = -Infinity;
+  window.gbEStop = function (t) {
+    t = String(t || "");
+    var now = Date.now(), twice = STOP2_RE.test(t);
+    if (!twice && STOP1_RE.test(t)) { twice = now - lone <= PAIR_MS; lone = twice ? -Infinity : now; }
+    if (!twice) return false;
+    var M = typeof _motion !== "undefined" ? _motion : null;
+    if (!M) return false;
+    // As upstream's own halt words end a move (next.html _recHalt): its end row says halt.
+    M.why = "halt";
+    stopMotion();
+    try { logEv("estop", { kind: String(M.kind || "") }); } catch (e) {}
+    try { setErr("Stopped."); } catch (e) {}
+    return true;
   };
 })();

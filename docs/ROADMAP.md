@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-11-10
+> **Status:** Living · **Last verified:** 2026-11-15
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -257,7 +257,12 @@ The location + family + intake slices shipped; build records are under
   `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
   on the analytics tier).
 
-- **GrowBot on the box** — In progress, G1 and G2 shipped (G2 built; first real flash pending) (`plans/GROWBOT_PLAN.md`) — the GrowBot desk robot's brain run entirely on the box under `growbot/`: the upstream creature app vendored with a patch set, a `/api` shim onto the local LLM, whisper and Kokoro, a keyed LAN relay in place of Cloudflare's, its own `jbrain.local:8444` origin with a no-egress CSP, and the Pico flashed from PWA → Endpoints; settings, the creature and switchable profiles live on the box, owned by the PWA.
+- **GrowBot on the box** — In progress, G1, G2 and G4 shipped (G2 built; first real flash pending) (`plans/GROWBOT_PLAN.md`) — the GrowBot desk robot's brain run entirely on the box under `growbot/`: the upstream creature app vendored with a patch set, a `/api` shim onto the local LLM, whisper and Kokoro, a keyed LAN relay in place of Cloudflare's, its own `jbrain.local:8444` origin with a no-egress CSP, and the Pico flashed from PWA → Endpoints; settings, the creature and switchable profiles live on the box, owned by the PWA.
+
+- **GrowBot policy drive** — In progress (`plans/GROWBOT_POLICY_DRIVE_PLAN.md`) — GrowBot_Training's
+  trained skills on the real robot: one front-camera command and skill sets the creature switches
+  between (look, the tall walk, the nose-first backing walk), the "stop stop" emergency stop, then
+  the face follower, the follow-me voice commands and walk for X seconds or meters.
 
 - **Pet endpoint (PWA first)** — In progress (`plans/PET_ENDPOINT_PWA_PLAN.md`; the face, the
   rig, the renderer and the anti-boredom engine landed as an owner-only troubleshooting screen) — a full-screen

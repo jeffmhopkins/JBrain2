@@ -12,6 +12,8 @@ import {
   type GrowbotPolicy,
   type GrowbotPolicyPatch,
   type GrowbotPolicySource,
+  type GrowbotSkill,
+  type GrowbotSkillSet,
   api,
 } from "../api/client";
 import { Sheet } from "./Sheet";
@@ -76,6 +78,34 @@ export function offered(all: GrowbotPolicy[], motion: GrowbotMotion): GrowbotPol
   }
   const chosen = new Set(pick.values());
   return all.filter((p) => chosen.has(p));
+}
+
+const SKILLS: GrowbotSkill[] = ["look", "forward", "back"];
+
+/** The skill set Drive can steer (growbot-drive.js): for each skill, the enabled policy that
+ *  serves it (for back, a nose-first one first), active first, then newest. Null unless it covers at least two skills, since one
+ *  file alone is just that walk. */
+export function skillSet(all: GrowbotPolicy[]): GrowbotSkillSet | null {
+  const set: GrowbotSkillSet = {};
+  for (const skill of SKILLS) {
+    let best: GrowbotPolicy | null = null;
+    for (const p of all) {
+      if (!enabledOf(p) || !(p.contract.modes ?? []).includes(skill)) continue;
+      // Backing is the nose walk's own gait (owner, 2026-11-15), over a camera walk's reverse.
+      const nose = (q: GrowbotPolicy) => skill === "back" && q.contract.facing === "nose";
+      if (
+        !best ||
+        (nose(p) && !nose(best)) ||
+        (nose(p) === nose(best) &&
+          ((p.active && !best.active) ||
+            (!!p.active === !!best.active && p.created_at > best.created_at)))
+      ) {
+        best = p;
+      }
+    }
+    if (best) set[skill] = best.id;
+  }
+  return Object.keys(set).length >= 2 ? set : null;
 }
 
 /** What kind of walk the pad drives, in words: which end leads and what it takes. */

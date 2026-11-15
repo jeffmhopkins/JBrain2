@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-14
+> **Status:** Living · **Last verified:** 2026-11-15
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -307,6 +307,20 @@ each tick (forward and the `look` trick hold heading; the spins aim ±90°; back
 `cmd_forward`, else turns left until it faces behind). It spends the legs' duty budget as a
 stock walk does, and keeps the stock walks' stops: a tip or a grab, a pause, a hidden page, a
 dream, or the relay dropping. The library refuses a policy with an input the runner can't feed.
+
+**Skill sets.** A walk move may carry `skills` in place of `policy`: a library policy for each of
+`look`, `forward` and `back` (the box reads which skills a file serves from the file itself,
+`Contract.modes`). The page then loads each file once and `growbot-drive.js` picks the skill every
+tick from one command in the front camera's frame: speed 0 stands and face-tracks with the look,
+ahead walks tall camera first, and back backs away nose first, still facing ahead and never turning
+round. A sharp turn is stop, spin, then walk, and a new file starts from 400 ms of neutral legs. The
+Body tab's Drive offers the set once the library covers two skills. The design, and the waves still
+to come (the face follower, voice commands, walk for X), is
+[`docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md`](../docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md).
+
+**Emergency stop.** "Stop stop" (the word twice, so a passing one doesn't count) halts whatever the
+legs are doing the moment its transcript lands: `apply.py` makes `heardText` call `gbEStop` first,
+before any model turn, so a slow model never stands between it and the legs.
 
 ## Leg calibration (the Body tab's Legs pane)
 
