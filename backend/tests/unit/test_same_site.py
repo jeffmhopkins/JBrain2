@@ -149,6 +149,10 @@ _LIVE = "/api/jlaunch/jobs/j1/live/replay.html"
         ({"sec-fetch-site": "cross-site", **_NAV}, "GET", "/api/jlaunch/jobs/j1/live", True),
         ({"sec-fetch-site": "cross-site", **_NAV}, "GET", _LIVE + "/x", True),
         ({"sec-fetch-site": "cross-site", **_NAV}, "GET", "/api/jlaunch/jobs/j1/stop", True),
+        ({"sec-fetch-site": "cross-site", **_NAV}, "HEAD", _LIVE, False),
+        ({"sec-fetch-site": "cross-site", **_NAV}, "GET", _LIVE + "/", True),
+        ({"sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate"}, "GET", _LIVE, True),
+        ({"sec-fetch-site": "cross-site", **_NAV}, None, _LIVE, True),
         # A WS handshake never gets the navigation exemption.
         ({"sec-fetch-site": "cross-site", **_NAV}, None, _CALLBACK, True),
         ({"origin": "https://h.example", "host": "h.example"}, "POST", "/api/x", False),
@@ -216,12 +220,12 @@ def test_a_live_replay_reloading_itself_is_not_refused(
     client: TestClient, repo: FakeAuthRepo
 ) -> None:
     # The sandboxed replay's location.reload() every couple of minutes used to land the
-    # owner on the guard's raw JSON. It must reach the route (which errors here, with no
-    # jlaunch server: anything but the guard's 403).
+    # owner on the guard's raw JSON. It must pass the guard and auth and reach the route,
+    # which has no launcher in the test app.
     token = _owner_token(repo)
-    lenient = TestClient(client.app, raise_server_exceptions=False)
-    resp = lenient.get(_LIVE, headers={**_cookie(token), "sec-fetch-site": "cross-site", **_NAV})
-    assert resp.json() != _REFUSED
+    resp = client.get(_LIVE, headers={**_cookie(token), "sec-fetch-site": "cross-site", **_NAV})
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "the job launcher is not enabled"}
     # Not a fetch from a foreign page, though.
     resp = client.get(
         _LIVE, headers={**_cookie(token), "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors"}
