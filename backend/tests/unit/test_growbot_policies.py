@@ -286,8 +286,7 @@ def test_the_contract_says_which_skills_a_file_serves() -> None:
     def modes(chans: list[str], facing: str = "camera", **over: Any) -> tuple[str, ...]:
         return summary(policy(chans, facing=facing, **over)).modes
 
-    look = {"training": {"speed": "still"}}
-    assert modes([*walk, "cmd_pitch"], **look) == ("look",)
+    assert modes([*walk, "cmd_pitch"], training={"speed": "still"}) == ("look",)
     # Nose first walks away from the front camera's view: the backing skill.
     assert modes(speed, facing="nose") == ("back",)
     assert modes(walk, facing="nose") == ("back",)
