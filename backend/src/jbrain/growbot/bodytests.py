@@ -29,6 +29,8 @@ SEQ_MAX: Final = 1500
 RUN_ROWS_MAX: Final = 60_000
 # Per robot, so one phone's runs never evict another robot's.
 KEEP_RUNS: Final = 50
+# A listing spans robots, so it isn't bounded by one robot's keep.
+LIST_MAX: Final = 200
 STATUSES: Final = frozenset({"running", "done", "stopped", "failed"})
 
 
@@ -193,7 +195,7 @@ class SqlBodyTests:
                     f"SELECT {_COLS} FROM app.growbot_bodytests"
                     " WHERE (:robot = '' OR robot = :robot) ORDER BY id DESC LIMIT :limit"
                 ),
-                {"robot": robot, "limit": max(1, min(limit, KEEP_RUNS))},
+                {"robot": robot, "limit": max(1, min(limit, LIST_MAX))},
             )
             return [_run(r) for r in got.mappings()]
 
