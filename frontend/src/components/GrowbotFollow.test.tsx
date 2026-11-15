@@ -75,6 +75,22 @@ describe("GrowbotFollow", () => {
     expect(screen.getByRole("button", { name: "Follow me" })).toBeTruthy();
   });
 
+  it("keeps Stop following when the creature didn't stop", async () => {
+    serve();
+    const { props } = follow();
+    fireEvent.click(screen.getByRole("button", { name: "Follow me" }));
+    await screen.findByRole("button", { name: "Stop following" });
+    serve({ ok: false, state: "", why: "the creature has not loaded its legs yet" });
+    fireEvent.click(screen.getByRole("button", { name: "Stop following" }));
+    await waitFor(() =>
+      expect(props.onSaid).toHaveBeenLastCalledWith({
+        text: "the creature has not loaded its legs yet",
+        bad: true,
+      }),
+    );
+    expect(screen.getByRole("button", { name: "Stop following" })).toBeTruthy();
+  });
+
   it("a move from the pad ends the follow it shows", async () => {
     serve();
     const { props, view } = follow();

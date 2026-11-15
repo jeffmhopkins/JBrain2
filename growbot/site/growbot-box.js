@@ -1487,7 +1487,7 @@
       var name = move === "gesture" && typeof m.name === "string" && m.name.length <= 16 && GESTURE_RE.test(m.name) ? m.name : "";
       // The follower (gbFollow): a skill set's "look", followed, dry run, or a camera setting.
       var follow = /^(walk|dry|calibrate|flip)$/.test(String(m.follow || "")) && move === "look" &&
-        !!policy && typeof policy === "object" ? m.follow : "";
+        !!policy && typeof policy === "object" ? String(m.follow) : "";
       if (m.follow && !follow) {
         try { s.send(JSON.stringify({ t: "box_ack", rid: m.rid, ok: false, state: "", why: "following takes a skill set's look" })); } catch (e) {}
         return;
@@ -1659,7 +1659,7 @@
     if (F.track.p) { F.track.update(reads, h, seen.t); return; }
     if (!F.track.lock(reads, h, seen.t)) return;
     F.f.start(F.track.p.dist);
-    try { logEv("follow_lock", { dist: Math.round(F.track.p.dist * 100) / 100, bearing: Math.round(F.track.p.az - h), faces: reads.length }); } catch (e) {}
+    try { logEv("follow_lock", { dist: Math.round(F.track.p.dist * 100) / 100, bearing: Math.round(wrap180(F.track.p.az - h)), faces: reads.length }); } catch (e) {}
   }
   // growbot-eyes.js may load after this file: join it once it's there.
   (function join() {
@@ -1878,6 +1878,8 @@
     $("brainTxt").textContent = "loading my trained walk…";
     var policy = null, files = null, lib = null;
     (skills ? loadSet(skills) : load(pid)).then(function (got) {
+      // Replaced while its files loaded: never start a follower that would end the new one's.
+      if (gen !== _motionGen || _motion !== M) return [null, null, null];
       if (skills) files = got; else policy = got;
       return Promise.all([import("/growbot_runner.js"), skills ? import("/growbot-drive.js") : null,
         following ? followStart(skills, false, M) : null]);
@@ -1965,6 +1967,8 @@
         // "done", so carryLegMotion settles to its rest stance rather than holding a stride.
         _imuWhy = "done";
         carryLegMotion({ l: 90, r: 90 });
+        // ...but the move itself didn't finish: it ended for this reason.
+        _moveReport(attempt, "cancelled", why);
         followEnd(why, words, fol);
         try { logEv("walk_end", { gait: "trained", policy: label, why: why, heading: Math.round(heading / D) }); } catch (e) {}
         $("brainTxt").textContent = "awake";
