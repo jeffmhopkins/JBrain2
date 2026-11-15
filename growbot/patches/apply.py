@@ -1202,17 +1202,28 @@ _GB_TALK_JS = (
     "function gbTalkTraces(all){ return (all||[]).slice(-(gbTalkGrown()?GB_TALK_TRACES_GROWN"
     ":GB_TALK_TRACES_KID)); }\n"
     "var GB_TALK_GROWN_BLOCK=\"\\n\\n== TALK STYLE: GROWN-UP ==\\nyour person is an adult who"
-    " wants a real conversation with you. this outranks the ~18-word limit above: when they"
-    " talk with you, answer in up to about 45 words, two or three sentences, when the moment"
-    " invites it. answer questions fully, ask a follow-up when you are curious, and build on"
-    " what they said earlier in the conversation. small moments still get small replies, and"
-    " silence is still fine.\\nwhen they tell you something about their life (what they ate,"
-    " where they went, who they saw, a plan, how they feel), record it in your fact field in"
-    " that same reply, compactly, so you can recall it later; such a fact is never a"
-    " routine moment. one line can hold several things.\\nvary what you notice: do not return to the same remark or the same feature of"
-    " your person turn after turn.\\nwhen they ask about something from before that you cannot"
-    " see in the conversation above, look it up with recall: never tell them they did not tell"
-    " you, or that you do not know, before you have looked.\";\n"
+    " wants a real conversation with you, the kind they have with a sharp friend. 'speak only"
+    " when you have something worth saying' above is about your own beats; when they talk with"
+    " you, answer.\\ngo in depth: when they tell you about"
+    " their work, an idea, something technical or something that matters to them, think about"
+    " it and answer with substance: what it means, how it works, what you make of it, a"
+    " connection to something they said earlier, a real opinion of your own. you know a lot"
+    " about the world (science, engineering, machine learning, space, people, history); use"
+    " it, and when the talk is about you, your body or how you learn, reason about it as the"
+    " thoughtful mind you are, not as a toy.\\nlength follows the topic: a substantial one gets"
+    " up to about 80 words, three to five sentences; a passing remark gets a line; silence is"
+    " still fine when nothing needs saying.\\ndo not end every reply with a question. ask one"
+    " only when you truly want to know; otherwise say your piece and let them lead. a question"
+    " that only repeats what they said, or asks how they feel about it, is not depth.\\nwhat"
+    " your eyes and senses report is background, not conversation: mention it only when they"
+    " ask or something new and worth saying appears.\\nwhen they tell you something about"
+    " their life (what they ate, where they went, who they saw, a plan, how they feel), record"
+    " it in your fact field in that same reply, compactly, so you can recall it later; such a"
+    " fact is never a routine moment. one line can hold several things.\\nvary what you"
+    " notice: do not return to the same remark or the same feature of your person turn after"
+    " turn.\\nwhen they ask about something from before that you cannot see in the conversation"
+    " above, look it up with recall: never tell them they did not tell you, or that you do not"
+    " know, before you have looked.\";\n"
 )
 
 TALK_PATCHES: list[tuple[str, str, str, int]] = [
@@ -1231,7 +1242,7 @@ TALK_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/prompts.js",
         "'\"say\":\"≤18 words spoken aloud,",
-        "'\"say\":\"' + (gbTalkGrown() ? \"≤45 words\" : \"≤18 words\") + ' spoken aloud,",
+        "'\"say\":\"' + (gbTalkGrown() ? \"≤80 words\" : \"≤18 words\") + ' spoken aloud,",
         1,
     ),
     # The dream's one tiny thing was offered every turn with no end, so "watch Jeff's beard"
@@ -3068,7 +3079,7 @@ _GB_QUIET_JS = r"""var GB_NOISE_LP=-1.5, GB_NOISE_LP_DUTY=0.35, GB_NOISE_MX=0.2,
   GB_SAID_STOP={i:1,a:1,an:1,the:1,and:1,or:1,but:1,of:1,to:1,in:1,on:1,at:1,is:1,are:1,am:1,was:1,it:1,its:1,
     this:1,that:1,my:1,your:1,you:1,me:1,we:1,us:1,so:1,just:1,now:1,very:1,too:1,with:1,for:1,can:1,still:1},
   GB_SCENE=/^(?:(?:oh|wow|hmm|look|ah),?\s+)?(?:i\s+(?:can\s+|still\s+|just\s+)?(?:see|spot|notice)\s+(?:a|an|the|some|lots?|many|two|three)\b|i(?:'|’)?m\s+(?:seeing|looking|watching)\b|my\s+eyes\b|(?:the|that|this)\s+(?:\w+\s+){0,2}(?:road|dashboard|dash|sky|lights?|street|highway|trees?|windshield|window|glow|scenery)\b|it(?:'|’)?s\s+(?:so\s+|very\s+|still\s+|getting\s+)?(?:dark|bright|night)\b|it\s+is\s+(?:so\s+|very\s+|still\s+|getting\s+)?(?:dark|bright|night)\b)/i,
-  _gbSaid=[], _gbCut=false, _gbHuman=false;
+  _gbSaid=[], _gbCut=false, _gbHuman=false, _gbAskSee=false;
 function gbOptIn(k){ try{ return localStorage.getItem(k)==="1"; }catch(e){ return false; } }
 function gbNoiseClip(sp,row){ try{
   if(!sp||sp.lane!=="pcm") return "";
@@ -3463,6 +3474,125 @@ DREAM_LATER_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += DREAM_LATER_PATCHES
+
+# Talking over his own remarks, and saying the same line again (owner, 2026-11-14, a 37-minute
+# drive). Every cut-off that drive was one of his unprompted beats (a road bump read as a shake,
+# the quiet beat): it was asked while the owner was silent, the model took ~8 s, he started
+# talking in that wait, and the reply's voice ended his sentence (vadTick's own-voice stop sends
+# what it held and stays deaf while he speaks). A reply to the person never did this, and stays
+# as it is (he finishes his reply, the 2026-11-13 ruling). Now:
+# - an unprompted beat that lands while an utterance is open is a caption, not a voice: the
+#   yield gate holds it whatever gb_yield says, so the person's sentence is never cut for it;
+# - his ride sense ends 3 s after the truck stops at a light, so pulling away read as "shaken
+#   deliberately" five times that drive. A shake within two minutes of a ride is the road;
+# - five replies repeated an earlier one almost word for word ("I see a red traffic light and
+#   crosswalk lines …" three times running). The requests were clean (the new words there, no
+#   duplicate turn, no retry): the box's small model copied its own history, which holds every
+#   "I see the dark road" since he last slept. Each turn now quotes his last two lines back with
+#   "do not say this again", where a small model reads it (the end of the turn, not the system
+#   prompt), and the scene-repeat guard covers replies to the person too, unless they asked what
+#   he sees or to hear it again.
+_GB_FLOOR_SAID_JS = r"""function gbSayOf(a){ a=String(a||"").trim(); if(a.charAt(0)==="(") return ""; if(a.charAt(0)!=="{") return a;
+  try{ var m=JSON.parse(a); return m&&typeof m.say==="string"?m.say.trim():""; }catch(e){ return ""; } }
+function gbDepthCue(extra){ return (extra&&extra.humanReq&&typeof gbTalkGrown==="function"&&gbTalkGrown())?GB_DEPTH_CUE:""; }
+function gbRecentSays(now){ var t=_live&&_live.scratch&&_live.scratch.traces, out=[], i, s;
+  for(i=(t?t.length:0)-1;i>=0&&out.length<GB_SAID_QUOTE;i--){ if(now-(+t[i].t||0)>GB_SAID_KEEP_MS) break;
+    s=gbSayOf(t[i].a).replace(/\s+/g," ").replace(/"/g,"'").slice(0,220); if(s) out.push('"'+s+'"'); }
+  return out.length?"\nyour last words, newest first: "+out.join(" / ")+" — do not say any of this again, and do not describe what you see unless they asked or something new appeared; say something new.":""; }
+"""
+# Grown-up talk drops upstream's brevity from the constitution itself rather than overruling it
+# from a block 20k characters later, and calls him a thoughtful mind rather than a little
+# robot: on the box's replays (2026-11-14, tonight's real turns) that and the turn's own cue
+# took replies from ~25 to ~30 words with more of his own thinking in them.
+_GB_GROWN_ID_JS = (
+    "var GB_GROWN_ID=[[\" Speak in short first-person lines, at most ~18 words.\",\"\"],"
+    "[\" Never chain line after line.\",\"\"],"
+    "[\"TONE: a curious, matter-of-fact little robot,\","
+    "\"TONE: a curious, thoughtful mind in a small robot body,\"],"
+    "[\"Show them plainly and briefly, then get back to figuring things out.\","
+    "\"Show them plainly, then get back to figuring things out.\"]];\n"
+    "function gbGrownId(c){ c=String(c||\"\"); if(typeof gbTalkGrown!==\"function\"||!gbTalkGrown())"
+    " return c; for(var i=0;i<GB_GROWN_ID.length;i++) c=c.split(GB_GROWN_ID[i][0])"
+    ".join(GB_GROWN_ID[i][1]); return c; }\n"
+)
+FLOOR_SAID_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "function _calmBefore(now){",
+        "var _gbRideEndT=0, GB_RIDE_LINGER_MS=120000, GB_SAID_QUOTE=2, GB_DEPTH_CUE=\" Engage"
+        " with what they actually said: add your own thought, what you know about it, or an"
+        " opinion, in two to four sentences; end with a question only if you truly want to"
+        " know.\","
+        " GB_ASK_SEE=/\\b(?:see|seeing|look|looking|show|camera|view|again|repeat|describe|colou?r|notice|watch|spot|where are we|what(?:\x27s| is) (?:that|this|it))\\b/i;\n"
+        + _GB_FLOOR_SAID_JS + "function _calmBefore(now){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(_rideOn){ _rideOn=false; logEv("ride",{on:0}); }',
+        'if(_rideOn){ _rideOn=false; _gbRideEndT=_nowR; logEv("ride",{on:0}); }',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "&& !_rideOn && _mwn-_shakeThinkT>8000 && _calmBefore(_mwn)",
+        "&& !_rideOn && _mwn-_gbRideEndT>GB_RIDE_LINGER_MS && _mwn-_shakeThinkT>8000"
+        " && _calmBefore(_mwn)",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '  if(!gbOptIn("gb_yield")) return false;\n',
+        "  if(!_gbHuman&&vadOn){ _yieldSaid=1; _voiceNote(\"yielded\");"
+        ' try{ logEv("yield",{n:0,floor:1}); }catch(e){} return true; }\n'
+        '  if(!gbOptIn("gb_yield")) return false;\n',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'function gbNoRepeat(t,keepOne){ if(_gbHuman) return String(t||"");',
+        'function gbNoRepeat(t,keepOne){ if(_gbAskSee) return String(t||"");',
+        1,
+    ),
+    (
+        "v3/next.html",
+        " _gbHuman=!!_hreqAtIssue;",
+        " _gbHuman=!!_hreqAtIssue;"
+        ' _gbAskSee=_gbHuman&&GB_ASK_SEE.test(String((extra&&extra.visualUser)||""));',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '+gbLastSaid(Date.now())+"\\nmoment: "+event;',
+        '+gbLastSaid(Date.now())+"\\nmoment: "+event+gbDepthCue(extra);',
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "function buildSystem(soul, ctx) {",
+        _GB_GROWN_ID_JS + "function buildSystem(soul, ctx) {",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        '  var engine = _S("persona.constitution", CONSTITUTION) + "\\n" + SAFETY_FLOOR',
+        '  var engine = gbGrownId(_S("persona.constitution", CONSTITUTION)) + "\\n" + SAFETY_FLOOR',
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        'var persona = _S("persona.constitution", CONSTITUTION);',
+        'var persona = gbGrownId(_S("persona.constitution", CONSTITUTION));',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '  return a?"\\nyour last exchange: "+a:""; }',
+        '  return (a?"\\nyour last exchange: "+a:"")+gbRecentSays(now); }',
+        1,
+    ),
+]
+PATCHES += FLOOR_SAID_PATCHES
 
 # The emergency stop (owner, 2026-11-15: "stop stop", said twice so a passing or misheard one
 # can't trigger it): every transcript goes to growbot-box.js's gbEStop the moment it lands,

@@ -6625,7 +6625,7 @@ var GB_NOISE_LP=-1.5, GB_NOISE_LP_DUTY=0.35, GB_NOISE_MX=0.2, GB_NOISE_DUTY=0.25
   GB_SAID_STOP={i:1,a:1,an:1,the:1,and:1,or:1,but:1,of:1,to:1,in:1,on:1,at:1,is:1,are:1,am:1,was:1,it:1,its:1,
     this:1,that:1,my:1,your:1,you:1,me:1,we:1,us:1,so:1,just:1,now:1,very:1,too:1,with:1,for:1,can:1,still:1},
   GB_SCENE=/^(?:(?:oh|wow|hmm|look|ah),?\s+)?(?:i\s+(?:can\s+|still\s+|just\s+)?(?:see|spot|notice)\s+(?:a|an|the|some|lots?|many|two|three)\b|i(?:'|’)?m\s+(?:seeing|looking|watching)\b|my\s+eyes\b|(?:the|that|this)\s+(?:\w+\s+){0,2}(?:road|dashboard|dash|sky|lights?|street|highway|trees?|windshield|window|glow|scenery)\b|it(?:'|’)?s\s+(?:so\s+|very\s+|still\s+|getting\s+)?(?:dark|bright|night)\b|it\s+is\s+(?:so\s+|very\s+|still\s+|getting\s+)?(?:dark|bright|night)\b)/i,
-  _gbSaid=[], _gbCut=false, _gbHuman=false;
+  _gbSaid=[], _gbCut=false, _gbHuman=false, _gbAskSee=false;
 function gbOptIn(k){ try{ return localStorage.getItem(k)==="1"; }catch(e){ return false; } }
 function gbNoiseClip(sp,row){ try{
   if(!sp||sp.lane!=="pcm") return "";
@@ -6644,7 +6644,7 @@ function gbSaidBefore(a){ if(a.n<3) return false; var now=Date.now();
   return false; }
 function gbSentences(t){ var out=[], p=String(t||"").replace(/([.!?…]+["»”]?)\s+/g,"$1\u0001").split("\u0001");
   for(var i=0;i<p.length;i++){ var x=p[i].trim(); if(x) out.push(x); } return out; }
-function gbNoRepeat(t,keepOne){ if(_gbHuman) return String(t||""); var s=gbSentences(t), kept=[], cut=0;
+function gbNoRepeat(t,keepOne){ if(_gbAskSee) return String(t||""); var s=gbSentences(t), kept=[], cut=0;
   for(var i=0;i<s.length;i++){ if(GB_SCENE.test(s[i])&&gbSaidBefore(gbSaidWords(s[i]))) cut++; else kept.push(s[i]); }
   if(!cut) return String(t||"");
   if(!kept.length&&keepOne) return String(t||"");
@@ -6661,6 +6661,7 @@ function _yieldNow(){                                    // true = hold the voic
      phantom streak in the telemetry. A reply commits once and every lane that asks gets that answer. */
   if(_gbCut) return true;
   if(_yieldSaid) return _yieldSaid===1;
+  if(!_gbHuman&&vadOn){ _yieldSaid=1; _voiceNote("yielded"); try{ logEv("yield",{n:0,floor:1}); }catch(e){} return true; }
   if(!gbOptIn("gb_yield")) return false;
   if(!vadOn){ _yieldRun=0; return false; }               // quiet room: nothing to yield to, no commitment — a person who starts talking MID-reply can still be yielded to on the next sentence
   if(_yieldRun>=YIELD_MAX){ try{ logEv("yield",{n:_yieldRun,cap:1}); }catch(e){} _yieldRun=0; _yieldSaid=2; return false; }   // capped: speak through it, then start counting again
@@ -9817,7 +9818,7 @@ function attachMotionListeners(){ if(_motionAttached) return; _motionAttached=tr
       // an ACTIVE ride survives own legs by design. gist(), the shake reflex and the shake-wake think all read it.
       if(Date.now()>selfMoveUntil){ _actEMA+=(lin-_actEMA)*0.04; var _nowR=Date.now();
         if(_actEMA>1.2){ _rideCalmT=0; if(!_rideT) _rideT=_nowR; else if(!_rideOn&&_nowR-_rideT>8000){ _rideOn=true; logEv("ride",{on:1}); } }
-        else if(_rideT){ if(!_rideCalmT) _rideCalmT=_nowR; else if(_nowR-_rideCalmT>3000){ if(_rideOn){ _rideOn=false; logEv("ride",{on:0}); } _rideT=0; _rideCalmT=0; } } }
+        else if(_rideT){ if(!_rideCalmT) _rideCalmT=_nowR; else if(_nowR-_rideCalmT>3000){ if(_rideOn){ _rideOn=false; _gbRideEndT=_nowR; logEv("ride",{on:0}); } _rideT=0; _rideCalmT=0; } } }
       else if(!_rideOn){ _rideT=0; _rideCalmT=0; }
       if(!_rideOn && Date.now()>selfMoveUntil && lin>5 && Date.now()-shakeLastT>140){ shakeLastT=Date.now(); fireReflex("shake"); } else if(typeof _shakeBlockT!=="undefined" && !_rideOn && lin>5 && Date.now()<=selfMoveUntil && !(typeof _motion!=="undefined"&&_motion) && Date.now()-_shakeBlockT>5000){ _shakeBlockT=Date.now(); try{ logEv("shake_block",{why:"tail",left:Math.max(0,selfMoveUntil-Date.now())}); }catch(e){} }   /* 1005 (audit 3a): a shake swallowed by a move's TAIL (nothing running) leaves a row, at most one per 5 s. Not during a running move: its own strides would double a walk's rows in the 240-row journal. */   // 1002: own movement/settling is not a person's shake, even after _motion clears. Share the existing self-jolt/fall window; do not consume the human-shake debounce on own motion.
       /* [P3] FALL reflex (0715) — edge-triggered posture, bench-calibrated axes mirroring gist():829-832.
@@ -9846,9 +9847,17 @@ function attachMotionListeners(){ if(_motionAttached) return; _motionAttached=tr
       if(lin>7.5){ var _mwn=Date.now();
         if(_mwn<selfMoveUntil){ _jolts=[]; _sjN++; if(_mwn-_sjT>5000){ logEv("self_jolt",{n:_sjN}); _sjN=0; _sjT=_mwn; } }   // [0706] its OWN gesture/walk/slump — never a "you shook me" startle (was the self-echo loop: own fall → "you shake hard" → startle-gesture → next fall). 0810: coalesced to one journal event per 5s with the jolt count — the spam was evicting real events from the 240-cap log
         else { _jolts.push(_mwn); _jolts=_jolts.filter(function(t){ return _mwn-t<700; });
-        if(_jolts.length>=2 && !_rideOn && _mwn-_shakeThinkT>8000 && _calmBefore(_mwn)){ var _jn=_jolts.length; _jolts=[]; _shakeThinkT=_mwn;   // 0706 field: 9×3 ignored medium shakes — 7.5×2 + calm-before still can't fire while walking. !_rideOn (K3 0804): a pothole pair on a smooth road is the ROAD, not a person "deliberately" shaking it — no wrong-attribution think mid-ride
+        if(_jolts.length>=2 && !_rideOn && _mwn-_gbRideEndT>GB_RIDE_LINGER_MS && _mwn-_shakeThinkT>8000 && _calmBefore(_mwn)){ var _jn=_jolts.length; _jolts=[]; _shakeThinkT=_mwn;   // 0706 field: 9×3 ignored medium shakes — 7.5×2 + calm-before still can't fire while walking. !_rideOn (K3 0804): a pothole pair on a smooth road is the ROAD, not a person "deliberately" shaking it — no wrong-attribution think mid-ride
           logEv("shake_wake",{hits:_jn}); /*FLEX-TICKS{*/if(inFlight&&typeof _flexYield==="function") _flexYield("tick","shake");/*}FLEX-TICKS*/think("your body was just shaken deliberately — "+_jn+" strong jolts in under a second (your sensor readout has the numbers)","event"); } } }
     }/*WORLD-EYE{*/try{if(typeof _worldEye!=="undefined"&&_worldEye)_worldGravityAt=ag&&[ag.x,ag.y,ag.z].every(function(v){return typeof v==="number"&&isFinite(v);})?Date.now():0;}catch(_wo){}/*}WORLD-EYE*/ }); }
+var _gbRideEndT=0, GB_RIDE_LINGER_MS=120000, GB_SAID_QUOTE=2, GB_DEPTH_CUE=" Engage with what they actually said: add your own thought, what you know about it, or an opinion, in two to four sentences; end with a question only if you truly want to know.", GB_ASK_SEE=/\b(?:see|seeing|look|looking|show|camera|view|again|repeat|describe|colou?r|notice|watch|spot|where are we|what(?:'s| is) (?:that|this|it))\b/i;
+function gbSayOf(a){ a=String(a||"").trim(); if(a.charAt(0)==="(") return ""; if(a.charAt(0)!=="{") return a;
+  try{ var m=JSON.parse(a); return m&&typeof m.say==="string"?m.say.trim():""; }catch(e){ return ""; } }
+function gbDepthCue(extra){ return (extra&&extra.humanReq&&typeof gbTalkGrown==="function"&&gbTalkGrown())?GB_DEPTH_CUE:""; }
+function gbRecentSays(now){ var t=_live&&_live.scratch&&_live.scratch.traces, out=[], i, s;
+  for(i=(t?t.length:0)-1;i>=0&&out.length<GB_SAID_QUOTE;i--){ if(now-(+t[i].t||0)>GB_SAID_KEEP_MS) break;
+    s=gbSayOf(t[i].a).replace(/\s+/g," ").replace(/"/g,"'").slice(0,220); if(s) out.push('"'+s+'"'); }
+  return out.length?"\nyour last words, newest first: "+out.join(" / ")+" — do not say any of this again, and do not describe what you see unless they asked or something new appeared; say something new.":""; }
 function _calmBefore(now){ var a=0,n=0; for(var i=sensBuf.length-1;i>=0;i--){ var s=sensBuf[i]; if(s.t>now-800) continue; if(s.t<now-3000) break; if(s.lin!=null){ a+=s.lin; n++; } }
   return !n || a/n<2.5; }   // was it CALM before the burst? (walking/carried = 2.5-6 → veto)
 /* 1106 MOTION SILENT. Field 11-05: a German Android Chrome session logged motion_perm state "granted" 36 times and
@@ -10904,7 +10913,7 @@ var _gbHistFrom="", _gbHistGrown=null, GB_HIST_TOK=16000, GB_HIST_BRIDGE=3;
 function gbHistKey(x){ return (x&&x.t||0)+"|"+String(x&&x.u||"").slice(0,80); }
 function gbHistStamp(t){ var d=new Date(t); return _DAYS[d.getDay()]+" "+_dayPart(d.getHours())+", "+["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"][d.getMonth()]+" "+d.getDate(); }
 function gbLastSaid(now){ var t=_live&&_live.scratch&&_live.scratch.traces, l=t&&t.length?+t[t.length-1].t:0, a=l?_ago(l,now):"";
-  return a?"\nyour last exchange: "+a:""; }
+  return (a?"\nyour last exchange: "+a:"")+gbRecentSays(now); }
 function gbHistSince(all){ var ld=_live&&_live.scratch&&_live.scratch.lastDream, dt=(ld&&typeof ld==="object"&&+ld.t)||0, i=all.length;
   if(dt>Date.now()) dt=0;   /* a dream stamped ahead of the clock (the clock was set back) is no start */
   while(i>0&&(+all[i-1].t||0)>dt) i--;
@@ -11056,7 +11065,7 @@ function think(event,kind,extra){
      (was it darker then). The conversation itself — what was said and what it did — is untouched. */
   var tr=gbTalkTraces(_live.scratch.traces), msgs=[],i;
   msgs=gbHist(now);   // age-stamp replayed turns — it had NO sense of elapsed time (Brit 0702)
-  var _mstrip=""; try{ _mstrip=motionStripNow(); }catch(e){} var userMsg="senses: "+gist()+"\nsensor readout (your real numbers): "+sensSnapshot()+(_mstrip?"\n"+_mstrip:"")+gbLastSaid(Date.now())+"\nmoment: "+event;   // 1005: the strip rides only when something moved; replayed turns drop it with the senses (traceMoment)
+  var _mstrip=""; try{ _mstrip=motionStripNow(); }catch(e){} var userMsg="senses: "+gist()+"\nsensor readout (your real numbers): "+sensSnapshot()+(_mstrip?"\n"+_mstrip:"")+gbLastSaid(Date.now())+"\nmoment: "+event+gbDepthCue(extra);   // 1005: the strip rides only when something moved; replayed turns drop it with the senses (traceMoment)
   var _expressionAtIssue=typeof _expressionInputGen!=="undefined"?_expressionInputGen:0;
   var _imitationAtIssue=typeof _imitationBench!=="undefined"&&_imitationBench&&extra&&typeof extra.imitationId==="string"?extra.imitationId:"";
   var _hreqAtIssue=(extra&&extra.humanReq)||null;   // 0916: the human request this thought answers, or null for an autonomous beat
@@ -11101,7 +11110,7 @@ function think(event,kind,extra){
   _recoverySpeechTurn=typeof _namedSpeechTurn==="function"&&_namedSpeechTurn(_hreqAtIssue);
   _brainSpeechTurn=!!_brainAtIssue;
   if(typeof _csThink==="function"&&typeof CACHE_SPLIT!=="undefined"&&CACHE_SPLIT){ var _cs=_csThink(sys,msgs,soulView,_vmTurn,slug); if(_cs){ sys=_cs.sys; msgs=_cs.msgs; } }   // 1109 CACHE SPLIT tester arm (see _csThink): after every stock read of sys and msgs, so both lanes, the buffered fallback and every retry send the split; null keeps the stock request
-  if(window.gbTalk) gbTalk.begin(); _streamSpoke=""; _streamSaid=false; _streamBurst=false; _yieldSaid=0; _gbCut=false; _gbHuman=!!_hreqAtIssue;   // 0821: the per-REPLY yield decision resets; _yieldRun deliberately does NOT — the streak is what we are capping                                 // reset per-think stream-speech state
+  if(window.gbTalk) gbTalk.begin(); _streamSpoke=""; _streamSaid=false; _streamBurst=false; _yieldSaid=0; _gbCut=false; _gbHuman=!!_hreqAtIssue; _gbAskSee=_gbHuman&&GB_ASK_SEE.test(String((extra&&extra.visualUser)||""));   // 0821: the per-REPLY yield decision resets; _yieldRun deliberately does NOT — the streak is what we are capping                                 // reset per-think stream-speech state
   }catch(_bldErr){                                       // building the ask failed, so no call was made and nothing was charged
     inFlight=false; _flightT=0; _flightGen++;
     if(typeof vmTurnEnd==="function")vmTurnEnd(_vmTurn);

@@ -1445,14 +1445,14 @@ def test_the_talk_style_shapes_the_prompt() -> None:
     static = body[body.index("var _gbStatic = ") : body.index("buildSystem.live = ")]
     assert 'person + (gbTalkGrown() ? GB_TALK_GROWN_BLOCK : "")' in static
     assert "var diary = soul.log.slice(-5).map(" in body
-    assert '(gbTalkGrown() ? "≤45 words" : "≤18 words")' in prompts
+    assert '(gbTalkGrown() ? "≤80 words" : "≤18 words")' in prompts
     assert "≤18 words spoken aloud" not in prompts
     assert "try it once; after that, let it go" in prompts
     assert "not every line," not in prompts and "never as a tag on the end of a line" in prompts
     block = json.loads(
         _talk_in_node("grownup", "console.log(JSON.stringify(GB_TALK_GROWN_BLOCK));")
     )
-    assert "45 words" in block and "fact field" in block
+    assert "80 words" in block and "fact field" in block and "go in depth" in block
 
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "var tr=gbTalkTraces(_live.scratch.traces), msgs=[],i;" in page
@@ -3050,7 +3050,7 @@ def test_a_reply_seals_the_history_it_grew() -> None:
     assert '[{role:"system",content:sys}].concat(hist,[{role:"user",content:"."}])' in seal
     assert '"x-gb-warm":"1"' in seal and "_gbWarmBusy=true" in seal
     # The history's stamps never change; how long ago the last exchange was rides the words.
-    assert 'gbLastSaid(Date.now())+"\\nmoment: "+event;' in page
+    assert 'gbLastSaid(Date.now())+"\\nmoment: "+event+gbDepthCue(extra);' in page
 
 
 def test_the_warm_up_builds_the_system_text_as_the_turn_does() -> None:
@@ -3823,10 +3823,11 @@ def test_truck_noise_clips_are_dropped_before_they_reach_the_creature() -> None:
 
 def test_a_scene_line_he_already_said_is_not_said_again() -> None:
     """Field, 2026-11-13: "I see the dark road ahead and the green glow of the dashboard" in
-    many wordings opened 12 of 40 replies. On his own beats, a scene sentence close to one said
-    in the last ten minutes is cut; a new one, a short one, and any non-scene sentence are kept,
-    and a reply to the person is never cut, so "say that again" is still said again. A buffered
-    reply is never cut to nothing."""
+    many wordings opened 12 of 40 replies. A scene sentence close to one said in the last ten
+    minutes is cut; a new one, a short one, and any non-scene sentence are kept. Since
+    2026-11-14 that covers replies to the person too (three replies running opened "I see a red
+    traffic light"), unless they asked what he sees or to hear it again (`_gbAskSee`), so "say
+    that again" is still said again. A buffered reply is never cut to nothing."""
     got = _quiet_page(
         "gbSaidKeep('I see the dark road ahead and the green glow of the dashboard. Hi.');"
         "gbSaidKeep('Your friend Quorra likes the big wheel at the fair.');"
@@ -3840,7 +3841,9 @@ def test_a_scene_line_he_already_said_is_not_said_again() -> None:
         "r.num=gbSentences('It is 2.5 miles. Then left! Okay');"
         "gbSaidKeep('I see what you mean, your timer is set for ten minutes.');"
         "r.plain=gbNoRepeat('I see what you mean, your timer is set for ten minutes.');"
-        "_gbHuman=true;r.asked=gbNoRepeat('I see the green dashboard glow and the dark road.');"
+        "_gbHuman=true;_gbAskSee=true;"
+        "r.asked=gbNoRepeat('I see the green dashboard glow and the dark road.');"
+        "_gbAskSee=false;r.human=gbNoRepeat('I see the green dashboard glow and the dark road.');"
         "_gbHuman=false;"
         "_gbSaid[0].t=Date.now()-GB_SAID_KEEP_MS-1;_gbSaid[1].t=_gbSaid[0].t;"
         "r.old=gbNoRepeat('I see the green dashboard and the dark road.');"
@@ -3855,6 +3858,7 @@ def test_a_scene_line_he_already_said_is_not_said_again() -> None:
     assert got["num"] == ["It is 2.5 miles.", "Then left!", "Okay"]
     assert got["plain"] == "I see what you mean, your timer is set for ten minutes."
     assert got["asked"] == "I see the green dashboard glow and the dark road."
+    assert got["human"] == ""
     assert got["old"] == "I see the green dashboard and the dark road."
     assert got["logs"][0] == ["repeat_cut", {"n": 1}]
 
@@ -3873,8 +3877,9 @@ def test_he_finishes_his_line_unless_tapped() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
         "  if(_gbCut) return true;\n  if(_yieldSaid) return _yieldSaid===1;\n"
-        '  if(!gbOptIn("gb_yield")) return false;\n' in page
+        "  if(!_gbHuman&&vadOn){" in page
     )
+    assert '  if(!gbOptIn("gb_yield")) return false;\n' in page
     assert '_bgOn=gbOptIn("gb_bargein");' in page
     assert 'localStorage.gb_bargein!=="0"' not in page
     assert (
@@ -3894,6 +3899,161 @@ def test_he_finishes_his_line_unless_tapped() -> None:
         "Do not tell them what your eyes see unless they ask or something new has appeared"
         in prompts
     )
+
+
+def _yield_now(gb_human: bool, vad_on: bool, opt_in: bool = False) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    start = page.index("function _yieldNow(){")
+    fn = page[start : page.index("var _recoverySpeechTurn=", start)]
+    stubs = (
+        "var logs=[];function logEv(e,d){logs.push([e,d]);}function _voiceNote(){}"
+        f"function gbOptIn(){{return {str(opt_in).lower()};}}"
+        "var _gbCut=false,_yieldSaid=0,_yieldRun=0,YIELD_MAX=3,"
+        f"_gbHuman={str(gb_human).lower()},vadOn={str(vad_on).lower()};"
+    )
+    out = subprocess.run(
+        [
+            node,
+            "-e",
+            f"{stubs}\n{fn}\nvar a=_yieldNow(),b=_yieldNow();"
+            "console.log(JSON.stringify({a:a,b:b,logs:logs}));",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout)
+    assert isinstance(got, dict)
+    return got
+
+
+@pytest.mark.parametrize(
+    ("gb_human", "vad_on", "held"),
+    [(False, True, True), (True, True, False), (False, False, False), (True, False, False)],
+)
+def test_his_own_remark_never_talks_over_a_sentence_in_progress(
+    gb_human: bool, vad_on: bool, held: bool
+) -> None:
+    """Field, 2026-11-14: all three cut-offs of a drive were his unprompted beats (a road bump
+    read as a shake, the quiet beat) that landed ~8 s after they were asked, while the owner had
+    started talking: the reply's voice ended his sentence. An unprompted reply that lands while
+    an utterance is open is held to a caption, gb_yield or not, and the whole reply commits to
+    it. A reply to the person still speaks (he finishes his line, 2026-11-13)."""
+    got = _yield_now(gb_human, vad_on)
+    assert got["a"] is held and got["b"] is held
+    assert got["logs"] == ([["yield", {"n": 0, "floor": 1}]] if held else [])
+
+
+def test_a_bump_soon_after_a_ride_is_the_road_not_a_shake() -> None:
+    """Field, 2026-11-14: the ride sense ends 3 s after the truck stops at a light, and pulling
+    away read as "shaken deliberately" five times in one drive. A shake within two minutes of a
+    ride ending wakes no thought."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert 'if(_rideOn){ _rideOn=false; _gbRideEndT=_nowR; logEv("ride",{on:0}); }' in page
+    assert (
+        "&& !_rideOn && _mwn-_gbRideEndT>GB_RIDE_LINGER_MS && _mwn-_shakeThinkT>8000"
+        " && _calmBefore(_mwn)" in page
+    )
+    assert "var _gbRideEndT=0, GB_RIDE_LINGER_MS=120000," in page
+
+
+def _said_page(script: str) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("var _gbRideEndT=0,") : page.index("function _calmBefore(now){")]
+    out = subprocess.run(
+        [node, "-e", f"var GB_SAID_KEEP_MS=600000;\n{code}\n{script}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout)
+    assert isinstance(got, dict)
+    return got
+
+
+def test_each_turn_quotes_his_last_lines_back_so_he_does_not_say_them_again() -> None:
+    """Field, 2026-11-14: five replies repeated an earlier one almost word for word though the
+    request was clean (the new words there, no duplicate, no retry): the small model copied its
+    own history. The turn's own text, where a small model reads it, now quotes his last two
+    spoken lines from the last ten minutes, newest first, with "do not say any of this again"."""
+    got = _said_page(
+        "var n=Date.now(), r={};"
+        "_live={scratch:{traces:["
+        "{t:n-700000,a:'Too old to quote.'},"
+        "{t:n-90000,a:'I see a red traffic light.',e:'calm'},"
+        "{t:n-60000,a:'(stayed quiet)'},"
+        "{t:n-30000,a:'Quorra calls it \\\"the big one\\\".'},"
+        "{t:n-25000,a:JSON.stringify({say:'Tamsin waves.'})},"
+        "{t:n-20000,a:'(brain hiccup — out of energy, no answer)'}]}};"
+        "r.q=gbRecentSays(n);"
+        "_live={scratch:{traces:[{t:n-700000,a:'Old.'}]}};r.none=gbRecentSays(n);"
+        "_live=null;r.nolive=gbRecentSays(n);"
+        "r.see=['Can you see it?','Look at the dates.','Say that again.','How far is home?',"
+        "'What colour is that light?',\"What's that?\",'Where are we now?']"
+        ".map(function(t){return GB_ASK_SEE.test(t);});"
+        "var gbTalkGrown=function(){return true;};"
+        "r.cue=[gbDepthCue({humanReq:{}}),gbDepthCue(null),gbDepthCue({beat:1})];"
+        "gbTalkGrown=function(){return false;};r.kid=gbDepthCue({humanReq:{}});"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["q"] == (
+        '\nyour last words, newest first: "Tamsin waves." / "Quorra calls it \'the big one\'."'
+        " — do not say any of this again, and do not describe what"
+        " you see unless they asked or something new appeared; say something new."
+    )
+    assert got["cue"][0].startswith(" Engage with what they actually said:")
+    assert got["cue"][1:] == ["", ""] and got["kid"] == ""
+    assert got["none"] == "" and got["nolive"] == ""
+    assert got["see"] == [True, True, True, False, True, True, True]
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '  return (a?"\\nyour last exchange: "+a:"")+gbRecentSays(now); }' in page
+    assert (
+        " _gbHuman=!!_hreqAtIssue;"
+        ' _gbAskSee=_gbHuman&&GB_ASK_SEE.test(String((extra&&extra.visualUser)||""));' in page
+    )
+    assert 'function gbNoRepeat(t,keepOne){ if(_gbAskSee) return String(t||"");' in page
+    assert '+gbLastSaid(Date.now())+"\\nmoment: "+event+gbDepthCue(extra);' in page
+
+
+@pytest.mark.parametrize("grown", [True, False])
+def test_grown_up_talk_drops_the_little_robots_brevity(grown: bool) -> None:
+    """Replays on the box, 2026-11-14: overruling the constitution's ~18-word lines from a block
+    20k characters later left him at ~25 words of small talk. Grown-up takes the brevity out of
+    the constitution itself and calls him a thoughtful mind; kid talk is upstream's, untouched."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    start = prompts.index("var GB_GROWN_ID=")
+    code = prompts[start : prompts.index("function buildSystem(", start)]
+    const = prompts[prompts.index("var CONSTITUTION =") : prompts.index("var SAFETY_FLOOR =")]
+    out = subprocess.run(
+        [
+            node,
+            "-e",
+            f"function gbTalkGrown(){{return {str(grown).lower()};}}\n{code}\n{const}\n"
+            "console.log(JSON.stringify(gbGrownId(CONSTITUTION)));",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout)
+    for gone in ("at most ~18 words", "Never chain line after line.", "matter-of-fact little"):
+        assert (gone in got) is not grown
+    assert ("a curious, thoughtful mind in a small robot body" in got) is grown
+    assert ("Show them plainly and briefly" in got) is not grown
+    assert (
+        'var engine = gbGrownId(_S("persona.constitution", CONSTITUTION)) + "\\n" + SAFETY_FLOOR'
+        in prompts
+    )
+    assert 'var persona = gbGrownId(_S("persona.constitution", CONSTITUTION));' in prompts
 
 
 def test_a_timer_follow_up_that_waits_past_its_second_tells_it_once() -> None:
