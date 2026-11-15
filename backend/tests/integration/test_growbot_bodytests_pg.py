@@ -131,6 +131,25 @@ async def test_a_run_stops_growing_past_its_cap(
     number = await bt.record(SYSTEM_OWNER, _chunk(0, {"t": 1}, {"t": 2}, {"t": 3}))
     assert await bt.record(SYSTEM_OWNER, _chunk(1, {"t": 4})) is None
     assert [r["t"] for r in await bt.rows(OWNER, number or 0)] == [1, 2, 3]
+    # Its ending still lands, rows dropped, so it never reads as running forever.
+    done = _chunk(2, {"t": 5}, status="done", summary={"results": {"turn": "pass"}})
+    assert await bt.record(SYSTEM_OWNER, done) == number
+    run = await bt.run(OWNER, number or 0)
+    assert run is not None and run.status == "done" and run.summary["results"]
+    assert [r["t"] for r in await bt.rows(OWNER, number or 0)] == [1, 2, 3]
+
+
+async def test_a_run_past_its_last_chunk_number_still_ends(
+    maker: async_sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bodytests_mod, "SEQ_MAX", 1)
+    bt = SqlBodyTests(maker)
+    number = await bt.record(SYSTEM_OWNER, _chunk(0, {"t": 1}))
+    assert await bt.record(SYSTEM_OWNER, _chunk(1, {"t": 2})) is None
+    assert await bt.record(SYSTEM_OWNER, _chunk(1, {"t": 2}, status="stopped")) == number
+    run = await bt.run(OWNER, number or 0)
+    assert run is not None and run.status == "stopped"
+    assert [r["t"] for r in await bt.rows(OWNER, number or 0)] == [1]
 
 
 async def test_a_nul_or_lone_surrogate_never_fails_the_write(maker: async_sessionmaker) -> None:
@@ -138,6 +157,10 @@ async def test_a_nul_or_lone_surrogate_never_fails_the_write(maker: async_sessio
     number = await bt.record(SYSTEM_OWNER, _chunk(0, {"t": 1, "x": "a\u0000b\ud800"}))
     got = await bt.rows(OWNER, number or 0)
     assert got[0]["x"].startswith("ab")
+    # Typed text that only looks like an escaped NUL is kept as typed.
+    number = await bt.record(SYSTEM_OWNER, _chunk(1, {"t": 2, "x": "a\\u0000"}))
+    got = await bt.rows(OWNER, number or 0)
+    assert got[1]["x"] == "a\\u0000"
 
 
 async def test_both_tables_are_owner_only(maker: async_sessionmaker) -> None:

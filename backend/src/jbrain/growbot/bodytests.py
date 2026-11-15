@@ -58,10 +58,22 @@ class Run:
     rows: int
 
 
+def _clean(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {_clean(k): _clean(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clean(v) for v in value]
+    return value
+
+
 def _dump(value: Any) -> str:
-    # jsonb takes neither a NUL nor a lone surrogate (which can't even be encoded), so the NUL is
-    # dropped and the surrogate becomes "?": one odd string never costs a chunk.
-    text = json.dumps(value, separators=(",", ":"), ensure_ascii=False).replace("\\u0000", "")
+    # jsonb takes neither a NUL nor a lone surrogate (which can't even be encoded), so NULs are
+    # dropped from the strings themselves (not the dumped text, where a literal "\\u0000" typed
+    # into a transcript must survive) and a surrogate becomes "?": one odd string never costs a
+    # chunk.
+    text = json.dumps(_clean(value), separators=(",", ":"), ensure_ascii=False)
     return text.encode("utf-8", "replace").decode("utf-8")
 
 
@@ -103,10 +115,17 @@ class SqlBodyTests:
     async def record(self, ctx: SessionContext, chunk: Chunk) -> int | None:
         """Keep one chunk; returns the run's number, or None when it isn't one to keep (a chunk
         too big, a run of another robot under the same id, or a finished run's straggler)."""
+        # A run that ends past its bounds still gets its ending (status and verdicts), only not
+        # its rows, or it would read as running forever.
+        final = chunk.status != "running"
+        if chunk.status not in STATUSES or chunk.seq < 0 or (chunk.seq >= SEQ_MAX and not final):
+            return None
         rows = [r for r in chunk.rows[:ROWS_MAX] if isinstance(r, dict)]
+        if chunk.seq >= SEQ_MAX:
+            rows = []
         body = _dump(rows)
         summary = _dump(chunk.summary)
-        if len(body) > CHUNK_MAX or chunk.status not in STATUSES or not 0 <= chunk.seq < SEQ_MAX:
+        if len(body) > CHUNK_MAX:
             return None
         if len(summary) > SUMMARY_MAX:
             summary = "{}"
@@ -120,8 +139,9 @@ class SqlBodyTests:
                     " status = EXCLUDED.status, summary = EXCLUDED.summary"
                     " WHERE app.growbot_bodytests.robot = EXCLUDED.robot"
                     " AND app.growbot_bodytests.status = 'running'"
-                    " AND app.growbot_bodytests.row_count < :cap"
-                    " RETURNING id, (xmax = 0) AS made"
+                    " AND (app.growbot_bodytests.row_count < :cap"
+                    " OR EXCLUDED.status <> 'running')"
+                    " RETURNING id, (xmax = 0) AS made, row_count"
                 ),
                 {
                     "run": chunk.run,
@@ -137,6 +157,8 @@ class SqlBodyTests:
             if row is None:
                 return None
             number = int(row["id"])
+            if chunk.seq >= SEQ_MAX or row["row_count"] >= RUN_ROWS_MAX:
+                return number
             kept = await session.execute(
                 text(
                     "INSERT INTO app.growbot_bodytest_chunks (run_id, seq, body)"
