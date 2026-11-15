@@ -111,12 +111,39 @@ def _commands(dists: list[float], set_to: float = 1.0, stay: bool = False) -> li
     )
 
 
-def test_the_follower_holds_its_distance_with_a_dead_band() -> None:
-    got = _commands([1.0, 1.1, 0.9, 1.5, 0.5, 3.0, 0.1])
-    assert [c["speed"] for c in got[:3]] == [0, 0, 0]
-    assert got[3]["speed"] == pytest.approx(1.5 * (0.5 - 0.15)) and got[3]["state"] == "follow"
-    assert got[4]["speed"] == pytest.approx(-1.5 * (0.5 - 0.15))
-    assert got[5]["speed"] == 1 and got[6]["speed"] == -1
+def test_too_far_waits_a_second_then_steps_forward_at_full_speed_until_within_5cm() -> None:
+    """The master's own follower (GrowBot_Training follow.py): a walk starts past 10 cm too far,
+    once the averaged distance holds a second of readings, and runs at full speed (drive only
+    walks above SPEED_ON) until the average is within 5 cm, so a turn's drift is walked back."""
+    got = _commands([1.3] * 15 + [1.0] * 45)
+    speeds = [c["speed"] for c in got]
+    assert speeds[:10] == [0] * 10 and speeds[10:15] == [1] * 5
+    assert got[10]["state"] == "follow"
+    # Still walking while the average is between 5 and 10 cm too far, then it stands.
+    walking = [c["dist"] - 1 for c in got[15:] if c["speed"] == 1]
+    standing = [c["dist"] - 1 for c in got[15:] if c["speed"] == 0]
+    assert walking and min(walking) <= 0.10 and all(d > 0.05 for d in walking)
+    assert standing and all(d <= 0.05 for d in standing)
+    assert speeds[15:] == sorted(speeds[15:], reverse=True)
+
+
+def test_a_distance_within_10cm_never_starts_a_walk() -> None:
+    got = _commands([1.08] * 30)
+    assert all(c["speed"] == 0 and c["state"] == "hold" for c in got)
+
+
+def test_one_long_reading_mid_waddle_does_not_start_a_walk() -> None:
+    """The face's distance swings with each waddle's pitch: the follower acts on the average."""
+    got = _commands([1.0] * 15 + [1.5] + [1.0] * 10)
+    assert all(c["speed"] == 0 for c in got)
+
+
+def test_too_close_backs_away_past_the_band_at_once() -> None:
+    got = _commands([0.9, 0.5])
+    assert got[0]["speed"] == 0
+    # The average of 0.9 and 0.5 is 0.7: 0.15 past the band.
+    assert got[1]["speed"] == pytest.approx(-1.5 * (0.3 - 0.15)) and got[1]["state"] == "follow"
+    assert _commands([0.1])[0]["speed"] == -1
 
 
 def test_too_close_with_the_person_off_to_one_side_turns_before_it_backs() -> None:
@@ -138,14 +165,17 @@ def test_stay_turns_to_watch_but_never_walks() -> None:
 
 def test_a_stale_reading_stops_and_a_lost_person_is_turned_toward() -> None:
     got = _node(
-        "const t = new f.Track(), fo = new f.Follower();"
+        "const t = new f.Track(), fo = new f.Follower(); let c;"
         "t.lock([f.reading(box(0.8, 0.05))], 0, 0); fo.start(1);"
-        "return [fo.command(t, 0, 100), fo.command(t, 0, 600), fo.command(t, 30, 3500)];"
+        "for (let i = 1; i <= 12; i++) { t.update([f.reading(box(0.8, 0.05))], 0, i * 100);"
+        "  c = fo.command(t, 0, i * 100); }"
+        "return [c, fo.command(t, 0, 1800), fo.command(t, 30, 4300), fo.walking];"
     )
-    fresh, stale, lost = got
-    assert fresh["speed"] > 0 and stale["speed"] == 0 and stale["state"] == "hold"
-    # Lost: it stands and turns toward where they were last seen, from where it now faces.
-    assert lost["state"] == "lost" and lost["speed"] == 0
+    fresh, stale, lost, walking = got
+    assert fresh["speed"] == 1 and stale["speed"] == 0 and stale["state"] == "hold"
+    # Lost: it stands and turns toward where they were last seen, from where it now faces, and
+    # forgets the averaged distance, which is stale by the time they're found.
+    assert lost["state"] == "lost" and lost["speed"] == 0 and not walking
     assert lost["heading"] == pytest.approx(fresh["heading"] - 30)
 
 
