@@ -2014,7 +2014,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     client=request.headers.get("x-debug-client", ""),
                     detail=getattr(request.state, "debug_detail", ""),
                 )
-            # Set only once the bearer authenticated, so a 401/404 never gains these.
+            # Set only once the bearer authenticated, so a failed-auth response never
+            # gains these; an authenticated route's own 4xx still does.
             expiry = getattr(request.state, "debug_token_expiry", None)
             if expiry is not None:
                 response.headers.update(debug_expiry.expiry_headers(expiry))

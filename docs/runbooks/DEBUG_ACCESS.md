@@ -56,6 +56,8 @@ PWA (owner) ──mint──▶ capability token  ──hand off──▶  assis
   the token, ask for a longer TTL (up to 30 days) when the token is minted.
   `scripts/debug-connect.sh` adds a second stderr line once under 12 h remain: the
   token will not last the night.
+  A token minted at the default 24 h TTL therefore warns from its first call — by
+  design: it will not see a second day, and saying so up front is the point.
 - **Owner's standing rule for overnight work (2026-11-15).** Before any overnight or
   unattended work that needs box access, check the token (`debug-connect.sh whoami` →
   `expires_at`) and confirm it lasts **until the owner's morning**, past the end of the
