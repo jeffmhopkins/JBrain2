@@ -303,6 +303,22 @@ class SqlAuthRepo:
             )
         return info
 
+    async def find_lapsed_capability_expiry(self, key_hash: str) -> datetime | None:
+        """The expiry of an unrevoked, unsuspended debug token that has run out, else None.
+        Read-only (no last_used_at stamp): a lapsed key did not get in."""
+        async with scoped_session(self._maker, _LOGIN) as session:
+            return (
+                await session.execute(
+                    select(Principal.expires_at).where(
+                        Principal.key_hash == key_hash,
+                        Principal.kind == "capability_token",
+                        Principal.revoked_at.is_(None),
+                        Principal.suspended_at.is_(None),
+                        Principal.expires_at <= func.now(),
+                    )
+                )
+            ).scalar_one_or_none()
+
     async def has_active_capability(self) -> bool:
         """True while any debug-console token is live (unrevoked, unsuspended, unexpired) —
         the signal that an owner-authorized debug session is open. Used to switch on verbose
@@ -670,4 +686,5 @@ def _principal_info(row: Principal) -> PrincipalInfo:
         label=row.label,
         subject_id=str(row.subject_id) if row.subject_id is not None else "",
         jcode_session_id=row.jcode_session_id or "",
+        expires_at=row.expires_at,
     )

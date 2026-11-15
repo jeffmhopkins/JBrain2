@@ -5,6 +5,7 @@ from typing import Annotated, cast
 from fastapi import Depends, HTTPException, Request
 
 from jbrain.api.client_ip import device_key
+from jbrain.api.debug_expiry import EXPIRES_AT_HEADER, iso, lapsed_detail, token_expiry
 from jbrain.api.session_cookie import mark_for_migration, session_token
 from jbrain.auth import service
 from jbrain.auth.service import AuthRepo, PrincipalInfo
@@ -185,11 +186,18 @@ async def current_debug_principal(
     key = _bearer(request.headers.get("Authorization", ""))
     principal = await service.authenticate_capability(repo, key) if key else None
     if principal is None:
+        lapsed = await service.lapsed_capability_expiry(repo, key) if key else None
+        headers = {"WWW-Authenticate": "Bearer"}
+        if lapsed is not None:
+            headers[EXPIRES_AT_HEADER] = iso(lapsed)
         raise HTTPException(
             status_code=401,
-            detail="invalid debug token",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail=lapsed_detail(lapsed) if lapsed is not None else "invalid debug token",
+            headers=headers,
         )
+    # Read by the debug middleware in main.py, which stamps the expiry on the response —
+    # every route's, including the ones that return a Response object directly.
+    request.state.debug_token_expiry = token_expiry(principal.expires_at)
     return principal
 
 

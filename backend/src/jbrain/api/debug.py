@@ -53,6 +53,7 @@ from jbrain.api import endpoint as endpoint_api
 from jbrain.api import engine as engine_api
 from jbrain.api import llm_settings, nudge, panel_ws
 from jbrain.api import sdr as sdr_api
+from jbrain.api.debug_expiry import token_expiry
 from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
 from jbrain.api.llm_settings import LlmSettingsOut, LlmSettingsPut, LoadedModelsOut
 from jbrain.db.session import SessionContext, scoped_session
@@ -177,14 +178,24 @@ class WhoamiOut(BaseModel):
     kind: str
     # The fixed scope this surface grants, so the assistant knows what it can do.
     scopes: list[str]
+    # When this token stops working (None = never), how many seconds are left, and a
+    # plain-words warning inside the last day — so a session can plan around the end of
+    # its own access instead of discovering it as a 401 mid-run.
+    expires_at: dt.datetime | None
+    expires_in_seconds: int | None
+    expiry_warning: str | None
 
 
 @router.get("/whoami")
 async def whoami(principal: DebugDep) -> WhoamiOut:
+    expiry = token_expiry(principal.expires_at)
     return WhoamiOut(
         id=principal.id,
         label=principal.label,
         kind=principal.kind,
+        expires_at=expiry.expires_at,
+        expires_in_seconds=expiry.expires_in_seconds,
+        expiry_warning=expiry.warning,
         scopes=[
             "llm.complete",
             "sql.read",

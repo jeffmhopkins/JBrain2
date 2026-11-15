@@ -79,6 +79,28 @@ async def test_expiry_and_revocation_fail_closed(maker: async_sessionmaker) -> N
     assert await repo.revoke_capability(live.id) is False
 
 
+async def test_the_principal_carries_its_expiry_and_a_lapsed_key_reports_when(
+    maker: async_sessionmaker,
+) -> None:
+    # The debug surface tells a holder when its token dies: the live principal carries
+    # expires_at, and a lapsed key (only) resolves to the moment it ran out.
+    repo = SqlAuthRepo(maker)
+    live_key, live = await auth_service.mint_capability(repo, "live", ttl_hours=24)
+    principal = await auth_service.authenticate_capability(repo, live_key)
+    assert principal is not None and principal.expires_at == live.expires_at
+    assert await auth_service.lapsed_capability_expiry(repo, live_key) is None
+
+    old_key, old = await auth_service.mint_capability(repo, "old", ttl_hours=-1)
+    assert await auth_service.lapsed_capability_expiry(repo, old_key) == old.expires_at
+    assert await auth_service.lapsed_capability_expiry(repo, "unknown") is None
+    # Revoked or suspended is not "expired": those stay the generic 401.
+    assert await repo.revoke_capability(old.id) is True
+    assert await auth_service.lapsed_capability_expiry(repo, old_key) is None
+    sus_key, sus = await auth_service.mint_capability(repo, "sus", ttl_hours=-1)
+    assert await repo.suspend_capability(sus.id) is True
+    assert await auth_service.lapsed_capability_expiry(repo, sus_key) is None
+
+
 async def test_has_active_capability_tracks_the_live_set(maker: async_sessionmaker) -> None:
     # The signal that switches on the wall's verbose TTS trace: True iff SOME token is live,
     # with the same fail-closed liveness as auth (expiry, revoke, suspend all drop it).

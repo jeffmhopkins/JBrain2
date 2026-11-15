@@ -162,6 +162,20 @@ class FakeAuthRepo:
                 return _info(p)
         return None
 
+    async def find_lapsed_capability_expiry(self, key_hash: str) -> datetime | None:
+        now = datetime.now(UTC)
+        for p in self.principals:
+            if (
+                p.key_hash == key_hash
+                and p.kind == "capability_token"
+                and not p.revoked
+                and p.suspended_at is None
+                and p.expires_at is not None
+                and p.expires_at <= now
+            ):
+                return p.expires_at
+        return None
+
     async def has_active_capability(self) -> bool:
         now = datetime.now(UTC)
         return any(
@@ -334,6 +348,7 @@ def _info(p: FakePrincipal) -> PrincipalInfo:
         label=p.label,
         subject_id=p.subject_id,
         jcode_session_id=p.jcode_session_id,
+        expires_at=p.expires_at,
     )
 
 
