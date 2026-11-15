@@ -27,14 +27,33 @@ export var CAMERA = {
 export var FOLLOW = {
   near: 0.4, far: 3,       // the set distance's limits (owner, 2026-11-15)
   step: 0.25,              // "get closer" / "back up"
-  band: 0.15,              // metres either side of the set distance where it stands and turns
-  gain: 1.5,               // speed per metre of distance error, before the clamp
+  band: 0.15,              // metres too close past which it backs away
+  gain: 1.5,               // backing speed per metre past the band, before the clamp
+  // Too far is a step forward, as the master's own follower trained it (GrowBot_Training
+  // follow.py): a walk starts past walkStart and keeps on until within walkStop, at full speed,
+  // so the half turn's own drift (10-25 cm) is taken back in one walk, not left in the band.
+  walkStart: 0.10,
+  walkStop: 0.05,
+  walkTurnMax: 30,         // degrees off the camera a walk starts within (+10 to keep walking)
+  // The face's distance swings about 0.3 m with each waddle's pitch, so the follower acts on
+  // its average over about this long, and a walk waits until it holds walkWaitMs of readings:
+  // acting on each reading chattered between walking and standing (owner, 2026-11-15: "zero
+  // creep").
+  avgMs: 1500,
+  walkWaitMs: 1000,
   backMax: 1,              // the furthest back a speed goes
   staleMs: 500,            // no reading this long: speed 0
   lostMs: 3000,            // no reading this long: lost
   coastMs: 2000,           // a track keeps its prediction this long through a crossing
   pitchGain: 0.02,         // camera height per degree of vertical offset, per reading
   backTurnMax: 60,         // degrees off the camera past which it turns before it backs
+  // Only look takes a camera height, and it barely turns with the camera low (GrowBot_Training
+  // master follow-me: 11-45 degrees of a 90-degree turn in 10 s at -1, 80-88 at 0). So the
+  // height moves only while standing within pitchTurnMax of the person, and a wider turn or a
+  // search is sent no lower than pitchTurnMin; the height asked for comes back after.
+  pitchTurnMax: 20,
+  pitchFaceDeg: 15,        // and comes back only within this, so noise at the limit doesn't flip it
+  pitchTurnMin: 0,
 };
 
 function num(v, d) { return typeof v === "number" && isFinite(v) ? v : d; }
@@ -81,7 +100,7 @@ Track.prototype.lock = function (reads, heading, t) {
   if (!ok.length) return false;
   ok.sort(function (a, b) { return (a.dist - b.dist) || (Math.abs(a.bearing) - Math.abs(b.bearing)); });
   var r = ok[0];
-  this.p = { az: wrap180(heading + r.bearing), dist: r.dist, size: r.size, vaz: 0, vdist: 0, t: t, up: r.up };
+  this.p = { az: wrap180(heading + r.bearing), dist: r.dist, raw: r.dist, size: r.size, vaz: 0, vdist: 0, t: t, up: r.up };
   this.seq++;
   return true;
 };
@@ -111,6 +130,7 @@ Track.prototype.update = function (reads, heading, t) {
   this.p = {
     az: wrap180(p.az + a * wrap180(best.az - p.az)),
     dist: p.dist + a * (best.r.dist - p.dist),
+    raw: best.r.dist,
     size: best.r.size,
     vaz: clamp(0.5 * p.vaz + 0.5 * vaz, -90, 90),
     vdist: clamp(0.5 * p.vdist + 0.5 * vdist, -1.5, 1.5),
@@ -131,9 +151,20 @@ export function Follower(opts) {
   this.pitch = 1;
   this.stay = false;
   this.seq = -1;
+  this.reset();
 }
+// Forget the averaged distance: a reading from before a gap is stale once they're seen again.
+Follower.prototype.reset = function () {
+  this.dist = null;   // the averaged distance
+  this.n = 0;         // readings in it
+  this.heldMs = 0;    // how long its readings span
+  this.lastT = null;
+  this.walking = false;
+  this.facing = true;
+};
 Follower.prototype.start = function (dist) {
   this.set = clamp(num(dist, 1), this.o.near, this.o.far);
+  this.reset();
 };
 Follower.prototype.closer = function () { this.set = clamp(this.set - this.o.step, this.o.near, this.o.far); return this.set; };
 Follower.prototype.further = function () { this.set = clamp(this.set + this.o.step, this.o.near, this.o.far); return this.set; };
@@ -143,27 +174,54 @@ Follower.prototype.further = function () { this.set = clamp(this.set + this.o.st
 // else by itself, the Track's match does that only for the same person).
 Follower.prototype.command = function (track, heading, t) {
   var age = track.age(t), p = track.p;
-  if (!p) return { heading: 0, speed: 0, pitch: this.pitch, state: "lost" };
-  if (age > this.o.lostMs) return { heading: wrap180(p.az - heading), speed: 0, pitch: this.pitch, state: "lost" };
+  var turning = Math.max(this.pitch, this.o.pitchTurnMin);
+  if (!p) { this.reset(); return { heading: 0, speed: 0, pitch: turning, state: "lost" }; }
+  if (age > this.o.lostMs) {
+    this.reset();
+    return { heading: wrap180(p.az - heading), speed: 0, pitch: turning, state: "lost" };
+  }
   // Coast on the prediction only while readings are fresh: a stale one holds where they were
   // heading at that moment, so it never spins far on old speed (the step back when lost is at
   // most half a second of its turning).
   var q = track.predict(Math.min(t, p.t + this.o.staleMs)), err = wrap180(q.az - heading);
-  var speed = 0, state = "hold";
-  if (age <= this.o.staleMs && !this.stay) {
-    var off = q.dist - this.set;
-    if (Math.abs(off) > this.o.band) {
-      speed = clamp(this.o.gain * (off - (off > 0 ? this.o.band : -this.o.band)), -this.o.backMax, 1);
-      state = "follow";
-      // Backing travels opposite the camera, so with the person well off to one side it would
-      // close on them while "backing away": turn to face them first, then back.
-      if (speed < 0 && Math.abs(err) > this.o.backTurnMax) { speed = 0; state = "hold"; }
-    }
-  }
-  // The camera's height creeps toward the face once per reading, not once per tick.
-  if (track.seq !== this.seq) {
+  // A stale reading forgets the average too, as the trained follower's tracker does after
+  // half a second: a gap must not count toward the second of readings a walk waits for, nor
+  // let the next reading after it stand in for the whole average.
+  if (age > this.o.staleMs) this.reset();
+  // Once per reading, the reading joins the distance's average (a plain mean until it spans
+  // avgMs, then a moving one, so an early long reading weighs no more than any other).
+  var newReading = track.seq !== this.seq;
+  if (newReading) {
     this.seq = track.seq;
-    if (isFinite(p.up)) this.pitch = clamp(this.pitch + this.o.pitchGain * p.up, -1, 1);
+    var raw = num(p.raw, p.dist), gap = this.lastT === null ? 0 : Math.max(0, p.t - this.lastT);
+    this.n++;
+    this.heldMs += gap;
+    this.lastT = p.t;
+    var a = Math.max(1 / this.n, Math.min(1, gap / this.o.avgMs));
+    this.dist = this.dist === null ? raw : this.dist + a * (raw - this.dist);
   }
-  return { heading: err, speed: speed, pitch: this.pitch, state: state, dist: q.dist, set: this.set };
+  var speed = 0, state = "hold", off = num(this.dist, q.dist) - this.set;
+  var fresh = age <= this.o.staleMs && !this.stay;
+  var within = this.o.walkTurnMax + (this.walking ? 10 : 0);
+  this.walking = fresh && (this.walking || this.heldMs >= this.o.walkWaitMs) &&
+    off > (this.walking ? this.o.walkStop : this.o.walkStart) && Math.abs(err) <= within;
+  if (this.walking) {
+    // Full speed: growbot-drive.js walks only above its SPEED_ON, and the master trained
+    // stop-or-go, so a speed scaled down near the set distance would never start the walk.
+    speed = 1;
+    state = "follow";
+  } else if (fresh && off < -this.o.band) {
+    speed = clamp(this.o.gain * (off + this.o.band), -this.o.backMax, 0);
+    state = "follow";
+    // Backing travels opposite the camera, so with the person well off to one side it would
+    // close on them while "backing away": turn to face them first, then back.
+    if (Math.abs(err) > this.o.backTurnMax) { speed = 0; state = "hold"; }
+  }
+  // The camera's height creeps toward the face once per reading, only while standing and
+  // facing them: a walk's own stance pitches the lens, which would read as the face moving.
+  var facing = this.facing = Math.abs(err) <= (this.facing ? this.o.pitchTurnMax : this.o.pitchFaceDeg);
+  if (newReading && speed === 0 && facing && isFinite(p.up)) {
+    this.pitch = clamp(this.pitch + this.o.pitchGain * p.up, -1, 1);
+  }
+  return { heading: err, speed: speed, pitch: facing ? this.pitch : turning, state: state, dist: num(this.dist, q.dist), set: this.set };
 };

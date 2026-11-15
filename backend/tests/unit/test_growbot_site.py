@@ -4180,11 +4180,17 @@ def test_following_walks_after_someone_who_walks_away() -> None:
     """growbot-follow.js: the distance at the lock is kept; a face shrinking in the frame is the
     person getting further, so it walks tall toward them, straight on while they're centred."""
     got = _trained_walk(
-        "look", _STILL, skills=_SET, follow="walk", faces=_walking_away(0.15, 0.95, 20)
+        "look",
+        _STILL,
+        skills=_SET,
+        follow="walk",
+        faces=_walking_away(0.15, 0.98, 40),
+        wait_ms=4500,
     )
     assert "follow_lock" in got["logs"]
-    # They were already further by the time its stance settled, so it walks from the start.
-    assert set(got["files"]) == {_TALL_F}
+    # It stands with the look until its averaged distance holds a second of readings (one
+    # long reading mid-waddle never starts a walk), then walks.
+    assert got["files"][0] == _LOOK_F and got["files"][-1] == _TALL_F
     assert got["cmds"][-1]["fwd"] == 1 and abs(got["cmds"][-1]["yaw"]) < 0.01
     assert "following" in got["screen"]
 
