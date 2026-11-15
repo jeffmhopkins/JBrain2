@@ -1021,7 +1021,7 @@ def test_a_silent_last_piece_is_not_a_failure() -> None:
         'dropped(0,"empty"); now+=200000; run();'
     )
     assert got["toasts"] == [] and got["sent"] == []
-    head = page[page.index("function heardText(txt,meta,detectedLang){") :][:120]
+    head = page[page.index("function heardText(txt,meta,detectedLang){") :][:200]
     assert "var toast=(meta&&meta.gbPiece)?function(){}:window.toast;" in head
 
 
