@@ -18,6 +18,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotMove, type GrowbotPolicy, type GrowbotRobot, api } from "../api/client";
 import { GrowbotDrive } from "./GrowbotDrive";
+import { GrowbotFollow } from "./GrowbotFollow";
 import {
   GrowbotPoliciesSheet,
   offered,
@@ -396,6 +397,16 @@ export function GrowbotMovePanel({
           halted={halted}
           onSaid={setSaid}
           onStop={stop}
+        />
+      )}
+
+      {skills && (
+        <GrowbotFollow
+          code={robot.code}
+          skills={skills}
+          disabled={!!blocked}
+          halted={halted}
+          onSaid={setSaid}
         />
       )}
 

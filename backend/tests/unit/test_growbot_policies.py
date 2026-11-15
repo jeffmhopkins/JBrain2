@@ -465,6 +465,19 @@ async def test_a_walk_names_a_library_policy_for_the_creature(
     ):
         assert client.post(move, json={**body, **bad}).status_code == status, bad
     assert len(sent) == 1
+    # The follower (growbot-follow.js) runs a skill set's look: following, its dry run, or one of
+    # the camera's settings. Never with a single policy, another move, or the Drive's steering.
+    follow = {"move": "look", "secs": 0, "skills": skills, "follow": "dry"}
+    assert client.post(move, json=follow).status_code == 200
+    assert sent.pop() == {"code": "gb-a1", **follow}
+    for bad in (
+        {"skills": None, "policy": pid},
+        {"move": "forward"},
+        {"drive": "d1ce0001"},
+        {"follow": "chase"},
+    ):
+        assert client.post(move, json={**follow, **bad}).status_code == 422, bad
+    assert len(sent) == 1
 
 
 def _keep(jl: FakeJlaunchClient, slug: str, title: str, body: bytes, job: str) -> None:

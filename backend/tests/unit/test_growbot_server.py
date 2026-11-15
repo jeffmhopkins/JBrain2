@@ -2732,6 +2732,36 @@ def test_a_drive_can_name_a_skill_set_for_the_creature(run: _Running) -> None:
     page.shut()
 
 
+def test_a_skill_sets_look_can_follow_a_face(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    skills = {"look": _PID, "forward": _PID2}
+    move = {"code": "gb-abc123", "move": "look", "secs": 0, "skills": skills, "follow": "walk"}
+    # Only a skill set's look follows, and only the follower's own words.
+    for bad in (
+        {"follow": "chase"},
+        {"follow": 1},
+        {"drive": "d1ce0001"},
+        {"move": "forward"},
+        {"skills": None, "policy": _PID},
+    ):
+        assert _move(run, {**move, **bad})[0] == 400, bad
+    moved: list[dict[str, Any]] = []
+
+    def answer() -> None:
+        msg = page.message()
+        moved.append(msg)
+        page.text({"t": "box_ack", "rid": msg["rid"], "ok": True, "state": "accepted"})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    assert _move(run, move)[0] == 200
+    t.join(5)
+    assert moved[0]["follow"] == "walk" and moved[0]["skills"] == skills
+    page.shut()
+
+
 def test_a_move_without_a_policy_sends_none(run: _Running) -> None:
     page = _phone(run, "/d/gb-abc123-agent")
     page.text({"t": "hello"})

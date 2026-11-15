@@ -24,6 +24,8 @@
   var model = null, loading = false, fails = 0, retryAt = 0;
   var lastFed = -Infinity, lastAsk = -Infinity, lastFace = -Infinity, lastUse = -Infinity;
   var previous = null;
+  /* Others that want every result too (growbot-box.js's follower), raw boxes and all. */
+  var listeners = [];
 
   function now() { return performance.now(); }
 
@@ -55,6 +57,7 @@
   }
 
   function feed(boxes) {
+    listeners.forEach(function (fn) { try { fn(boxes || []); } catch (e) {} });
     var b = pick(boxes);
     previous = b;
     if (!b) return;
@@ -150,6 +153,7 @@
     },
     /* Whether this file would run its own detector right now. */
     wants: function () { return !!camera() && !trackerWatching(now()); },
+    listen: function (fn) { if (typeof fn === "function" && listeners.indexOf(fn) < 0) listeners.push(fn); },
     toScreen: toScreen,
     pick: pick
   };

@@ -4,12 +4,16 @@
 // the Body tab's steering as JSON ({at, drive, heading, speed, pitch}: sent `at` ms after a move
 // whose Drive id is "d1ce0001"). Env: GB_SKILLS runs a skill set (growbot-drive.js at GB_DRIVE)
 // of three stand-in files instead, and GB_ESTOP_AT says "stop, stop!" that many ms in.
+// GB_FOLLOW ("walk" or "dry") follows faces instead (growbot-follow.js at GB_FOLLOW_JS): GB_FACES
+// is [{at, x, w}], a square face box centred at x (0..1 of the frame) and w wide, seen `at` ms
+// in; GB_WAIT is how long to watch.
 import { register } from "node:module";
 const RUNNER = process.argv[2], BOX = process.argv[3], MOVE = process.argv[4];
 const PHONE = JSON.parse(process.argv[5]);
 register("data:text/javascript," + encodeURIComponent(
   "export async function resolve(s, c, n) {" +
   " if (s === '/growbot-drive.js') return n(" + JSON.stringify(process.env.GB_DRIVE || "") + ", c);" +
+  " if (s === '/growbot-follow.js') return n(" + JSON.stringify(process.env.GB_FOLLOW_JS || "") + ", c);" +
   " return n(s === '/growbot_runner.js' ? " + JSON.stringify(RUNNER) + " : s, c); }"));
 const fs = await import("node:fs");
 const runner = await import(RUNNER);
@@ -30,6 +34,13 @@ g._bodyAlive = () => true; g.ensureIMU = () => {}; g.holdStop = () => {}; g.logE
 g.phoneTiltDegrees = () => 0; g.setErr = (m) => errs.push(m);
 g.calNow = () => ({ L_OFF: 4, R_OFF: -2, L_SIGN: -1, R_SIGN: 1, IMU_SIGN: [1, -1, 1], gain: 0.7 });
 g.$ = () => ({ textContent: "" });
+// The eyes' feed, the creature's screen and its camera, for the follower.
+let eyes = null;
+const shown = [];
+g.gbEyes = { listen(fn) { eyes = fn; } };
+g.camOn = true; g.camFacing = process.env.GB_CAM || "user";
+g.document.body = { appendChild(el) { shown.push(el); } };
+g.document.createElement = () => ({ style: {}, innerHTML: "", remove() {} });
 // The legs' duty budget, as next.html keeps it: a run is granted no more than what is left.
 g._walkLog = [];
 g.dutyLeftMs = () => Math.max(0, Number(process.argv[6] || 60000) - g._walkLog.reduce((t, w) => t + w.ms, 0));
@@ -38,7 +49,7 @@ let seq = 0;
 g._moveRequest = (name) => ({ id: ++seq, action: name, state: "requested" });
 g._moveReport = (a, state, why) => { a.state = state; reports.push([state, why]); };
 g.stopMotion = () => { g._motionGen++; if (g._motion && g._motion.loopIv) clearTimeout(g._motion.loopIv); g._motion = null; };
-g.carryLegMotion = (rest) => { g._motionGen++; if (g._motion && g._motion.loopIv) clearTimeout(g._motion.loopIv); g._motion = null; if (rest) poses.push(["rest"]); return true; };
+g.carryLegMotion = (rest) => { g._motionGen++; if (g._motion && g._motion.loopIv) clearTimeout(g._motion.loopIv); g._motion = null; if (rest && g._imuWhy === "done") poses.push(["rest"]); return true; };
 const POLICY = {
   obs_size: 2, act_size: 2, mean: [0, 0], std: [1, 1],
   layers: [{ W: [[0, 0], [1, -1]], b: [0, 0], act: "linear" }],
@@ -68,7 +79,16 @@ const src = fs.readFileSync(BOX, "utf8");
 (0, eval)(src.slice(src.indexOf("/* Trained walks from JBrain's policy library")));
 const STEER = process.argv[7] ? JSON.parse(process.argv[7]) : null;
 const SKILLS = process.env.GB_SKILLS ? JSON.parse(process.env.GB_SKILLS) : null;
-g.gbTrainedWalk(SKILLS || "0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, 1, STEER ? "d1ce0001" : "");
+const FOLLOW = process.env.GB_FOLLOW || "";
+const FACES = process.env.GB_FACES ? JSON.parse(process.env.GB_FACES) : [];
+const logs = [];
+g.logEv = (k, v) => logs.push([k, v]);
+FACES.forEach((f) => setTimeout(() => {
+  const h = f.w * 0.75;
+  if (eyes) eyes(f.w ? [{ x: f.x - f.w / 2, y: 0.4 - h / 2, width: f.w, height: h }] : []);
+}, f.at));
+if (FOLLOW === "dry") g.gbFollow.dry(SKILLS);
+else g.gbTrainedWalk(SKILLS || "0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, 1, STEER ? "d1ce0001" : "", FOLLOW === "walk");
 let estopped = null, estopAt = -1;
 if (process.env.GB_ESTOP_AT) {
   setTimeout(() => { estopped = [g.gbEStop("stop"), g.gbEStop("stop, stop!")]; estopAt = fed.length; }, Number(process.env.GB_ESTOP_AT));
@@ -76,5 +96,7 @@ if (process.env.GB_ESTOP_AT) {
 const accepted = reports[0];
 let steered = null;
 if (STEER) setTimeout(() => { steered = g.gbSteer(STEER); }, STEER.at);
-await new Promise((r) => setTimeout(r, STEER ? 3600 : 2400));
-console.log(JSON.stringify({ accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
+await new Promise((r) => setTimeout(r, Number(process.env.GB_WAIT || 0) || (STEER ? 3600 : 2400)));
+const screen = shown.length ? shown[shown.length - 1].innerHTML : "";
+console.log(JSON.stringify({ screen, logs: logs.map((l) => l[0]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
+if (FOLLOW) process.exit(0);
