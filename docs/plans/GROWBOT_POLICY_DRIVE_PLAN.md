@@ -88,8 +88,11 @@ The real-robot trials after P5 are GrowBot_Training's phase 6.
   the robot turning doesn't look like the person moving. Each frame takes the face nearest where
   the person should be, within a gate that widens with time since the last sighting; a face
   outside it is never taken, so a stranger crossing doesn't steal the lock.
-- **Follower (built, P3):** heading = the bearing; pitch creeps toward the face once per
-  reading. The distance it acts on is the readings' average over about 1.5 s (a plain mean until
+- **Follower (built, P3):** heading = the bearing. Pitch creeps toward the face once per
+  reading, but only while standing within 20° of the person, since only look takes a camera
+  height and a walk's stance pitches the lens; a wider turn or a search is sent with pitch no
+  lower than 0, because look barely turns with the camera low (GrowBot_Training's follow-me
+  test: 11–45° of a 90° turn in 10 s at −1, 80–88° at 0). The distance it acts on is the readings' average over about 1.5 s (a plain mean until
   then), because the face's distance swings about 0.3 m with each waddle. Too far is a step
   forward, the one the master's own follower trained with (GrowBot_Training `follow.py`): once
   the average holds a second of readings, more than 0.10 m too far with the person within 30° of

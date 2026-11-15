@@ -47,6 +47,12 @@ export var FOLLOW = {
   coastMs: 2000,           // a track keeps its prediction this long through a crossing
   pitchGain: 0.02,         // camera height per degree of vertical offset, per reading
   backTurnMax: 60,         // degrees off the camera past which it turns before it backs
+  // Only look takes a camera height, and it barely turns with the camera low (GrowBot_Training
+  // master follow-me: 11-45 degrees of a 90-degree turn in 10 s at -1, 80-88 at 0). So the
+  // height moves only while standing within pitchTurnMax of the person, and a wider turn or a
+  // search is sent no lower than pitchTurnMin; the height asked for comes back after.
+  pitchTurnMax: 20,
+  pitchTurnMin: 0,
 };
 
 function num(v, d) { return typeof v === "number" && isFinite(v) ? v : d; }
@@ -166,10 +172,11 @@ Follower.prototype.further = function () { this.set = clamp(this.set + this.o.st
 // else by itself, the Track's match does that only for the same person).
 Follower.prototype.command = function (track, heading, t) {
   var age = track.age(t), p = track.p;
-  if (!p) { this.reset(); return { heading: 0, speed: 0, pitch: this.pitch, state: "lost" }; }
+  var turning = Math.max(this.pitch, this.o.pitchTurnMin);
+  if (!p) { this.reset(); return { heading: 0, speed: 0, pitch: turning, state: "lost" }; }
   if (age > this.o.lostMs) {
     this.reset();
-    return { heading: wrap180(p.az - heading), speed: 0, pitch: this.pitch, state: "lost" };
+    return { heading: wrap180(p.az - heading), speed: 0, pitch: turning, state: "lost" };
   }
   // Coast on the prediction only while readings are fresh: a stale one holds where they were
   // heading at that moment, so it never spins far on old speed (the step back when lost is at
@@ -179,12 +186,11 @@ Follower.prototype.command = function (track, heading, t) {
   // half a second: a gap must not count toward the second of readings a walk waits for, nor
   // let the next reading after it stand in for the whole average.
   if (age > this.o.staleMs) this.reset();
-  // Once per reading: the camera's height creeps toward the face, and the reading joins the
-  // distance's average (a plain mean until it spans avgMs, then a moving one, so an early long
-  // reading weighs no more than any other).
-  if (track.seq !== this.seq) {
+  // Once per reading, the reading joins the distance's average (a plain mean until it spans
+  // avgMs, then a moving one, so an early long reading weighs no more than any other).
+  var newReading = track.seq !== this.seq;
+  if (newReading) {
     this.seq = track.seq;
-    if (isFinite(p.up)) this.pitch = clamp(this.pitch + this.o.pitchGain * p.up, -1, 1);
     var raw = num(p.raw, p.dist), gap = this.lastT === null ? 0 : Math.max(0, p.t - this.lastT);
     this.n++;
     this.heldMs += gap;
@@ -209,5 +215,11 @@ Follower.prototype.command = function (track, heading, t) {
     // close on them while "backing away": turn to face them first, then back.
     if (Math.abs(err) > this.o.backTurnMax) { speed = 0; state = "hold"; }
   }
-  return { heading: err, speed: speed, pitch: this.pitch, state: state, dist: num(this.dist, q.dist), set: this.set };
+  // The camera's height creeps toward the face once per reading, only while standing and
+  // facing them: a walk's own stance pitches the lens, which would read as the face moving.
+  var facing = Math.abs(err) <= this.o.pitchTurnMax;
+  if (newReading && speed === 0 && facing && isFinite(p.up)) {
+    this.pitch = clamp(this.pitch + this.o.pitchGain * p.up, -1, 1);
+  }
+  return { heading: err, speed: speed, pitch: facing ? this.pitch : turning, state: state, dist: num(this.dist, q.dist), set: this.set };
 };

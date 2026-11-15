@@ -223,3 +223,31 @@ def test_the_camera_height_creeps_once_per_reading_not_per_tick() -> None:
         "fo.command(t, 0, 10); fo.command(t, 0, 50); return fo.command(t, 0, 90).pitch;"
     )
     assert got == pytest.approx(0.2)
+
+
+def test_the_camera_height_holds_while_walking_and_a_wide_turn_is_sent_level() -> None:
+    """Only look takes a camera height: a walk's stance pitching the lens must not move it, and
+    look barely turns with the camera low, so a turn past 20 degrees goes no lower than 0."""
+    got = _node(
+        "const t = new f.Track(), fo = new f.Follower(); fo.start(1); fo.pitch = -1; let c;"
+        "for (let i = 0; i <= 12; i++) {"
+        "  t.p = { az: 0, dist: 2, raw: 2, size: 0.1, vaz: 0, vdist: 0, t: i * 100,"
+        "    up: i < 10 ? 0 : 10 };"
+        "  t.seq++; c = fo.command(t, 0, i * 100); }"
+        "const walking = [c.speed, c.pitch];"
+        "t.p.az = 60; t.seq++; const wide = fo.command(t, 0, 1300);"
+        "t.p.az = 0; t.seq++; const back = fo.command(t, 0, 1400);"
+        "return [walking, [wide.pitch, fo.pitch], back.pitch];"
+    )
+    assert got[0] == [1, -1]
+    assert got[1] == [0, -1] and got[2] == -1
+
+
+def test_a_search_for_someone_lost_is_sent_with_the_camera_level() -> None:
+    got = _node(
+        "const t = new f.Track(), fo = new f.Follower(); fo.pitch = -0.6;"
+        "t.lock([f.reading(box(0.5, 0.15))], 0, 0);"
+        "return [fo.command(t, 0, 4000), new f.Follower().command(new f.Track(), 0, 0)];"
+    )
+    assert got[0]["state"] == "lost" and got[0]["pitch"] == 0
+    assert got[1]["pitch"] == 1
