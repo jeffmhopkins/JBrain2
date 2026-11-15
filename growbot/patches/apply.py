@@ -1202,9 +1202,9 @@ _GB_TALK_JS = (
     "function gbTalkTraces(all){ return (all||[]).slice(-(gbTalkGrown()?GB_TALK_TRACES_GROWN"
     ":GB_TALK_TRACES_KID)); }\n"
     "var GB_TALK_GROWN_BLOCK=\"\\n\\n== TALK STYLE: GROWN-UP ==\\nyour person is an adult who"
-    " wants a real conversation with you, the kind they have with a sharp friend. whenever they"
-    " talk with you, this replaces the ~18-word limit, 'never chain line after line' and 'speak"
-    " only when you have something worth saying' above.\\ngo in depth: when they tell you about"
+    " wants a real conversation with you, the kind they have with a sharp friend. 'speak only"
+    " when you have something worth saying' above is about your own beats; when they talk with"
+    " you, answer.\\ngo in depth: when they tell you about"
     " their work, an idea, something technical or something that matters to them, think about"
     " it and answer with substance: what it means, how it works, what you make of it, a"
     " connection to something they said earlier, a real opinion of your own. you know a lot"
@@ -3523,7 +3523,7 @@ FLOOR_SAID_PATCHES: list[tuple[str, str, str, int]] = [
         " with what they actually said: add your own thought, what you know about it, or an"
         " opinion, in two to four sentences; end with a question only if you truly want to"
         " know.\","
-        " GB_ASK_SEE=/\\b(?:see|seeing|look|looking|show|camera|view|again|repeat)\\b/i;\n"
+        " GB_ASK_SEE=/\\b(?:see|seeing|look|looking|show|camera|view|again|repeat|describe|colou?r|notice|watch|spot|where are we|what(?:\x27s| is) (?:that|this|it))\\b/i;\n"
         + _GB_FLOOR_SAID_JS + "function _calmBefore(now){",
         1,
     ),
@@ -3571,6 +3571,12 @@ FLOOR_SAID_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/prompts.js",
         "function buildSystem(soul, ctx) {",
         _GB_GROWN_ID_JS + "function buildSystem(soul, ctx) {",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        '  var engine = _S("persona.constitution", CONSTITUTION) + "\\n" + SAFETY_FLOOR',
+        '  var engine = gbGrownId(_S("persona.constitution", CONSTITUTION)) + "\\n" + SAFETY_FLOOR',
         1,
     ),
     (

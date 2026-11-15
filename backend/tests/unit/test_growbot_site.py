@@ -3994,7 +3994,8 @@ def test_each_turn_quotes_his_last_lines_back_so_he_does_not_say_them_again() ->
         "r.q=gbRecentSays(n);"
         "_live={scratch:{traces:[{t:n-700000,a:'Old.'}]}};r.none=gbRecentSays(n);"
         "_live=null;r.nolive=gbRecentSays(n);"
-        "r.see=['Can you see it?','Look at the dates.','Say that again.','How far is home?']"
+        "r.see=['Can you see it?','Look at the dates.','Say that again.','How far is home?',"
+        "'What colour is that light?',\"What's that?\",'Where are we now?']"
         ".map(function(t){return GB_ASK_SEE.test(t);});"
         "var gbTalkGrown=function(){return true;};"
         "r.cue=[gbDepthCue({humanReq:{}}),gbDepthCue(null),gbDepthCue({beat:1})];"
@@ -4009,7 +4010,7 @@ def test_each_turn_quotes_his_last_lines_back_so_he_does_not_say_them_again() ->
     assert got["cue"][0].startswith(" Engage with what they actually said:")
     assert got["cue"][1:] == ["", ""] and got["kid"] == ""
     assert got["none"] == "" and got["nolive"] == ""
-    assert got["see"] == [True, True, True, False]
+    assert got["see"] == [True, True, True, False, True, True, True]
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert '  return (a?"\\nyour last exchange: "+a:"")+gbRecentSays(now); }' in page
     assert (
@@ -4047,6 +4048,11 @@ def test_grown_up_talk_drops_the_little_robots_brevity(grown: bool) -> None:
     for gone in ("at most ~18 words", "Never chain line after line.", "matter-of-fact little"):
         assert (gone in got) is not grown
     assert ("a curious, thoughtful mind in a small robot body" in got) is grown
+    assert ("Show them plainly and briefly" in got) is not grown
+    assert (
+        'var engine = gbGrownId(_S("persona.constitution", CONSTITUTION)) + "\\n" + SAFETY_FLOOR'
+        in prompts
+    )
     assert 'var persona = gbGrownId(_S("persona.constitution", CONSTITUTION));' in prompts
 
 
