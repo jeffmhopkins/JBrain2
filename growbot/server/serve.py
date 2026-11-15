@@ -172,14 +172,21 @@ CAL_CACHE_S = 2.0
 CAL_PATH = "/api/box/cal"
 # A trained walk from JBrain's policy library, which the Body tab drives by its id.
 POLICY_PATH = "/api/box/policy"
+# The body test's log (growbot-bodytest.js): a chunk of samples and events every couple of
+# seconds, from the phone wearing the robot it names. A chunk is about 40 samples and at most one
+# small camera still, so this bounds a page gone wrong, not a real one.
+BODYTEST_PATH = "/api/box/bodytest"
+MAX_BODYTEST_BODY = 512 * 1024
+BODYTEST_RUN_RE = re.compile(r"bt-[a-z0-9]{1,16}-[a-z0-9]{1,16}")
 # The id the Body tab's Drive gives the walk it starts, so only that walk takes its steering.
 DRIVE_RE = re.compile(r"[0-9a-f]{8,32}")
 POLICY_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # The skills a skill set names (growbot-drive.js): stand and look, walk camera first, back away.
 SKILL_MODES = frozenset({"look", "forward", "back"})
 # What a skill set's look may do instead (growbot-follow.js): follow the face it sees, a
-# legs-off dry run of that, or set the camera's 1 m distance or which way its frames run.
-FOLLOW = frozenset({"walk", "dry", "calibrate", "flip"})
+# legs-off dry run of that, set the camera's 1 m distance or which way its frames run, or run
+# the guided body test (growbot-bodytest.js) on those skills.
+FOLLOW = frozenset({"walk", "dry", "calibrate", "flip", "test"})
 # A library policy never changes under its id, so one read serves a run of walks; a deleted
 # one stops loading within this.
 POLICY_CACHE_S = 60.0
@@ -804,6 +811,8 @@ def body_limit(req: Request) -> int:
         return MAX_PREFS_BODY
     if req.path == DREAM_PATH:
         return MAX_DREAM_BODY
+    if req.path == BODYTEST_PATH:
+        return MAX_BODYTEST_BODY
     return MAX_BODY
 
 
@@ -1837,6 +1846,8 @@ class GrowBot:
             return await self.cal_route(req)
         if req.path == POLICY_PATH:
             return await self.policy_route(req)
+        if req.path == BODYTEST_PATH:
+            return await self.bodytest_route(req)
         if req.path in (MEMORY_PATH, MEMORY_PATH + "/view", MEMORY_PATH + "/forget"):
             return await self.memory_route(req)
         if req.path == PREFS_PATH:
@@ -1930,6 +1941,41 @@ class GrowBot:
             self._cals.clear()
         self._cals[code] = (time.monotonic(), cal)
         return cal
+
+    async def bodytest_route(self, req: Request) -> Response:
+        """`POST`: one chunk of a body test's log, kept by the api for review. Only from a phone
+        that drives the robot it names, so one phone can't write into another robot's runs.
+        Sent and answered in order (the page waits for each), unlike the diary's best effort:
+        a run read back later is only as good as its missing chunks."""
+        if req.method != "POST":
+            return json_response(405, {"error": "method not allowed"})
+        if len(req.body) > MAX_BODYTEST_BODY:
+            return json_response(413, {"error": "too big"})
+        msg = _parse(req.body)
+        if msg is None:
+            return json_response(400, {"error": "json"})
+        code, run = msg.get("robot"), msg.get("run")
+        if not isinstance(code, str) or not CODE_RE.fullmatch(code):
+            return json_response(400, {"error": "robot"})
+        if not isinstance(run, str) or not BODYTEST_RUN_RE.fullmatch(run):
+            return json_response(400, {"error": "run"})
+        claims = self._claims(req)
+        if claims is None or not await self._drives(claims, code):
+            return json_response(403, {"error": "not this phone's robot"})
+        payload = {k: msg[k] for k in ("run", "seq", "status", "summary", "rows", "skills") if k in msg}
+        payload["robot"] = code
+        if claims.persona:
+            payload["persona"] = claims.persona
+        up = await self._call(
+            self._api_post, "/internal/growbot/bodytests", payload, pool=self._cal_pool
+        )
+        if up.status != 200:
+            return json_response(502, {"ok": False, "status": up.status})
+        got = _parse(up.body)
+        # Refused by the api (a finished run's straggler, a run over its cap): said, not kept.
+        if not (isinstance(got, dict) and got.get("ok") is True):
+            return json_response(409, {"ok": False})
+        return json_response(200, {"ok": True})
 
     async def policy_route(self, req: Request) -> Response:
         """`GET ?id=<uuid>`: a library policy's JSON for the creature's runner, read from the

@@ -96,7 +96,11 @@ if (process.env.GB_ESTOP_AT) {
 const accepted = reports[0];
 let steered = null;
 if (STEER) setTimeout(() => { steered = g.gbSteer(STEER); }, STEER.at);
+// What the body test samples off the walk (growbot-box.js M.tele), as last seen.
+let tele = null;
+const teleIv = setInterval(() => { if (g._motion && g._motion.tele) tele = g._motion.tele; }, 20);
 await new Promise((r) => setTimeout(r, Number(process.env.GB_WAIT || 0) || (STEER ? 3600 : 2400)));
+clearInterval(teleIv);
 const screen = shown.length ? shown[shown.length - 1].innerHTML : "";
-console.log(JSON.stringify({ screen, logs: logs.map((l) => l[0]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
+console.log(JSON.stringify({ tele, screen, logs: logs.map((l) => l[0]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
 if (FOLLOW) process.exit(0);

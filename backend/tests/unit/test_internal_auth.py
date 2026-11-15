@@ -111,6 +111,8 @@ GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ("GET", f"/internal/growbot/policies/{_POLICY}", None, 200),
     ("POST", "/internal/growbot/calls", {"kind": "tts", "ok": True, "total_ms": 1}, 204),
     ("POST", "/internal/growbot/journal", {"sid": "nx-abc", "rows": []}, 200),
+    # A body test chunk that names no run is refused by its model, never reaching the store.
+    ("POST", "/internal/growbot/bodytests", {}, 422),
     ("POST", "/internal/growbot/memories/list", {"persona": _PID, "phone": _PHONE}, 200),
     (
         "POST",

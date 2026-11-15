@@ -1476,6 +1476,86 @@ details.gb-help[open] summary::after {
   width: 100%;
   margin-top: 8px;
 }
+/* The Body test (GrowbotBodyTest): its button, the live mirror of a run, and past runs. */
+.gb-drive .gb-bt-go {
+  width: 100%;
+  margin-bottom: 6px;
+}
+.gb-bt-live {
+  padding: 12px 14px;
+  border: 1px solid var(--violet);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.gb-bt-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.gb-bt-h .gb-t1 {
+  flex: 1;
+}
+.gb-bt-bar {
+  height: 6px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+.gb-bt-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.gb-bt-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 10px 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.gb-bt-grid dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.gb-bt-live .gb-bt-stop {
+  width: 100%;
+  margin-top: 10px;
+  border-color: transparent;
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-weight: 500;
+}
+.gb-bt-past {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.gb-bt-past li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  border-top: 1px solid var(--border);
+}
+.gb-bt-n {
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+.gb-bt-what {
+  flex: 1;
+  min-width: 0;
+}
+.gb-bt-past a {
+  padding: 8px 4px;
+  color: var(--accent);
+}
 .gb-switch {
   display: flex;
   align-items: flex-start;

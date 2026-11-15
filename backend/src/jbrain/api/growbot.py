@@ -336,8 +336,8 @@ class MoveIn(BaseModel):
     skills: SkillSet | None = Field(default=None, min_length=1)
     # A skill set's look may follow the face it sees instead (growbot-follow.js), run that as a
     # legs-off dry run, or set the creature camera's 1 m distance (calibrate) or which way its
-    # frames run (flip).
-    follow: Literal["walk", "dry", "calibrate", "flip"] | None = None
+    # frames run (flip). Or run the guided body test on the skill set (growbot-bodytest.js).
+    follow: Literal["walk", "dry", "calibrate", "flip", "test"] | None = None
 
 
 class MoveOut(BaseModel):

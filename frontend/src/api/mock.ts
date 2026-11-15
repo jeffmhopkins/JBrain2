@@ -1099,6 +1099,50 @@ async function mockGrowbot(
     if (!r.creature) return json({ detail: "Nobody is driving it." }, 409);
     return new Response(null, { status: 202 });
   }
+  // Body tests (GrowbotBodyTest): two past runs; `?growbot-bodytest=live` shows one running.
+  if (path === "/api/growbot/bodytests" && method === "GET") {
+    const at = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    const run = (n: number, status: string, min: number, summary: object) => ({
+      number: n,
+      run: `bt-mock${n}-a1b2c3`,
+      robot: "gb-3fa91c",
+      started_at: at(min),
+      updated_at: status === "running" ? new Date().toISOString() : at(min - 5),
+      status,
+      skills: {},
+      summary,
+      rows: 2914,
+    });
+    const liveRun =
+      new URLSearchParams(globalThis.location?.search ?? "").get("growbot-bodytest") === "live";
+    return json([
+      ...(liveRun
+        ? [
+            run(8, "running", 2, {
+              phase: "run",
+              step_n: 4,
+              steps: 8,
+              label: "Turn left 90°, right 90°",
+              ask: "Stay where you are",
+              secs: 102,
+              mode: "look",
+              heading: 68.4,
+              face: { dist: 1.02, bearing: 21 },
+              falls: 0,
+            }),
+          ]
+        : []),
+      run(7, "done", 40, {
+        secs: 291,
+        results: {
+          leftright: { v: "ok", why: "frames run the right way" },
+          tilt: { v: "warn", why: "tilt reversed?" },
+          creep: { v: "warn", why: "drifted 4 cm" },
+        },
+      }),
+      run(6, "stopped", 75, { secs: 64, label: "Look and hold, 10 s" }),
+    ]);
+  }
   const move = /^\/api\/growbot\/robots\/([^/]+)\/move$/.exec(path);
   if (move && method === "POST") {
     const r = robots().find((x) => x.code === decodeURIComponent(move[1] ?? ""));

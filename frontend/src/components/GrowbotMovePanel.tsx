@@ -17,6 +17,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotMove, type GrowbotPolicy, type GrowbotRobot, api } from "../api/client";
+import { GrowbotBodyTest } from "./GrowbotBodyTest";
 import { GrowbotDrive } from "./GrowbotDrive";
 import { GrowbotFollow } from "./GrowbotFollow";
 import {
@@ -408,6 +409,10 @@ export function GrowbotMovePanel({
           halted={halted}
           onSaid={setSaid}
         />
+      )}
+
+      {skills && (
+        <GrowbotBodyTest code={robot.code} skills={skills} disabled={!!blocked} onSaid={setSaid} />
       )}
 
       <div className="gb-move-h">Tricks</div>

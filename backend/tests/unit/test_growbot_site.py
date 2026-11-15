@@ -1021,8 +1021,18 @@ def test_a_silent_last_piece_is_not_a_failure() -> None:
         'dropped(0,"empty"); now+=200000; run();'
     )
     assert got["toasts"] == [] and got["sent"] == []
-    head = page[page.index("function heardText(txt,meta,detectedLang){") :][:200]
+    head = page[page.index("function heardText(txt,meta,detectedLang){") :][:400]
     assert "var toast=(meta&&meta.gbPiece)?function(){}:window.toast;" in head
+
+
+def test_a_body_test_takes_every_heard_line_after_the_emergency_stop() -> None:
+    # "stop stop" is checked first, so it still halts the legs during a body test; then the test
+    # takes the line ("ready", "stand up", "1 meter"), so no model turn moves the legs under it.
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    head = page[page.index("function heardText(txt,meta,detectedLang){") :][:400]
+    estop = head.index("window.gbEStop(txt)")
+    taken = head.index("if(window.gbBodyTest&&window.gbBodyTest.heard(txt)) return;")
+    assert estop < taken < head.index("var toast=")
 
 
 def test_a_streamed_utterance_outlives_the_old_twelve_second_cap() -> None:
@@ -4320,6 +4330,10 @@ def test_a_skill_set_stands_and_face_tracks_at_speed_zero() -> None:
     # Walking, then the steer: speed 0 is the look, turning right 45 degrees and tilting.
     assert got["files"][0] == _TALL_F and got["files"][-1] == _LOOK_F
     assert got["cmds"][-1] == {"fwd": 0, "yaw": -0.25, "pitch": -0.5}
+    # What the body test samples off the walk: its heading, command, skill and leg poses.
+    tele = got["tele"]
+    assert (tele["tg"], tele["sp"], tele["p"], tele["mode"]) == (-45, 0, -0.5, "look")
+    assert set(tele) == {"h", "tg", "sp", "p", "mode", "l", "r"}
 
 
 def test_a_skill_set_turned_round_exactly_keeps_turning_left() -> None:
