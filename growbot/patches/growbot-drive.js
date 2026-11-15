@@ -23,8 +23,9 @@
 
 export var MODES = ["look", "forward", "back"];
 
-// The selector's thresholds. A forward walk starts only when the target is nearly ahead (sharp
-// turns are stop, spin with look, then walk: settled 2026-11-15); backing has no heading gate, and a mode holds a moment so a speed
+// The selector's thresholds. A forward walk starts only when the target is nearly ahead
+// (sharp turns are stop, spin with look, then walk: settled 2026-11-15); backing has no
+// heading gate, and a mode holds a moment so a speed
 // hovering at a threshold doesn't swap files every tick.
 export var SPEED_ON = 0.15, SPEED_OFF = 0.05, WALK_TURN_MAX = 30, WALK_TURN_LEAVE = 45, HOLD_MS = 1500;
 
