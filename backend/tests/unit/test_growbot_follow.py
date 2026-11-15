@@ -119,6 +119,18 @@ def test_the_follower_holds_its_distance_with_a_dead_band() -> None:
     assert got[5]["speed"] == 1 and got[6]["speed"] == -1
 
 
+def test_too_close_with_the_person_off_to_one_side_turns_before_it_backs() -> None:
+    """Backing travels opposite the camera: with the person 120 degrees off it would close on
+    them. The follower asks for no speed until they're within 60 degrees, then backs."""
+    got = _node(
+        "const t = new f.Track(), fo = new f.Follower(); fo.start(1);"
+        "t.p = { az: 120, dist: 0.6, size: 0.1, vaz: 0, vdist: 0, t: 0, up: 0 }; t.seq++;"
+        "return [fo.command(t, 0, 0), fo.command(t, 70, 0)];"
+    )
+    assert got[0]["speed"] == 0 and got[0]["heading"] == pytest.approx(120)
+    assert got[1]["speed"] < 0 and got[1]["heading"] == pytest.approx(50)
+
+
 def test_stay_turns_to_watch_but_never_walks() -> None:
     got = _commands([2.0], stay=True)
     assert got[0]["speed"] == 0 and got[0]["state"] == "hold"

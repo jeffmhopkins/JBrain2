@@ -23,8 +23,9 @@
 
 export var MODES = ["look", "forward", "back"];
 
-// The selector's thresholds. A walk starts only when the target is nearly ahead (sharp turns are
-// stop, spin with look, then walk: settled 2026-11-15), and a mode holds a moment so a speed
+// The selector's thresholds. A forward walk starts only when the target is nearly ahead
+// (sharp turns are stop, spin with look, then walk: settled 2026-11-15); backing has no
+// heading gate, and a mode holds a moment so a speed
 // hovering at a threshold doesn't swap files every tick.
 export var SPEED_ON = 0.15, SPEED_OFF = 0.05, WALK_TURN_MAX = 30, WALK_TURN_LEAVE = 45, HOLD_MS = 1500;
 
@@ -75,14 +76,16 @@ export function inputs(prof, mode, cmd) {
   return out;
 }
 
-// The mode a command asks for, before hysteresis.
+// The mode a command asks for, before hysteresis. Only the speed's sign picks the walk (owner,
+// 2026-11-15): a negative speed is the nose walk whatever the heading, steering as it backs with
+// the camera on the person; a target behind never means backing, only a spin (look) first.
 export function wanted(cmd, current) {
   var h = Math.abs(wrap180(num(cmd && cmd.heading, 0))), s = num(cmd && cmd.speed, 0);
   var walking = current === "forward" || current === "back";
   var on = walking ? SPEED_OFF : SPEED_ON, turnMax = walking ? WALK_TURN_LEAVE : WALK_TURN_MAX;
+  if (s < -on) return "back";
   if (h > turnMax) return "look";
   if (s > on) return "forward";
-  if (s < -on) return "back";
   return "look";
 }
 

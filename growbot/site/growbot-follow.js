@@ -34,6 +34,7 @@ export var FOLLOW = {
   lostMs: 3000,            // no reading this long: lost
   coastMs: 2000,           // a track keeps its prediction this long through a crossing
   pitchGain: 0.02,         // camera height per degree of vertical offset, per reading
+  backTurnMax: 60,         // degrees off the camera past which it turns before it backs
 };
 
 function num(v, d) { return typeof v === "number" && isFinite(v) ? v : d; }
@@ -154,6 +155,9 @@ Follower.prototype.command = function (track, heading, t) {
     if (Math.abs(off) > this.o.band) {
       speed = clamp(this.o.gain * (off - (off > 0 ? this.o.band : -this.o.band)), -this.o.backMax, 1);
       state = "follow";
+      // Backing travels opposite the camera, so with the person well off to one side it would
+      // close on them while "backing away": turn to face them first, then back.
+      if (speed < 0 && Math.abs(err) > this.o.backTurnMax) { speed = 0; state = "hold"; }
     }
   }
   // The camera's height creeps toward the face once per reading, not once per tick.
