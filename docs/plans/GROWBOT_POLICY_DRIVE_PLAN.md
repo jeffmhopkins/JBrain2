@@ -1,6 +1,6 @@
 # GrowBot policy drive — trained skills on the real robot
 
-> **Status:** In progress · **Last verified:** 2026-11-15 · **Waves:** P1🟡 P2🟡 P3◻️ P4◻️ P5◻️
+> **Status:** In progress · **Last verified:** 2026-11-15 · **Waves:** P1🟡 P2✅ P3🟡 P4◻️ P5◻️
 
 The owner's ask (2026-11-14/15): start wiring GrowBot_Training's locomotion policies into the
 robot's software now, without waiting for training to finish. First, follow a face. Then answer the
@@ -65,9 +65,9 @@ at one file and nothing reloads (back keeps a nose-first file while one is enabl
 
 | Wave | What | State |
 | --- | --- | --- |
-| P1 | Current best checkpoints kept in GrowBot_Training `policies/` so the Body tab imports them | 🟡 look v6 kept (#39); lift_fall ca607df3 and nose_walk 6e69e32c when they finish |
-| P2 | Skill sets: `growbot-drive.js`, the page's skill switching, `skills` on the move, the Drive's skill set; the "stop stop" emergency stop | 🟡 this PR |
-| P3 | Front-camera face/pose tracker and the follower, with a legs-off dry run showing the commands | ◻️ |
+| P1 | Current best checkpoints kept in GrowBot_Training `policies/` so the Body tab imports them | 🟡 look v6 (#39) and nose-walk-1 6e69e32c (#40) kept; lift_fall ca607df3 when it finishes. nose-walk-1 is slower than its cap (1.9 cm/s at a full command, 0.5 cm/s creep at 0), so walk for X (P5) uses measured speed, not the cap |
+| P2 | Skill sets: `growbot-drive.js`, the page's skill switching, `skills` on the move, the Drive's skill set; the "stop stop" emergency stop | ✅ #1912 |
+| P3 | Front-camera face tracker and the follower, with a legs-off dry run showing the commands | 🟡 this PR; the bench checks below are open |
 | P4 | Voice commands (follow me, come, get closer, back up, stay) and the speaker lock | ◻️ |
 | P5 | Walk for X seconds or meters: distance from speed, floor calibration, camera stall/looming checks, hold-while-speaking | ◻️ |
 
@@ -75,14 +75,28 @@ The real-robot trials after P5 are GrowBot_Training's phase 6.
 
 ## Follower, voice and walk-for-X (P3–P5)
 
-- **Tracker:** MediaPipe face first, pose as the fallback, on the front camera at 8 or more
-  readings a second. Each reading gives a bearing, a vertical offset, a distance (from eye spacing
-  or shoulder width, calibrated once at 1 m), a confidence and its age. The gyro carries the
-  heading between frames. Check the image's left-right sign on the bench, since browsers mirror the
-  selfie preview.
-- **Follower:** heading = the bearing; speed from the distance error with a ±0.15 m dead band;
-  pitch = the vertical offset, integrated. No reading for 0.5 s drops speed to 0. Lost for 3 s, it
-  turns toward the last bearing and re-locks only on a strong match.
+- **Tracker (built, P3):** `growbot/patches/growbot-follow.js`. It takes the face boxes the
+  creature already detects (`growbot-eyes.js`: upstream's BlazeFace, in the leg tracker or in
+  its own worker, whichever is running), so there is no second detector on the phone. Each box
+  gives a bearing (from the frame's 60° assumed width of view), a vertical offset and a distance
+  (from the face's width, 15 cm, corrected once by **Measure 1 m**). The frames aren't mirrored,
+  so a face right of centre is on the robot's left; **Flip frames** reverses that per phone. The
+  person is kept in the walk's own frame (the gyro's heading at the reading plus the bearing), so
+  the robot turning doesn't look like the person moving. Each frame takes the face nearest where
+  the person should be, within a gate that widens with time since the last sighting; a face
+  outside it is never taken, so a stranger crossing doesn't steal the lock.
+- **Follower (built, P3):** heading = the bearing; speed = 1.5 × the distance error beyond a
+  ±0.15 m dead band; pitch creeps toward the face once per reading. No reading for 0.5 s drops
+  speed to 0. After 3 s it stands and turns toward where the person was last seen. A walk that
+  never locks within 6 s, or loses the person for 8 s, ends with the legs released and says why.
+  A follow runs up to 2 minutes and spends the legs' duty budget as any walk does. "stop stop",
+  the Body tab's Stop and any other move end it.
+- **Dry run (built, P3):** the same tracker and follower with the legs left alone. The
+  creature's screen (which faces the person) shows an arrow the way it would turn, the skill the
+  selector would pick, the speed, and the distance against the one it keeps.
+- **From the Body tab (built, P3):** Follow me, Dry run, Measure 1 m and Flip frames, sent as a
+  skill set's `look` with `follow` set (`walk`, `dry`, `calibrate`, `flip`). The camera settings
+  live on the creature's phone.
 - **Voice:** parsed on the phone with no model call, extending `_ftWords`. The commands change only
   the follower's settings.
 - **Walk for X:** holds the starting heading. Distance is summed from the speed estimate, and the
@@ -90,7 +104,13 @@ The real-robot trials after P5 are GrowBot_Training's phase 6.
   early; it is not a ruler. Speech starting mid-walk holds it in place until the transcript lands.
   A few frames go to the run log. It ends with one line, e.g. "Walked about 0.9 m in 19 s".
 
-## Known gaps (from the P2 review)
+## Known gaps
+
+- **Bench checks for P3:** the left-right sign (a dry run's arrow should point at the person;
+  else Flip frames), the 60° width of view, whether a positive pitch raises the camera toward a
+  face above centre, and the box's latency (a reading is placed with the heading when it lands,
+  not when the frame was taken).
+- **Pose as the fallback** (a person facing away has no face box) isn't built; a face is needed.
 
 - **A shout may never be transcribed while it walks.** Upstream drops an unpitched clip heard
   during the robot's own motion (`self_drop`, next.html) before speech-to-text, so "stop stop"

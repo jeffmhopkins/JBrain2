@@ -334,6 +334,10 @@ class MoveIn(BaseModel):
     # Or a skill set (growbot-drive.js): a library policy for each of look, forward and back,
     # which the creature switches between as the command asks.
     skills: SkillSet | None = Field(default=None, min_length=1)
+    # A skill set's look may follow the face it sees instead (growbot-follow.js), run that as a
+    # legs-off dry run, or set the creature camera's 1 m distance (calibrate) or which way its
+    # frames run (flip).
+    follow: Literal["walk", "dry", "calibrate", "flip"] | None = None
 
 
 class MoveOut(BaseModel):
@@ -362,9 +366,15 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
         raise HTTPException(status_code=422, detail="a trick runs a library policy: name one")
     if body.drive is not None and not trained:
         raise HTTPException(status_code=422, detail="only a trained walk can be driven")
+    if body.follow is not None and (body.skills is None or body.move != "look"):
+        raise HTTPException(status_code=422, detail="following runs a skill set's look")
+    if body.follow is not None and body.drive is not None:
+        raise HTTPException(status_code=422, detail="the follower steers, not the Drive")
     sent: dict[str, object] = {"code": code, "move": body.move, "secs": body.secs}
     if body.drive is not None:
         sent["drive"] = body.drive
+    if body.follow is not None:
+        sent["follow"] = body.follow
     if body.name is not None:
         sent["name"] = body.name
     if body.policy is not None:
@@ -407,6 +417,7 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
         gesture=body.name,
         policy=body.policy,
         skills=body.skills,
+        follow=body.follow,
         ok=out.ok,
         state=out.state,
     )

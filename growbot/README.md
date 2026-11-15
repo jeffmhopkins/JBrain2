@@ -315,12 +315,21 @@ tick from one command in the front camera's frame: speed 0 stands and face-track
 ahead walks tall camera first, and back backs away nose first, still facing ahead and never turning
 round. A sharp turn is stop, spin, then walk, and a new file starts from 400 ms of neutral legs. The
 Body tab's Drive offers the set once the library covers two skills. The design, and the waves still
-to come (the face follower, voice commands, walk for X), is
+to come (voice commands, walk for X), is
 [`docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md`](../docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md).
 
 **Emergency stop.** "Stop stop" (the word twice, so a passing one doesn't count) halts whatever the
 legs are doing the moment its transcript lands: `apply.py` makes `heardText` call `gbEStop` first,
 before any model turn, so a slow model never stands between it and the legs.
+
+**Following a face.** A skill set's `look` move may carry `follow`: `walk` follows the nearest
+face the front camera sees and keeps the distance it was at, `dry` does the same with the legs
+left alone and shows the command as an arrow on the creature's screen, and `calibrate` (the person
+stands 1 m away) and `flip` (which way the frames run) set that phone's camera. The Body tab's
+Follow box sends all four. `growbot-follow.js` (copied in by `apply.py`, imported by
+`growbot-box.js`) turns `growbot-eyes.js`'s face boxes into a bearing and a distance, keeps one
+person through a crossing, and steers the skill set; it stands when it loses them and ends after
+8 s. "Stop stop", Stop and any other move end it.
 
 ## Leg calibration (the Body tab's Legs pane)
 

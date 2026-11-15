@@ -261,8 +261,9 @@ The location + family + intake slices shipped; build records are under
 
 - **GrowBot policy drive** — In progress (`plans/GROWBOT_POLICY_DRIVE_PLAN.md`) — GrowBot_Training's
   trained skills on the real robot: one front-camera command and skill sets the creature switches
-  between (look, the tall walk, the nose-first backing walk), the "stop stop" emergency stop, then
-  the face follower, the follow-me voice commands and walk for X seconds or meters.
+  between (look, the tall walk, the nose-first backing walk) and the "stop stop" emergency stop
+  have shipped; the face follower (with a legs-off dry run) is landing, then the follow-me voice
+  commands and walk for X seconds or meters.
 
 - **Pet endpoint (PWA first)** — In progress (`plans/PET_ENDPOINT_PWA_PLAN.md`; the face, the
   rig, the renderer and the anti-boredom engine landed as an owner-only troubleshooting screen) — a full-screen

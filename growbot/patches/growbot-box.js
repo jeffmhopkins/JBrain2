@@ -1337,8 +1337,15 @@
     try { ws.send(JSON.stringify({ t: "box_info", gestures: names })); told = said; } catch (e) {}
   }
 
-  function run(move, secs, policy, name, drive) {
+  function run(move, secs, policy, name, drive, follow) {
     var spec = null;
+    // Any other move ends a follow (or its dry run) first; a walk's own stop ends it anyway.
+    if (window.gbFollow) window.gbFollow.stop("new_move");
+    if (follow) {
+      if (typeof window.gbTrainedWalk !== "function") throw new Error("this page can't follow yet");
+      window.gbTrainedWalk(policy, "look", secs, "", true);
+      return;
+    }
     if (policy) {
       if (typeof window.gbTrainedWalk !== "function") throw new Error("this page can't run a trained walk");
       window.gbTrainedWalk(policy, move, secs, drive);
@@ -1372,13 +1379,32 @@
     }
   }
 
-  function answer(rid, move, secs, policy, name, drive) {
+  // The follower's settings moves (the Body tab's Dry run, Calibrate 1 m and Flip): no legs.
+  function setting(follow, skills) {
+    if (!window.gbFollow) throw new Error("this page can't follow yet");
+    if (follow === "dry") { window.gbFollow.stop("new_move"); return { state: window.gbFollow.dry(skills), why: "" }; }
+    if (follow === "calibrate") {
+      window.gbFollow.calibrate(1).then(function (k) { setErr("Measured: you're 1 m away (\u00d7" + k.toFixed(2) + ")."); },
+        function (e) { setErr("couldn't measure (" + ((e && e.message) || e) + ")"); });
+      return { state: "calibrated", why: "" };
+    }
+    window.gbFollow.flip().then(function (f) { setErr(f ? "Frames flipped." : "Frames as they come."); },
+      function (e) { setErr("couldn't flip (" + ((e && e.message) || e) + ")"); });
+    return { state: "flipped", why: "" };
+  }
+
+  function answer(rid, move, secs, policy, name, drive, follow) {
     var err = document.getElementById("err");
     // setErr also retires a "try again" left under the old caption.
     if (typeof window.setErr === "function") window.setErr(""); else if (err) err.textContent = "";
     var before = window._moveLast, out = { t: "box_ack", rid: rid, ok: false, state: "", why: "" };
+    if (follow && follow !== "walk") {
+      try { var got = setting(follow, policy); out.ok = true; out.state = got.state; }
+      catch (e) { out.why = String((e && e.message) || e).slice(0, 220); }
+      return out;
+    }
     try {
-      run(move, secs, policy, name, drive);
+      run(move, secs, policy, name, drive, follow === "walk");
       if (move === "stop") {
         // runGait files a halt word as a move it never admitted; the legs did stop.
         out.ok = true;
@@ -1454,11 +1480,18 @@
       // The Body tab's Drive names its walk, so only that walk takes its steering.
       var drive = policy && typeof m.drive === "string" && DRIVE_RE.test(m.drive) ? m.drive : "";
       var name = move === "gesture" && typeof m.name === "string" && m.name.length <= 16 && GESTURE_RE.test(m.name) ? m.name : "";
+      // The follower (gbFollow): a skill set's "look", followed, dry run, or a camera setting.
+      var follow = /^(walk|dry|calibrate|flip)$/.test(String(m.follow || "")) && move === "look" &&
+        typeof policy === "object" ? m.follow : "";
+      if (m.follow && !follow) {
+        try { s.send(JSON.stringify({ t: "box_ack", rid: m.rid, ok: false, state: "", why: "following takes a skill set's look" })); } catch (e) {}
+        return;
+      }
       if (move === "gesture" && !name) {
         try { s.send(JSON.stringify({ t: "box_ack", rid: m.rid, ok: false, state: "", why: "not a gesture name this creature can play" })); } catch (e) {}
         return;
       }
-      try { s.send(JSON.stringify(answer(m.rid, move, secs, policy, name, drive))); } catch (e) {}
+      try { s.send(JSON.stringify(answer(m.rid, move, secs, policy, name, drive, follow))); } catch (e) {}
       tell();
     };
     s.onclose = function (ev) {
@@ -1581,6 +1614,148 @@
     return true;
   };
 
+  /* The face follower (growbot-follow.js, wave P3 of docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md).
+     Every face box the eyes see (growbot-eyes.js, whichever detector made it) becomes a reading;
+     one person is locked and kept; each tick the follower's command steers the skill set in
+     place of the Drive's. A dry run does all of it with the legs left alone and shows the
+     command on the creature's own screen, which faces the person it follows. The camera's
+     numbers (its width of view, the 1 m correction, which way its frames run) live on this
+     phone, set from the Body tab (follow "calibrate" and "flip"). */
+  var CAM_KEY = "gb.follow.camera", FOLLOW_MAX_MS = DRIVE_MAX_MS, LOCK_WAIT_MS = 6000, LOST_END_MS = 8000;
+  var follow = null, seen = { boxes: [], t: -Infinity }, followLib = null, ui = null, uiIv = 0;
+
+  function followLoad() {
+    if (!followLib) followLib = import("/growbot-follow.js").catch(function (e) { followLib = null; throw e; });
+    return followLib;
+  }
+  function camera(lib) {
+    var c = {};
+    try { c = JSON.parse(localStorage.getItem(CAM_KEY) || "{}") || {}; } catch (e) { c = {}; }
+    return Object.assign({}, lib.CAMERA, {
+      k: typeof c.k === "number" && c.k > 0.2 && c.k < 5 ? c.k : lib.CAMERA.k,
+      flipX: c.flipX === true,
+    });
+  }
+  function saveCamera(c) {
+    try { localStorage.setItem(CAM_KEY, JSON.stringify({ k: c.k, flipX: c.flipX })); } catch (e) {}
+  }
+  function goodBox(b) { return b && isFinite(b.x) && isFinite(b.y) && b.width > 0 && b.height > 0; }
+
+  function followBoxes(boxes) {
+    seen = { boxes: (boxes || []).filter(goodBox), t: Date.now() };
+    var F = follow;
+    if (!F) return;
+    var reads = seen.boxes.map(function (b) { return F.lib.reading(b, F.cam); }), h = F.heading;
+    if (F.track.p) { F.track.update(reads, h, seen.t); return; }
+    if (!F.track.lock(reads, h, seen.t)) return;
+    F.f.start(F.track.p.dist);
+    try { logEv("follow_lock", { dist: Math.round(F.track.p.dist * 100) / 100, bearing: Math.round(reads[0].bearing), faces: reads.length }); } catch (e) {}
+  }
+  // growbot-eyes.js may load after this file: join it once it's there.
+  (function join() {
+    if (window.gbEyes && window.gbEyes.listen) window.gbEyes.listen(followBoxes);
+    else setTimeout(join, 500);
+  })();
+
+  function followEnd(why, words) {
+    var F = follow;
+    if (!F) return;
+    follow = null;
+    clearInterval(uiIv); uiIv = 0;
+    if (ui) { ui.remove(); ui = null; }
+    try { logEv("follow_end", { why: why, dry: F.dry }); } catch (e) {}
+    if (words) try { setErr(words); } catch (e) {}
+  }
+
+  // What the creature's screen shows while it follows: an arrow the way it would turn (up is
+  // the camera end, left is the robot's left), the skill it would use, and the distances.
+  function render(F, c, mode) {
+    if (!ui) {
+      ui = document.createElement("div");
+      ui.id = "gbFollow";
+      ui.style.cssText = "position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:99999;" +
+        "background:rgba(0,0,0,.72);color:#fff;font:600 15px/1.3 system-ui,sans-serif;padding:8px 14px;" +
+        "border-radius:14px;text-align:center;pointer-events:none;white-space:nowrap";
+      document.body.appendChild(ui);
+    }
+    var arrow = c.state === "lost" && !F.track.p ? "\u2026" :
+      '<span style="display:inline-block;font-size:30px;transform:rotate(' + (-Math.round(c.heading)) + 'deg)">\u2191</span>';
+    var dist = c.dist ? c.dist.toFixed(1) + " m (keep " + c.set.toFixed(1) + ")" : "no one locked";
+    var speed = c.speed > 0 ? "come " + c.speed.toFixed(2) : c.speed < 0 ? "back " + (-c.speed).toFixed(2) : "stand";
+    ui.innerHTML = (F.dry ? "dry run \u00b7 " : "following \u00b7 ") + arrow + " " + Math.round(c.heading) + "\u00b0<br>" +
+      mode + " \u00b7 " + speed + " \u00b7 " + dist;
+  }
+
+  function followStart(skills, dry, M) {
+    return followLoad().then(function (lib) {
+      var has = {};
+      Object.keys(skills).forEach(function (m) { has[m] = true; });
+      followEnd("replaced");
+      var F = follow = {
+        lib: lib, dry: dry, M: M || null, cam: camera(lib), heading: 0, t0: Date.now(),
+        track: new lib.Track(), f: new lib.Follower(), sel: null, last: null,
+      };
+      if (dry) {
+        return import("/growbot-drive.js").then(function (drive) {
+          if (follow !== F) return;
+          F.sel = new drive.Selector(has, Date.now());
+          uiIv = setInterval(function () {
+            if (follow !== F) return;
+            var now = Date.now(), c = F.f.command(F.track, 0, now);
+            if (!F.track.p && now - F.t0 > LOCK_WAIT_MS) { followEnd("no_face", "I can't see anyone to follow."); return; }
+            if (F.track.p && F.track.age(now) > LOST_END_MS) { followEnd("lost", "I lost you, so I stopped."); return; }
+            if (now - F.t0 > FOLLOW_MAX_MS) { followEnd("done"); return; }
+            render(F, c, F.sel.pick(c, now).mode);
+          }, 100);
+        });
+      }
+      uiIv = setInterval(function () {
+        if (follow !== F) return;
+        if (F.M && _motion !== F.M) { followEnd("walk_ended"); return; }
+        if (F.last) render(F, F.last, F.mode || "look");
+      }, 100);
+    });
+  }
+
+  window.gbFollow = {
+    // A dry run: everything but the legs, on the skill set's modes.
+    dry: function (skills) {
+      if (!skills) throw new Error("a dry run needs a skill set");
+      if (window.camFacing !== "user" || !window.camOn) throw new Error("open the front camera first: that's what it follows with");
+      followStart(skills, true).catch(function (e) { setErr("the follower didn't load (" + ((e && e.message) || e) + ")"); });
+      return "dry_run";
+    },
+    stop: function (why) { followEnd(why || "stopped"); },
+    active: function () { return !!follow; },
+    closer: function () { return follow ? follow.f.closer() : 0; },
+    further: function () { return follow ? follow.f.further() : 0; },
+    stay: function (on) { if (follow) follow.f.stay = !!on; },
+    // The person stands `metres` away (1 m by default) facing the camera: the nearest face's
+    // reading becomes that, on this phone, from now on.
+    calibrate: function (metres) {
+      var b = seen.boxes, m = +metres || 1;
+      if (Date.now() - seen.t > 1500 || !b.length) throw new Error("I can't see a face to measure");
+      return followLoad().then(function (lib) {
+        var c = camera(lib);
+        var raw = Math.min.apply(null, b.map(function (x) { return lib.reading(x, Object.assign({}, c, { k: 1 })).dist; }));
+        c.k = lib.calibrate(raw, m);
+        saveCamera(c);
+        try { logEv("follow_calibrate", { k: Math.round(c.k * 1000) / 1000 }); } catch (e) {}
+        return c.k;
+      });
+    },
+    // Which way the frames run: a dry run's arrow pointing away from the person says flip.
+    flip: function () {
+      return followLoad().then(function (lib) {
+        var c = camera(lib);
+        c.flipX = !c.flipX;
+        saveCamera(c);
+        if (follow) follow.cam.flipX = c.flipX;
+        return c.flipX;
+      });
+    },
+  };
+
   function load(pid) {
     var ref = "/api/box/policy?id=" + encodeURIComponent(pid), hit = cache[pid];
     if (!hit || Date.now() - hit.t >= KEEP_MS) {
@@ -1665,9 +1840,10 @@
     });
   }
 
-  function start(pid, move, secs, attempt, drive) {
+  function start(pid, move, secs, attempt, drive, following) {
     // `pid` is one library policy, or a skill set {look?, forward?, back?} of them.
     var skills = pid && typeof pid === "object" ? pid : null;
+    if (following && !skills) { refuse(attempt, "no_skills", "following needs a skill set"); return; }
     var label = skills ? "set:" + Object.keys(skills).join("+") : pid;
     if (_wheels) { refuse(attempt, "no_legs", "a trained walk needs legs, and this body rolls"); return; }
     if (!window._body || !window._body.ready) { refuse(attempt, "connection_unavailable", "no robot connected to walk — its legs aren't here"); return; }
@@ -1679,15 +1855,19 @@
     if (left < 800) { refuse(attempt, "duty_limit", "resting its legs a moment (duty limit)"); return; }
     var dflt = move === "forward" || move === "back" ? 8 : 4, walkS = policySeconds(secs, dflt, left);
     carryLegMotion();
-    var gen = _motionGen, M = { kind: "walk", loading: true, report: attempt, drive: drive || "" };
+    var gen = _motionGen, M = { kind: "walk", loading: true, report: attempt, drive: following ? "" : drive || "" };
     _motion = M;
+    var fol = null;
     _moveReport(attempt, "accepted", "loading_policy");
     $("brainTxt").textContent = "loading my trained walk…";
     var policy = null, files = null, lib = null;
     (skills ? loadSet(skills) : load(pid)).then(function (got) {
       if (skills) files = got; else policy = got;
-      return Promise.all([import("/growbot_runner.js"), skills ? import("/growbot-drive.js") : null]);
+      return Promise.all([import("/growbot_runner.js"), skills ? import("/growbot-drive.js") : null,
+        following ? followStart(skills, false, M) : null]);
     }).then(function (mods) {
+      if (following) fol = follow && follow.M === M ? follow : null;
+      if (following && !fol && _motion === M) { stopMotion(); return; }
       var mod = mods[0];
       lib = mods[1];
       if (gen !== _motionGen || _motion !== M) return;
@@ -1765,10 +1945,31 @@
         $("brainTxt").textContent = "walking…";
         step();
       });
+      function endFollowWalk(why, words) {
+        _imuWhy = why;
+        carryLegMotion({ l: 90, r: 90 });
+        followEnd(why, words);
+        try { logEv("walk_end", { gait: "trained", policy: label, why: why, heading: Math.round(heading / D) }); } catch (e) {}
+        $("brainTxt").textContent = "awake";
+      }
       var step = guarded(function () {
         if (gone()) return;
         var t0 = performance.now(), live = M.drive && steer && steer.drive === M.drive ? steer : null;
-        if (live) {
+        if (fol) {
+          // The follower steers, and keeps the walk going while it has someone (or briefly lost).
+          var fnow = Date.now(), fc = fol.f.command(fol.track, heading / D, fnow);
+          if (!fol.track.p && fnow - walkT > LOCK_WAIT_MS) return endFollowWalk("no_face", "I can't see anyone to follow.");
+          if (fol.track.p && fol.track.age(fnow) > LOST_END_MS) return endFollowWalk("lost", "I lost you, so I stopped.");
+          cmd = { target: wrap180(heading / D + fc.heading), speed: fc.speed };
+          pitch = fc.pitch;
+          fol.last = fc;
+          var fwant = Math.min(fnow + STEER_HOLD_MS, walkT + FOLLOW_MAX_MS);
+          if (fwant > endT && dutyLeftMs() >= fwant - endT) {
+            _walkLog.push({ t: fnow, ms: fwant - endT });
+            endT = fwant;
+            selfMoveUntil = Math.max(selfMoveUntil, endT + 3500);
+          }
+        } else if (live) {
           // At exactly ±180 the error's sign would flip with the noise, as for the pad's back.
           if (skills) {
             cmd = { target: live.heading, speed: live.speed, around: Math.abs(live.heading) === 180 };
@@ -1808,6 +2009,8 @@
         var dt = Math.min(0.1, Math.max(0, (t0 - lastT) / 1000));
         lastT = t0;
         heading += G.z * dt;
+        // The gyro carries the heading between camera frames: readings land in the walk's frame.
+        if (fol) fol.heading = heading / D;
         var err = wrap180(cmd.target - heading / D), out;
         if (skills) {
           // Just under 180: inputs() wraps again, and +180 would wrap to -180, a right turn.
@@ -1819,6 +2022,7 @@
             var was = set[mode] || null, next = set[pick.mode] || null;
             try { logEv("skill", { from: mode, to: pick.mode }); } catch (e) {}
             mode = pick.mode;
+            if (fol) fol.mode = mode;
             // Another file takes over from a still stance with a fresh history, as it trained.
             if (next && next !== was) { settleEnd = Date.now() + SETTLE_MS; next.w.reset(); }
           }
@@ -1847,9 +2051,9 @@
   }
 
   // As runGait: one move request, and a move it never admitted reads as blocked.
-  window.gbTrainedWalk = function (pid, move, secs, drive) {
-    var attempt = _moveRequest("walk:trained:" + String(move).slice(0, 16));
-    try { start(pid, move, +secs || 0, attempt, drive); }
+  window.gbTrainedWalk = function (pid, move, secs, drive, following) {
+    var attempt = _moveRequest((following ? "walk:follow:" : "walk:trained:") + String(move).slice(0, 16));
+    try { start(pid, move, +secs || 0, attempt, drive, !!following); }
     finally { if (attempt.state === "requested") _moveReport(attempt, "blocked", "not_admitted"); }
   };
 })();
@@ -1869,7 +2073,10 @@
     var now = Date.now(), twice = STOP2_RE.test(t);
     if (!twice && STOP1_RE.test(t)) { twice = now - lone <= PAIR_MS; lone = twice ? -Infinity : now; }
     if (!twice) return false;
+    var dry = !!(window.gbFollow && window.gbFollow.active());
+    if (window.gbFollow) window.gbFollow.stop("estop");
     var M = typeof _motion !== "undefined" ? _motion : null;
+    if (!M && dry) { try { setErr("Stopped."); } catch (e) {} return true; }
     if (!M) return false;
     // As upstream's own halt words end a move (next.html _recHalt): its end row says halt.
     M.why = "halt";

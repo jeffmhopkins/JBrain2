@@ -3988,8 +3988,18 @@ def _trained_walk(
     steer: dict[str, Any] | None = None,
     skills: dict[str, str] | None = None,
     estop_at: int | None = None,
+    follow: str = "",
+    faces: list[dict[str, float]] | None = None,
+    wait_ms: int = 0,
 ) -> dict[str, Any]:
-    env = {**os.environ, "GB_DRIVE": (_SITE / "growbot-drive.js").as_uri()}
+    env = {
+        **os.environ,
+        "GB_DRIVE": (_SITE / "growbot-drive.js").as_uri(),
+        "GB_FOLLOW_JS": (_SITE / "growbot-follow.js").as_uri(),
+        "GB_FOLLOW": follow,
+        "GB_FACES": json.dumps(faces or []),
+        "GB_WAIT": str(wait_ms),
+    }
     if skills:
         env["GB_SKILLS"] = json.dumps(skills)
     if estop_at is not None:
@@ -4157,6 +4167,72 @@ def test_stop_stop_halts_a_skill_set_at_once_and_one_stop_does_not() -> None:
     assert got["n"] == got["estopAt"]
     # Not finished on time: released by the stop, never stood in its rest pose.
     assert got["last"] != ["rest"]
+
+
+def _walking_away(start: float, factor: float, n: int, x: float = 0.5) -> list[dict[str, float]]:
+    """A face seen every 100 ms from 200 ms in, its width scaled by `factor` each time."""
+    return [{"at": 200 + 100 * i, "x": x, "w": start * factor**i} for i in range(n)]
+
+
+def test_following_walks_after_someone_who_walks_away() -> None:
+    """growbot-follow.js: the distance at the lock is kept; a face shrinking in the frame is the
+    person getting further, so it walks tall toward them, straight on while they're centred."""
+    got = _trained_walk(
+        "look", _STILL, skills=_SET, follow="walk", faces=_walking_away(0.15, 0.95, 20)
+    )
+    assert "follow_lock" in got["logs"]
+    # They were already further by the time its stance settled, so it walks from the start.
+    assert set(got["files"]) == {_TALL_F}
+    assert got["cmds"][-1]["fwd"] == 1 and abs(got["cmds"][-1]["yaw"]) < 0.01
+    assert "following" in got["screen"]
+
+
+def test_following_backs_away_from_someone_who_comes_close() -> None:
+    got = _trained_walk(
+        "look", _STILL, skills=_SET, follow="walk", faces=_walking_away(0.15, 1.05, 20)
+    )
+    # Too close: the nose walk backs away, still facing them (its heading unflipped).
+    assert got["files"][-1] == _NOSE_F
+    assert got["cmds"][-1]["fwd"] > 0 and abs(got["cmds"][-1]["yaw"]) < 0.01
+
+
+def test_following_turns_toward_someone_off_to_the_left() -> None:
+    """The front camera's frames aren't mirrored: a face right of the frame's centre is on the
+    robot's left, so it turns left (positive yaw), standing with the look."""
+    got = _trained_walk(
+        "look", _STILL, skills=_SET, follow="walk", faces=_walking_away(0.15, 1, 20, x=0.8)
+    )
+    assert set(got["files"]) == {_LOOK_F}
+    assert got["cmds"][-1]["yaw"] == pytest.approx(19.1 / 180, abs=0.01)
+    assert got["cmds"][-1]["fwd"] == 0
+
+
+def test_following_nobody_stops_and_says_so() -> None:
+    got = _trained_walk("look", _STILL, skills=_SET, follow="walk", wait_ms=7500)
+    assert "I can't see anyone to follow." in got["errs"]
+    assert got["last"] == ["rest"] and "follow_end" in got["logs"]
+
+
+def test_a_dry_run_shows_the_command_and_moves_no_legs() -> None:
+    got = _trained_walk(
+        "look", _STILL, skills=_SET, follow="dry", faces=_walking_away(0.15, 1, 10, x=0.8)
+    )
+    assert got["poses"] == [] and got["n"] == 0
+    # The arrow points the way it would turn: left, on the creature's screen.
+    assert "dry run" in got["screen"] and "rotate(-19deg)" in got["screen"]
+    assert "look" in got["screen"]
+
+
+def test_stop_stop_ends_a_dry_run() -> None:
+    got = _trained_walk(
+        "look",
+        _STILL,
+        skills=_SET,
+        follow="dry",
+        faces=_walking_away(0.15, 1, 5),
+        estop_at=1000,
+    )
+    assert got["estopped"] == [False, True] and "follow_end" in got["logs"]
 
 
 def test_the_emergency_stop_needs_the_word_twice() -> None:

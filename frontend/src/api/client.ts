@@ -3986,6 +3986,9 @@ export type GrowbotMotion = "walk" | "turn" | "trick";
  *  nose first while still facing ahead. */
 export type GrowbotSkill = "look" | "forward" | "back";
 export type GrowbotSkillSet = Partial<Record<GrowbotSkill, string>>;
+/** What a skill set's look may do instead (growbot-follow.js): follow the face it sees, a
+ *  legs-off dry run of that, or set the creature camera's 1 m distance or frame direction. */
+export type GrowbotFollow = "walk" | "dry" | "calibrate" | "flip";
 
 /** The owner's switches for one library policy. */
 export interface GrowbotPolicyPatch {
@@ -8422,6 +8425,7 @@ export const api = {
     name?: string,
     drive?: string,
     skills?: GrowbotSkillSet,
+    follow?: GrowbotFollow,
   ): Promise<GrowbotMoveResult> {
     const response = await request(
       `/api/growbot/robots/${encodeURIComponent(code)}/move`,
@@ -8432,6 +8436,7 @@ export const api = {
         ...(name ? { name } : {}),
         ...(drive ? { drive } : {}),
         ...(skills ? { skills } : {}),
+        ...(follow ? { follow } : {}),
       }),
     );
     return (await response.json()) as GrowbotMoveResult;

@@ -177,6 +177,9 @@ DRIVE_RE = re.compile(r"[0-9a-f]{8,32}")
 POLICY_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # The skills a skill set names (growbot-drive.js): stand and look, walk camera first, back away.
 SKILL_MODES = frozenset({"look", "forward", "back"})
+# What a skill set's look may do instead (growbot-follow.js): follow the face it sees, a
+# legs-off dry run of that, or set the camera's 1 m distance or which way its frames run.
+FOLLOW = frozenset({"walk", "dry", "calibrate", "flip"})
 # A library policy never changes under its id, so one read serves a run of walks; a deleted
 # one stops loading within this.
 POLICY_CACHE_S = 60.0
@@ -1510,6 +1513,13 @@ class GrowBot:
             return json_response(400, {"error": "skills"})
         if what == "look" and not policy and not skills:
             return json_response(400, {"error": "policy"})
+        # The face follower (growbot-follow.js): a skill set's look, followed, dry run, or one
+        # of its camera settings.
+        follow = msg.get("follow", "") if msg else ""
+        if not isinstance(follow, str) or (
+            follow and (follow not in FOLLOW or not skills or what != "look")
+        ):
+            return json_response(400, {"error": "follow"})
         drive = msg.get("drive", "") if msg else ""
         if not isinstance(drive, str) or (
             drive and (not (policy or skills) or not DRIVE_RE.fullmatch(drive))
@@ -1533,6 +1543,8 @@ class GrowBot:
                 frame["skills"] = skills
             if drive:
                 frame["drive"] = drive
+            if follow:
+                frame["follow"] = follow
             if name:
                 frame["name"] = name
             creature.send_json(frame)
