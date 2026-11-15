@@ -3986,7 +3986,14 @@ def _trained_walk(
     phone: dict[str, Any],
     duty_ms: int = 60000,
     steer: dict[str, Any] | None = None,
+    skills: dict[str, str] | None = None,
+    estop_at: int | None = None,
 ) -> dict[str, Any]:
+    env = {**os.environ, "GB_DRIVE": (_SITE / "growbot-drive.js").as_uri()}
+    if skills:
+        env["GB_SKILLS"] = json.dumps(skills)
+    if estop_at is not None:
+        env["GB_ESTOP_AT"] = str(estop_at)
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -4005,6 +4012,7 @@ def _trained_walk(
         text=True,
         check=True,
         timeout=30,
+        env=env,
     )
     return json.loads(out.stdout.strip().splitlines()[-1])
 
@@ -4095,6 +4103,89 @@ def test_steering_never_spends_duty_the_legs_lack() -> None:
     # Retargeted, but not kept going: the budget can't pay for another 1.2 s.
     assert [w["ms"] for w in got["walkLog"]] == [1000]
     assert got["n"] < 32
+
+
+# A skill set of the harness's stand-ins (growbot_trained_walk_harness.mjs FILES).
+_LOOK_F, _TALL_F, _NOSE_F = (
+    "gyro_z,cmd_yaw,cmd_pitch",
+    "gyro_z,cmd_yaw",
+    "gyro_z,cmd_yaw,cmd_forward",
+)
+_SET = {
+    "look": "11111111-1111-4111-8111-111111111111",
+    "forward": "22222222-2222-4222-8222-222222222222",
+    "back": "33333333-3333-4333-8333-333333333333",
+}
+
+
+def test_a_skill_set_walks_forward_with_the_tall_walk() -> None:
+    got = _trained_walk("forward", _STILL, skills=_SET)
+    assert set(got["files"]) == {_TALL_F}
+    assert all(c["fwd"] == 1 and c["yaw"] == 0 for c in got["cmds"])
+    # A new file starts from a still stance: legs neutral before its first tick.
+    assert got["poses"][:2] == [[94, 88], [94, 88]]
+    assert got["errs"] == [] and got["last"] == ["rest"]
+
+
+def test_a_skill_set_backs_away_nose_first_without_turning_round() -> None:
+    """The owner's frame (2026-11-15): backing travels opposite the front camera, so the nose
+    walk is fed its own forward and the camera's heading unflipped: no half turn, ever."""
+    got = _trained_walk("back", _STILL, skills=_SET)
+    assert set(got["files"]) == {_NOSE_F}
+    assert all(c["fwd"] == 1 and c["yaw"] == 0 for c in got["cmds"])
+
+
+def test_a_skill_set_stands_and_face_tracks_at_speed_zero() -> None:
+    steer = {**_STEER, "at": 1800, "heading": -45, "speed": 0, "pitch": -0.5}
+    got = _trained_walk("forward", _STILL, steer=steer, skills=_SET)
+    assert got["steered"] is True
+    # Walking, then the steer: speed 0 is the look, turning right 45 degrees and tilting.
+    assert got["files"][0] == _TALL_F and got["files"][-1] == _LOOK_F
+    assert got["cmds"][-1] == {"fwd": 0, "yaw": -0.25, "pitch": -0.5}
+
+
+def test_stop_stop_halts_a_skill_set_at_once_and_one_stop_does_not() -> None:
+    got = _trained_walk("forward", _STILL, skills=_SET, estop_at=900)
+    assert got["estopped"] == [False, True]
+    assert got["n"] == got["estopAt"]
+    # Not finished on time: released by the stop, never stood in its rest pose.
+    assert got["last"] != ["rest"]
+
+
+def test_the_emergency_stop_needs_the_word_twice() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    estop = box[box.index("/* The emergency stop") :]
+    said = [
+        "stop stop",
+        "Stop. Stop!",
+        "stop, stop",
+        "STOP — stop",
+        "stop",
+        "don't stop",
+        "the bus stop stops here",
+        "stopstop",
+        "stop it, please stop",
+    ]
+    script = (
+        "var stopped=0, _motion=null, window=globalThis;"
+        "function stopMotion(){ stopped++; _motion=null; } function logEv(){} function setErr(){}"
+        f"{estop}"
+        f"console.log(JSON.stringify({json.dumps(said)}.map(function(t){{"
+        " _motion={kind:'walk'}; return gbEStop(t); })));"
+    )
+    run = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    assert json.loads(run.stdout) == [True, True, True, True, False, False, False, False, False]
+    # Nothing moving: nothing to stop.
+    assert "if (!M) return false" in estop
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    # Every transcript reaches it first, before the turn.
+    assert (
+        "function heardText(txt,meta,detectedLang){ try{ if(window.gbEStop) window.gbEStop(txt);"
+        in page
+    )
 
 
 def test_the_trained_walk_keeps_upstreams_stops() -> None:

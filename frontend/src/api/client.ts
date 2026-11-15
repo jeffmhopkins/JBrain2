@@ -3958,7 +3958,14 @@ export interface GrowbotPolicy {
   source_spec: string;
   bytes: number;
   created_at: string;
-  contract: { facing: "nose" | "camera"; speed: boolean; pitch: boolean; control_hz: number };
+  contract: {
+    facing: "nose" | "camera";
+    speed: boolean;
+    pitch: boolean;
+    control_hz: number;
+    /** The skills it serves in a skill set (absent: an older box, none). */
+    modes?: GrowbotSkill[];
+  };
   /** Offered on the pad; off keeps it in the library, unused (absent: an older box, on). */
   enabled?: boolean;
   /** What the pad does with it: walk drives its four keys, turn its left and right keys,
@@ -3974,6 +3981,11 @@ export interface GrowbotPolicy {
 export type GrowbotSteer = { drive: string; heading: number; speed: number; pitch: number };
 
 export type GrowbotMotion = "walk" | "turn" | "trick";
+
+/** A skill set's skills (growbot-drive.js): stand and look, walk camera first, back away
+ *  nose first while still facing ahead. */
+export type GrowbotSkill = "look" | "forward" | "back";
+export type GrowbotSkillSet = Partial<Record<GrowbotSkill, string>>;
 
 /** The owner's switches for one library policy. */
 export interface GrowbotPolicyPatch {
@@ -8409,6 +8421,7 @@ export const api = {
     policy?: string,
     name?: string,
     drive?: string,
+    skills?: GrowbotSkillSet,
   ): Promise<GrowbotMoveResult> {
     const response = await request(
       `/api/growbot/robots/${encodeURIComponent(code)}/move`,
@@ -8418,6 +8431,7 @@ export const api = {
         ...(policy ? { policy } : {}),
         ...(name ? { name } : {}),
         ...(drive ? { drive } : {}),
+        ...(skills ? { skills } : {}),
       }),
     );
     return (await response.json()) as GrowbotMoveResult;

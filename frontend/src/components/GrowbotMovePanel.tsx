@@ -18,7 +18,13 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotMove, type GrowbotPolicy, type GrowbotRobot, api } from "../api/client";
 import { GrowbotDrive } from "./GrowbotDrive";
-import { GrowbotPoliciesSheet, offered, offeredFor, walkKind } from "./GrowbotPoliciesSheet";
+import {
+  GrowbotPoliciesSheet,
+  offered,
+  offeredFor,
+  skillSet,
+  walkKind,
+} from "./GrowbotPoliciesSheet";
 import { ChevronDownIcon, ChevronUpIcon, RotateCcwIcon, RotateCwIcon, StopIcon } from "./icons";
 
 type Policy = "forward" | "back" | "spin_right" | "spin_left";
@@ -187,6 +193,7 @@ export function GrowbotMovePanel({
   const trained = offeredFor(policies, walks, walkWith);
   const turner = offeredFor(policies, turns, turnWith);
   const pad = trained ? trainedPad(trained) : null;
+  const skills = skillSet(policies);
   const turnPad = turner ? trainedPad(turner) : null;
   // The policy each pad key runs: a picked turn takes the left and right keys from the walk.
   const keyPolicy = (k: Policy): GrowbotPolicy | null =>
@@ -380,10 +387,11 @@ export function GrowbotMovePanel({
         ))}
       </fieldset>
 
-      {trained && (
+      {(trained || skills) && (
         <GrowbotDrive
           code={robot.code}
           policy={trained}
+          skills={skills}
           disabled={!!blocked}
           halted={halted}
           onSaid={setSaid}

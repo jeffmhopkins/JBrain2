@@ -207,7 +207,13 @@ async def test_a_finished_training_job_offers_its_policy_and_adds_it(tmp_path: P
     assert resp.status_code == 201
     got = resp.json()
     assert got["name"] == "First walk" and got["source_job"] == jid
-    assert got["contract"] == {"facing": "nose", "speed": False, "pitch": False, "control_hz": 25}
+    assert got["contract"] == {
+        "facing": "nose",
+        "speed": False,
+        "pitch": False,
+        "control_hz": 25,
+        "modes": ["back"],
+    }
     assert got["bytes"] == len(FINAL)
     assert client.get("/api/growbot/policies/sources").json()[0]["added"] is True
     assert [p["id"] for p in client.get("/api/growbot/policies").json()] == [got["id"]]
@@ -270,6 +276,30 @@ def test_the_contract_says_what_the_pad_must_feed() -> None:
     assert (cam.facing, cam.speed, cam.pitch, cam.control_hz) == ("camera", True, True, 25)
     with pytest.raises(PolicyError, match="too large"):
         parse(b" " * (MAX_POLICY_BYTES + 1))
+
+
+def test_the_contract_says_which_skills_a_file_serves() -> None:
+    """growbot-drive.js's skill sets, read from the file: a new checkpoint needs no app change."""
+    walk = ["gyro_z", "cmd_yaw"]
+    speed = [*walk, "cmd_forward"]
+
+    def modes(chans: list[str], facing: str = "camera", **over: Any) -> tuple[str, ...]:
+        return summary(policy(chans, facing=facing, **over)).modes
+
+    look = {"training": {"speed": "still"}}
+    assert modes([*walk, "cmd_pitch"], **look) == ("look",)
+    # Nose first walks away from the front camera's view: the backing skill.
+    assert modes(speed, facing="nose") == ("back",)
+    assert modes(walk, facing="nose") == ("back",)
+    # Camera first with one speed (lift and fall) only walks forward.
+    assert modes(walk) == ("forward",)
+    # A speed command lets it stand, and below 0 back away too (a master policy).
+    assert modes(speed) == ("look", "forward", "back")
+    fwd_only = policy(speed, facing="camera")
+    fwd_only["obs_spec"]["cmd_forward"] = {"range": [0.0, 1]}
+    assert summary(fwd_only).modes == ("look", "forward")
+    # A file that names its skills is taken at its word, in a fixed order, unknown ones dropped.
+    assert modes(walk, modes=["back", "look", "dance"]) == ("look", "back")
 
 
 async def test_rename_and_delete(tmp_path: Path) -> None:
@@ -417,6 +447,21 @@ async def test_a_walk_names_a_library_policy_for_the_creature(
     missing = str(uuid.uuid4())
     assert client.post(move, json={"move": "forward", "policy": missing}).status_code == 404
     assert client.post(move, json={"move": "forward", "policy": "../x"}).status_code == 422
+    assert len(sent) == 1
+    # A skill set names a library policy per skill, and only those skills.
+    skills = {"look": pid, "back": pid}
+    body = {"move": "forward", "secs": 2, "skills": skills, "drive": "d1ce0001"}
+    assert client.post(move, json=body).status_code == 200
+    assert sent.pop() == {"code": "gb-a1", "move": "forward", "secs": 2, **body}
+    for bad, status in (
+        ({"policy": pid}, 422),
+        ({"move": "bow"}, 422),
+        ({"skills": {}}, 422),
+        ({"skills": {"walk": pid}}, 422),
+        ({"skills": {"look": "../x"}}, 422),
+        ({"skills": {"look": pid, "back": missing}}, 404),
+    ):
+        assert client.post(move, json={**body, **bad}).status_code == status, bad
     assert len(sent) == 1
 
 
