@@ -4144,8 +4144,15 @@ def test_a_skill_set_stands_and_face_tracks_at_speed_zero() -> None:
     assert got["cmds"][-1] == {"fwd": 0, "yaw": -0.25, "pitch": -0.5}
 
 
+def test_a_skill_set_turned_round_exactly_keeps_turning_left() -> None:
+    # The gyro reads nothing, so the error stays exactly 180, where a wrap would flip it right.
+    steer = {**_STEER, "at": 1800, "heading": 180, "speed": 0, "pitch": 1}
+    got = _trained_walk("forward", _STILL, steer=steer, skills=_SET)
+    assert got["files"][-1] == _LOOK_F and got["cmds"][-1]["yaw"] > 0.99
+
+
 def test_stop_stop_halts_a_skill_set_at_once_and_one_stop_does_not() -> None:
-    got = _trained_walk("forward", _STILL, skills=_SET, estop_at=900)
+    got = _trained_walk("forward", _STILL, skills=_SET, estop_at=1700)
     assert got["estopped"] == [False, True]
     assert got["n"] == got["estopAt"]
     # Not finished on time: released by the stop, never stood in its rest pose.

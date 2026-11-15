@@ -1810,7 +1810,8 @@
         heading += G.z * dt;
         var err = wrap180(cmd.target - heading / D), out;
         if (skills) {
-          if (cmd.around && Math.abs(err) > 90) err = Math.abs(err);
+          // Just under 180: inputs() wraps again, and +180 would wrap to -180, a right turn.
+          if (cmd.around && Math.abs(err) > 90) err = Math.min(Math.abs(err), 179.9);
           // The heading is the gyro's, the same whichever end leads, so err is the front
           // camera's error for every skill (growbot-drive.js, THE FRAME).
           var c = { heading: err, speed: cmd.speed, pitch: pitch }, pick = sel.pick(c, Date.now());

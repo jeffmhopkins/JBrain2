@@ -59,7 +59,7 @@ list wins, which the master policy will carry. Otherwise a still file is a look,
 file backs, and a camera-first file walks forward (and also looks and backs when its speed command
 spans -1..+1). The api refuses a file put in a slot it doesn't serve. The Body tab's Drive builds the set from the enabled library (active, else newest,
 per skill) and sends it as a move's `skills`. When the master policy lands, all three skills point
-at one file and nothing reloads.
+at one file and nothing reloads (back keeps a nose-first file while one is enabled, by design).
 
 ## Waves
 
