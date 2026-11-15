@@ -3472,6 +3472,10 @@ class HostMetricsOut(BaseModel):
     gpu_busy_percent: float | None
     fan_rpm: dict[str, int] | None
     apu_power_w: float | None
+    # Whole-box CPU busy 0-100 and the hardware thread count (None from an older
+    # supervisor, or when /proc/stat is unreadable).
+    cpu_busy_percent: float | None = None
+    cpu_threads: int | None = None
     # Per-compose-container RSS, biggest first — the breakdown the unified-memory
     # total can't show on its own.
     containers: list[ContainerMem]

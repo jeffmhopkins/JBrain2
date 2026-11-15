@@ -1272,6 +1272,10 @@ export interface OpsMetrics {
   uptime_seconds: number;
   /** iGPU/dGPU utilization 0-100, or null when the host exposes no GPU telemetry. */
   gpu_busy_percent: number | null;
+  /** Whole-box CPU busy 0-100 across every hardware thread, over a short window; and
+   * the thread count. Absent from an older supervisor; null when unreadable. */
+  cpu_busy_percent?: number | null;
+  cpu_threads?: number | null;
   /** Fan speeds in RPM keyed by sensor label, or null when the host exposes no fan telemetry. */
   fan_rpm: Record<string, number> | null;
   /** APU/SoC package power in watts (amdgpu power1_average), or null when absent. */

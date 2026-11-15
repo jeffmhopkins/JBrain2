@@ -999,7 +999,7 @@ describe("ToolView registry", () => {
     );
     expect(getByText("Server health · 24h")).toBeInTheDocument();
     expect(getByText("2 30s buckets")).toBeInTheDocument();
-    expect(getByText("CPU load")).toBeInTheDocument();
+    expect(getByText("CPU load (threads running or waiting)")).toBeInTheDocument();
     expect(getByText("APU power")).toBeInTheDocument();
     // Peak readout reflects the higher bucket (load 1.5, fan 2600, power 31W).
     expect(getByText("1.50 peak")).toBeInTheDocument();
