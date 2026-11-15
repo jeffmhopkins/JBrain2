@@ -331,6 +331,15 @@ Follow box sends all four. `growbot-follow.js` (copied in by `apply.py`, importe
 person through a crossing, and steers the skill set; it stands when it loses them and ends after
 8 s. "Stop stop", Stop and any other move end it.
 
+**The body test.** `follow: "test"` starts a guided trial on the creature's phone
+(`growbot-bodytest.js`, imported by `growbot-box.js`'s `gbBodyTest`): it asks the person to place
+the phone, power the body, say "stand up" and then "1 meter", runs eight checks on the skill set
+(steered through `gbSteer`, a walk per check), shows the camera and live numbers, and posts its
+log in order to `/api/box/bodytest` (`MAX_BODYTEST_BODY`, only for a robot the phone drives),
+which the sidecar hands to the api's `/internal/growbot/bodytests` and answers only once kept.
+While it runs `heardText` gives it every line after `gbEStop`, so no model turn moves the legs.
+`docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md` "Body test" has the checks.
+
 ## Leg calibration (the Body tab's Legs pane)
 
 Upstream keeps a robot's calibration (`gb_walk_cal`: the by-eye trims `L_OFF`/`R_OFF`, the

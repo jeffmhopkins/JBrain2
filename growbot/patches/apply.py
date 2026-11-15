@@ -3467,13 +3467,15 @@ PATCHES += DREAM_LATER_PATCHES
 # The emergency stop (owner, 2026-11-15: "stop stop", said twice so a passing or misheard one
 # can't trigger it): every transcript goes to growbot-box.js's gbEStop the moment it lands,
 # before anything else reads it, so a slow or hung model turn never stands between it and the
-# legs. The words still go on to the turn afterwards.
+# legs. The words still go on to the turn afterwards, except while a body test runs: it takes
+# every line ("ready", "stand up", "1 meter"), so no model turn moves the legs under it.
 ESTOP_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         "function heardText(txt,meta,detectedLang){",
         "function heardText(txt,meta,detectedLang){ try{ if(window.gbEStop) window.gbEStop(txt);"
-        " }catch(_es){}",
+        " }catch(_es){} try{ if(window.gbBodyTest&&window.gbBodyTest.heard(txt)) return;"
+        " }catch(_bt){}",
         1,
     ),
 ]
@@ -3644,6 +3646,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     # Imported by growbot-box.js's trained walks, as growbot_runner.js is: no script tag.
     shutil.copyfile(HERE / "growbot-drive.js", site / "growbot-drive.js")
     shutil.copyfile(HERE / "growbot-follow.js", site / "growbot-follow.js")
+    shutil.copyfile(HERE / "growbot-bodytest.js", site / "growbot-bodytest.js")
     # The installed app (Android): served without a session, since Chrome fetches the
     # manifest and its icons with no cookie.
     (site / "icons").mkdir(exist_ok=True)

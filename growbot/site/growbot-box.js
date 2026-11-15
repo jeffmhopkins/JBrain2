@@ -1341,6 +1341,7 @@
     var spec = null;
     // Any other move ends a follow (or its dry run) first; a walk's own stop ends it anyway.
     if (window.gbFollow) window.gbFollow.stop("new_move");
+    if (window.gbBodyTest) window.gbBodyTest.stop("new_move");
     if (follow) {
       if (typeof window.gbTrainedWalk !== "function") throw new Error("this page can't follow yet");
       window.gbTrainedWalk(policy, "look", secs, "", true);
@@ -1379,9 +1380,16 @@
     }
   }
 
-  // The follower's settings moves (the Body tab's Dry run, Calibrate 1 m and Flip): no legs.
+  // The follower's settings moves (the Body tab's Dry run, Calibrate 1 m and Flip, no legs) and
+  // the body test, which drives the legs itself.
   function setting(follow, skills) {
     if (!window.gbFollow) throw new Error("this page can't follow yet");
+    if (follow === "test") {
+      if (!window.gbBodyTest) throw new Error("this page can't run a body test yet");
+      return { state: window.gbBodyTest.start(skills), why: "" };
+    }
+    // The follower's moves end a body test, as any other move does.
+    if (window.gbBodyTest) window.gbBodyTest.stop("new_move");
     if (follow === "dry") {
       // A dry run never shows over walking legs: whatever they were doing stops first.
       window.gbFollow.stop("new_move");
@@ -1486,7 +1494,7 @@
       var drive = policy && typeof m.drive === "string" && DRIVE_RE.test(m.drive) ? m.drive : "";
       var name = move === "gesture" && typeof m.name === "string" && m.name.length <= 16 && GESTURE_RE.test(m.name) ? m.name : "";
       // The follower (gbFollow): a skill set's "look", followed, dry run, or a camera setting.
-      var follow = /^(walk|dry|calibrate|flip)$/.test(String(m.follow || "")) && move === "look" &&
+      var follow = /^(walk|dry|calibrate|flip|test)$/.test(String(m.follow || "")) && move === "look" &&
         !!policy && typeof policy === "object" ? String(m.follow) : "";
       if (m.follow && !follow) {
         try { s.send(JSON.stringify({ t: "box_ack", rid: m.rid, ok: false, state: "", why: "following takes a skill set's look" })); } catch (e) {}
@@ -1769,6 +1777,253 @@
         return c.flipX;
       });
     },
+  };
+
+  /* The body test (growbot-bodytest.js; owner, 2026-11-15: "a button that says body test ... it'll
+     tell me what to do ... then it starts the test ... showing telemetry and camera view ... log
+     everything so you can review after"). The script and its verdicts live in that module; this
+     is its page: the legs (a Drive-steered skill set walk per check, through gbSteer), the
+     camera's faces through this phone's calibrated follow camera, the gyro and accelerometer, the
+     screen it draws on, and the box it posts its log to. The Body tab starts it as a skill set's
+     look with follow "test"; any other move, "stop stop" or the screen's Stop ends it. */
+  var bt = null, btLib = null, btUi = null, btVid = null, btLog = null;
+  function btR(v, k) { k = k || 10; return typeof v === "number" && isFinite(v) ? Math.round(v * k) / k : null; }
+  function btFace() {
+    if (!followLib || !btLib || !seen.boxes.length || !frontCamera()) return null;
+    var big = seen.boxes.reduce(function (a, b) { return !a || b.width > a.width ? b : a; }, null);
+    var cam = camera(btLib), r = btLib.reading(big, cam);
+    return { t: seen.t, bearing: r.bearing, up: r.up, dist: r.dist, n: seen.boxes.length, box: big };
+  }
+  function btTele(drive) {
+    var M = typeof _motion !== "undefined" ? _motion : null, out = { kind: M ? String(M.kind || "") : "" };
+    if (M && drive && M.drive === drive && M.tele) {
+      var w = M.tele;
+      out.h = btR(w.h); out.tg = btR(w.tg); out.sp = btR(w.sp, 100); out.p = btR(w.p, 100);
+      out.mode = w.mode; out.l = btR(w.l); out.r = btR(w.r);
+    }
+    try {
+      if (ori) { out.oa = btR(ori.a); out.ob = btR(ori.b); out.og = btR(ori.g); }
+      var a = bodyAccel(), g = bodyGyro();
+      out.ax = btR(a.x, 100); out.ay = btR(a.y, 100); out.az = btR(a.z, 100);
+      out.gz = btR(g.z / D);
+      out.lin = btR(typeof linMag === "number" ? linMag : null, 100);
+      out.up = typeof _bodyUpright === "function" ? _bodyUpright() : null;
+    } catch (e) {}
+    return out;
+  }
+  function btStill() {
+    try {
+      var v = btVid && btVid.videoWidth ? btVid : null;
+      if (!v) return null;
+      var c = document.createElement("canvas");
+      c.width = 160; c.height = Math.round(160 * v.videoHeight / v.videoWidth) || 120;
+      c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+      var url = c.toDataURL("image/jpeg", 0.6);
+      return url.length < 40000 ? url : null;
+    } catch (e) { return null; }
+  }
+  function btEsc(s) {
+    return String(s === null || s === undefined ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  var BT_CSS = "#gbBT{position:fixed;inset:0;z-index:100000;color:#fff;font:15px/1.35 system-ui,sans-serif;display:flex;flex-direction:column;" +
+    "pointer-events:none}#gbBT .pane{pointer-events:auto;background:#000;margin-top:auto;padding:16px 20px 22px;box-sizing:border-box}" +
+    "#gbBT.full .pane{margin-top:0;height:100%;overflow:auto;padding:10px 12px 86px}" +
+    "#gbBT .dots{display:flex;gap:6px;justify-content:center;margin-bottom:12px}#gbBT .dots i{width:9px;height:9px;border-radius:50%;background:#333}" +
+    "#gbBT .dots i.on{background:#fff}#gbBT .dots i.done{background:#8fbc9a}#gbBT .big{font-size:26px;font-weight:700;line-height:1.15;text-align:center;margin:0 0 8px}" +
+    "#gbBT .sub{color:#b9bcc2;text-align:center;margin:0 0 14px}#gbBT .say{color:#000;background:#fff;border-radius:10px;padding:0 8px}" +
+    "#gbBT button{display:block;width:100%;border:0;border-radius:14px;padding:14px;font:700 16px system-ui,sans-serif;margin-top:8px;background:#fff;color:#000}" +
+    "#gbBT button.g{background:#1c1d20;color:#ddd;font-weight:500}#gbBT button.stop{position:fixed;left:12px;right:12px;bottom:12px;width:auto;background:#cf8a8f;font-weight:800}" +
+    "#gbBT .st{display:flex;gap:8px;align-items:center;justify-content:center;background:#121315;border-radius:12px;padding:10px;margin-bottom:10px;color:#d6d8dc}" +
+    "#gbBT .dot{width:10px;height:10px;border-radius:50%;background:#c9a36a}#gbBT .dot.g{background:#8fbc9a}" +
+    "#gbBT .cam{position:relative;width:100%;max-width:420px;margin:0 auto 10px;border-radius:14px;overflow:hidden;background:#1d2025;aspect-ratio:4/3}" +
+    "#gbBT .cam video{width:100%;height:100%;object-fit:cover;display:block}#gbBT .fbox{position:absolute;border:2px solid #8fbc9a;border-radius:6px}" +
+    "#gbBT .lbl{position:absolute;left:8px;top:6px;font:600 12px ui-monospace,monospace;background:rgba(0,0,0,.6);padding:2px 6px;border-radius:6px}" +
+    "#gbBT .rec{position:absolute;right:8px;top:6px;font:600 12px ui-monospace,monospace;background:rgba(207,60,60,.9);padding:2px 6px;border-radius:6px}" +
+    "#gbBT .hd{display:flex;justify-content:space-between;align-items:baseline}#gbBT .hd b{font-size:18px}#gbBT .hd span{font:600 13px ui-monospace,monospace;color:#9a9da3}" +
+    "#gbBT .ask{background:#fff;color:#000;border-radius:12px;padding:8px 12px;font-weight:700;font-size:18px;text-align:center;margin:8px 0}" +
+    "#gbBT .tl{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font:12px/1.35 ui-monospace,monospace;color:#cfd2d6;background:#0f1012;border-radius:12px;padding:8px 10px}" +
+    "#gbBT .tl i{color:#7d8187;font-style:normal}#gbBT ul{list-style:none;margin:8px 0 0;padding:0;font-size:13px;color:#9a9da3}" +
+    "#gbBT li{display:flex;gap:8px;padding:3px 0}#gbBT li b{width:16px;text-align:center}#gbBT li.ok b{color:#8fbc9a}#gbBT li.warn b{color:#c9a36a}" +
+    "#gbBT li.fail b{color:#cf8a8f}#gbBT li.now{color:#fff}#gbBT li.now b{color:#c9a36a}#gbBT li em{display:block;font-style:normal;color:#8d9096;font-size:12px}";
+  var BT_MARK = { ok: "✓", warn: "!", fail: "✗", now: "●", todo: "○" };
+
+  function btCam(V) {
+    var f = V.face, box = f && f.box && Date.now() - f.t < 600 ? f.box : null;
+    var lbl = f && Date.now() - f.t < 600 ? (f.bearing >= 0 ? "+" : "") + Math.round(f.bearing) + "° · " + f.dist.toFixed(2) + " m" : "no face";
+    return '<div class="cam" data-cam="1">' + (box ? '<div class="fbox" style="left:' + (box.x * 100) + "%;top:" + (box.y * 100) +
+      "%;width:" + (box.width * 100) + "%;height:" + (box.height * 100) + '%"></div>' : "") +
+      '<div class="lbl">' + btEsc(lbl) + "</div>" + (V.phase === "run" ? '<div class="rec">● REC</div>' : "") + "</div>";
+  }
+  function btDraw(V) {
+    if (!btUi) {
+      btUi = document.createElement("div");
+      btUi.id = "gbBT";
+      var st = document.createElement("style");
+      st.textContent = BT_CSS;
+      btUi.appendChild(st);
+      btUi.appendChild(document.createElement("div")).className = "pane";
+      btUi.addEventListener("click", function (ev) {
+        var b = ev.target && ev.target.closest ? ev.target.closest("button[data-bt]") : null;
+        if (!b) return;
+        var what = b.getAttribute("data-bt");
+        if (what === "close") { btClose(); return; }
+        if (bt) bt.tap(what);
+      });
+      document.body.appendChild(btUi);
+    }
+    var pane = btUi.querySelector(".pane"), html = "", t = V.tele || {};
+    var full = V.phase !== "setup" || V.setupIdx === 3;
+    btUi.className = full ? "full" : "";
+    if (V.phase === "setup") {
+      var dots = "";
+      for (var i = 0; i < 4; i++) dots += "<i class=\"" + (i < V.setupIdx ? "done" : i === V.setupIdx ? "on" : "") + "\"></i>";
+      var s = V.setup, title = btEsc(s.title).replace(/“([^”]*)”/, '<span class="say">“$1”</span>');
+      if (V.setupIdx === 3) html += btCam(V);
+      html += '<div class="dots">' + dots + '</div><p class="big">' + title + '</p><p class="sub">' + btEsc(s.sub) + "</p>";
+      if (V.say) html += '<div class="st"><span class="dot"></span>' + btEsc(V.say) + "</div>";
+      if (V.setupIdx === 1) html += '<div class="st"><span class="dot' + (V.bodyUp ? " g" : "") + '"></span>' + (V.bodyUp ? "Legs connected" : "Waiting for the legs…") + "</div>";
+      if (V.setupIdx === 3) {
+        var seenNow = V.face && Date.now() - V.face.t < 600;
+        html += '<div class="st"><span class="dot' + (seenNow ? " g" : "") + '"></span>' + (seenNow ? "I can see you · listening" : "I can't see a face yet") + "</div>";
+      }
+      if (V.waiting && V.waiting.indexOf("tap") >= 0) {
+        html += '<button data-bt="tap">' + (V.setupIdx === 0 ? "It's on" : V.setupIdx === 2 ? "Stand up" : V.setupIdx === 3 ? "Measure now" : "Next") + "</button>";
+      }
+      html += '<button class="g" data-bt="cancel">Cancel test</button>';
+    } else if (V.phase === "run") {
+      var c = V.checks[V.checkIdx] || { name: "" }, mm = Math.floor(V.secs / 60), ss = V.secs % 60;
+      html += '<div class="hd"><b>' + (V.checkIdx + 1) + " / " + V.checks.length + " · " + btEsc(c.name) + "</b><span>" +
+        (mm < 10 ? "0" : "") + mm + ":" + (ss < 10 ? "0" : "") + ss + "</span></div>";
+      if (V.ask) html += '<div class="ask">' + btEsc(V.ask) + "</div>";
+      html += btCam(V);
+      var row = function (k, v) { return "<div><i>" + k + " </i>" + btEsc(v === null || v === undefined ? "–" : v) + "</div>"; };
+      html += '<div class="tl">' + row("skill", t.mode || t.kind || "still") +
+        row("cmd", t.tg !== undefined ? "h" + (t.tg >= 0 ? "+" : "") + t.tg + " s" + t.sp + " p" + t.p : null) +
+        row("heading", t.h !== undefined ? t.h + "°" : null) + row("tilt", t.ob !== undefined ? "b" + t.ob + " g" + t.og : null) +
+        row("legs", t.l !== undefined ? "L " + t.l + " R " + t.r : null) + row("gyro z", t.gz !== null ? t.gz + "°/s" : null) +
+        row("upright", t.up === null ? "?" : t.up ? "yes" : "NO") + row("sent", V.rowsSent + " chunks") + "</div>";
+      html += "<ul>" + V.checks.map(function (k) {
+        return '<li class="' + k.state + '"><b>' + BT_MARK[k.state] + "</b><span>" + btEsc(k.name) + "</span></li>";
+      }).join("") + "</ul>";
+      html += '<button class="stop" data-bt="cancel">STOP · or say “stop stop”</button>';
+    } else {
+      var words = { done: "Body test done", stopped: "Body test stopped", failed: "Body test hit an error" }[V.status] || "Body test";
+      html += '<p class="big" style="text-align:left">' + words + '</p><p class="sub" style="text-align:left">' +
+        Math.floor(V.secs / 60) + " min " + (V.secs % 60) + " s · saved on the box as " + btEsc(V.run) + "</p><ul>" +
+        V.checks.concat(V.falls ? [{ name: "Falls", state: V.falls.v, why: V.falls.why }] : []).map(function (k) {
+          return '<li class="' + k.state + '"><b>' + BT_MARK[k.state] + "</b><span>" + btEsc(k.name) + (k.why ? "<em>" + btEsc(k.why) + "</em>" : "") + "</span></li>";
+        }).join("") + '</ul><button data-bt="close">Done</button>';
+    }
+    // The camera's video element is kept across redraws, so the picture never blinks.
+    if (btVid && btVid.parentNode) btVid.parentNode.removeChild(btVid);
+    pane.innerHTML = html;
+    var slot = pane.querySelector("[data-cam]");
+    if (slot) {
+      var stream = typeof camStream !== "undefined" ? camStream : null;
+      if (!btVid) {
+        btVid = document.createElement("video");
+        btVid.muted = true; btVid.setAttribute("playsinline", ""); btVid.setAttribute("autoplay", "");
+      }
+      if (stream && btVid.srcObject !== stream) { btVid.srcObject = stream; try { btVid.play(); } catch (e) {} }
+      slot.insertBefore(btVid, slot.firstChild);
+    }
+  }
+  function btClose() {
+    if (bt && bt.phase !== "result") return;
+    bt = null;
+    if (btUi) { btUi.remove(); btUi = null; }
+    if (btVid) { btVid.srcObject = null; btVid = null; }
+  }
+  function btUnhook() {
+    if (btLog && window.logEv === btLog.mine) window.logEv = btLog.real;
+    btLog = null;
+  }
+
+  window.gbBodyTest = {
+    start: function (skills) {
+      if (!skills) throw new Error("a body test needs a skill set");
+      if (bt && bt.phase !== "result") throw new Error("a body test is already running");
+      btClose();
+      // Whatever the legs or the follower were doing stops first.
+      window.gbFollow.stop("new_move");
+      if (typeof _motion !== "undefined" && _motion) stopMotion();
+      Promise.all([import("/growbot-bodytest.js"), followLoad()]).then(function (mods) {
+        var mod = mods[0];
+        btLib = mods[1];
+        var drawn = 0, env = {
+          now: function () { return Date.now(); },
+          sleep: function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); },
+          newId: function () { return "bt-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8); },
+          newDrive: function () { var s = ""; while (s.length < 16) s += Math.random().toString(16).slice(2); return s.slice(0, 16); },
+          show: function (V) { var n = Date.now(); if (V.phase === "run" && n - drawn < 200) return; drawn = n; btDraw(V); },
+          bodyUp: function () { return !!(window._body && window._body.ready && _bodyAlive(true)); },
+          upright: function () { return typeof _bodyUpright === "function" ? _bodyUpright() : null; },
+          standUp: function () {
+            ensureIMU();
+            if (_bodyUpright() === false && typeof window.gbGetUp === "function") { window.gbGetUp(); return; }
+            var t = typeof STAND_TALL !== "undefined" && STAND_TALL ? STAND_TALL : { l: 50, r: 130, ms: 600 };
+            window.moveLegs({ body: { steps: [{ l: t.l, r: t.r, ms: t.ms }] } });
+          },
+          camFront: function () {
+            try {
+              if (window.camFacing !== "user" && typeof gbEyeTo === "function") gbEyeTo("user", "bodytest");
+              if (!window.camOn && typeof ensureCam === "function") ensureCam(false);
+            } catch (e) {}
+            return frontCamera();
+          },
+          face: btFace,
+          tele: function () { return btTele(bt ? bt.drive : ""); },
+          calibrate: function () { return window.gbFollow.calibrate(1); },
+          flip: function () { return window.gbFollow.flip(); },
+          still: btStill,
+          walk: function (sk, drive) {
+            window.gbTrainedWalk(sk, "look", 15, drive);
+            var M = typeof _motion !== "undefined" ? _motion : null;
+            if (M && M.drive === drive) return "";
+            var a = window._moveLast;
+            return String((a && a.reason) || "not admitted");
+          },
+          steer: function (drive, h, sp, p) {
+            return !!(window.gbSteer && window.gbSteer({ drive: drive, heading: h, speed: sp, pitch: p }));
+          },
+          legsOff: function () {
+            var M = typeof _motion !== "undefined" ? _motion : null;
+            if (!M || !bt || M.drive !== bt.drive) return;
+            _imuWhy = "done";
+            carryLegMotion({ l: 90, r: 90 });
+          },
+          post: function (chunk) {
+            chunk.robot = new URLSearchParams(location.search).get("id") || "";
+            return fetch("/api/box/bodytest", {
+              method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(chunk),
+            });
+          },
+        };
+        var run = bt = new mod.BodyTest(env, skills, { ua: String(navigator.userAgent || "").slice(0, 120) });
+        // Every diary row the page logs while it runs (walks, skills, falls, stops) joins its log.
+        btUnhook();
+        if (typeof window.logEv === "function") {
+          var real = window.logEv, mine = function (e, d) {
+            try { if (bt === run) run.event(e, d); } catch (x) {}
+            return real.apply(this, arguments);
+          };
+          btLog = { real: real, mine: mine };
+          window.logEv = mine;
+        }
+        try { logEv("bodytest_start", { run: run.run_id }); } catch (e) {}
+        return run.run().then(function () { if (bt === run) btUnhook(); });
+      }).catch(function (e) {
+        btUnhook();
+        setErr("the body test didn't load (" + ((e && e.message) || e) + ")");
+      });
+      return "body_test";
+    },
+    stop: function (why) { if (bt) bt.cancel(why || "stopped"); },
+    active: function () { return !!bt && bt.phase !== "result"; },
+    // A transcript: true when the test took it, so no model turn hears it.
+    heard: function (txt) { return !!(bt && bt.phase !== "result" && bt.heard(txt)); },
   };
 
   function load(pid) {
@@ -2058,6 +2313,8 @@
           out = walker.step(A, G, { fwd: cmd.fwd, yaw: err / 180, pitch: pitch });
         }
         try { send(out.l, out.r); } catch (e) { stopMotion(); return; }
+        // What the body test samples: the walk's own heading, command and leg poses.
+        M.tele = { h: heading / D, tg: cmd.target, sp: skills ? cmd.speed : cmd.fwd, p: pitch, mode: skills ? mode : "", l: out.l, r: out.r };
         // Each file ticks at the rate it trained at: its clock and history count steps.
         var rate = skills && set[mode] ? set[mode].prof.hz : hz;
         M.loopIv = setTimeout(step, Math.max(0, 1000 / rate - (performance.now() - t0)));

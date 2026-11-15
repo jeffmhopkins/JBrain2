@@ -1,0 +1,77 @@
+// Drives growbot-bodytest.js's whole script against a fake robot, person and clock, for
+// test_growbot_bodytest.py. argv: the module's file URL, then a JSON scenario:
+//   stepSign   +1 (the frames run as assumed) or -1 (reversed) for the person's step right
+//   tiltSign   +1 (+pitch lifts the camera toward the face) or -1 (reversed)
+//   fallIn     a check id whose walk tips over once
+//   estop      whether "stop stop" stops the walk in the last check (default true)
+//   drops      self_drop rows logged in the last check
+//   cancelIn   a step id ("place", "hold", ...) in which the screen's Stop is tapped
+//   stopStopIn a check id in which "stop stop" halts the legs (the test must end)
+//   noFace     the camera never sees anyone during this check id
+//   upright    false: the robot never reads upright
+const m = await import(process.argv[2]);
+const sc = JSON.parse(process.argv[3] || "{}");
+let now = 1e6, heading = 0, cmd = { heading: 0, speed: 0, pitch: 0 }, walking = false, dist = 1.0, bearing = 0;
+const posts = [], drives = [], out = { flips: 0, legsOff: 0, standUps: 0, calibrations: 0, walks: 0, shown: 0 };
+let test, fell = false, said = {};
+const step = () => test.stepName();
+const env = {
+  now: () => now,
+  sleep: async (ms) => {
+    now += ms;
+    if (walking) {
+      heading += Math.max(-3, Math.min(3, (cmd.heading - heading) * 0.1));
+      dist -= cmd.speed * 0.002;
+      if (sc.fallIn === step() && !fell && cmd.speed !== 0) { fell = true; walking = false; test.event("gait_abort", { why: "tipped" }); }
+      if (sc.stopStopIn === step() && !said.stopStop) { said.stopStop = true; walking = false; test.event("estop", { kind: "walk" }); }
+    }
+    if (sc.cancelIn === step() && !said.cancel) { said.cancel = true; test.tap("cancel"); }
+    const ask = test.ask || "";
+    if (/YOUR right/.test(ask)) bearing = Math.max(-20, Math.min(20, bearing + (sc.stepSign || 1)));
+    else if (/middle/.test(ask)) bearing += bearing > 0 ? -1 : bearing < 0 ? 1 : 0;
+    const w = test.waiting;
+    if (w) {
+      if (w.includes("ready")) test.heard("I'm ready");
+      else if (w.includes("stand")) test.heard("Stand up.");
+      else if (w.includes("metre")) test.heard("One meter.");
+      else if (w.includes("tap") && !w.includes("ready")) { /* power: waits for the body */ }
+    }
+    if (/stop stop/.test(ask) && /now/.test(ask)) {
+      if (!said.drops) { said.drops = true; for (let i = 0; i < (sc.drops || 0); i++) test.event("self_drop", { ms: 900 }); }
+      if (sc.estop !== false && walking && !said.estop && now % 3000 === 0) { said.estop = true; walking = false; test.event("estop", { kind: "walk" }); }
+    }
+  },
+  show: () => { out.shown++; },
+  bodyUp: () => true,
+  upright: () => sc.upright === false ? false : true,
+  standUp: () => { out.standUps++; },
+  face: () => sc.noFace === step() ? null : ({ t: now, bearing: bearing - heading, up: 10 - (sc.tiltSign || 1) * cmd.pitch * 4, dist, n: 1, box: { x: 0.4, y: 0.2, width: 0.1, height: 0.1 } }),
+  tele: () => ({ h: heading, ob: 80 + cmd.pitch * 5, mode: "look", up: true }),
+  newId: () => "bt-test-run1",
+  newDrive: () => { const d = "d" + String(drives.length).padStart(7, "0"); drives.push(d); return d; },
+  walk: () => { walking = true; out.walks++; return ""; },
+  steer: (d, h, s, p) => { if (!walking || d !== drives[drives.length - 1]) return false; cmd = { heading: h, speed: s, pitch: p }; return true; },
+  legsOff: () => { walking = false; out.legsOff++; },
+  camFront: () => true,
+  calibrate: async () => { out.calibrations++; return 1.07; },
+  flip: async () => { out.flips++; return true; },
+  still: () => (sc.stills ? "data:image/jpeg;base64,AAAA" : null),
+  post: async (c) => { posts.push(JSON.parse(JSON.stringify(c))); },
+};
+test = new m.BodyTest(env, { look: "pol-look", forward: "pol-fwd" });
+const status = await test.run();
+const rows = posts.flatMap((p) => p.rows);
+const kinds = {};
+rows.forEach((r) => { kinds[r.k] = (kinds[r.k] || 0) + 1; });
+const samples = rows.filter((r) => r.k === "s");
+out.heardAfter = test.heard("hello");
+console.log(JSON.stringify({
+  status, results: test.results, out, secs: (now - 1e6) / 1000,
+  seqs: posts.map((p) => p.seq), statuses: posts.map((p) => p.status),
+  skills: posts.map((p) => p.skills || null), last: posts[posts.length - 1].summary,
+  kinds, sampleHz: samples.length / ((samples[samples.length - 1].t - samples[0].t) / 1000),
+  events: rows.filter((r) => r.k === "e" || r.k === "ev").map((r) => r.e),
+  steps: rows.filter((r) => r.e === "bt_step").map((r) => r.step),
+  stills: rows.filter((r) => r.k === "still").map((r) => r.step),
+  heard: rows.filter((r) => r.e === "bt_heard").slice(0, 3),
+}));

@@ -3988,7 +3988,42 @@ export type GrowbotSkill = "look" | "forward" | "back";
 export type GrowbotSkillSet = Partial<Record<GrowbotSkill, string>>;
 /** What a skill set's look may do instead (growbot-follow.js): follow the face it sees, a
  *  legs-off dry run of that, or set the creature camera's 1 m distance or frame direction. */
-export type GrowbotFollow = "walk" | "dry" | "calibrate" | "flip";
+export type GrowbotFollow = "walk" | "dry" | "calibrate" | "flip" | "test";
+
+/** One check's verdict in a body test (growbot-bodytest.js): ok, a warning, or a failure. */
+export interface GrowbotBodyTestVerdict {
+  v: "ok" | "warn" | "fail";
+  why: string;
+}
+
+/** A body test run's latest state, as the creature's phone last posted it. */
+export interface GrowbotBodyTestSummary {
+  phase?: "setup" | "run" | "result";
+  step?: string;
+  step_n?: number;
+  steps?: number;
+  label?: string;
+  ask?: string;
+  secs?: number;
+  mode?: string;
+  heading?: number | null;
+  face?: { dist: number | null; bearing: number | null } | null;
+  falls?: number;
+  results?: Record<string, GrowbotBodyTestVerdict>;
+}
+
+/** A body test run kept on the box (GET /api/growbot/bodytests). */
+export interface GrowbotBodyTestRun {
+  number: number;
+  run: string;
+  robot: string;
+  started_at: string;
+  updated_at: string;
+  status: "running" | "done" | "stopped" | "failed";
+  skills: GrowbotSkillSet;
+  summary: GrowbotBodyTestSummary;
+  rows: number;
+}
 
 /** The owner's switches for one library policy. */
 export interface GrowbotPolicyPatch {
@@ -8445,6 +8480,13 @@ export const api = {
   /** Steer the trained walk running now, and keep it going a moment (the Body tab's Drive). */
   async steerGrowbotRobot(code: string, steer: GrowbotSteer): Promise<void> {
     await request(`/api/growbot/robots/${encodeURIComponent(code)}/steer`, jsonInit("POST", steer));
+  },
+
+  /** The robot's newest body tests, the one running first if any (the Body tab's mirror). */
+  async growbotBodyTests(code: string, limit = 5): Promise<GrowbotBodyTestRun[]> {
+    const q = new URLSearchParams({ robot: code, limit: String(limit) });
+    const response = await request(`/api/growbot/bodytests?${q}`);
+    return (await response.json()) as GrowbotBodyTestRun[];
   },
 
   async growbotPolicies(): Promise<GrowbotPolicy[]> {

@@ -65,6 +65,7 @@ class _Fake(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     seen: list[dict[str, Any]] = []
     models: list[dict[str, Any]] = []
+    bodytest_reply: tuple[int, bytes] = (200, b'{"ok":true,"number":1}')
     stt_reply: bytes = b""
     root_cert: bytes = b"-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
     tts_status = 200
@@ -243,6 +244,8 @@ class _Fake(BaseHTTPRequestHandler):
             self._reply(*_Fake.tag_reply)
         elif self.path == "/internal/growbot/calls":
             self._reply(204 if authed else 401, b"")
+        elif self.path == "/internal/growbot/bodytests":
+            self._reply(*(_Fake.bodytest_reply if authed else (401, b"{}")))
         else:
             self._reply(404, b"{}")
 
@@ -2762,6 +2765,28 @@ def test_a_skill_sets_look_can_follow_a_face(run: _Running) -> None:
     page.shut()
 
 
+def test_a_skill_sets_look_can_start_the_body_test(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    skills = {"look": _PID, "forward": _PID2}
+    move = {"code": "gb-abc123", "move": "look", "secs": 0, "skills": skills, "follow": "test"}
+    assert _move(run, {**move, "move": "forward"})[0] == 400
+    moved: list[dict[str, Any]] = []
+
+    def answer() -> None:
+        msg = page.message()
+        moved.append(msg)
+        page.text({"t": "box_ack", "rid": msg["rid"], "ok": True, "state": "body_test"})
+
+    t = threading.Thread(target=answer)
+    t.start()
+    assert _move(run, move)[0] == 200
+    t.join(5)
+    assert moved[0]["follow"] == "test" and moved[0]["skills"] == skills
+    page.shut()
+
+
 def test_a_move_without_a_policy_sends_none(run: _Running) -> None:
     page = _phone(run, "/d/gb-abc123-agent")
     page.text({"t": "hello"})
@@ -3937,3 +3962,80 @@ def test_only_the_phone_holding_the_persona_reaches_its_dream(
     opened = {"op": "open", "persona": _PERSONA}
     assert _soul_call(run, "POST", "/api/box/dream", opened, cookie=other) == (200, {"ok": True})
     assert run.app._dreams == {}
+
+
+# --- the body test's log (growbot-bodytest.js) ---------------------------------------------------
+
+_RUN = "bt-mhz8k2-a1b2c3"
+
+
+def _bodytest(run: _Running, chunk: Any, cookie: str | None = None) -> tuple[int, Any]:
+    headers = {"Content-Type": "application/json", "Origin": run.origin}
+    if cookie:
+        headers["Cookie"] = cookie
+    raw = chunk if isinstance(chunk, bytes) else json.dumps(chunk).encode()
+    resp = run.request("POST", "/api/box/bodytest", raw, headers)
+    data = resp.read()
+    return resp.status, (json.loads(data) if data else None)
+
+
+def test_a_body_test_chunk_goes_to_the_api_with_its_robot(run: _Running) -> None:
+    chunk = {
+        "run": _RUN,
+        "robot": "gb-abc123",
+        "seq": 0,
+        "status": "running",
+        "summary": {"step": "place"},
+        "rows": [{"t": 1, "k": "e", "e": "bt_start"}],
+        "skills": {"look": _PID},
+        "persona": "forged",
+    }
+    assert _bodytest(run, chunk) == (200, {"ok": True})
+    sent = [r for r in _Fake.seen if r["path"] == "/internal/growbot/bodytests"]
+    assert sent[0]["auth"] == f"Bearer {_TOKEN}"
+    got = json.loads(sent[0]["body"])
+    # The session says whose it is: a persona the page names is never passed on.
+    assert got == {k: v for k, v in chunk.items() if k != "persona"}
+    _Fake.bodytest_reply = (503, b"{}")
+    try:
+        assert _bodytest(run, chunk) == (502, {"ok": False, "status": 503})
+    finally:
+        _Fake.bodytest_reply = (200, b'{"ok":true,"number":1}')
+
+
+def test_a_body_test_chunk_is_only_for_the_robot_this_phone_drives(run: _Running) -> None:
+    chunk = {"run": _RUN, "robot": "gb-other", "seq": 0, "rows": []}
+    assert _bodytest(run, chunk)[0] == 403
+    _Fake.riders = {"gb-worn": (_PERSONA, _PHONE)}
+    cookie = _persona_cookie(run, robot="")
+    assert _bodytest(run, {**chunk, "robot": "gb-worn"}, cookie)[0] == 200
+    sent = [r for r in _Fake.seen if r["path"] == "/internal/growbot/bodytests"]
+    assert json.loads(sent[-1]["body"])["persona"] == _PERSONA
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    [
+        b"not json",
+        {"run": "bt-x", "robot": "gb-abc123", "seq": 0},
+        {"run": _RUN, "robot": "../x", "seq": 0},
+        {"run": _RUN, "seq": 0},
+    ],
+)
+def test_an_odd_body_test_chunk_is_refused(run: _Running, chunk: Any) -> None:
+    assert _bodytest(run, chunk)[0] == 400
+    assert not [r for r in _Fake.seen if r["path"] == "/internal/growbot/bodytests"]
+
+
+def test_the_body_test_log_wants_a_session_a_post_and_a_bounded_body(run: _Running) -> None:
+    chunk = json.dumps({"run": _RUN, "robot": "gb-abc123", "seq": 0}).encode()
+    resp = run.request("POST", "/api/box/bodytest", chunk, {"Origin": run.origin}, cookie=False)
+    resp.read()
+    assert resp.status == 401
+    resp = run.request("GET", "/api/box/bodytest")
+    resp.read()
+    assert resp.status == 405
+    big = json.dumps({"run": _RUN, "robot": "gb-abc123", "rows": ["x" * 600_000]}).encode()
+    resp = run.request("POST", "/api/box/bodytest", big, {"Origin": run.origin})
+    resp.read()
+    assert resp.status == 413

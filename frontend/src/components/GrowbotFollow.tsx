@@ -15,7 +15,8 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-const SAID: Record<FollowMove, string> = {
+// The body test is GrowbotBodyTest's own move.
+const SAID: Record<Exclude<FollowMove, "test">, string> = {
   walk: "Following the nearest face. Say “stop stop” or tap Stop following to end it.",
   dry: "Dry run: the arrow on the creature's screen shows which way it would go.",
   calibrate: "Measuring: stand 1 m from the camera, facing it.",
@@ -49,7 +50,7 @@ export function GrowbotFollow({
   // biome-ignore lint/correctness/useExhaustiveDependencies: halted is the trigger.
   useEffect(() => setRunning(null), [halted, disabled]);
 
-  async function send(what: FollowMove) {
+  async function send(what: Exclude<FollowMove, "test">) {
     setBusy(true);
     try {
       const out = await api.moveGrowbotRobot(

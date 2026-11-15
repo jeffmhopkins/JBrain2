@@ -118,9 +118,31 @@ The real-robot trials after P5 are GrowBot_Training's phase 6.
   early; it is not a ruler. Speech starting mid-walk holds it in place until the transcript lands.
   A few frames go to the run log. It ends with one line, e.g. "Walked about 0.9 m in 19 s".
 
+## Body test (built, owner 2026-11-15)
+
+The Body tab's **Body test…** (`frontend/src/components/GrowbotBodyTest.tsx`, mock
+`docs/mocks/growbot-body-test/screens.html`) sends a skill set's look with `follow: "test"`. The
+creature's phone (`growbot/patches/growbot-bodytest.js`, page glue `gbBodyTest` in
+`growbot-box.js`) then talks the person through setup on its own screen: place the phone on the
+body (tap or "ready"), power on (moves on when the legs answer), "stand up" (get-up if lying,
+else the tall stance, until upright 1 s), stand 1 m away and say "1 meter" (the follower's
+calibration). Then, each check on a Drive-steered walk of its own: the left-right sign (legs still;
+reversed frames are flipped), the camera tilt (pitch -1 then +1 with the face above centre), look
+and hold 10 s, turns to +90 and -90 and back, creep over 15 s of hold after them, 4 s forward and
+4 s back by face distance, and "stop stop" while backing. Falls are counted throughout; a fall
+fails its check and the test carries on once the robot is upright. While it runs, every heard
+line goes to the test, never a model turn ("stop stop" is still checked first and ends it).
+
+The phone shows the camera with its face box, live numbers and the checklist, then a verdict per
+check. It posts its log every 2 s (`/api/box/bodytest` → `/internal/growbot/bodytests`, migration
+0274, newest 50 runs kept): ~20 samples a second, its events, the page's diary rows during it, and
+a camera still per step. The Body tab mirrors a running test (step, clock, skill, heading, face,
+falls) with Stop, and lists past runs with their JSON log; `GET /api/debug/growbot/bodytests[/{n}]`
+reads the same for review.
+
 ## Known gaps
 
-- **Bench checks for P3:** the left-right sign (a dry run's arrow should point at the person;
+- **Bench checks for P3** (the Body test runs each of these and logs it): the left-right sign (a dry run's arrow should point at the person;
   else Flip frames), the 60° width of view, whether a positive pitch raises the camera toward a
   face above centre, and the box's latency (a reading is placed with the heading when it lands,
   not when the frame was taken).
