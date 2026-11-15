@@ -5111,6 +5111,11 @@ button.small {
   gap: 14px 16px;
 }
 
+/* An odd tile out (CPU joins the four) spans the row rather than leave a hole. */
+.ops-vital:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
 .ops-vital {
   display: flex;
   flex-direction: column;

@@ -28,7 +28,7 @@ export function serverMetricSeries(points: MetricPoint[]): PlotSeries[] {
     {
       // The load average: threads running or waiting, not a percentage (owner,
       // 2026-11-15, read ~10 on a 32-thread box as "10%").
-      label: "CPU load (threads busy)",
+      label: "CPU load (threads running or waiting)",
       lines: [
         {
           color: "var(--steel)",

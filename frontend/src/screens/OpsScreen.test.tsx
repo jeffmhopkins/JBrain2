@@ -480,6 +480,8 @@ describe("OpsScreen", () => {
     expect(vitals).toHaveTextContent(/31%\s*38\.0 GB \/ 121\.0 GB/);
     expect(vitals).toHaveTextContent("28.5");
     expect(vitals).toHaveTextContent("load 0.55 · 0.64 · 0.62 · up 5h 40m");
+    // An older supervisor sends no CPU reading: no CPU tile, rather than a 0%.
+    expect(vitals).not.toHaveTextContent(/CPU/);
     expect(screen.getAllByRole("button", { name: "Update" })).toHaveLength(1);
     // The owner settled on Flash-Next: the update's engine switches are gone from the PWA.
     expect(screen.queryByRole("switch", { name: /Track newest llama.cpp/ })).toBeNull();
@@ -497,7 +499,9 @@ describe("OpsScreen", () => {
 
     const vitals = await screen.findByRole("region", { name: "Vitals" });
     await waitFor(() => expect(vitals).toHaveTextContent(/CPU\s*31%\s*of 32 threads/));
-    expect(vitals).toHaveTextContent("load 0.55 · 0.64 · 0.62 threads busy of 32 · up 5h 40m");
+    expect(vitals).toHaveTextContent(
+      "load 0.55 · 0.64 · 0.62 running or waiting, of 32 threads · up 5h 40m",
+    );
   });
 
   it("names a down service in a banner that opens Services", async () => {
@@ -681,7 +685,7 @@ describe("OpsScreen", () => {
     render(<OpsScreen />);
 
     // Open from the start: charts render on mount, fetched over the 6h window.
-    expect(await screen.findByText("CPU load (threads busy)")).toBeInTheDocument();
+    expect(await screen.findByText("CPU load (threads running or waiting)")).toBeInTheDocument();
     expect(screen.getByText("Fan")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("metrics/history?range=6h"))).toBe(
       true,

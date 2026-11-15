@@ -19,6 +19,7 @@ cover every host interface — see read_net_counters.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -395,24 +396,63 @@ def _cpu_times(stat: Path) -> tuple[int, int, int] | None:
     return total - idle, total, threads
 
 
-def read_cpu_busy(
-    proc: Path = Path("/proc"),
-    window_s: float = 0.25,
-    sleep: Callable[[float], None] = time.sleep,
-) -> tuple[float | None, int | None]:
-    """Whole-box CPU busy percent over ``window_s``, and the hardware thread count."""
-    first = _cpu_times(proc / "stat")
-    if first is None:
-        return None, None
-    sleep(window_s)
-    second = _cpu_times(proc / "stat")
-    if second is None:
-        return None, first[2] or None
-    spent = second[1] - first[1]
-    if spent <= 0:
-        return None, second[2] or None
-    busy = max(0.0, min(100.0, 100 * (second[0] - first[0]) / spent))
-    return round(busy, 1), second[2] or None
+class CpuBusy:
+    """Whole-box CPU busy percent since the previous reading, and the thread count.
+
+    /metrics is polled (the Ops page, the history sampler, the load watchdog once a
+    second), so a reading measures against the last one rather than sleeping: only a
+    first or stale reading waits ``window_s`` for a second sample, so the watchdog's
+    cadence isn't stretched for a number it ignores."""
+
+    STALE_S = 60.0
+    MIN_GAP_S = 0.2
+
+    def __init__(
+        self,
+        window_s: float = 0.25,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.window_s = window_s
+        self.sleep = sleep
+        self.clock = clock
+        self.last: tuple[int, int, float] | None = None
+        self.busy: float | None = None
+        self.lock = threading.Lock()
+
+    def read(self, proc: Path = Path("/proc")) -> tuple[float | None, int | None]:
+        with self.lock:
+            now = _cpu_times(proc / "stat")
+            if now is None:
+                return None, None
+            at = self.clock()
+            prev = self.last
+            if prev is not None and at - prev[2] < self.MIN_GAP_S:
+                # Too close to the last reading to mean anything: repeat its answer.
+                return self.busy, now[2] or None
+            if prev is None or at - prev[2] > self.STALE_S:
+                self.sleep(self.window_s)
+                prev = (now[0], now[1], at)
+                now = _cpu_times(proc / "stat")
+                if now is None:
+                    return None, None
+                at = self.clock()
+            self.last = (now[0], now[1], at)
+            spent = now[1] - prev[1]
+            if spent <= 0:
+                self.busy = None
+            else:
+                self.busy = round(
+                    max(0.0, min(100.0, 100 * (now[0] - prev[0]) / spent)), 1
+                )
+            return self.busy, now[2] or None
+
+
+_CPU = CpuBusy()
+
+
+def read_cpu_busy(proc: Path = Path("/proc")) -> tuple[float | None, int | None]:
+    return _CPU.read(proc)
 
 
 def read_host_metrics(

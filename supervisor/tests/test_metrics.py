@@ -295,26 +295,60 @@ def _stat(user: int, idle: int, iowait: int = 0, threads: int = 4) -> str:
     return head + rows + "intr 1 2 3\nctxt 99\n"
 
 
-def test_cpu_busy_is_the_whole_box_over_the_window(tmp_path: Path) -> None:
+class _Clock:
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_cpu_busy_waits_once_then_measures_since_the_last_reading(
+    tmp_path: Path,
+) -> None:
     # 32 threads, 300 of the next 1000 jiffies busy, 100 waiting on IO (not busy).
-    (tmp_path / "stat").write_text(_stat(1000, 9000, 0, threads=32))
+    stat = tmp_path / "stat"
+    stat.write_text(_stat(1000, 9000, 0, threads=32))
+    clock = _Clock()
     waited: list[float] = []
+
+    after_wait = [
+        _stat(1300, 9600, 100, threads=32),
+        _stat(2300, 10600, 100, threads=32),
+    ]
 
     def tick(s: float) -> None:
         waited.append(s)
-        (tmp_path / "stat").write_text(_stat(1300, 9600, 100, threads=32))
+        clock.t += s
+        stat.write_text(after_wait.pop(0))
 
-    assert host_metrics.read_cpu_busy(tmp_path, sleep=tick) == (30.0, 32)
+    cpu = host_metrics.CpuBusy(sleep=tick, clock=clock)
+    assert cpu.read(tmp_path) == (30.0, 32)
     assert waited == [0.25]
+    # A second later: measured against the last reading, with no wait.
+    clock.t += 1.0
+    stat.write_text(_stat(2300, 9600, 100, threads=32))
+    assert cpu.read(tmp_path) == (100.0, 32)
+    assert waited == [0.25]
+    # Right on top of it: the same answer, not a meaningless sliver.
+    clock.t += 0.05
+    assert cpu.read(tmp_path) == (100.0, 32)
+    # Long idle since: stale, so it waits for a fresh window again (all idle in it).
+    clock.t += 120.0
+    assert cpu.read(tmp_path) == (0.0, 32)
+    assert waited == [0.25, 0.25]
 
 
 def test_cpu_busy_is_none_without_a_readable_stat(tmp_path: Path) -> None:
-    assert host_metrics.read_cpu_busy(tmp_path, sleep=lambda _s: None) == (None, None)
+    def cpu() -> host_metrics.CpuBusy:
+        return host_metrics.CpuBusy(sleep=lambda _s: None, clock=_Clock())
+
+    assert cpu().read(tmp_path) == (None, None)
     (tmp_path / "stat").write_text("intr 1 2\n")
-    assert host_metrics.read_cpu_busy(tmp_path, sleep=lambda _s: None) == (None, None)
-    # No time passed between the reads: no percentage, but the thread count stands.
+    assert cpu().read(tmp_path) == (None, None)
+    # No jiffies passed between the reads: no percentage, but the thread count stands.
     (tmp_path / "stat").write_text(_stat(5, 5, threads=8))
-    assert host_metrics.read_cpu_busy(tmp_path, sleep=lambda _s: None) == (None, 8)
+    assert cpu().read(tmp_path) == (None, 8)
 
 
 def test_metrics_route(client: TestClient, monkeypatch) -> None:  # type: ignore[no-untyped-def]

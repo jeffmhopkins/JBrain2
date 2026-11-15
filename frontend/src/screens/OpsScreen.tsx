@@ -564,7 +564,7 @@ function VitalsCard({
         <span>
           load {metrics.load_1m.toFixed(2)} · {metrics.load_5m.toFixed(2)} ·{" "}
           {metrics.load_15m.toFixed(2)}
-          {metrics.cpu_threads ? ` threads busy of ${metrics.cpu_threads}` : ""} · up{" "}
+          {metrics.cpu_threads ? ` running or waiting, of ${metrics.cpu_threads} threads` : ""} · up{" "}
           {fmtUptime(metrics.uptime_seconds)}
         </span>
         {refresh}
