@@ -52,6 +52,7 @@ export var FOLLOW = {
   // height moves only while standing within pitchTurnMax of the person, and a wider turn or a
   // search is sent no lower than pitchTurnMin; the height asked for comes back after.
   pitchTurnMax: 20,
+  pitchFaceDeg: 15,        // and comes back only within this, so noise at the limit doesn't flip it
   pitchTurnMin: 0,
 };
 
@@ -159,6 +160,7 @@ Follower.prototype.reset = function () {
   this.heldMs = 0;    // how long its readings span
   this.lastT = null;
   this.walking = false;
+  this.facing = true;
 };
 Follower.prototype.start = function (dist) {
   this.set = clamp(num(dist, 1), this.o.near, this.o.far);
@@ -217,7 +219,7 @@ Follower.prototype.command = function (track, heading, t) {
   }
   // The camera's height creeps toward the face once per reading, only while standing and
   // facing them: a walk's own stance pitches the lens, which would read as the face moving.
-  var facing = Math.abs(err) <= this.o.pitchTurnMax;
+  var facing = this.facing = Math.abs(err) <= (this.facing ? this.o.pitchTurnMax : this.o.pitchFaceDeg);
   if (newReading && speed === 0 && facing && isFinite(p.up)) {
     this.pitch = clamp(this.pitch + this.o.pitchGain * p.up, -1, 1);
   }

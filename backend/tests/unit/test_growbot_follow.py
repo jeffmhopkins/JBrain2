@@ -251,3 +251,14 @@ def test_a_search_for_someone_lost_is_sent_with_the_camera_level() -> None:
     )
     assert got[0]["state"] == "lost" and got[0]["pitch"] == 0
     assert got[1]["pitch"] == 1
+
+
+def test_the_camera_height_comes_back_only_well_inside_the_turn_limit() -> None:
+    """Noise at 20 degrees must not flip the height between the stored one and level."""
+    got = _node(
+        "const t = new f.Track(), fo = new f.Follower(); fo.start(1); fo.pitch = -0.8;"
+        "t.p = { az: 0, dist: 1, raw: 1, size: 0.1, vaz: 0, vdist: 0, t: 0, up: 0 };"
+        "return [19, 21, 19, 16, 14].map((az, i) => { t.p.az = az; t.p.t = i * 100; t.seq++;"
+        "  return fo.command(t, 0, i * 100).pitch; });"
+    )
+    assert got == [-0.8, 0, 0, 0, -0.8]
