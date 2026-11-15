@@ -1513,18 +1513,18 @@ class GrowBot:
             return json_response(400, {"error": "skills"})
         if what == "look" and not policy and not skills:
             return json_response(400, {"error": "policy"})
-        # The face follower (growbot-follow.js): a skill set's look, followed, dry run, or one
-        # of its camera settings.
-        follow = msg.get("follow", "") if msg else ""
-        if not isinstance(follow, str) or (
-            follow and (follow not in FOLLOW or not skills or what != "look")
-        ):
-            return json_response(400, {"error": "follow"})
         drive = msg.get("drive", "") if msg else ""
         if not isinstance(drive, str) or (
             drive and (not (policy or skills) or not DRIVE_RE.fullmatch(drive))
         ):
             return json_response(400, {"error": "drive"})
+        # The face follower (growbot-follow.js): a skill set's look, followed, dry run, or one
+        # of its camera settings.
+        follow = msg.get("follow", "") if msg else ""
+        if not isinstance(follow, str) or (
+            follow and (follow not in FOLLOW or not skills or what != "look" or drive)
+        ):
+            return json_response(400, {"error": "follow"})
         name = msg.get("name", "") if msg else ""
         if (what == "gesture") != bool(name) or (name and not _gesture_name(name)):
             return json_response(400, {"error": "name"})

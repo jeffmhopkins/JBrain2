@@ -144,7 +144,9 @@ Follower.prototype.command = function (track, heading, t) {
   var age = track.age(t), p = track.p;
   if (!p) return { heading: 0, speed: 0, pitch: this.pitch, state: "lost" };
   if (age > this.o.lostMs) return { heading: wrap180(p.az - heading), speed: 0, pitch: this.pitch, state: "lost" };
-  var q = track.predict(t), err = wrap180(q.az - heading);
+  // Coast on the prediction only while readings are fresh: a stale one holds where they were
+  // heading at that moment, so it never spins off on old speed and snaps back when lost.
+  var q = track.predict(Math.min(t, p.t + this.o.staleMs)), err = wrap180(q.az - heading);
   var speed = 0, state = "hold";
   if (age <= this.o.staleMs && !this.stay) {
     var off = q.dist - this.set;

@@ -137,6 +137,16 @@ def test_a_stale_reading_stops_and_a_lost_person_is_turned_toward() -> None:
     assert lost["heading"] == pytest.approx(fresh["heading"] - 30)
 
 
+def test_a_stale_reading_holds_its_bearing_rather_than_coasting_on() -> None:
+    got = _node(
+        "const t = new f.Track(), fo = new f.Follower(); fo.start(1);"
+        "t.p = { az: 0, dist: 1, size: 0.1, vaz: 60, vdist: 0, t: 0, up: 0 }; t.seq++;"
+        "return [fo.command(t, 0, 500).heading, fo.command(t, 0, 2000).heading];"
+    )
+    # Coasts at 60 deg/s while fresh (0.5 s), then holds there instead of running on to 120.
+    assert got == [pytest.approx(30), pytest.approx(30)]
+
+
 def test_closer_and_further_move_the_distance_within_its_limits() -> None:
     got = _node(
         "const fo = new f.Follower(); fo.start(1);"

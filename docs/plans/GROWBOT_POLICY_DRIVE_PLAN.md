@@ -110,6 +110,8 @@ The real-robot trials after P5 are GrowBot_Training's phase 6.
   else Flip frames), the 60° width of view, whether a positive pitch raises the camera toward a
   face above centre, and the box's latency (a reading is placed with the heading when it lands,
   not when the frame was taken).
+- **The Body tab doesn't hear a follow end on the creature** (lost, nobody seen, 2 minutes):
+  its button stays on Stop following until tapped. The creature's own screen and caption say it.
 - **Pose as the fallback** (a person facing away has no face box) isn't built; a face is needed.
 
 - **A shout may never be transcribed while it walks.** Upstream drops an unpitched clip heard

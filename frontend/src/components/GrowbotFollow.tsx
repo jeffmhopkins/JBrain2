@@ -77,10 +77,12 @@ export function GrowbotFollow({
   }
 
   async function stop() {
-    setRunning(null);
     try {
       await api.moveGrowbotRobot(code, "stop");
-      if (mounted.current) onSaid({ text: "Stopped following.", bad: false });
+      if (!mounted.current) return;
+      // Only once it stopped: a failed stop leaves the button to try again.
+      setRunning(null);
+      onSaid({ text: "Stopped following.", bad: false });
     } catch (e) {
       if (mounted.current) onSaid({ text: message(e), bad: true });
     }

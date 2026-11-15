@@ -1382,7 +1382,12 @@
   // The follower's settings moves (the Body tab's Dry run, Calibrate 1 m and Flip): no legs.
   function setting(follow, skills) {
     if (!window.gbFollow) throw new Error("this page can't follow yet");
-    if (follow === "dry") { window.gbFollow.stop("new_move"); return { state: window.gbFollow.dry(skills), why: "" }; }
+    if (follow === "dry") {
+      // A dry run never shows over walking legs: whatever they were doing stops first.
+      window.gbFollow.stop("new_move");
+      if (typeof _motion !== "undefined" && _motion) stopMotion();
+      return { state: window.gbFollow.dry(skills), why: "" };
+    }
     if (follow === "calibrate") {
       window.gbFollow.calibrate(1).then(function (k) { setErr("Measured: you're 1 m away (\u00d7" + k.toFixed(2) + ")."); },
         function (e) { setErr("couldn't measure (" + ((e && e.message) || e) + ")"); });
@@ -1482,7 +1487,7 @@
       var name = move === "gesture" && typeof m.name === "string" && m.name.length <= 16 && GESTURE_RE.test(m.name) ? m.name : "";
       // The follower (gbFollow): a skill set's "look", followed, dry run, or a camera setting.
       var follow = /^(walk|dry|calibrate|flip)$/.test(String(m.follow || "")) && move === "look" &&
-        typeof policy === "object" ? m.follow : "";
+        !!policy && typeof policy === "object" ? m.follow : "";
       if (m.follow && !follow) {
         try { s.send(JSON.stringify({ t: "box_ack", rid: m.rid, ok: false, state: "", why: "following takes a skill set's look" })); } catch (e) {}
         return;
@@ -1623,6 +1628,9 @@
      phone, set from the Body tab (follow "calibrate" and "flip"). */
   var CAM_KEY = "gb.follow.camera", FOLLOW_MAX_MS = DRIVE_MAX_MS, LOCK_WAIT_MS = 6000, LOST_END_MS = 8000;
   var follow = null, seen = { boxes: [], t: -Infinity }, followLib = null, ui = null, uiIv = 0;
+  // Bumped by every stop, so a follower still loading when a stop lands never starts after it.
+  var followGen = 0;
+  function frontCamera() { return !!window.camOn && window.camFacing === "user"; }
 
   function followLoad() {
     if (!followLib) followLib = import("/growbot-follow.js").catch(function (e) { followLib = null; throw e; });
@@ -1642,6 +1650,8 @@
   function goodBox(b) { return b && isFinite(b.x) && isFinite(b.y) && b.width > 0 && b.height > 0; }
 
   function followBoxes(boxes) {
+    // Only the front camera's frames: a face seen by the back eye is behind it, signs reversed.
+    if (!frontCamera()) { seen = { boxes: [], t: -Infinity }; return; }
     seen = { boxes: (boxes || []).filter(goodBox), t: Date.now() };
     var F = follow;
     if (!F) return;
@@ -1649,7 +1659,7 @@
     if (F.track.p) { F.track.update(reads, h, seen.t); return; }
     if (!F.track.lock(reads, h, seen.t)) return;
     F.f.start(F.track.p.dist);
-    try { logEv("follow_lock", { dist: Math.round(F.track.p.dist * 100) / 100, bearing: Math.round(reads[0].bearing), faces: reads.length }); } catch (e) {}
+    try { logEv("follow_lock", { dist: Math.round(F.track.p.dist * 100) / 100, bearing: Math.round(F.track.p.az - h), faces: reads.length }); } catch (e) {}
   }
   // growbot-eyes.js may load after this file: join it once it's there.
   (function join() {
@@ -1657,9 +1667,12 @@
     else setTimeout(join, 500);
   })();
 
-  function followEnd(why, words) {
+  // Ends the follow running now, or only `own` when given (a walk ending ends its own follow,
+  // never a dry run that has since replaced it).
+  function followEnd(why, words, own) {
     var F = follow;
-    if (!F) return;
+    if (!own) followGen++;
+    if (!F || (own && own !== F)) return;
     follow = null;
     clearInterval(uiIv); uiIv = 0;
     if (ui) { ui.remove(); ui = null; }
@@ -1687,10 +1700,12 @@
   }
 
   function followStart(skills, dry, M) {
+    followEnd("replaced");
+    var gen = followGen;
     return followLoad().then(function (lib) {
+      if (gen !== followGen) return;
       var has = {};
       Object.keys(skills).forEach(function (m) { has[m] = true; });
-      followEnd("replaced");
       var F = follow = {
         lib: lib, dry: dry, M: M || null, cam: camera(lib), heading: 0, t0: Date.now(),
         track: new lib.Track(), f: new lib.Follower(), sel: null, last: null,
@@ -1844,6 +1859,7 @@
     // `pid` is one library policy, or a skill set {look?, forward?, back?} of them.
     var skills = pid && typeof pid === "object" ? pid : null;
     if (following && !skills) { refuse(attempt, "no_skills", "following needs a skill set"); return; }
+    if (following && !frontCamera()) { refuse(attempt, "no_front_camera", "open the front camera first: that's what it follows with"); return; }
     var label = skills ? "set:" + Object.keys(skills).join("+") : pid;
     if (_wheels) { refuse(attempt, "no_legs", "a trained walk needs legs, and this body rolls"); return; }
     if (!window._body || !window._body.ready) { refuse(attempt, "connection_unavailable", "no robot connected to walk — its legs aren't here"); return; }
@@ -1946,9 +1962,10 @@
         step();
       });
       function endFollowWalk(why, words) {
-        _imuWhy = why;
+        // "done", so carryLegMotion settles to its rest stance rather than holding a stride.
+        _imuWhy = "done";
         carryLegMotion({ l: 90, r: 90 });
-        followEnd(why, words);
+        followEnd(why, words, fol);
         try { logEv("walk_end", { gait: "trained", policy: label, why: why, heading: Math.round(heading / D) }); } catch (e) {}
         $("brainTxt").textContent = "awake";
       }

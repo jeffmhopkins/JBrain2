@@ -3991,6 +3991,7 @@ def _trained_walk(
     follow: str = "",
     faces: list[dict[str, float]] | None = None,
     wait_ms: int = 0,
+    cam: str = "user",
 ) -> dict[str, Any]:
     env = {
         **os.environ,
@@ -3999,6 +4000,7 @@ def _trained_walk(
         "GB_FOLLOW": follow,
         "GB_FACES": json.dumps(faces or []),
         "GB_WAIT": str(wait_ms),
+        "GB_CAM": cam,
     }
     if skills:
         env["GB_SKILLS"] = json.dumps(skills)
@@ -4211,6 +4213,19 @@ def test_following_nobody_stops_and_says_so() -> None:
     got = _trained_walk("look", _STILL, skills=_SET, follow="walk", wait_ms=7500)
     assert "I can't see anyone to follow." in got["errs"]
     assert got["last"] == ["rest"] and "follow_end" in got["logs"]
+
+
+def test_following_needs_the_front_camera() -> None:
+    """A face the back eye sees is behind it, its signs reversed: never followed."""
+    got = _trained_walk(
+        "look",
+        _STILL,
+        skills=_SET,
+        follow="walk",
+        faces=_walking_away(0.15, 0.95, 5),
+        cam="environment",
+    )
+    assert got["accepted"] == ["blocked", "no_front_camera"] and got["n"] == 0
 
 
 def test_a_dry_run_shows_the_command_and_moves_no_legs() -> None:

@@ -2742,6 +2742,7 @@ def test_a_skill_sets_look_can_follow_a_face(run: _Running) -> None:
     for bad in (
         {"follow": "chase"},
         {"follow": 1},
+        {"drive": "d1ce0001"},
         {"move": "forward"},
         {"skills": None, "policy": _PID},
     ):

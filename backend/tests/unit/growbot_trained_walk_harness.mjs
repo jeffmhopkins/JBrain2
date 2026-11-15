@@ -38,7 +38,7 @@ g.$ = () => ({ textContent: "" });
 let eyes = null;
 const shown = [];
 g.gbEyes = { listen(fn) { eyes = fn; } };
-g.camOn = true; g.camFacing = "user";
+g.camOn = true; g.camFacing = process.env.GB_CAM || "user";
 g.document.body = { appendChild(el) { shown.push(el); } };
 g.document.createElement = () => ({ style: {}, innerHTML: "", remove() {} });
 // The legs' duty budget, as next.html keeps it: a run is granted no more than what is left.
@@ -49,7 +49,7 @@ let seq = 0;
 g._moveRequest = (name) => ({ id: ++seq, action: name, state: "requested" });
 g._moveReport = (a, state, why) => { a.state = state; reports.push([state, why]); };
 g.stopMotion = () => { g._motionGen++; if (g._motion && g._motion.loopIv) clearTimeout(g._motion.loopIv); g._motion = null; };
-g.carryLegMotion = (rest) => { g._motionGen++; if (g._motion && g._motion.loopIv) clearTimeout(g._motion.loopIv); g._motion = null; if (rest) poses.push(["rest"]); return true; };
+g.carryLegMotion = (rest) => { g._motionGen++; if (g._motion && g._motion.loopIv) clearTimeout(g._motion.loopIv); g._motion = null; if (rest && g._imuWhy === "done") poses.push(["rest"]); return true; };
 const POLICY = {
   obs_size: 2, act_size: 2, mean: [0, 0], std: [1, 1],
   layers: [{ W: [[0, 0], [1, -1]], b: [0, 0], act: "linear" }],
