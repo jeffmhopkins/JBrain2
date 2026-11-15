@@ -19,6 +19,8 @@ cover every host interface — see read_net_counters.
 from __future__ import annotations
 
 import os
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,6 +40,11 @@ class HostMetrics:
     # iGPU/dGPU utilization, 0-100, or None when no amdgpu busy attribute is
     # present (non-AMD box, no GPU, or /sys not exposed) — the card omits the row.
     gpu_busy_percent: float | None = None
+    # Whole-box CPU busy, 0-100 across every hardware thread, over a short window; and
+    # the thread count. None when /proc/stat is unreadable. The load average alone read
+    # as a percentage on the Ops page (owner, 2026-11-15: "10%" was ~10 busy of 32).
+    cpu_busy_percent: float | None = None
+    cpu_threads: int | None = None
     # Fan speeds in RPM keyed by sensor label, or None when the host exposes no
     # fan telemetry at all — the card omits the row rather than imply a dead fan.
     fan_rpm: dict[str, int] | None = None
@@ -369,6 +376,45 @@ def read_apu_power_w(hwmon: Path = Path("/sys/class/hwmon")) -> float | None:
     return None
 
 
+def _cpu_times(stat: Path) -> tuple[int, int, int] | None:
+    """(busy jiffies, total jiffies, thread count) from /proc/stat, which is not
+    namespaced: it counts the host's every thread, whatever the container's cpuset."""
+    try:
+        lines = stat.read_text().splitlines()
+        fields = [int(v) for v in lines[0].split()[1:]]
+    except (OSError, IndexError, ValueError):
+        return None
+    if not lines[0].startswith("cpu ") or len(fields) < 4:
+        return None
+    threads = sum(
+        1 for line in lines[1:] if line.startswith("cpu") and line[3:4].isdigit()
+    )
+    # idle + iowait are the not-busy columns; guest time is already inside user/nice.
+    idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
+    total = sum(fields[:8])
+    return total - idle, total, threads
+
+
+def read_cpu_busy(
+    proc: Path = Path("/proc"),
+    window_s: float = 0.25,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[float | None, int | None]:
+    """Whole-box CPU busy percent over ``window_s``, and the hardware thread count."""
+    first = _cpu_times(proc / "stat")
+    if first is None:
+        return None, None
+    sleep(window_s)
+    second = _cpu_times(proc / "stat")
+    if second is None:
+        return None, first[2] or None
+    spent = second[1] - first[1]
+    if spent <= 0:
+        return None, second[2] or None
+    busy = max(0.0, min(100.0, 100 * (second[0] - first[0]) / spent))
+    return round(busy, 1), second[2] or None
+
+
 def read_host_metrics(
     proc: Path = Path("/proc"),
     disk_path: str = "/",
@@ -390,6 +436,7 @@ def read_host_metrics(
     uptime = float((proc / "uptime").read_text().split()[0])
     vfs = os.statvfs(disk_path)
     breakdown = {k: mem[k] * 1024 for k in _MEMINFO_BREAKDOWN if k in mem}
+    cpu_busy, cpu_threads = read_cpu_busy(proc)
     return HostMetrics(
         mem_total_bytes=mem.get("MemTotal", 0) * 1024,
         mem_available_bytes=mem.get("MemAvailable", 0) * 1024,
@@ -402,6 +449,8 @@ def read_host_metrics(
         load_15m=float(load_parts[2]),
         uptime_seconds=int(uptime),
         gpu_busy_percent=read_gpu_busy_percent(drm),
+        cpu_busy_percent=cpu_busy,
+        cpu_threads=cpu_threads,
         fan_rpm=read_fan_rpm(hwmon),
         apu_power_w=read_apu_power_w(hwmon),
         gpu_mem=read_amdgpu_mem(drm),

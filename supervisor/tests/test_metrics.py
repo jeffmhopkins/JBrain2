@@ -288,6 +288,35 @@ def test_read_gpu_busy_is_none_without_telemetry(tmp_path: Path) -> None:
     assert host_metrics.read_gpu_busy_percent(tmp_path) is None
 
 
+def _stat(user: int, idle: int, iowait: int = 0, threads: int = 4) -> str:
+    # cpu user nice system idle iowait irq softirq steal guest guest_nice
+    head = f"cpu  {user} 0 0 {idle} {iowait} 0 0 0 0 0\n"
+    rows = "".join(f"cpu{i} 1 0 0 1 0 0 0 0 0 0\n" for i in range(threads))
+    return head + rows + "intr 1 2 3\nctxt 99\n"
+
+
+def test_cpu_busy_is_the_whole_box_over_the_window(tmp_path: Path) -> None:
+    # 32 threads, 300 of the next 1000 jiffies busy, 100 waiting on IO (not busy).
+    (tmp_path / "stat").write_text(_stat(1000, 9000, 0, threads=32))
+    waited: list[float] = []
+
+    def tick(s: float) -> None:
+        waited.append(s)
+        (tmp_path / "stat").write_text(_stat(1300, 9600, 100, threads=32))
+
+    assert host_metrics.read_cpu_busy(tmp_path, sleep=tick) == (30.0, 32)
+    assert waited == [0.25]
+
+
+def test_cpu_busy_is_none_without_a_readable_stat(tmp_path: Path) -> None:
+    assert host_metrics.read_cpu_busy(tmp_path, sleep=lambda _s: None) == (None, None)
+    (tmp_path / "stat").write_text("intr 1 2\n")
+    assert host_metrics.read_cpu_busy(tmp_path, sleep=lambda _s: None) == (None, None)
+    # No time passed between the reads: no percentage, but the thread count stands.
+    (tmp_path / "stat").write_text(_stat(5, 5, threads=8))
+    assert host_metrics.read_cpu_busy(tmp_path, sleep=lambda _s: None) == (None, 8)
+
+
 def test_metrics_route(client: TestClient, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(
         host_metrics,
@@ -304,6 +333,8 @@ def test_metrics_route(client: TestClient, monkeypatch) -> None:  # type: ignore
             load_15m=0.3,
             uptime_seconds=12345,
             gpu_busy_percent=42.0,
+            cpu_busy_percent=31.5,
+            cpu_threads=32,
             fan_rpm={"CPU Fan": 2100},
             apu_power_w=14.0,
             gpu_mem=host_metrics.GpuMem(
@@ -325,6 +356,7 @@ def test_metrics_route(client: TestClient, monkeypatch) -> None:  # type: ignore
     assert body["mem_total_bytes"] == 4 << 30
     assert body["disk_free_bytes"] == 25 << 30
     assert body["gpu_busy_percent"] == 42.0
+    assert body["cpu_busy_percent"] == 31.5 and body["cpu_threads"] == 32
     assert body["fan_rpm"] == {"CPU Fan": 2100}
     assert body["apu_power_w"] == 14.0
     assert body["gpu_mem"]["gtt_used_bytes"] == 12 << 30

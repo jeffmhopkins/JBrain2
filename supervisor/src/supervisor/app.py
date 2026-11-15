@@ -172,6 +172,9 @@ class MetricsResponse(BaseModel):
     gpu_busy_percent: float | None
     fan_rpm: dict[str, int] | None
     apu_power_w: float | None
+    # Whole-box CPU busy 0-100 and the hardware thread count; None if unreadable.
+    cpu_busy_percent: float | None = None
+    cpu_threads: int | None = None
     # iGPU RAM the meter's total includes but no process shows as RSS; None off AMD.
     gpu_mem: GpuMemOut | None = None
     # Curated /proc/meminfo lines (bytes) attributing "used" to a kind; None if
@@ -546,6 +549,8 @@ def create_app(
             load_15m=host.load_15m,
             uptime_seconds=host.uptime_seconds,
             gpu_busy_percent=host.gpu_busy_percent,
+            cpu_busy_percent=host.cpu_busy_percent,
+            cpu_threads=host.cpu_threads,
             fan_rpm=host.fan_rpm,
             apu_power_w=host.apu_power_w,
             gpu_mem=(

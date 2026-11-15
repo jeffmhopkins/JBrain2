@@ -487,6 +487,19 @@ describe("OpsScreen", () => {
     expect(screen.queryByRole("group", { name: "Local engine" })).toBeNull();
   });
 
+  it("shows whole-box CPU as a percent, and the load as threads, not a percent", async () => {
+    serve((path) =>
+      path === "/api/ops/metrics"
+        ? json({ ...METRICS, cpu_busy_percent: 31.4, cpu_threads: 32 })
+        : null,
+    );
+    render(<OpsScreen />);
+
+    const vitals = await screen.findByRole("region", { name: "Vitals" });
+    await waitFor(() => expect(vitals).toHaveTextContent(/CPU\s*31%\s*of 32 threads/));
+    expect(vitals).toHaveTextContent("load 0.55 · 0.64 · 0.62 threads busy of 32 · up 5h 40m");
+  });
+
   it("names a down service in a banner that opens Services", async () => {
     // STATUS has worker exited: a stock service, so it is down, not off.
     serve();
@@ -668,7 +681,7 @@ describe("OpsScreen", () => {
     render(<OpsScreen />);
 
     // Open from the start: charts render on mount, fetched over the 6h window.
-    expect(await screen.findByText("CPU load")).toBeInTheDocument();
+    expect(await screen.findByText("CPU load (threads busy)")).toBeInTheDocument();
     expect(screen.getByText("Fan")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("metrics/history?range=6h"))).toBe(
       true,

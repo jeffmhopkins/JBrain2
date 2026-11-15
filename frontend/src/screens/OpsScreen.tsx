@@ -507,6 +507,16 @@ function VitalsCard({
   return (
     <section className="ops-card ops-vitals" aria-label="Vitals">
       <div className="ops-vitals-grid">
+        {metrics.cpu_busy_percent != null && (
+          <div className="ops-vital">
+            <span className="ops-vk">CPU</span>
+            <span className="ops-vital-v">
+              {Math.round(metrics.cpu_busy_percent)}%
+              {metrics.cpu_threads ? <small> of {metrics.cpu_threads} threads</small> : null}
+            </span>
+            <Meter used={metrics.cpu_busy_percent} total={100} tone="util" />
+          </div>
+        )}
         <div className="ops-vital">
           <span className="ops-vk">GPU</span>
           <span className="ops-vital-v">
@@ -553,7 +563,9 @@ function VitalsCard({
       <div className="ops-vitals-foot">
         <span>
           load {metrics.load_1m.toFixed(2)} · {metrics.load_5m.toFixed(2)} ·{" "}
-          {metrics.load_15m.toFixed(2)} · up {fmtUptime(metrics.uptime_seconds)}
+          {metrics.load_15m.toFixed(2)}
+          {metrics.cpu_threads ? ` threads busy of ${metrics.cpu_threads}` : ""} · up{" "}
+          {fmtUptime(metrics.uptime_seconds)}
         </span>
         {refresh}
       </div>
