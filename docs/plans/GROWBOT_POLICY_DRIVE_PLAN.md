@@ -23,8 +23,8 @@ with the owner in a Claude Doc on 2026-11-15, and this page carries them.
   and "back up" move it 0.25 m, kept between 0.4 m and 3 m.
 - **Two people:** it keeps the one already tracked, and makes a best guess if they meet at the
   same distance. It stops rather than follow a stranger it can't match.
-- **Emergency stop is "stop stop":** the word twice, so a passing or misheard "stop" doesn't
-  trigger it. It is checked on the phone the moment the transcript lands, never through the model.
+- **Emergency stop is "stop stop":** the word twice (in one clip, or two lone ones within
+  2.5 s), so a passing or misheard "stop" doesn't trigger it. It is checked on the phone the moment the transcript lands, never through the model.
 - **Position is never a policy input:** the phone can't measure it.
 - **Walk limits:** up to 2 minutes or 3 m a walk, forward only in v1. Backing for X is left out
   because the camera faces away from where it's going.
@@ -57,7 +57,7 @@ it starts from a fresh history, as it trained.
 skills a file serves from the file itself (`policies.py` `Contract.modes`). A top-level `modes`
 list wins, which the master policy will carry. Otherwise a still file is a look, a nose-first
 file backs, and a camera-first file walks forward (and also looks and backs when its speed command
-spans -1..+1). The Body tab's Drive builds the set from the enabled library (active, else newest,
+spans -1..+1). The api refuses a file put in a slot it doesn't serve. The Body tab's Drive builds the set from the enabled library (active, else newest,
 per skill) and sends it as a move's `skills`. When the master policy lands, all three skills point
 at one file and nothing reloads.
 
@@ -89,3 +89,12 @@ The real-robot trials after P5 are GrowBot_Training's phase 6.
   settle and spins don't count. The camera checks for stall, looming and a covered lens, and stops
   early; it is not a ruler. Speech starting mid-walk holds it in place until the transcript lands.
   A few frames go to the run log. It ends with one line, e.g. "Walked about 0.9 m in 19 s".
+
+## Known gaps (from the P2 review)
+
+- **A shout may never be transcribed while it walks.** Upstream drops an unpitched clip heard
+  during the robot's own motion (`self_drop`, next.html) before speech-to-text, so "stop stop"
+  over servo noise may never reach `gbEStop`. Check it on the bench; if it bites, send those
+  clips to speech-to-text for the stop check alone, never to a model turn (P4).
+- **A master policy's mode inputs.** A file with `cmd_mode_*` channels gets slot 0 from the skill
+  set today; the master's export will say how modes map to slots, and the page feeds it then.

@@ -4178,6 +4178,19 @@ def test_the_emergency_stop_needs_the_word_twice() -> None:
     )
     run = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
     assert json.loads(run.stdout) == [True, True, True, True, False, False, False, False, False]
+    # Shouted as two clips, each a lone "stop": the second within 2.5 s stops it, a later one
+    # starts over, and a lone stop never stops on its own.
+    paired = (
+        "var stopped=0, _motion=null, window=globalThis, t=0; Date.now=function(){ return t; };"
+        "function stopMotion(){ stopped++; _motion=null; } function logEv(){} function setErr(){}"
+        f"{estop}"
+        "var said=[[0,'Stop!'],[1000,'Stop.'],[2000,'stop'],[5000,'stop'],[6000,'go on'],"
+        "[6500,'stop'],[7000,'stop the car'],[7200,'stop']];"
+        "console.log(JSON.stringify(said.map(function(p){ t=p[0]; _motion={kind:'walk'};"
+        " return gbEStop(p[1]); })));"
+    )
+    run = subprocess.run([node, "-e", paired], capture_output=True, text=True, check=True)
+    assert json.loads(run.stdout) == [False, True, False, False, False, True, False, False]
     # Nothing moving: nothing to stop.
     assert "if (!M) return false" in estop
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")

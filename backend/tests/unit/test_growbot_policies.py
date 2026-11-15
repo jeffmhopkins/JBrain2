@@ -447,8 +447,9 @@ async def test_a_walk_names_a_library_policy_for_the_creature(
     assert client.post(move, json={"move": "forward", "policy": missing}).status_code == 404
     assert client.post(move, json={"move": "forward", "policy": "../x"}).status_code == 422
     assert len(sent) == 1
-    # A skill set names a library policy per skill, and only those skills.
-    skills = {"look": pid, "back": pid}
+    # A skill set names a library policy per skill, and only those skills. This one is a
+    # nose-first walk: it serves back, never forward (it would back away when told to go).
+    skills = {"back": pid}
     body = {"move": "forward", "secs": 2, "skills": skills, "drive": "d1ce0001"}
     assert client.post(move, json=body).status_code == 200
     assert sent.pop() == {"code": "gb-a1", "move": "forward", "secs": 2, **body}
@@ -458,7 +459,9 @@ async def test_a_walk_names_a_library_policy_for_the_creature(
         ({"skills": {}}, 422),
         ({"skills": {"walk": pid}}, 422),
         ({"skills": {"look": "../x"}}, 422),
-        ({"skills": {"look": pid, "back": missing}}, 404),
+        ({"skills": {"back": pid, "look": missing}}, 404),
+        ({"skills": {"forward": pid}}, 422),
+        ({"skills": {"look": pid, "back": pid}}, 422),
     ):
         assert client.post(move, json={**body, **bad}).status_code == status, bad
     assert len(sent) == 1

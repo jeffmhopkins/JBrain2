@@ -83,7 +83,7 @@ export function offered(all: GrowbotPolicy[], motion: GrowbotMotion): GrowbotPol
 const SKILLS: GrowbotSkill[] = ["look", "forward", "back"];
 
 /** The skill set Drive can steer (growbot-drive.js): for each skill, the enabled policy that
- *  serves it, active first, then newest. Null unless it covers at least two skills, since one
+ *  serves it (for back, a nose-first one first), active first, then newest. Null unless it covers at least two skills, since one
  *  file alone is just that walk. */
 export function skillSet(all: GrowbotPolicy[]): GrowbotSkillSet | null {
   const set: GrowbotSkillSet = {};
@@ -91,10 +91,14 @@ export function skillSet(all: GrowbotPolicy[]): GrowbotSkillSet | null {
     let best: GrowbotPolicy | null = null;
     for (const p of all) {
       if (!enabledOf(p) || !(p.contract.modes ?? []).includes(skill)) continue;
+      // Backing is the nose walk's own gait (owner, 2026-11-15), over a camera walk's reverse.
+      const nose = (q: GrowbotPolicy) => skill === "back" && q.contract.facing === "nose";
       if (
         !best ||
-        (p.active && !best.active) ||
-        (!!p.active === !!best.active && p.created_at > best.created_at)
+        (nose(p) && !nose(best)) ||
+        (nose(p) === nose(best) &&
+          ((p.active && !best.active) ||
+            (!!p.active === !!best.active && p.created_at > best.created_at)))
       ) {
         best = p;
       }

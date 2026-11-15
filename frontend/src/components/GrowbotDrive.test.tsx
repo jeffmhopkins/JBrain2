@@ -206,6 +206,12 @@ describe("skillSet", () => {
     expect(skillSet([look, old, fresh, off])).toEqual({ look: "a", forward: "c" });
     expect(skillSet([look, { ...old, active: true }, fresh])).toEqual({ look: "a", forward: "b" });
     expect(skillSet([look, off])).toBeNull();
+    // Back goes to the nose walk even when a newer camera walk can reverse.
+    const nose = p("e", ["back"], {
+      contract: { ...CAMERA.contract, facing: "nose", modes: ["back"] },
+    });
+    const master = p("f", ["look", "forward", "back"], { created_at: "2026-11-15T00:00:00Z" });
+    expect(skillSet([nose, master])).toEqual({ look: "f", forward: "f", back: "e" });
     // An older box sends no modes: no skill set.
     expect(skillSet([CAMERA])).toBeNull();
     expect(skillWords({ look: "a", forward: "b", back: "c" })).toBe("look, forward and back");

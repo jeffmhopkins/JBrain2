@@ -1770,7 +1770,10 @@
         var t0 = performance.now(), live = M.drive && steer && steer.drive === M.drive ? steer : null;
         if (live) {
           // At exactly ±180 the error's sign would flip with the noise, as for the pad's back.
-          if (skills) { cmd = { target: live.heading, speed: live.speed }; pitch = live.pitch; }
+          if (skills) {
+            cmd = { target: live.heading, speed: live.speed, around: Math.abs(live.heading) === 180 };
+            pitch = live.pitch;
+          }
           else {
             cmd = { target: live.heading, fwd: hasSpeed ? live.speed : 1, around: Math.abs(live.heading) === 180 };
             pitch = hasPitch ? live.pitch : 1;
@@ -1807,6 +1810,7 @@
         heading += G.z * dt;
         var err = wrap180(cmd.target - heading / D), out;
         if (skills) {
+          if (cmd.around && Math.abs(err) > 90) err = Math.abs(err);
           // The heading is the gyro's, the same whichever end leads, so err is the front
           // camera's error for every skill (growbot-drive.js, THE FRAME).
           var c = { heading: err, speed: cmd.speed, pitch: pitch }, pick = sel.pick(c, Date.now());
@@ -1828,7 +1832,9 @@
           out = walker.step(A, G, { fwd: cmd.fwd, yaw: err / 180, pitch: pitch });
         }
         try { send(out.l, out.r); } catch (e) { stopMotion(); return; }
-        M.loopIv = setTimeout(step, Math.max(0, 1000 / hz - (performance.now() - t0)));
+        // Each file ticks at the rate it trained at: its clock and history count steps.
+        var rate = skills && set[mode] ? set[mode].prof.hz : hz;
+        M.loopIv = setTimeout(step, Math.max(0, 1000 / rate - (performance.now() - t0)));
       });
       prep();
     }).catch(function (e) {
@@ -1855,8 +1861,13 @@
 (function () {
   "use strict";
   var STOP2_RE = /\bstop\b[\s,.!?;:\u2026\u2013\u2014-]*\bstop\b/i;
+  // A shouted "Stop! ... Stop!" can land as two clips, each a lone "stop".
+  var STOP1_RE = /^[\s,.!?;:\u2026\u2013\u2014-]*stop[\s,.!?;:\u2026\u2013\u2014-]*$/i, PAIR_MS = 2500, lone = -Infinity;
   window.gbEStop = function (t) {
-    if (!STOP2_RE.test(String(t || ""))) return false;
+    t = String(t || "");
+    var now = Date.now(), twice = STOP2_RE.test(t);
+    if (!twice && STOP1_RE.test(t)) { twice = now - lone <= PAIR_MS; lone = twice ? -Infinity : now; }
+    if (!twice) return false;
     var M = typeof _motion !== "undefined" ? _motion : null;
     if (!M) return false;
     // As upstream's own halt words end a move (next.html _recHalt): its end row says halt.

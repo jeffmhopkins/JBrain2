@@ -379,9 +379,13 @@ async def _move(request: Request, ctx: SessionContext, code: str, body: MoveIn) 
         if body.move not in _WALKS:
             raise HTTPException(status_code=422, detail="only a walk or a spin runs a skill set")
         library = cast(PolicyRepo, request.app.state.growbot_policies)
-        for pid in set(body.skills.values()):
-            if not await library.exists(ctx, pid):
+        modes = {r.id: r.contract.modes for r in await library.list(ctx)}
+        for skill, pid in body.skills.items():
+            if pid not in modes:
                 raise HTTPException(status_code=404, detail="no such policy")
+            # The page trusts the slot: a nose-first file put in forward would back away.
+            if skill not in modes[pid]:
+                raise HTTPException(status_code=422, detail=f"that policy can't {skill}")
         sent["skills"] = dict(body.skills)
     resp = await _sidecar(request, "POST", "/internal/robots/move", sent)
     if resp is None:
