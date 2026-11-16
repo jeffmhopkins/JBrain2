@@ -1657,10 +1657,18 @@
   }
   function goodBox(b) { return b && isFinite(b.x) && isFinite(b.y) && b.width > 0 && b.height > 0; }
 
-  function followBoxes(boxes) {
+  function followBoxes(boxes, src, ms) {
     // Only the front camera's frames: a face seen by the back eye is behind it, signs reversed.
     if (!frontCamera()) { seen = { boxes: [], t: -Infinity }; return; }
-    seen = { boxes: (boxes || []).filter(goodBox), t: Date.now() };
+    if (src === "tracker") {
+      var ftm = window._faceTrack && window._faceTrack.metrics, dms = ftm && ftm.detectMs;
+      ms = dms && dms.length ? dms[dms.length - 1] : null;
+    }
+    var vid = window.camV;
+    seen = {
+      boxes: (boxes || []).filter(goodBox), t: Date.now(), src: src || "", ms: typeof ms === "number" ? ms : null,
+      frame: vid && vid.videoWidth ? [vid.videoWidth, vid.videoHeight] : null,
+    };
     var F = follow;
     if (!F) return;
     var reads = seen.boxes.map(function (b) { return F.lib.reading(b, F.cam); }), h = F.heading;
@@ -1795,7 +1803,10 @@
     if (!followLib || !btLib || !seen.boxes.length || !frontCamera()) return null;
     var big = seen.boxes.reduce(function (a, b) { return !a || b.width > a.width ? b : a; }, null);
     var cam = camera(btLib), r = btLib.reading(big, cam);
-    return { t: seen.t, bearing: r.bearing, up: r.up, dist: r.dist, n: seen.boxes.length, box: big };
+    return {
+      t: seen.t, bearing: r.bearing, up: r.up, dist: r.dist, side: r.side, n: seen.boxes.length, box: big, src: seen.src,
+      score: typeof big.score === "number" ? big.score : null, ms: seen.ms, frame: seen.frame,
+    };
   }
   function btTele(drive) {
     var M = typeof _motion !== "undefined" ? _motion : null, out = { kind: M ? String(M.kind || "") : "" };
@@ -1803,6 +1814,13 @@
       var w = M.tele;
       out.h = btR(w.h); out.tg = btR(w.tg); out.sp = btR(w.sp, 100); out.p = btR(w.p, 100);
       out.mode = w.mode; out.l = btR(w.l); out.r = btR(w.r);
+      // The policy's own side of the tick (see the walker's M.tele): n counts ticks, so a gap
+      // in it between samples is ticks the phone ran late.
+      out.dt = btR(w.dt); out.tn = w.n;
+      if (w.A) out.lev = [btR(w.A.x, 100), btR(w.A.y, 100), btR(w.A.z, 100), btR(w.G.x, 100), btR(w.G.y, 100), btR(w.G.z, 100)];
+      if (w.fed) out.fed = [btR(w.fed.fwd, 100), btR(w.fed.yaw, 1000), btR(w.fed.pitch, 100)];
+      if (w.act) out.act = [btR(w.act[0], 1000), btR(w.act[1], 1000)];
+      if (w.fs) out.fst = w.fs;
     }
     try {
       if (ori) { out.oa = btR(ori.a); out.ob = btR(ori.b); out.og = btR(ori.g); }
@@ -2222,6 +2240,12 @@
       function walkerFor(pj) {
         var w = new mod.Walker(pj, cal);
         w.setFrame("zup");
+        // The robot's leg ports are named from the other end from the sim's legs, so its action
+        // 0 ("right_leg", seen from the nose) drives the left port. Unswapped, every turn ran the
+        // wrong way and holding a heading spun away from it: body test #40 drifted 15 deg/s
+        // counter-clockwise at a target of 0 and turned to -20 when told +90, and the sim with
+        // the legs swapped does the same, while normal it holds (GrowBot_Training, 2026-11-16).
+        w.setSwap(!w.swap);
         return w;
       }
       if (skills) {
@@ -2310,6 +2334,19 @@
           if (fol.track.p && fol.track.age(fnow) > LOST_END_MS) return endFollowWalk("lost", "I lost you, so I stopped.");
           cmd = { target: wrap180(heading / D + fc.heading), speed: fc.speed };
           pitch = fc.pitch;
+          // Each change of the follower's state, with where the face was across the frame:
+          // a "lost" row's side is how far round the camera sees before it loses someone, and
+          // past is the extra turn the search takes beyond it.
+          if (fol.track.p && (!fol.last || fol.last.state !== fc.state)) {
+            var fp = fol.track.p;
+            try {
+              logEv("follow_state", {
+                from: fol.last ? fol.last.state : "", to: fc.state, side: Math.round((+fp.side || 0) * 100) / 100,
+                dist: Math.round((+fp.dist || 0) * 100) / 100, err: Math.round(fc.heading), sp: fc.speed, past: fc.past || 0,
+                age: Math.round(fnow - fp.t),
+              });
+            } catch (e) {}
+          }
           fol.last = fc;
           var fwant = Math.min(fnow + STEER_HOLD_MS, walkT + FOLLOW_MAX_MS);
           if (fwant > endT && dutyLeftMs() >= fwant - endT) {
@@ -2354,12 +2391,12 @@
           return;
         }
         var A = mul(R, bodyAccel()), G = mul(R, bodyGyro());
-        var dt = Math.min(0.1, Math.max(0, (t0 - lastT) / 1000));
+        var tickMs = t0 - lastT, dt = Math.min(0.1, Math.max(0, tickMs / 1000));
         lastT = t0;
         heading += G.z * dt;
         // The gyro carries the heading between camera frames: readings land in the walk's frame.
         if (fol) fol.heading = heading / D;
-        var err = wrap180(cmd.target - heading / D), out;
+        var err = wrap180(cmd.target - heading / D), out, fed = null;
         if (skills) {
           // Just under 180: inputs() wraps again, and +180 would wrap to -180, a right turn.
           if (cmd.around && Math.abs(err) > 90) err = Math.min(Math.abs(err), 179.9);
@@ -2378,15 +2415,24 @@
           if (!sk || Date.now() < settleEnd) out = { l: 90 + L, r: 90 + Rr };
           else {
             var inp = lib.inputs(sk.prof, mode, c);
+            fed = inp;
             out = sk.w.step(A, G, { fwd: inp.fwd, yaw: inp.yaw, pitch: inp.pitch });
           }
         } else {
           if (cmd.around && Math.abs(err) > 90) err = Math.abs(err);
-          out = walker.step(A, G, { fwd: cmd.fwd, yaw: err / 180, pitch: pitch });
+          fed = { fwd: cmd.fwd, yaw: err / 180, pitch: pitch };
+          out = walker.step(A, G, fed);
         }
         try { send(out.l, out.r); } catch (e) { stopMotion(); return; }
         // What the body test samples: the walk's own heading, command and leg poses.
-        M.tele = { h: heading / D, tg: cmd.target, sp: skills ? cmd.speed : cmd.fwd, p: pitch, mode: skills ? mode : "", l: out.l, r: out.r };
+        // And what the policy was given and gave back, for comparing a run with the sim: the
+        // tick's real interval (it trained at a fixed rate), the levelled accelerometer and
+        // gyro it read, the command inputs, and its raw actions before the legs' calibration.
+        M.tele = {
+          h: heading / D, tg: cmd.target, sp: skills ? cmd.speed : cmd.fwd, p: pitch, mode: skills ? mode : "", l: out.l, r: out.r,
+          dt: tickMs, n: (M.tele ? M.tele.n : 0) + 1, A: A, G: G, fed: fed, act: out.action || null,
+          fs: fol && fol.last ? fol.last.state : "",
+        };
         // Each file ticks at the rate it trained at: its clock and history count steps.
         var rate = skills && set[mode] ? set[mode].prof.hz : hz;
         M.loopIv = setTimeout(step, Math.max(0, 1000 / rate - (performance.now() - t0)));

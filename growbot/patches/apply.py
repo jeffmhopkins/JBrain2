@@ -895,16 +895,31 @@ HISTORY_PATCHES: list[tuple[str, str, str, int]] = [
         "  var tr=_live.scratch.traces.slice(-4), msgs=[],i;",
         1,
     ),
-    # The reply's emotion rides the trace, so the replayed history keeps the whole shape the
-    # model is asked for and it does not learn to drop the field.
+    # The reply's emotion and its move ride the trace, so the replayed history keeps the whole
+    # shape the model is asked for and it does not learn to drop a field (gbTraceMove).
     (
         "v3/next.html",
         ",m:moved,t:Date.now()};",
-        ',m:moved,t:Date.now(),e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)};',
+        ',m:moved,t:Date.now(),e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)'
+        ',w:(typeof gbTraceMove==="function"?gbTraceMove(o):undefined)};',
         1,
     ),
 ]
 PATCHES += HISTORY_PATCHES
+
+# Each face box keeps the detector's score, so a body test's log can tell a weak detection at
+# the size floor (about 0.6 m on a 240x320 frame) from a clear one (owner, 2026-11-16: "add
+# verbose logging ... the face reading telemetry").
+FACE_SCORE_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/face-detector-worker.js",
+        "return {x:b.originX/w,y:b.originY/h,width:b.width/w,height:b.height/h};});",
+        "return {x:b.originX/w,y:b.originY/h,width:b.width/w,height:b.height/h,"
+        "score:v.categories&&v.categories[0]?v.categories[0].score:null};});",
+        1,
+    ),
+]
+PATCHES += FACE_SCORE_PATCHES
 
 # Round 2 of the speed work, from the owner's first live session on the new layout (2026-11-12).
 # The automatic reply-language line rewrites itself once the person's speech settles a language
@@ -2409,7 +2424,16 @@ PATCHES += [
 _GB_WARM_JS = r"""var _gbWokeT=0, GB_WOKE_HOLD_MS=30000, GB_OPEN_DREAM_QUIET_MS=180000;
 function gbOpenDreamDue(){ return _gbDreamOnOpen&&!_gbBoxAsk&&!_gbCanned&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS&&!(typeof _humanT==="number"&&_humanT>0&&Date.now()-_humanT<GB_OPEN_DREAM_QUIET_MS); }
 var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000, GB_WARM_LOOK_MS=3000;
-function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
+/* A reply's move rides its trace too (field, 2026-11-16): replayed as say and emotion alone, a
+   history of 54 replies without one taught the model to answer "I'm walking forward now" with
+   no walk in the reply, so after one real step the creature only ever narrated. Only the
+   fields a move is made of, and a short one: the "(did: ...)" note still says what it did. */
+function gbTraceMove(o){ if(!o||typeof o!=="object") return undefined; var w={}, n=0, k;
+  if(o.walk&&typeof o.walk==="object"&&!Array.isArray(o.walk)){ w.walk={}; for(k in {gait:1,dir:1,secs:1}) if(typeof o.walk[k]==="string"||typeof o.walk[k]==="number") w.walk[k]=typeof o.walk[k]==="string"?o.walk[k].slice(0,24):o.walk[k]; n++; }
+  if(typeof o.gesture==="string"&&o.gesture){ w.gesture=o.gesture.slice(0,40); n++; }
+  if(o.body&&typeof o.body==="object"&&Array.isArray(o.body.steps)&&o.body.steps.length){ w.body={steps:o.body.steps.slice(0,6).map(function(x){ x=x||{}; return {l:x.l,r:x.r,ms:x.ms}; })}; n++; }
+  return n?w:undefined; }
+function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}, k; if(t.e) r.emotion=t.e; if(t.w&&typeof t.w==="object") for(k in t.w) if(k==="walk"||k==="gesture"||k==="body") r[k]=t.w[k]; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 /* The box resumes a turn from the longest prefix it read before, so the history ahead of the new
    words has to read the same from turn to turn. Upstream's last-N window dropped the oldest
    exchange every turn and stamped each one "[96s ago]", which changed every turn too, so only the

@@ -145,6 +145,29 @@ a camera still per step. The Body tab mirrors a running test (step, clock, skill
 falls) with Stop, and lists past runs with their JSON log; `GET /api/debug/growbot/bodytests[/{n}]`
 reads the same for review.
 
+Each sample also carries, while a walk runs, the policy's own side of its tick (`dt` the real
+interval, `tn` a tick count, `lev` the levelled accelerometer and gyro it read, `fed` the
+command inputs, `act` its raw actions, `fst` the follower's state), and with a face, where it
+sits across the frame (`fs`), the reading's age (`fa`), whose detector found it (`fsrc`), the
+detector's score (`fsc`), its time (`fms`) and the frame's size (`fwh`); a `bt_face` event marks
+each loss (with where it was last seen) and each find (with how long it took). Free play logs
+`follow_state` on each change of the follower's state.
+
+### Field run #40 (2026-11-16)
+
+- **Trained walks drive the legs swapped.** The sim's action 0 is `right_leg` seen from the
+  nose; on the robot that is the left port. Unswapped, look held no heading (15°/s
+  counter-clockwise at a target of 0) and turned the wrong way; the sim with the legs swapped does
+  the same. `walkerFor` now swaps every trained walk's legs.
+- **Nothing detected faces during a walk.** The leg tracker yields for any move and stops
+  detecting, but stays enabled, and the eyes' own detector waited for it, so every walking check
+  and a walking follow went blind. The eyes now run their own detector while a move runs.
+- **A face lost near the frame's edge** (outer 30% of the half-frame) is searched for 15° past
+  where it was last seen, on that side (owner: "keep on spinning in that direction").
+- **The creature stopped walking after one step.** Its history replayed each past reply as say
+  and emotion only, so the model copied that and narrated walks without a `walk`. A reply's
+  walk, gesture or free move now rides back with it (`gbTraceMove`, apply.py).
+
 ## Known gaps
 
 - **Bench checks for P3** (the Body test runs each of these and logs it): the left-right sign (a dry run's arrow should point at the person;

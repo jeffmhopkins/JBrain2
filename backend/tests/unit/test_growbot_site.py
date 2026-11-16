@@ -389,6 +389,33 @@ def test_the_eyes_never_run_a_second_detector_beside_the_tracker() -> None:
     assert json.loads(out) == [True, False, True, False, False, False, False]
 
 
+def test_the_eyes_watch_for_faces_while_a_walk_has_the_tracker_stood_down() -> None:
+    """Field, 2026-11-16 (body test #40): the leg tracker yields for a walk and stops detecting
+    but stays enabled, so nothing watched the face for a whole walk and every walking check went
+    blind. While a move runs the eyes run their own detector, unless the tracker is still
+    handing boxes over."""
+    out = _eyes_in_node(
+        "var v={readyState:4,paused:false};"
+        "window.camV=v;window.camOn=true;window.camFacing='user';window.paused=false;"
+        "window.dreaming=false;window._faceTrack={enabled:true};var r=[];"
+        "r.push(window.gbEyes.wants());window._motion={kind:'walk'};r.push(window.gbEyes.wants());"
+        "window.gbEyes.boxes([]);r.push(window.gbEyes.wants());"
+        "console.log(JSON.stringify(r));"
+    )
+    assert json.loads(out) == [False, True, False]
+
+
+def test_the_eyes_say_whose_detector_found_each_face() -> None:
+    out = _eyes_in_node(
+        "var got=[];window.gbEyes.listen(function(b,src,ms){got.push([b.length,src,ms]);});"
+        "window.gbEyes.boxes([{x:0.4,y:0.4,width:0.1,height:0.1}]);"
+        "console.log(JSON.stringify(got));"
+    )
+    assert json.loads(out) == [[1, "tracker", None]]
+    worker = (_SITE / "v3" / "face-detector-worker.js").read_text(encoding="utf-8")
+    assert "score:v.categories&&v.categories[0]?v.categories[0].score:null" in worker
+
+
 def test_a_persona_wears_its_own_face_lantern_by_default() -> None:
     """The box's face for the persona is read before the face loads, a poll's new one changes
     it where it stands, and only ?face= outranks it."""
@@ -853,7 +880,7 @@ def test_past_replies_go_back_to_the_model_in_its_own_json_shape() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert 'msgs.push({role:"assistant",content:gbTraceReply(tr[i])});' in page
     assert 'content:tr[i].d?tr[i].a+"\\n(did: "' not in page
-    assert ',e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)};' in page
+    assert ',e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)' in page
     start = page.index("function gbTraceReply(t){")
     fn = page[start : page.index("\n", start)]
     node = shutil.which("node")
@@ -874,6 +901,47 @@ def test_past_replies_go_back_to_the_model_in_its_own_json_shape() -> None:
     # A say the model wrote in brackets is still words it spoke.
     assert json.loads(spoken) == {"say": "(purrs) hi"}
     assert json.loads(empty) == {"say": ""}
+
+
+def test_a_past_replys_move_is_replayed_with_it() -> None:
+    """Field, 2026-11-16: with every past reply replayed as say and emotion alone, the model
+    copied its history and answered "walk forward" with words and no walk: one step, then only
+    narration. A reply's walk, gesture or free move now rides back with it, trimmed."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert ',w:(typeof gbTraceMove==="function"?gbTraceMove(o):undefined)};' in page
+    start = page.index("function gbTraceMove(o){")
+    end = page.index("\n", page.index("function gbTraceReply(t){"))
+    fn = page[start:end]
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    setup = (
+        "var w=gbTraceMove({say:'ok',walk:{gait:'official',dir:'fwd',secs:2,gain:0.99,x:{}}});"
+        "var g=gbTraceMove({gesture:'wave'}), n=gbTraceMove({say:'hi'}), z=gbTraceMove(null);"
+        "var b=gbTraceMove({body:{steps:[1,2,3,4,5,6,7].map(function(i){"
+        "return {l:50+i,r:130,ms:400,junk:1};})}});"
+    )
+    cases = (
+        "[w,g,n===undefined,z===undefined,b.body.steps.length,b.body.steps[0],"
+        "gbTraceReply({a:'Walking.',e:'happy',w:w,d:'walk fwd 2 s'}),"
+        "gbTraceReply({a:'x',w:{say:'no',walk:{dir:'fwd'}}})]"
+    )
+    script = f"{fn}\n{setup}\nconsole.log(JSON.stringify({cases}));"
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    walk, gesture, none, null, steps, first, reply, guarded = json.loads(out.stdout)
+    assert walk == {"walk": {"gait": "official", "dir": "fwd", "secs": 2}}
+    assert gesture == {"gesture": "wave"}
+    assert none and null
+    assert steps == 6 and first == {"l": 51, "r": 130, "ms": 400}
+    body, did = reply.split("\n")
+    assert json.loads(body) == {
+        "say": "Walking.",
+        "emotion": "happy",
+        "walk": {"gait": "official", "dir": "fwd", "secs": 2},
+    }
+    assert did == "(did: walk fwd 2 s)"
+    # Only a move's own fields come back from a trace, never a say over the one it spoke.
+    assert json.loads(guarded) == {"say": "x", "walk": {"dir": "fwd"}}
 
 
 def test_a_turn_sends_at_most_one_frame() -> None:
@@ -4333,7 +4401,27 @@ def test_a_skill_set_stands_and_face_tracks_at_speed_zero() -> None:
     # What the body test samples off the walk: its heading, command, skill and leg poses.
     tele = got["tele"]
     assert (tele["tg"], tele["sp"], tele["p"], tele["mode"]) == (-45, 0, -0.5, "look")
-    assert set(tele) == {"h", "tg", "sp", "p", "mode", "l", "r"}
+    assert {"h", "tg", "sp", "p", "mode", "l", "r"} <= set(tele)
+    # And the policy's own side of the tick, for comparing a run with the sim.
+    assert {"dt", "n", "A", "G", "fed", "act", "fs"} <= set(tele)
+    assert {k: tele["fed"][k] for k in ("fwd", "yaw", "pitch")} == got["cmds"][-1]
+    assert tele["n"] >= 1
+    # The robot's ports are named from the other end from the sim's legs: the policy's action 0
+    # ("right_leg" from the nose) drives the left port (field, 2026-11-16, body test #40).
+    assert tele["l"] == pytest.approx(94) and tele["r"] == pytest.approx(88)
+
+
+def test_a_trained_walk_drives_the_left_port_with_the_policys_action_0() -> None:
+    """The robot's ports are named from the other end from the sim's legs: action 0, "right_leg"
+    seen from the nose, is the left port. Unswapped, look turned the wrong way and spun away from
+    a held heading (field, 2026-11-16, body test #40; the sim with the legs swapped does too)."""
+    tele = _trained_walk("spin_left", _LEANING)["tele"]
+    a0, a1 = tele["act"]
+    assert a0 != a1
+    deg = 90  # the runner's default reach: an action of 1 is a quarter turn
+    # This phone's trims and signs: L_OFF 4, L_SIGN -1; R_OFF -2, R_SIGN +1; the walk's gain 1.
+    assert tele["l"] == pytest.approx(94 - a0 * deg)
+    assert tele["r"] == pytest.approx(88 + a1 * deg)
 
 
 def test_a_skill_set_turned_round_exactly_keeps_turning_left() -> None:

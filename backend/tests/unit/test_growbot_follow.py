@@ -205,6 +205,27 @@ def test_a_stale_reading_holds_its_bearing_rather_than_coasting_on() -> None:
     assert got == [pytest.approx(30), pytest.approx(30)]
 
 
+def test_a_face_lost_over_the_frames_edge_is_searched_for_past_it() -> None:
+    """Owner, 2026-11-16: a face lost at an edge needs the turn to carry on "another 5 or 10 or
+    15 degrees" that way, since the camera loses it before the robot faces where it went."""
+    got = _node(
+        "const run = (x) => { const t = new f.Track(), fo = new f.Follower(); fo.start(1);"
+        "  t.lock([f.reading(box(x, 0.05))], 0, 0);"
+        "  return [fo.command(t, 0, 100), fo.command(t, 0, 1800), fo.command(t, 0, 4300)]; };"
+        "return [run(0.95), run(0.05), run(0.6), f.reading(box(0.95, 0.05)).side];"
+    )
+    left, right, middle, side = got
+    assert side == pytest.approx(0.9)
+    # Fresh, it turns to the face itself; stale or lost, 15 degrees past it on that side.
+    assert left[1]["heading"] == pytest.approx(left[0]["heading"] + 15)
+    assert left[2]["heading"] == pytest.approx(left[0]["heading"] + 15)
+    assert left[2]["past"] == 15 and left[2]["state"] == "lost"
+    assert right[2]["heading"] == pytest.approx(right[0]["heading"] - 15)
+    # A face lost in the middle of the frame (it was covered, or blurred) turns only to it.
+    assert middle[2]["heading"] == pytest.approx(middle[0]["heading"])
+    assert middle[2]["past"] == 0
+
+
 def test_closer_and_further_move_the_distance_within_its_limits() -> None:
     got = _node(
         "const fo = new f.Follower(); fo.start(1);"

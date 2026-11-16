@@ -258,7 +258,26 @@ BodyTest.prototype.sample = function () {
   if (this.lastFace) {
     row.fb = r1(f.bearing); row.fu = r1(f.up); row.fd = r3(f.dist); row.fn = f.n || 1;
     if (f.box) row.box = [r3(f.box.x), r3(f.box.y), r3(f.box.width), r3(f.box.height)];
+    // Where across the frame (-1..1, + left), how old the reading is, and whose detector
+    // found it: the leg tracker's, or the eyes' own while a walk has the tracker stood down.
+    if (typeof f.side === "number") row.fs = r3(f.side);
+    row.fa = Math.round(env.now() - f.t);
+    if (f.src) row.fsrc = f.src;
+    // The detector's score, its time and the frame's size: with the box's width, enough to
+    // tell a face at the model's size floor from one it sees clearly.
+    if (typeof f.score === "number") row.fsc = r3(f.score);
+    if (typeof f.ms === "number") row.fms = r1(f.ms);
+    if (f.frame) row.fwh = f.frame;
   }
+  // The moments the face goes and comes back, with where it was last seen: the angle the
+  // camera loses someone at, and how long a search takes to find them again.
+  if (!this.lastFace !== !this.prevFace) {
+    var was = this.prevFace, now = env.now();
+    if (was) this.log("e", { e: "bt_face", seen: false, fb: r1(was.bearing), fs: typeof was.side === "number" ? r3(was.side) : null, fd: r3(was.dist), h: tl.h });
+    else this.log("e", { e: "bt_face", seen: true, fb: r1(f.bearing), fs: typeof f.side === "number" ? r3(f.side) : null, fd: r3(f.dist), h: tl.h, after: this.lostAt ? Math.round(now - this.lostAt) : null });
+    this.lostAt = was ? now : 0;
+  }
+  this.prevFace = this.lastFace;
   var kept = this.log("s", row);
   // The running check's own samples, which its verdict reads.
   if (this.mine) this.mine.push(kept);

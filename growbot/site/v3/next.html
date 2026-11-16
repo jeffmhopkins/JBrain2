@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=be425e5b356f"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=da90fb6bb05b"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=e6557a46aa16"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=34d9a63ed523"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -10918,7 +10918,16 @@ function _runGait(spec,attempt){
 var _gbWokeT=0, GB_WOKE_HOLD_MS=30000, GB_OPEN_DREAM_QUIET_MS=180000;
 function gbOpenDreamDue(){ return _gbDreamOnOpen&&!_gbBoxAsk&&!_gbCanned&&!window._wakeGateUp&&Date.now()-_gbWokeT>=GB_WOKE_HOLD_MS&&!(typeof _humanT==="number"&&_humanT>0&&Date.now()-_humanT<GB_OPEN_DREAM_QUIET_MS); }
 var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false, GB_WARM_MISS=3, GB_WARM_MAX_MS=20000, GB_WARM_GAP_MS=5000, GB_WARM_VOICE_MS=600, GB_WARM_FUSE_MS=30000, GB_WARM_LOOK_MS=3000;
-function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}; if(t.e) r.emotion=t.e; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
+/* A reply's move rides its trace too (field, 2026-11-16): replayed as say and emotion alone, a
+   history of 54 replies without one taught the model to answer "I'm walking forward now" with
+   no walk in the reply, so after one real step the creature only ever narrated. Only the
+   fields a move is made of, and a short one: the "(did: ...)" note still says what it did. */
+function gbTraceMove(o){ if(!o||typeof o!=="object") return undefined; var w={}, n=0, k;
+  if(o.walk&&typeof o.walk==="object"&&!Array.isArray(o.walk)){ w.walk={}; for(k in {gait:1,dir:1,secs:1}) if(typeof o.walk[k]==="string"||typeof o.walk[k]==="number") w.walk[k]=typeof o.walk[k]==="string"?o.walk[k].slice(0,24):o.walk[k]; n++; }
+  if(typeof o.gesture==="string"&&o.gesture){ w.gesture=o.gesture.slice(0,40); n++; }
+  if(o.body&&typeof o.body==="object"&&Array.isArray(o.body.steps)&&o.body.steps.length){ w.body={steps:o.body.steps.slice(0,6).map(function(x){ x=x||{}; return {l:x.l,r:x.r,ms:x.ms}; })}; n++; }
+  return n?w:undefined; }
+function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}, k; if(t.e) r.emotion=t.e; if(t.w&&typeof t.w==="object") for(k in t.w) if(k==="walk"||k==="gesture"||k==="body") r[k]=t.w[k]; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 /* The box resumes a turn from the longest prefix it read before, so the history ahead of the new
    words has to read the same from turn to turn. Upstream's last-N window dropped the oldest
    exchange every turn and stamped each one "[96s ago]", which changed every turn too, so only the
@@ -11427,7 +11436,7 @@ function think(event,kind,extra){
     if(!_gbTurn1){ _gbTurn1=true;   // DEEP LINK (0805): the first COMPLETED call anchors the redeem lane server-side — the stashed code may now be spent
       if(gbPendingCode()){ try{ gbBadgeSync(); }catch(e){} toast("🎁 the code from your link is ready — tap 🧠 brain, then ⚡ credits. it's already typed in"); try{ gbPendingSync(); }catch(_e){} } }
     if(kind!=="tick" && (!(extra&&extra.beat) || said || phoneDir)){
-      var _tr={u:String(event||"").replace(/\s+/g," "),a:(said?said.replace(/\s+/g," "):"")||"(stayed quiet)",m:moved,t:Date.now(),e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)};   // 0918 r2: the EVENT, not a parse of the composed message if(extra&&extra.beat) _tr.b=1;   // K3 r2 #3: traces replay into the DREAM prompt — collapse whitespace at write so a crafted multi-line say can never start a line that spoofs the "Its inner weather" trigger (or any other line-anchored instruction)
+      var _tr={u:String(event||"").replace(/\s+/g," "),a:(said?said.replace(/\s+/g," "):"")||"(stayed quiet)",m:moved,t:Date.now(),e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined),w:(typeof gbTraceMove==="function"?gbTraceMove(o):undefined)};   // 0918 r2: the EVENT, not a parse of the composed message if(extra&&extra.beat) _tr.b=1;   // K3 r2 #3: traces replay into the DREAM prompt — collapse whitespace at write so a crafted multi-line say can never start a line that spoofs the "Its inner weather" trigger (or any other line-anchored instruction)
       try{ if(MODE==="legs"&&!_wheels&&_moveLast&&_moveLast.id>_beforeMove){ if(_moveLast.ended) _tr.d=_moveDesc(_moveLast); else _moveLast.tr=_tr; } }catch(_de){}   // 0929 (audit step 1): what this turn's move did, replayed as "did:" (see the trace replay in think). Only an ENDED move is written: one still running gets d from _moveEnd when it ends, so the soul saved just below never keeps a "running" that a reload would replay as true. Legs only: wheels are their own job
       var _lastTr=_live.scratch.traces[_live.scratch.traces.length-1];
       if(_tr.b&&_lastTr&&_lastTr.b) _live.scratch.traces[_live.scratch.traces.length-1]=_tr;   // PURSUE beats occupy ONE ring slot — 4 spoken beats were evicting the user's pre-seek words in ~30s (audit lobotomy vector)
