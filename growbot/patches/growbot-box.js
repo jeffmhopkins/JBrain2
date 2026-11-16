@@ -1327,8 +1327,12 @@
   // Asked again while it follows, it carries on: a restart would drop the face it holds (or
   // the search for one it lost) and stop the legs to re-stand. A stop that lands while the
   // skill set loads (the motion generation moves on) starts nothing.
+  var followAskT = -Infinity;
   window.gbFollowMe = function (secs) {
     if (window.gbFollow && window.gbFollow.active()) return Promise.resolve(true);
+    // Nor while one is still loading (the skill set's fetch, the policy): it isn't active yet.
+    if (Date.now() - followAskT < 5000) return Promise.resolve(true);
+    followAskT = Date.now();
     var gen = typeof _motionGen === "number" ? _motionGen : 0;
     return fetch("/api/box/skills?robot=" + encodeURIComponent(code), { cache: "no-store" })
       .then(function (r) {

@@ -53,7 +53,10 @@ def _replied_since(sim: Sim, t: float) -> bool:
     return bool(_answers_since(sim, t))
 
 
-FELL_RE = re.compile(r"(?i)\b(fell|fall|fallen|tipped|knocked|over|on my (side|back|face))\b")
+FELL_RE = re.compile(
+    r"(?i)\b(fell|fall|fallen|falling|tipped|tip over|knocked|sideways|upside down|"
+    r"flip(ped)? (me )?over|on my (side|back|face))\b"
+)
 
 
 def _spoke_since(sim: Sim, t: float) -> bool:
