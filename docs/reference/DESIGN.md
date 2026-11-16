@@ -3441,8 +3441,9 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     *no training needed*) and each trained walk as a radio row with its short name, the rest of
     its name as the gist and its kind (*nose first, heading only* / *camera end first, with
     speed*); with turn policies, a second list *Turn with* (*The walk's turns* or *Built-in
-    spins*, then each turn), the row then reading *Master v3 · turns with Tight spin*. Picking
-    closes the sheet and is remembered per robot on this phone. *Trained walks…* (*Add a
+    spins*, then each turn), the row then reading *Master v3 · turns with Tight spin*. A tap
+    picks and closes the sheet (arrow keys only move the pick, so it stays open for them); the
+    pick is remembered per robot on this phone. *Trained walks…* (*Add a
     trained walk…* while there are none) at the sheet's foot opens the **Trained walks** sheet
     (below).
   - **Tap a move | Steer live**, a segmented switch shown when a trained walk or a skill set
@@ -3464,14 +3465,18 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     shown when the walk takes it; a skill set takes all three), then *Start driving* (primary),
     which becomes a rose *Stop driving*. With both a skill set and a picked walk, one line says
     which it steers (*Steering the skill set (look, forward and back).*) with *Steer Master v3
-    instead* as a link, never a second walk picker. Switching back to *Tap a move*, or any pad
-    move, ends the drive.
+    instead* as a link, never a second walk picker. While no drive runs, a rose *Stop* stands in
+    for the pad's, so the remote always has one. Switching to *Steer live* stops a timed move
+    still under way, and switching back to *Tap a move* stops a drive, each with the card's one
+    Stop.
   - **Tricks**, one line of pill chips sized to their words that scrolls sideways, never
     wrapped or clipped: the creature's own (*Wiggle*, *Bow*, *Sway*, *Stand tall*, *Get up*),
     *Escape spin left* and *right* (for the picked seconds), the library's trick policies by
     short name, and the soul's own saved gestures. Tricks stay the creature's own whatever walk
     is picked.
-  - Rows opening sheets: **Follow me** (*Walks after the nearest face*; the sheet: *Follow me*
+  - Rows opening sheets: **Follow me** (*Walks after the nearest face*, or in green *Following
+    now* / *Dry run on* while one runs, which outlives its sheet closing and ends with any move
+    of the pad's own; the sheet: *Follow me*
     (primary) and *Dry run*, which become a rose *Stop following* / *Stop dry run*, then
     *Camera setup*: *Measure 1 m* and *Flip frames*) and **Body test** (*A guided trial, with
     past runs and their logs*; the sheet: *Start a body test*, the live mirror of a run, then

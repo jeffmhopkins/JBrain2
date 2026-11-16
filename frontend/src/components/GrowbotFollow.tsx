@@ -9,7 +9,7 @@ import type { DriveSaid } from "./GrowbotDrive";
 // checked before anything walks. Measure 1 m and Flip frames set that phone's camera, so none of
 // it needs a terminal. Stopping sends a plain stop move, which ends a follow or a dry run.
 
-type Running = "walk" | "dry" | null;
+export type FollowRunning = "walk" | "dry" | null;
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -27,17 +27,18 @@ export function GrowbotFollow({
   code,
   skills,
   disabled,
-  halted,
   onSaid,
+  running,
+  setRunning,
 }: {
   code: string;
   skills: GrowbotSkillSet;
   disabled: boolean;
-  /** Bumped by the pad whenever it sends a move of its own, which ends the follow. */
-  halted: number;
   onSaid: (said: DriveSaid) => void;
+  /** Held by the remote, so a follow outlives its sheet closing and its row can say so. */
+  running: FollowRunning;
+  setRunning: (r: FollowRunning) => void;
 }) {
-  const [running, setRunning] = useState<Running>(null);
   const [busy, setBusy] = useState(false);
   const mounted = useRef(true);
   useEffect(
@@ -46,9 +47,6 @@ export function GrowbotFollow({
     },
     [],
   );
-  // The pad's own moves end a follow on the creature (any new move does), so show it.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: halted is the trigger.
-  useEffect(() => setRunning(null), [halted, disabled]);
 
   async function send(what: Exclude<FollowMove, "test">) {
     setBusy(true);

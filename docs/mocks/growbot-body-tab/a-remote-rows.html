@@ -28,9 +28,9 @@
         <div class="sub">Tricks</div>${B.tricks()}
       </section>
       <div class="rows">
-        <button class="row" data-act="sheet" data-id="follow"><span class="ic">◎</span><span class="tx">Follow me<em>${S.follow ? "Following now" : "Walks after the nearest face"}</em></span><span class="chev">›</span></button>
-        <button class="row" data-act="sheet" data-id="test"><span class="ic">✓</span><span class="tx">Body test<em>Last: #40 · 3 failed, 6 to look at</em></span><span class="chev">›</span></button>
-        <button class="row" data-act="sheet" data-id="legs"><span class="ic">⟂</span><span class="tx">Legs<em>Trim L +4° · R −2°, saved on the box</em></span><span class="chev">›</span></button>
+        <button class="row" data-act="sheet" data-id="follow"><span class="ic">◎</span><span class="tx">Follow me<em>${S.follow ? (S.follow === "walk" ? "Following now" : "Dry run on") : "Walks after the nearest face"}</em></span><span class="chev">›</span></button>
+        <button class="row" data-act="sheet" data-id="test"><span class="ic">✓</span><span class="tx">Body test<em>A guided trial, with past runs and their logs</em></span><span class="chev">›</span></button>
+        <button class="row" data-act="sheet" data-id="legs"><span class="ic">⟂</span><span class="tx">Legs<em>Which leg, trim, direction and calibration</em></span><span class="chev">›</span></button>
       </div>
       <button class="btn block">Add a robot</button>
       ${B.dev(false)}`) + B.sheet() + B.toast();

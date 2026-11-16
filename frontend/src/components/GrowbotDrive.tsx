@@ -56,6 +56,7 @@ export function GrowbotDrive({
   halted,
   onSaid,
   onStop,
+  onDriving,
 }: {
   code: string;
   /** The pad's picked walk; null when only a skill set can be driven. */
@@ -67,12 +68,18 @@ export function GrowbotDrive({
   halted: number;
   onSaid: (said: DriveSaid) => void;
   onStop: () => void;
+  /** Told whenever a drive starts or ends, so the remote can stop it on leaving Steer live. */
+  onDriving?: (driving: boolean) => void;
 }) {
   // The slider turns right as it goes right; the creature's heading is left positive.
   const [turn, setTurn] = useState(0);
   const [speed, setSpeed] = useState(1);
   const [pitch, setPitch] = useState(1);
   const [driving, setDriving] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a change of driving is news.
+  useEffect(() => onDriving?.(driving), [driving]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: on leaving, the drive is over.
+  useEffect(() => () => onDriving?.(false), []);
   // A skill set when there is one: it is what the follower will drive.
   const [withSet, setWithSet] = useState(true);
   const set = skills && (withSet || !policy) ? skills : null;

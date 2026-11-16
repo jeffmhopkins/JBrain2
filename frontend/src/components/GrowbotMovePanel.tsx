@@ -2,8 +2,9 @@
 // rows" (docs/mocks/growbot-body-tab/a-remote-rows.html): the walk is one row opening the Walk
 // with sheet, Tap a move | Steer live makes the timed pad and the live steering one control,
 // tricks run on one line that scrolls sideways, and Follow me and Body test are rows opening
-// sheets, so the everyday remote fits about a screen. Its history (owner, 2026-11-12: "if the body is turned on, I want to be
-// able to call the policies directly"; then "this looks like crap, need a way better GUI").
+// sheets, so the everyday remote fits about a screen. Its history (owner, 2026-11-12: "if the
+// body is turned on, I want to be able to call the policies directly"; then "this looks like
+// crap, need a way better GUI").
 // A driving pad instead of a form: up/down walk, left/right spin, Stop in the middle, how
 // long as chips under it, and the gestures as tricks. The walk and spin policies need the
 // motion sensors of the phone riding the robot, so every move goes to the creature page on
@@ -23,7 +24,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotMove, type GrowbotPolicy, type GrowbotRobot, api } from "../api/client";
 import { GrowbotBodyTest } from "./GrowbotBodyTest";
 import { GrowbotDrive } from "./GrowbotDrive";
-import { GrowbotFollow } from "./GrowbotFollow";
+import { type FollowRunning, GrowbotFollow } from "./GrowbotFollow";
 import {
   GrowbotPoliciesSheet,
   offered,
@@ -113,17 +114,28 @@ function WalkChoice({
   kind,
   on,
   pick,
+  done,
 }: {
   group: string;
   name: string;
-  gist?: string;
+  gist?: string | undefined;
   kind?: string;
   on: boolean;
   pick: () => void;
+  done: () => void;
 }) {
   return (
     <label className={`gb-choice${on ? " sel" : ""}`}>
-      <input type="radio" name={group} checked={on} onChange={pick} />
+      <input
+        type="radio"
+        name={group}
+        checked={on}
+        onChange={pick}
+        // A tap picks and closes; arrow keys only move the pick, so the sheet stays for them.
+        onClick={(e) => {
+          if (e.detail > 0) done();
+        }}
+      />
       <span className="gb-tx">
         {name}
         {gist ? <em>{gist}</em> : null}
@@ -203,6 +215,9 @@ export function GrowbotMovePanel({
   const [turnWith, setTurnWith] = useState(() => storedWalk(robot.code, "turn"));
   const [sheet, setSheet] = useState<"walks" | "follow" | "test" | "library" | null>(null);
   const [mode, setMode] = useState<"tap" | "steer">("tap");
+  // Lifted out of their sheets, so closing one never forgets that the robot is still going.
+  const [following, setFollowing] = useState<FollowRunning>(null);
+  const [driving, setDriving] = useState(false);
   const [halted, setHalted] = useState(0);
   const mounted = useRef(true);
   const done = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -225,6 +240,10 @@ export function GrowbotMovePanel({
     };
   }, []);
   const blocked = moveBlocked(robot);
+  // Any move of the pad's own ends a follow on the creature (a new move replaces it), as does a
+  // robot nobody can drive any more.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: halted and blocked are the triggers.
+  useEffect(() => setFollowing(null), [halted, blocked]);
   const name = robot.name || robot.code;
   const walks = offered(policies, "walk");
   const turns = offered(policies, "turn");
@@ -243,13 +262,11 @@ export function GrowbotMovePanel({
   function pick(id: string) {
     setWalkWith(id);
     storeWalk(robot.code, id);
-    setSheet(null);
   }
 
   function pickTurn(id: string) {
     setTurnWith(id);
     storeWalk(robot.code, id, "turn");
-    setSheet(null);
   }
   // The pad's Stop works whenever the chip is on: a shared Stop also stops the chip itself,
   // creature or not.
@@ -317,6 +334,11 @@ export function GrowbotMovePanel({
   const saved = (robot.gestures ?? []).filter((g) => !STOCK_GESTURES.has(g));
   const steerable = !!(trained || skills);
   const steering = steerable && mode === "steer";
+  // A walk that can't be steered sends the remote back to taps, so picking one later
+  // doesn't land on live steering unasked.
+  useEffect(() => {
+    if (!steerable) setMode("tap");
+  }, [steerable]);
   const saidLine = (
     <output className={`gb-move-said${said?.bad ? " gb-bad-t" : ""}`} aria-live="polite">
       {said?.text ?? ""}
@@ -348,7 +370,11 @@ export function GrowbotMovePanel({
             type="button"
             className={steering ? "" : "on"}
             aria-pressed={!steering}
-            onClick={() => setMode("tap")}
+            onClick={() => {
+              // Leaving live steering ends the drive now, not when its lease runs out.
+              if (driving) stop();
+              setMode("tap");
+            }}
           >
             Tap a move
           </button>
@@ -357,8 +383,8 @@ export function GrowbotMovePanel({
             className={steering ? "on" : ""}
             aria-pressed={steering}
             onClick={() => {
-              setHalted((n) => n + 1);
-              setRunning(null);
+              // A timed move still under way stops here, since its pad and bar go away.
+              if (running) stop();
               setMode("steer");
             }}
           >
@@ -385,6 +411,7 @@ export function GrowbotMovePanel({
           halted={halted}
           onSaid={setSaid}
           onStop={stop}
+          onDriving={setDriving}
         />
       ) : (
         <>
@@ -425,7 +452,18 @@ export function GrowbotMovePanel({
           </div>
         </>
       )}
-      {saidLine}
+      {steering && !driving && (
+        <button
+          type="button"
+          className="gb-btn danger block gb-steer-stop"
+          disabled={!canStop}
+          onClick={stop}
+        >
+          <StopIcon size={16} />
+          Stop
+        </button>
+      )}
+      {!sheet && saidLine}
 
       {!steering && (
         <fieldset className="gb-seg pick gb-secs" aria-label="Walks and spins run for">
@@ -504,7 +542,13 @@ export function GrowbotMovePanel({
             >
               <span className="gb-tx">
                 <span className="gb-t1">Follow me</span>
-                <span className="gb-t2">Walks after the nearest face</span>
+                <span className={`gb-t2${following ? " gb-ok-t" : ""}`}>
+                  {following === "walk"
+                    ? "Following now"
+                    : following === "dry"
+                      ? "Dry run on"
+                      : "Walks after the nearest face"}
+                </span>
               </span>
               <span className="gb-chev" aria-hidden="true">
                 ›
@@ -535,7 +579,7 @@ export function GrowbotMovePanel({
         <Sheet title="Walk with" onClose={() => setSheet(null)}>
           <fieldset className="gb-choices gb-walks">
             {/* The sheet's title names it, until a Turn with list needs telling apart. */}
-            <legend className={turns.length ? undefined : "gb-sr"}>Walk with</legend>
+            <legend className={turns.length ? undefined : "gb-sr-only"}>Walk with</legend>
             <WalkChoice
               group={`gb-walk-${robot.code}`}
               name="Built-in walk"
@@ -543,6 +587,7 @@ export function GrowbotMovePanel({
               kind="no training needed"
               on={!trained}
               pick={() => pick("")}
+              done={() => setSheet(null)}
             />
             {walks.map((p) => (
               <WalkChoice
@@ -553,6 +598,7 @@ export function GrowbotMovePanel({
                 kind={walkKind(p)}
                 on={trained?.id === p.id}
                 pick={() => pick(p.id)}
+                done={() => setSheet(null)}
               />
             ))}
           </fieldset>
@@ -562,9 +608,10 @@ export function GrowbotMovePanel({
               <WalkChoice
                 group={`gb-turn-${robot.code}`}
                 name={trained ? "The walk's turns" : "Built-in spins"}
-                gist="Left and right use the walk above"
+                gist={trained ? "Left and right use the walk above" : undefined}
                 on={!turner}
                 pick={() => pickTurn("")}
+                done={() => setSheet(null)}
               />
               {turns.map((p) => (
                 <WalkChoice
@@ -575,6 +622,7 @@ export function GrowbotMovePanel({
                   kind={walkKind(p)}
                   on={turner?.id === p.id}
                   pick={() => pickTurn(p.id)}
+                  done={() => setSheet(null)}
                 />
               ))}
             </fieldset>
@@ -590,8 +638,9 @@ export function GrowbotMovePanel({
             code={robot.code}
             skills={skills}
             disabled={!!blocked}
-            halted={halted}
             onSaid={setSaid}
+            running={following}
+            setRunning={setFollowing}
           />
           {saidLine}
         </Sheet>

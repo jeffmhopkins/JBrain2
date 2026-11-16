@@ -216,8 +216,11 @@ describe("GrowbotMovePanel", () => {
     render(<GrowbotMovePanel robot={robot()} />);
     fireEvent.click(screen.getByRole("button", { name: /^Walking with/ }));
     const sheet = await screen.findByRole("dialog", { name: "Walk with" });
+    // Arrow keys move the pick (a change with no tap) and leave the sheet open for the next.
     fireEvent.click(await within(sheet).findByRole("radio", { name: /^Quick trot/ }));
-    // Picking closes the sheet; the row then names the walk.
+    expect(screen.getByRole("dialog", { name: "Walk with" })).toBeInTheDocument();
+    // A tap picks and closes; the row then names the walk.
+    fireEvent.click(within(sheet).getByRole("radio", { name: /^Quick trot/ }), { detail: 1 });
     expect(screen.queryByRole("dialog", { name: "Walk with" })).toBeNull();
     expect(screen.getByRole("button", { name: /^Walking with Quick trot/ })).toBeInTheDocument();
     expect(screen.getByText(/nose first, heading only/)).toBeInTheDocument();
@@ -264,7 +267,7 @@ describe("GrowbotMovePanel", () => {
     render(<GrowbotMovePanel robot={robot()} />);
     fireEvent.click(screen.getByRole("button", { name: /^Walking with/ }));
     const turnWith = await screen.findByRole("group", { name: "Turn with" });
-    fireEvent.click(within(turnWith).getByRole("radio", { name: /^Tight spin/ }));
+    fireEvent.click(within(turnWith).getByRole("radio", { name: /^Tight spin/ }), { detail: 1 });
     expect(localStorage.getItem("gb-turn-with:gb-3fa91c")).toBe("s-1");
     // The turn takes the left and right keys; forward stays the creature's own.
     expect(screen.getByRole("button", { name: "Walk forward 5 s" })).toBeEnabled();
@@ -344,6 +347,38 @@ describe("GrowbotMovePanel", () => {
     expect(screen.getByRole("button", { name: "Walk forward 5 s" })).toBeInTheDocument();
   });
 
+  it("stops a timed move on switching to Steer live, and keeps a Stop there", async () => {
+    localStorage.clear();
+    const SET = { ...QUICK, contract: { ...QUICK.contract, modes: ["look", "forward"] } };
+    const fetch = serve(json({ ok: true, state: "started", why: "" }), [SET]);
+    const shared = vi.fn(async () => ({ text: "Stopped. The legs are limp.", bad: false }));
+    render(<GrowbotMovePanel robot={robot()} onStop={shared} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Walk forward 5 s" }));
+    await screen.findByText("Walking forward for 5 s.");
+    fireEvent.click(screen.getByRole("button", { name: "Steer live" }));
+    expect(shared).toHaveBeenCalledOnce();
+    await screen.findByText("Stopped. The legs are limp.");
+    // No drive yet, so the remote's own Stop stands in for the pad's.
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(shared).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("ends a live drive on switching back to Tap a move", async () => {
+    localStorage.clear();
+    const SET = { ...QUICK, contract: { ...QUICK.contract, modes: ["look", "forward"] } };
+    serve(json({ ok: true, state: "started", why: "" }), [SET]);
+    const shared = vi.fn(async () => ({ text: "Stopped. The legs are limp.", bad: false }));
+    render(<GrowbotMovePanel robot={robot()} onStop={shared} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Steer live" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start driving" }));
+    await screen.findByRole("button", { name: "Stop driving" });
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Tap a move" }));
+    expect(shared).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Walk forward 5 s" })).toBeInTheDocument();
+  });
+
   it("offers no live steering with only the creature's own walks", () => {
     localStorage.clear();
     serve(json({}), []);
@@ -371,6 +406,14 @@ describe("GrowbotMovePanel", () => {
     fireEvent.click(within(follow).getByRole("button", { name: "Dry run" }));
     await within(follow).findByText(/^Dry run: the arrow/);
     fireEvent.click(within(follow).getByRole("button", { name: "Close" }));
+    // The dry run outlives its sheet: the row says so, and reopening offers its Stop.
+    expect(screen.getByRole("button", { name: /^Follow me Dry run on/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Follow me/ }));
+    expect(screen.getByRole("button", { name: "Stop dry run" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    // A move of the pad's own replaces the follow on the creature.
+    fireEvent.click(screen.getByRole("button", { name: "Wiggle" }));
+    await screen.findByRole("button", { name: /^Follow me Walks after the nearest face/ });
     fireEvent.click(screen.getByRole("button", { name: /^Body test/ }));
     expect(screen.getByRole("dialog", { name: "Body test" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Legs row" })).toBeInTheDocument();
