@@ -105,6 +105,20 @@ describe("GrowbotBodyTest", () => {
     );
   });
 
+  it("lists a camera test as one, never as a body test under way", async () => {
+    const cam = run({
+      number: 9,
+      run: "bt-cam-mhz8k2",
+      status: "running",
+      summary: { kind: "camera", phase: "run", secs: 65, label: "Stand 2 m away" },
+    });
+    serve(() => [cam]);
+    show();
+    expect(await screen.findByText(/camera test · .* · running/)).toBeTruthy();
+    expect(screen.queryByLabelText("Body test running")).toBeNull();
+    expect(screen.getByRole("button", { name: "Body test…" })).toBeTruthy();
+  });
+
   it("polls while a test runs, and shows a silent one as lost contact", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const old = new Date(Date.now() - 60_000).toISOString();
