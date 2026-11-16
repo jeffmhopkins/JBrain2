@@ -178,8 +178,10 @@ export function GrowbotDrive({
   }
 
   const id = `gb-drive-${code}`;
+  // A skill set walks only past growbot-drive.js's SPEED_ON (0.15); below it, it stands and looks.
+  const stands = aim.length === 0 || (!!set && aim.length < 0.15);
   const said = speedOn
-    ? `${headingWords(turn)}, ${aim.length === 0 ? "standing" : `speed ${speed.toFixed(1)}`}`
+    ? `${headingWords(turn)}, ${stands ? "standing" : `speed ${speed.toFixed(1)}`}`
     : headingWords(turn);
   return (
     <fieldset className="gb-drive" aria-label="Steer live">

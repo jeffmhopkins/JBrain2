@@ -3468,8 +3468,9 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     ticks every 45° (straight on brighter and longer) and a dashed half-speed ring. Dragging (or
     tapping) sets a steel arrow from the centre: its angle off straight up is the heading
     (*straight*, *90° left*, round to *180° right* straight behind, in 5° steps), its length the
-    speed (rounded to a tenth; at the centre a skill set stands and turns with the look). The
-    arrow stays where it was let go. Under it the words (*130° right, speed 0.9*, *straight,
+    speed (rounded to a tenth, half by default; a skill set stands and turns with the look below
+    0.15, which the words call *standing*). The arrow stays where it was let go; a second finger
+    on the dial is ignored until the first lifts. Under it the words (*130° right, speed 0.9*, *straight,
     standing*), then *Forward | Back* for a walk that takes a speed: *Back* backs it away still
     facing the arrow's way. A heading-only walk's arrow is all direction, always full length,
     with no *Back*; pointing it behind turns it round. Arrow keys work the dial (left and right

@@ -1502,8 +1502,9 @@ details.gb-help[open] summary::after {
   stroke: var(--text);
   stroke-width: 2.5;
 }
+/* steel-text, not steel: the arrow is the control, so it keeps 3:1 on the light theme too. */
 .gb-dial-vec {
-  stroke: var(--steel);
+  stroke: var(--steel-text);
   stroke-width: 4;
   stroke-linecap: round;
 }
@@ -1512,7 +1513,7 @@ details.gb-help[open] summary::after {
 }
 .gb-dial-tip {
   fill: var(--steel-tint);
-  stroke: var(--steel);
+  stroke: var(--steel-text);
   stroke-width: 2;
 }
 .gb-dial-said {

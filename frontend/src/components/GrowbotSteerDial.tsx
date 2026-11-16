@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent, useRef } from "react";
+import { type KeyboardEvent, type PointerEvent, useId, useRef } from "react";
 
 // Steer live's dial (owner, 2026-11-16: "Steer live is a bit hard to control. Maybe a kind of
 // half circle graphics version that show origin and has a draggable vector?", then "can't we
@@ -57,7 +57,8 @@ export function GrowbotSteerDial({
   valueText: string;
 }) {
   const box = useRef<HTMLDivElement>(null);
-  const held = useRef(false);
+  // The finger steering it; a second one (a palm, a thumb) is ignored until this one lifts.
+  const held = useRef<number | null>(null);
 
   function from(e: PointerEvent<HTMLDivElement>) {
     const r = box.current?.getBoundingClientRect();
@@ -83,7 +84,8 @@ export function GrowbotSteerDial({
     onAim(tidy(lengthOn ? next : { ...next, length: 1 }));
   }
 
-  const tip = at(aim.angle, Math.max(aim.length, 0.04) * R);
+  const tip = at(aim.angle, Math.max(lengthOn ? aim.length : 1, 0.04) * R);
+  const hint = `gb-dial-hint-${useId()}`;
   const ticks = [0, 45, 90, 135, 180, -135, -90, -45];
   return (
     <div
@@ -96,22 +98,29 @@ export function GrowbotSteerDial({
       aria-valuemax={180}
       aria-valuenow={aim.angle}
       aria-valuetext={valueText}
+      aria-describedby={hint}
       onKeyDown={key}
       onPointerDown={(e) => {
-        held.current = true;
+        if (held.current !== null) return;
+        held.current = e.pointerId;
         e.currentTarget.setPointerCapture?.(e.pointerId);
         from(e);
       }}
       onPointerMove={(e) => {
-        if (held.current) from(e);
+        if (held.current === e.pointerId) from(e);
       }}
-      onPointerUp={() => {
-        held.current = false;
+      onPointerUp={(e) => {
+        if (held.current === e.pointerId) held.current = null;
       }}
-      onPointerCancel={() => {
-        held.current = false;
+      onPointerCancel={(e) => {
+        if (held.current === e.pointerId) held.current = null;
       }}
     >
+      <span id={hint} className="gb-sr-only">
+        {lengthOn
+          ? "Left and right turn it; up and down change the speed."
+          : "Left and right turn it."}
+      </span>
       <svg viewBox={`0 0 ${SIZE} ${SIZE}`} aria-hidden="true">
         <circle className="gb-dial-face" cx={O} cy={O} r={R} />
         {lengthOn && <circle className="gb-dial-ring" cx={O} cy={O} r={R / 2} />}

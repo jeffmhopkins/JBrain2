@@ -94,6 +94,8 @@ describe("GrowbotDrive", () => {
     drive({ policy: { ...CAMERA, contract: { ...CAMERA.contract, speed: false, pitch: false } } });
     // A heading-only walk's arrow is all direction: no length, and no reverse to switch to.
     const dial = screen.getByRole("slider", { name: "Heading" });
+    // Drawn full length from the start, as it is sent.
+    expect(dial.querySelector(".gb-dial-tip")).toHaveAttribute("cy", "16");
     fireEvent.keyDown(dial, { key: "ArrowDown" });
     expect(dial).toHaveAttribute("aria-valuetext", "straight");
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
