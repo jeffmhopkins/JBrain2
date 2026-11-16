@@ -3461,9 +3461,22 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     bar, what the creature said, or its own words for why not, in rose. Then the durations as
     one segmented row (*2 s*, *5 s* by default, *10 s*, *15 s*, inside the box's 1-15 bound),
     shown only here, since only taps use them.
-  - *Steer live*: *Heading* (*straight*, *90° left*), *Speed* and *Camera height* sliders (each
-    shown when the walk takes it; a skill set takes all three), then *Start driving* (primary),
-    which becomes a rose *Stop driving*. With both a skill set and a picked walk, one line says
+  - *Steer live* (the dial, owner 2026-11-16: *"a kind of half circle graphics version that
+    show origin and has a draggable vector"*, then *"can't we steer beyond 180°"*;
+    `components/GrowbotSteerDial.tsx`): a whole circle, since the box takes any heading from
+    180° left to 180° right of where the drive began, with the robot as a dot at its centre,
+    ticks every 45° (straight on brighter and longer) and a dashed half-speed ring. Dragging (or
+    tapping) sets a steel arrow from the centre: its angle off straight up is the heading
+    (*straight*, *90° left*, round to *180° right* straight behind, in 5° steps), its length the
+    speed (rounded to a tenth; at the centre a skill set stands and turns with the look). The
+    arrow stays where it was let go. Under it the words (*130° right, speed 0.9*, *straight,
+    standing*), then *Forward | Back* for a walk that takes a speed: *Back* backs it away still
+    facing the arrow's way. A heading-only walk's arrow is all direction, always full length,
+    with no *Back*; pointing it behind turns it round. Arrow keys work the dial (left and right
+    5°, round through behind; up and down a tenth; Home straight on), which a screen reader
+    hears as one slider. Then *Camera height* as a slider (when the walk takes it; a skill set
+    takes it), then *Start driving* (primary), which becomes a rose
+    *Stop driving*. With both a skill set and a picked walk, one line says
     which it steers (*Steering the skill set (look, forward and back).*) with *Steer Master v3
     instead* as a link, never a second walk picker. While no drive runs, a rose *Stop* stands in
     for the pad's, so the remote always has one. Switching to *Steer live* stops a timed move

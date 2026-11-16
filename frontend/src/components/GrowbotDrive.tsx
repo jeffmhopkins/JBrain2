@@ -6,6 +6,7 @@ import {
   type GrowbotSteer,
   api,
 } from "../api/client";
+import { GrowbotSteerDial, type SteerAim } from "./GrowbotSteerDial";
 import { shortName } from "./growbotNames";
 
 // Continuous steering for a trained walk (owner, 2026-11-14: steer heading, speed and camera
@@ -34,7 +35,7 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** Where the heading slider points, in words: 0 is the way it faced when the drive began. */
+/** Where the heading points, in words: 0 is the way it faced when the drive began. */
 export function headingWords(turn: number): string {
   if (turn === 0) return "straight";
   return `${Math.abs(turn)}° ${turn < 0 ? "left" : "right"}`;
@@ -71,9 +72,9 @@ export function GrowbotDrive({
   /** Told whenever a drive starts or ends, so the remote can stop it on leaving Steer live. */
   onDriving?: (driving: boolean) => void;
 }) {
-  // The slider turns right as it goes right; the creature's heading is left positive.
-  const [turn, setTurn] = useState(0);
-  const [speed, setSpeed] = useState(1);
+  // The dial's arrow (GrowbotSteerDial), right positive, and Forward | Back.
+  const [aim, setAim] = useState<SteerAim>({ angle: 0, length: 0.5 });
+  const [back, setBack] = useState(false);
   const [pitch, setPitch] = useState(1);
   const [driving, setDriving] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: only a change of driving is news.
@@ -83,7 +84,14 @@ export function GrowbotDrive({
   // A skill set when there is one: it is what the follower will drive.
   const [withSet, setWithSet] = useState(true);
   const set = skills && (withSet || !policy) ? skills : null;
-  const now = useRef({ heading: 0, speed: 1, pitch: 1 });
+  const speedOn = set ? true : !!policy?.contract.speed;
+  const pitchOn = set ? true : !!policy?.contract.pitch;
+  // Back backs a speed walk away still facing the arrow's way; pointing the arrow behind turns
+  // it round instead.
+  const turn = aim.angle;
+  const speed = speedOn ? (back ? -aim.length : aim.length) : 1;
+  // The creature's heading is left positive.
+  const now = useRef({ heading: 0, speed: 0.5, pitch: 1 });
   now.current = { heading: -turn, speed, pitch };
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   // A halt while the walk's start is still on its way must win over that start's answer.
@@ -170,8 +178,9 @@ export function GrowbotDrive({
   }
 
   const id = `gb-drive-${code}`;
-  const speedOn = set ? true : !!policy?.contract.speed;
-  const pitchOn = set ? true : !!policy?.contract.pitch;
+  const said = speedOn
+    ? `${headingWords(turn)}, ${aim.length === 0 ? "standing" : `speed ${speed.toFixed(1)}`}`
+    : headingWords(turn);
   return (
     <fieldset className="gb-drive" aria-label="Steer live">
       {skills && policy && (
@@ -182,37 +191,35 @@ export function GrowbotDrive({
           </button>
         </p>
       )}
-      <div className="gb-trim">
-        <label htmlFor={`${id}-turn`}>Heading</label>
-        <input
-          id={`${id}-turn`}
-          type="range"
-          min={-180}
-          max={180}
-          step={5}
-          value={turn}
-          onChange={(e) => setTurn(Number(e.target.value))}
-        />
-        <output htmlFor={`${id}-turn`} className="gb-mono">
-          {headingWords(turn)}
-        </output>
-      </div>
+      <GrowbotSteerDial
+        aim={aim}
+        onAim={setAim}
+        lengthOn={speedOn}
+        label={speedOn ? "Heading and speed" : "Heading"}
+        valueText={said}
+      />
+      <output className="gb-dial-said gb-mono" aria-hidden="true">
+        {said}
+      </output>
       {speedOn && (
-        <div className="gb-trim">
-          <label htmlFor={`${id}-speed`}>Speed</label>
-          <input
-            id={`${id}-speed`}
-            type="range"
-            min={-1}
-            max={1}
-            step={0.1}
-            value={speed}
-            onChange={(e) => setSpeed(Number(e.target.value))}
-          />
-          <output htmlFor={`${id}-speed`} className="gb-mono">
-            {speed.toFixed(1)}
-          </output>
-        </div>
+        <fieldset className="gb-seg pick gb-dial-way" aria-label="Which way">
+          <button
+            type="button"
+            className={back ? "" : "on"}
+            aria-pressed={!back}
+            onClick={() => setBack(false)}
+          >
+            Forward
+          </button>
+          <button
+            type="button"
+            className={back ? "on" : ""}
+            aria-pressed={back}
+            onClick={() => setBack(true)}
+          >
+            Back
+          </button>
+        </fieldset>
       )}
       {pitchOn && (
         <div className="gb-trim">

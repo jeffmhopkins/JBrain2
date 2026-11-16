@@ -340,7 +340,7 @@ describe("GrowbotMovePanel", () => {
     expect(screen.getByRole("group", { name: "Walks and spins run for" })).toBeInTheDocument();
     fireEvent.click(steer);
     expect(screen.getByRole("button", { name: "Start driving" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Heading")).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Heading and speed" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Walk forward 5 s" })).toBeNull();
     expect(screen.queryByRole("group", { name: "Walks and spins run for" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Tap a move" }));

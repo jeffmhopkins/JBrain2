@@ -1462,6 +1462,66 @@ details.gb-help[open] summary::after {
   padding: 8px 0 0;
   border-radius: 0;
 }
+/* Steer live's dial (GrowbotSteerDial): the robot at the origin, the arrow where it goes. */
+.gb-dial {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  margin: 12px auto 0;
+  touch-action: none;
+  cursor: grab;
+  border-radius: var(--r-input);
+}
+.gb-dial:focus:not(:focus-visible) {
+  outline: none;
+}
+.gb-dial:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: 2px;
+}
+.gb-dial-face {
+  fill: var(--surface-2);
+  stroke: var(--border);
+}
+.gb-dial-ring {
+  fill: none;
+  stroke: var(--border);
+  stroke-dasharray: 3 4;
+}
+.gb-dial svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.gb-dial-tick {
+  stroke: var(--text-3);
+  stroke-width: 1.5;
+}
+/* Straight on: the way it faced when the drive began. */
+.gb-dial-tick.ahead {
+  stroke: var(--text);
+  stroke-width: 2.5;
+}
+.gb-dial-vec {
+  stroke: var(--steel);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+.gb-dial-origin {
+  fill: var(--text-2);
+}
+.gb-dial-tip {
+  fill: var(--steel-tint);
+  stroke: var(--steel);
+  stroke-width: 2;
+}
+.gb-dial-said {
+  display: block;
+  text-align: center;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+  margin: 4px 0 10px;
+}
 .gb-steer-with {
   margin: 10px 0 0;
 }

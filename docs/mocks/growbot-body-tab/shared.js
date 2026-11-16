@@ -3,7 +3,7 @@
 window.B = (function () {
   const S = {
     theme: "dark", on: true, many: true, walk: "master", mode: "tap", secs: 5,
-    heading: 0, speed: 1, pitch: 1, driving: false, running: null, said: null,
+    angle: 0, len: 0.5, back: false, heading: 0, speed: 1, pitch: 1, driving: false, running: null, said: null,
     sheet: null, toast: "", follow: null, remote: false, pane: "drive",
   };
   // Library names as the box holds them; the part before ":" is the short name the pad shows.
@@ -70,14 +70,48 @@ window.B = (function () {
   const said = () => `<p class="said${S.said && S.said.bad ? " bad" : ""}" aria-live="polite">${S.said ? esc(S.said.text) : "&nbsp;"}</p>`;
   const secs = (label) => `${label ? `<div class="sub">${label}</div>` : ""}<div class="segs" role="group" aria-label="How long">${[2, 5, 10, 15].map((s) =>
     `<button class="${S.secs === s ? "on" : ""}" data-act="secs" data-id="${s}">${s} s</button>`).join("")}</div>`;
-  const headingWords = (t) => (t === 0 ? "straight" : `${Math.abs(t)}° ${t < 0 ? "left" : "right"}`);
+  const headingWords = (t) => (t === 0 ? "straight" : t === 180 ? "180° right" : `${Math.abs(t)}° ${t < 0 ? "left" : "right"}`);
+  // Steer live's dial: the robot at the centre, the arrow's angle is the heading and its length
+  // the speed (owner, 2026-11-16: "a kind of half circle ... that shows origin and has a draggable
+  // vector", then "can't we steer beyond 180°": the box takes any heading, so a whole circle).
+  // Forward | Back flips the speed of a walk that takes one.
+  const DS = 240, DR = 104, DO = 120;
+  const dialAt = (ang, r) => { const t = (ang * Math.PI) / 180; return [DO + r * Math.sin(t), DO - r * Math.cos(t)]; };
+  const wrap = (d) => { const x = ((((d + 180) % 360) + 360) % 360) - 180; return x === -180 ? 180 : x; };
+  const speedOn = () => { const w = cur(); return !w || w.kind.includes("speed"); };
+  function dialWords() {
+    const hw = headingWords(S.angle);
+    return speedOn() ? `${hw}, ${S.len === 0 ? "standing" : `speed ${((S.back ? -1 : 1) * S.len).toFixed(1)}`}` : hw;
+  }
+  function dialSvg() {
+    const [tx, ty] = dialAt(S.angle, Math.max(S.len, 0.04) * DR);
+    const ticks = [0, 45, 90, 135, 180, -135, -90, -45].map((t) => { const [x1, y1] = dialAt(t, DR - (t === 0 ? 14 : 8)), [x2, y2] = dialAt(t, DR); return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${t === 0 ? "var(--text)" : "var(--text-3)"}" stroke-width="${t === 0 ? 2.5 : 1.5}"/>`; }).join("");
+    return `<div id="dial" role="slider" tabindex="0" aria-label="Heading and speed" aria-valuetext="${dialWords()}" style="display:block;width:100%;max-width:260px;margin:12px auto 0;touch-action:none;cursor:grab"><svg viewBox="0 0 ${DS} ${DS}" style="display:block;width:100%;height:auto" aria-hidden="true">
+      <circle cx="${DO}" cy="${DO}" r="${DR}" fill="var(--surface-2)" stroke="var(--border)"/>
+      ${speedOn() ? `<circle cx="${DO}" cy="${DO}" r="${DR / 2}" fill="none" stroke="var(--border)" stroke-dasharray="3 4"/>` : ""}${ticks}
+      <line id="dial-vec" x1="${DO}" y1="${DO}" x2="${tx}" y2="${ty}" stroke="var(--steel)" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="${DO}" cy="${DO}" r="6" fill="var(--text-2)"/>
+      <circle id="dial-tip" cx="${tx}" cy="${ty}" r="13" fill="var(--steel-tint)" stroke="var(--steel)" stroke-width="2"/></svg></div>
+      <p class="said" id="dial-said" style="color:var(--text);font-family:var(--font-mono)">${dialWords()}</p>`;
+  }
+  function dialMove(e) {
+    const el = document.getElementById("dial"); if (!el) return;
+    const box = el.getBoundingClientRect();
+    const x = ((e.clientX - box.left) / box.width) * DS - DO, y = DO - ((e.clientY - box.top) / box.height) * DS;
+    S.angle = wrap(Math.round((Math.atan2(x, y) * 180) / Math.PI / 5) * 5);
+    S.len = speedOn() ? Math.max(0, Math.min(1, Math.round((Math.hypot(x, y) / DR) * 10) / 10)) : 1;
+    const [tx, ty] = dialAt(S.angle, Math.max(S.len, 0.04) * DR);
+    const v = document.getElementById("dial-vec"), t = document.getElementById("dial-tip");
+    v.setAttribute("x2", tx); v.setAttribute("y2", ty); t.setAttribute("cx", tx); t.setAttribute("cy", ty);
+    el.setAttribute("aria-valuetext", dialWords());
+    document.getElementById("dial-said").textContent = dialWords();
+  }
   function sliders() {
-    const w = cur();
-    const speed = !w || w.kind.includes("speed");
-    return `<div class="sl"><label for="h">Heading</label><input id="h" type="range" min="-180" max="180" step="5" value="${S.heading}" data-sl="heading"><output>${headingWords(S.heading)}</output></div>
-      ${speed ? `<div class="sl"><label for="sp">Speed</label><input id="sp" type="range" min="-1" max="1" step="0.1" value="${S.speed}" data-sl="speed"><output>${(+S.speed).toFixed(1)}</output></div>` : ""}
+    return `${dialSvg()}
+      ${speedOn() ? `<div class="segs" role="group" aria-label="Which way" style="margin-bottom:8px"><button class="${S.back ? "" : "on"}" data-act="way" data-id="fwd">Forward</button><button class="${S.back ? "on" : ""}" data-act="way" data-id="back">Back</button></div>` : ""}
       <div class="sl"><label for="pi">Camera height</label><input id="pi" type="range" min="-1" max="1" step="0.1" value="${S.pitch}" data-sl="pitch"><output>${(+S.pitch).toFixed(1)}</output></div>
-      <button class="btn block go${S.driving ? " on" : ""}" data-act="drive" ${S.on || S.driving ? "" : "disabled"}>${S.driving ? "Stop driving" : "Start driving"}</button>`;
+      <button class="btn block go${S.driving ? " on" : ""}" data-act="drive" ${S.on || S.driving ? "" : "disabled"}>${S.driving ? "Stop driving" : "Start driving"}</button>
+      ${S.driving ? "" : `<button class="btn block danger" style="margin-top:8px" data-act="stop" ${S.on ? "" : "disabled"}>Stop</button>`}`;
   }
   const picker = () => {
     const w = cur();
@@ -154,7 +188,8 @@ window.B = (function () {
       else if (a === "secs") S.secs = +id;
       else if (a === "mode") { S.mode = id; S.running = null; if (id === "tap") S.driving = false; }
       else if (a === "pane") S.pane = id;
-      else if (a === "drive") { S.driving = !S.driving; S.running = null; S.said = S.driving ? { text: `Driving with ${cur() ? short(cur().name) : "the built-in walk"}. Move the sliders as it goes.`, bad: false } : { text: "Stopped driving.", bad: false }; }
+      else if (a === "way") S.back = id === "back";
+      else if (a === "drive") { S.driving = !S.driving; S.running = null; S.said = S.driving ? { text: `Driving with ${cur() ? short(cur().name) : "the built-in walk"}. Drag the arrow as it goes.`, bad: false } : { text: "Stopped driving.", bad: false }; }
       else if (a === "trick") { run(id, id === "Look v10" ? "Holding Look v10" : `${id}`); S.sheet = null; }
       else if (a === "follow") { S.follow = S.follow === id ? null : id; S.said = S.follow ? { text: id === "walk" ? "Following the nearest face." : "Dry run: the arrow on Fish's screen shows the way.", bad: false } : null; }
       else if (a === "sheet") S.sheet = id;
@@ -164,6 +199,14 @@ window.B = (function () {
       else if (a === "toast") { S.toast = id; setTimeout(() => { S.toast = ""; paint(); }, 2200); }
       paint();
     });
+    let held = false;
+    root.addEventListener("pointerdown", (e) => {
+      if (!e.target.closest("#dial")) return;
+      held = true; e.target.closest("#dial").setPointerCapture(e.pointerId); dialMove(e);
+    });
+    root.addEventListener("pointermove", (e) => { if (held) dialMove(e); });
+    root.addEventListener("pointerup", () => { held = false; });
+    root.addEventListener("pointercancel", () => { held = false; });
     root.addEventListener("input", (e) => {
       const k = e.target.dataset && e.target.dataset.sl; if (!k) return;
       S[k] = +e.target.value;
