@@ -81,6 +81,9 @@ class PolicyRow:
     enabled: bool = True
     motion: str = "walk"
     active: bool = False
+    # A master's teachers, (role, kept slug) in look/walk/back order: which kept walks it was
+    # distilled from, so the Trained walks sheet can fold them under it (owner, 2026-11-16).
+    teachers: tuple[tuple[str, str], ...] = ()
 
 
 def summary(policy: Any) -> Contract:
@@ -164,6 +167,28 @@ def _modes(
     return ("look", "forward", "back") if backs else ("look", "forward")
 
 
+# A master names each teacher by its file in the training repo, policies/<slug>/<file>.json.
+_TEACHER_PATH = re.compile(r"^policies/([a-z0-9][a-z0-9-]{0,47})/[^/]+\.json$")
+_TEACHER_ROLES: tuple[str, ...] = ("look", "walk", "back")
+
+
+def teachers(declared: Any) -> tuple[tuple[str, str], ...]:
+    """The kept walks a master was distilled from, from its `training.master.teachers` map of
+    role to file. A file outside policies/<slug>/ (a run's own scratch path) names no kept
+    walk, so it is left out rather than guessed at."""
+    if not isinstance(declared, dict):
+        return ()
+    roles = [r for r in _TEACHER_ROLES if r in declared]
+    roles += sorted(str(r) for r in declared if r not in _TEACHER_ROLES)
+    out: list[tuple[str, str]] = []
+    for role in roles:
+        path = declared[role]
+        m = _TEACHER_PATH.match(path) if isinstance(path, str) else None
+        if m:
+            out.append((role, m.group(1)))
+    return tuple(out)
+
+
 def _no_constant(name: str) -> Any:
     raise ValueError(f"{name} isn't a number JSON allows")
 
@@ -191,6 +216,7 @@ def _row(r: Any) -> PolicyRow:
         enabled=bool(r.enabled),
         motion=str(r.motion),
         active=bool(r.active),
+        teachers=teachers(r.teachers),
     )
 
 
@@ -252,7 +278,7 @@ _COLS = (
     "id, name, source_job, source_spec, bytes, created_at, enabled, motion, active,"
     " jsonb_build_object('obs_spec', policy->'obs_spec', "
     + ", ".join(_stub(k) for k in ("mean", "std", "layers"))
-    + ") AS policy"
+    + ") AS policy, policy #> '{training,master,teachers}' AS teachers"
 )
 
 

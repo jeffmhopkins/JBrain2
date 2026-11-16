@@ -182,3 +182,26 @@ async def test_a_kept_policy_is_replaced_in_place(maker: async_sessionmaker) -> 
     assert not await repo.replace_policy(
         OWNER, "00000000-0000-0000-0000-000000000000", newer, 1, tag
     )
+
+
+async def test_a_masters_teachers_come_back_from_every_read(maker: async_sessionmaker) -> None:
+    repo = SqlPolicyRepo(maker)
+    master = {
+        **POLICY,
+        "training": {
+            "master": {
+                "teachers": {
+                    "walk": "policies/lift-fall-3/policy_lift_fall.json",
+                    "look": "policies/look-v9/policy_look.json",
+                }
+            }
+        },
+    }
+    want = (("look", "look-v9"), ("walk", "lift-fall-3"))
+    row = await repo.add(OWNER, "Master v2", master, 10, "job1", "growbot_master")
+    assert row.teachers == want
+    assert [r.teachers for r in await repo.list(OWNER)] == [want]
+    renamed = await repo.update(OWNER, row.id, name="Steady")
+    assert renamed is not None and renamed.teachers == want
+    plain = await repo.add(OWNER, "Look", POLICY, 10, "job2", "growbot_look")
+    assert plain.teachers == ()

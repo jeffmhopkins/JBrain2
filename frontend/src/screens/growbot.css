@@ -1866,3 +1866,64 @@ a.gb-btn {
   color: var(--text-2);
   font-size: var(--fs-secondary);
 }
+
+/* The Trained walks sheet's masters (mock B, docs/mocks/growbot-master-family): a master's
+   row, then a toggle that opens the walks it learned from, each under its role. */
+.gb-fam {
+  border-top: 1px solid var(--border);
+}
+.gb-fam:first-child {
+  border-top: 0;
+}
+.gb-fam-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px 8px;
+  background: none;
+  border: 0;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  text-align: left;
+  cursor: pointer;
+}
+.gb-fam-car {
+  display: inline-block;
+  width: 14px;
+  color: var(--text-3);
+  font-size: 15px;
+  transition: transform 0.15s;
+}
+.gb-fam-toggle[aria-expanded="true"] .gb-fam-car {
+  transform: rotate(90deg);
+}
+.gb-fam-kids {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 14px 14px 36px;
+}
+/* Its display: flex would otherwise beat the hidden attribute. */
+.gb-fam-kids[hidden] {
+  display: none;
+}
+.gb-fam-kid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gb-fam-role {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--steel-text);
+}
+.gb-fam-kid .gb-list {
+  background: var(--surface-2);
+}
+@media (prefers-reduced-motion: reduce) {
+  .gb-fam-car {
+    transition: none;
+  }
+}
