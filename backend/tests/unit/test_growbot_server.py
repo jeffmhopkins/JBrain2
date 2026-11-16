@@ -4036,6 +4036,8 @@ def test_the_wake_screen_reads_the_skill_set_for_its_robot(run: _Running) -> Non
         # Only ever ids of the three skills, whatever the api says.
         _Fake.skills_reply = (200, json.dumps({"skills": {"dance": _PID}}).encode())
         assert _skills(run, "?robot=gb-abc123")[0] == 502
+        _Fake.skills_reply = (200, b'{"skills":{}}')
+        assert _skills(run, "?robot=gb-abc123")[0] == 502
         _Fake.skills_reply = (503, b"{}")
         assert _skills(run, "?robot=gb-abc123")[0] == 502
     finally:

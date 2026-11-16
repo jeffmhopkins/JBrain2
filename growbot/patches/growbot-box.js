@@ -2061,7 +2061,7 @@
     b.onclick = function () {
       wake.click();
       fetch("/api/box/skills?robot=" + encodeURIComponent(id), { cache: "no-store" }).then(function (r) {
-        if (r.status === 403) throw new Error("this phone isn't wearing " + id);
+        if (r.status === 403) throw new Error("this phone isn't signed in to drive " + id);
         if (!r.ok) throw new Error("the box said " + r.status);
         return r.json();
       }).then(function (j) {

@@ -2005,6 +2005,7 @@ class GrowBot:
         skills = got["skills"]
         if skills is not None and not (
             isinstance(skills, dict)
+            and skills
             and all(
                 k in SKILL_MODES and POLICY_ID_RE.fullmatch(str(v))
                 for k, v in skills.items()

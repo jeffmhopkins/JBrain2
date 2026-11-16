@@ -4794,6 +4794,6 @@ def test_the_wake_screen_starts_a_body_test_on_a_robots_phone() -> None:
     none = run("?id=gb-abc123", [200, {"skills": None}])
     assert none["started"] == [] and "no trained walks" in none["errs"][0]
     other = run("?id=gb-abc123", [403, {}])
-    assert "isn't wearing gb-abc123" in other["errs"][0]
+    assert "signed in to drive gb-abc123" in other["errs"][0]
     # Not a robot's phone: no button at all.
     assert run("", [200, {"skills": skills}])["n"] == 0
