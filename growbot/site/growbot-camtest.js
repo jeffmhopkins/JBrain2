@@ -166,7 +166,8 @@ Zoom.prototype.update = function (boxes, at) {
 // frame, 3 places) on a hit, `[ms]` on a miss, absent when it didn't run.
 export function hitOf(cell) { return !!(cell && cell.length > 1); }
 
-// What one station's measuring frames say, per detector.
+// What one station's measuring frames say, per detector. `k` is a calibration (one number, or
+// one per detector) for distanceOf.
 export function stationStats(rows, hdeg, k) {
   var out = {};
   PIPES.forEach(function (p) {
@@ -180,7 +181,7 @@ export function stationStats(rows, hdeg, k) {
         hits++;
         var a = angleOf(c[0] + c[2] / 2, hdeg);
         ang.push(a);
-        if (p !== "body") { wf.push(c[2]); var d = distanceOf(c[2], hdeg, k); if (d) dist.push(d); }
+        if (p !== "body") { wf.push(c[2]); var d = distanceOf(c[2], hdeg, k && typeof k === "object" ? k[p] : k); if (d) dist.push(d); }
         if (prev && r.t - prev.t > 0 && r.t - prev.t < 300) speeds.push(Math.abs(a - prev.a) / ((r.t - prev.t) / 1000));
         prev = { a: a, t: r.t };
         last = a; run = 0;
@@ -196,7 +197,7 @@ export function stationStats(rows, hdeg, k) {
       width: wf.length ? Math.round(median(wf) * 1000) / 1000 : null,
       dist: r1(median(dist)), distMax: r1(pct(dist, 0.95)),
       left: r1(ang.length ? Math.min.apply(null, ang) : null), right: r1(ang.length ? Math.max.apply(null, ang) : null),
-      losses: losses.map(r1), speed: r1(pct(speeds, 0.9)),
+      losses: losses.slice(0, 10).map(r1), lossCount: losses.length, speed: r1(pct(speeds, 0.9)),
     };
   });
   return out;
@@ -219,7 +220,7 @@ export function verdicts(stations, meta) {
       }
     });
     var away = stations.away && stations.away[p];
-    if (away && away.distMax && p !== "body" && away.distMax > reach && away.rate > 0) reach = Math.max(reach, Math.min(away.distMax, 6));
+    if (away && away.distMax && p !== "body" && away.distMax > reach && away.rate >= 0.5) reach = Math.max(reach, Math.min(away.distMax, 6));
     var ms = median(msAll.filter(function (v) { return v !== null; }));
     var edges = stations.edges && stations.edges[p];
     var fps = ms ? Math.round(1000 / ms) : null;
@@ -268,8 +269,8 @@ function boot() {
   lumaCanvas.width = 32; lumaCanvas.height = 24;
   var det = {}, delegate = {}, on = { now: true, full: true, zoom: true, body: true };
   var zoom = new Zoom(), stream = null, busy = false, running = false, lastCrop = null, last = {};
-  var rows = [], pending = [], seq = 0, run = null, saved = robot ? "saving" : "not saved: no robot on this phone";
-  var t0 = 0, phase = "idle", stIdx = -1, stRows = [], stats = {}, stopAt = 0, cal = 0, hdeg = FOV.narrow;
+  var rows = [], pending = [], all = [], seq = 0, run = null, saved = robot ? "saving" : "not saved: no robot on this phone";
+  var t0 = 0, phase = "idle", stIdx = -1, stRows = [], stats = {}, stopAt = 0, cal = {}, hdeg = FOV.narrow;
   var prevAt = 0, frames = 0, fpsAt = 0, fps = 0, ua = String(navigator.userAgent || "").slice(0, 120), info = {};
 
   function say(text) {
@@ -315,7 +316,14 @@ function boot() {
       stream = s; video.srcObject = s;
       return video.play().catch(function () {});
     }).then(function () {
-      return new Promise(function (ok) { (function wait() { if (video.videoWidth) ok(); else setTimeout(wait, 50); })(); });
+      var until = performance.now() + 8000;
+      return new Promise(function (ok, no) {
+        (function wait() {
+          if (video.videoWidth) ok();
+          else if (performance.now() > until) no(new Error("the camera opened but sent no picture"));
+          else setTimeout(wait, 50);
+        })();
+      });
     }).then(function () {
       var st = {};
       try { st = stream.getVideoTracks()[0].getSettings() || {}; } catch (e) {}
@@ -345,14 +353,14 @@ function boot() {
   }
   // The verbose part (owner, 2026-11-16: "increase more verbose logging for anything that you
   // need ... to make good decisions in the future"): how many faces each detector saw, the
-  // chosen face's eye spacing (fraction of frame width) and roll, and the runner-up's score.
+  // chosen face's eye spacing (fraction of frame width) and roll, and the second-best score.
   function extra(row, p, boxes, chosen, w, h) {
     row[p + "N"] = boxes.length;
     if (chosen && chosen.eye) {
       var e = chosen.eye, dx = e[2] - e[0], dy = e[3] - e[1];
       row[p + "E"] = [Math.round((Math.hypot(dx, dy) / w) * 10000) / 10000, Math.round((Math.atan2(dy, dx) * 180) / Math.PI)];
     }
-    if (boxes.length > 1) row[p + "2"] = Math.round(Math.min.apply(null, boxes.map(function (b) { return b.s; })) * 100) / 100;
+    if (boxes.length > 1) row[p + "2"] = Math.round(boxes.map(function (b) { return b.s; }).sort(function (a, b) { return b - a; })[1] * 100) / 100;
   }
   function biggest(bs) { var b = null; bs.forEach(function (x) { if (!b || x.w > b.w) b = x; }); return b; }
 
@@ -383,8 +391,9 @@ function boot() {
     }
     if (on.zoom && det.zoom) {
       var c = zoom.plan(w, h, at);
-      // A crop bigger than the model's input is drawn at 384 px: the model shrinks it anyway.
-      var side = Math.min(c.w, c.h) === c.w && c.w === c.h ? Math.min(c.w, 384) : 0, z;
+      // Every crop is drawn at one size (the model resizes to its 192 input anyway), so the
+      // canvas is never reallocated as the face's size changes.
+      var side = 288, z;
       var t1 = performance.now();
       if (c.why === "frame") z = detectFace("zoom", frameCanvas, w, h, 0, 0, 1);
       else {
@@ -437,7 +446,7 @@ function boot() {
       var r = rows.length ? rows[rows.length - 1][p] : null;
       if (!r) return "";
       var hit = hitOf(r);
-      var d = hit && p !== "body" ? distanceOf(r[2], hdeg, cal) : null;
+      var d = hit && p !== "body" ? distanceOf(r[2], hdeg, cal[p]) : null;
       return '<span class="chip' + (hit ? " hit" : "") + '" style="--c:' + COLORS[p] + '">' + p + " " + (hit ? "●" : "○") + " " + Math.round(r[r.length - 1]) + "ms" + (d ? " · " + d.toFixed(1) + "m" : "") + "</span>";
     }).join("");
     $("chips").innerHTML = chips + '<span class="chip">' + fps + "/s · " + w + "×" + h + " · " + Math.round(hdeg) + "°</span>";
@@ -448,7 +457,7 @@ function boot() {
     var now = performance.now();
     if (now - fpsAt > 1000) { fps = frames; frames = 0; fpsAt = now; }
     if (phase === "measure") { row.st = STATIONS[stIdx].id; stRows.push(row); }
-    if (run && phase !== "result") { pending.push(row); rows.push(row); if (rows.length > 4) rows.shift(); }
+    if (run && phase !== "result") { pending.push(row); all.push(row); rows.push(row); if (rows.length > 4) rows.shift(); }
     else { rows = [row]; }
   }
 
@@ -467,7 +476,7 @@ function boot() {
 
   function event(ev) {
     ev.t = Math.round(performance.now() - t0);
-    if (run) pending.push(ev);
+    if (run) { pending.push(ev); all.push(ev); }
   }
 
   // The body test's log, so a run reads back the same way (`bt-cam-…`): chunks go one at a
@@ -504,6 +513,7 @@ function boot() {
 
   function countdown(secs, label) {
     var end = performance.now() + secs * 1000;
+    skip = false;   // a Skip tapped late in one countdown never carries into the next
     return new Promise(function (ok) {
       (function tick() {
         if (phase === "stopped") return ok();
@@ -516,7 +526,7 @@ function boot() {
   var skip = false;
 
   function guided() {
-    run = runId(Date.now()); seq = 0; pending = []; stats = {}; cal = 0; t0 = performance.now();
+    run = runId(Date.now()); seq = 0; pending = []; all = []; stats = {}; cal = {}; t0 = performance.now();
     event({ e: "start", camera: info, delegate: delegate, robot: robot });
     $("results").innerHTML = ""; $("stopBtn").textContent = "Stop";
     var poster = setInterval(function () { post("running"); }, 2000);
@@ -533,8 +543,12 @@ function boot() {
           phase = "measure"; stRows = [];
           say(s.kind === "range" ? "Go. Walk slowly back." : "Hold.");
           return countdown(s.secs, "measuring").then(function () {
+            // Each model's box hugs a face its own way, so each is calibrated on its own 1 m.
+            if (s.id === "d10") {
+              var one = stationStats(stRows, hdeg, {});
+              PIPES.forEach(function (p) { if (one[p] && one[p].width && one[p].rate > 0.5) cal[p] = one[p].width; });
+            }
             stats[s.id] = stationStats(stRows, hdeg, cal);
-            if (s.id === "d10" && stats.d10.full && stats.d10.full.width && stats.d10.full.rate > 0.5) cal = stats.d10.full.width;
             event({ e: "measured", id: s.id, stats: stats[s.id] });
           });
         });
@@ -544,12 +558,17 @@ function boot() {
       clearInterval(poster);
       var status = phase === "stopped" ? "stopped" : "done";
       phase = "result";
+      // Nothing left to measure: no detectors or camera running on a phone left propped up.
+      running = false;
+      try { if (stream) stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
       say(status === "done" ? "Done. The results are on the screen." : "Stopped.");
       show(status === "done" ? "Camera test done" : "Camera test stopped", "");
       $("count").textContent = "";
       paintResults();
       // The last rows, then the final status. A box that refuses stops it: Download keeps them.
-      function flush(tries) { return post(status).then(function (ok) { if (ok && pending.length && tries < 200) return flush(tries + 1); }); }
+      // Only the very last chunk carries the end status: the box closes a run on it and refuses
+      // what comes after.
+      function flush(tries) { return post(pending.length > 400 ? "running" : status).then(function (ok) { if (ok && pending.length && tries < 200) return flush(tries + 1); }); }
       return flush(0);
     });
   }
@@ -571,24 +590,28 @@ function boot() {
         return "<td>" + Math.round(x.rate * 100) + "%" + extra + "</td>";
       }).join("") + "</tr>";
     });
-    html += "</table><p class=mut>Camera " + info.w + "×" + info.h + ", " + Math.round(hdeg) + "° wide. Distance " + (cal ? "calibrated at 1 m" : "from a 15 cm face") + ". " + saved + ".</p>";
+    html += "</table><p class=mut>Camera " + info.w + "×" + info.h + ", " + Math.round(hdeg) + "° wide. Distance " + (Object.keys(cal).length ? "calibrated per detector at 1 m (" + Object.keys(cal).join(", ") + ")" : "from a 15 cm face") + ". Detectors ran on: " + PIPES.map(function (p) { return p + " " + (delegate[p] || "off"); }).join(", ") + ". " + saved + ".</p>";
     $("results").innerHTML = html;
     $("dl").style.display = "inline-block";
   }
 
   $("dl").onclick = function () {
-    var blob = new Blob([JSON.stringify({ run: run, summary: summary("done") }, null, 1)], { type: "application/json" });
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = (run || "camtest") + ".json";
+    // The whole log, every frame, whether or not the box kept it.
+    var blob = new Blob([JSON.stringify({ run: run, summary: summary("done"), rows: all })], { type: "application/json" });
+    var a = document.createElement("a"), url = URL.createObjectURL(blob);
+    a.href = url; a.download = (run || "camtest") + ".json";
     document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
   };
   ["now", "full", "zoom", "body"].forEach(function (p) {
     $("on_" + p).onchange = function () { on[p] = $("on_" + p).checked; };
   });
-  $("res").onchange = $("lens").onchange = function () { if (running) openCamera(); };
+  $("res").onchange = $("lens").onchange = function () {
+    if (running) openCamera().catch(function (e) { show("The camera didn't reopen", String((e && e.message) || e)); });
+  };
   $("skipBtn").onclick = function () { skip = true; };
   $("stopBtn").onclick = function () {
-    if (phase === "prep" || phase === "measure") { phase = "stopped"; skip = true; event({ e: "stop" }); }
+    if (phase === "prep" || phase === "measure" || phase === "starting") { phase = "stopped"; skip = true; event({ e: "stop" }); }
   };
   $("startBtn").onclick = function () {
     $("startBtn").disabled = true;
@@ -596,12 +619,22 @@ function boot() {
     say("Camera test. Prop the phone up where the robot's camera would be, then step away.");
     var wake = null;
     try { if (navigator.wakeLock) navigator.wakeLock.request("screen").then(function (l) { wake = l; }).catch(function () {}); } catch (e) {}
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      show("No camera here", "This page needs the box's https address to use the camera.");
+      $("startBtn").disabled = false;
+      return;
+    }
     openCamera().then(loadVision).then(function () {
+      if (!Object.keys(det).length) throw new Error("no detector loaded: " + JSON.stringify(delegate));
       running = true; loop();
       $("startBtn").style.display = "none"; $("live").style.display = "flex";
       show("Prop the phone up", "Where the robot's camera would be, screen toward you. The test starts in a moment: listen for each station.");
+      phase = "starting";
       return countdown(10, "starting in");
-    }).then(guided).catch(function (e) {
+    }).then(function () {
+      // A Stop during the lead-in still runs the flow, which ends at once as "stopped".
+      return guided();
+    }).catch(function (e) {
       show("The camera test couldn't start", String((e && e.message) || e));
       $("startBtn").disabled = false;
     });

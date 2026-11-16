@@ -183,3 +183,36 @@ def test_losses_and_edges_are_measured() -> None:
     assert got["losses"] == [pytest.approx(got["right"])]
     assert got["right"] > 20 and got["left"] < 0
     assert got["speed"] > 0
+
+
+def test_a_few_walk_away_hits_never_raise_a_detectors_reach() -> None:
+    got = _eval(
+        """
+        const width = d => 2 * Math.atan(0.075 / d) * 180 / Math.PI / 60;
+        const hit = d => [0.4, 0.3, width(d), width(d), 0.9, 10];
+        const away = rate => {
+          const rows = [];
+          for (let i = 0; i < 20; i++) rows.push({t: i * 66, zoom: i < rate * 20 ? hit(3) : [10]});
+          return m.stationStats(rows, 60, 0);
+        };
+        return [0.2, 0.6].map(r => m.verdicts({away: away(r)}, {hdeg: 60}).numbers.zoom.reach);
+        """
+    )
+    assert got[0] == 0
+    assert got[1] == pytest.approx(3, abs=0.1)
+
+
+def test_calibration_is_per_detector_and_losses_are_capped() -> None:
+    got = _eval(
+        """
+        const rows = [];
+        for (let i = 0; i < 200; i++)
+          rows.push({t: i * 66, now: i % 4 ? [5] : [0.4, 0.3, 0.2, 0.2, 0.9, 5],
+                     full: [0.4, 0.3, 0.1, 0.1, 0.9, 9]});
+        for (let i = 200; i < 205; i++) rows.push({t: i * 66, now: [5], full: [9]});
+        return m.stationStats(rows, 60, {now: 0.4, full: 0.2});
+        """
+    )
+    assert got["now"]["dist"] == pytest.approx(2.0)
+    assert got["full"]["dist"] == pytest.approx(2.0)
+    assert len(got["now"]["losses"]) == 10 and got["now"]["lossCount"] == 50
