@@ -136,7 +136,17 @@ function normalizeSpec(pj) {
     if (m0.includes('left') && m1.includes('right')) swapDeclared = true;
     else if (m0.includes('left') || m1.includes('right')) throw new Error(`action_map ${JSON.stringify(am)} is one-sided/ambiguous — declare both legs`);
   }
-  return { segments, action_to_rad, swapDeclared };
+  // action_filter: a low-pass the policy trained to be scored under (the master, whose
+  // teachers chatter 20-30° a tick that the sim's servo lag hid and the real servos shook on).
+  // Malformed, it throws: half a filter would run the legs on numbers nobody scored.
+  let filter = null;
+  const af = sp.action_filter;
+  if (af != null) {
+    const ok = (v) => typeof v === 'number' && v > 0 && v <= 1;
+    if (typeof af !== 'object' || !ok(af.forward) || !ok(af.otherwise)) throw new Error(`action_filter ${JSON.stringify(af)}: forward and otherwise must be in (0, 1]`);
+    filter = { forward: af.forward, otherwise: af.otherwise };
+  }
+  return { segments, action_to_rad, swapDeclared, filter };
 }
 
 export class Walker {
@@ -241,6 +251,7 @@ export class Walker {
   reset() {
     this.rings = this.spec.segments.map((s) => Array.from({ length: s.frames }, () => new Array(s.channels.length).fill(0)));
     this.last = new Array(this.actSize).fill(0);
+    this.sent = null;     // the filter's last output; the first action after a reset goes straight through
     this.stepIndex = 0;   // cycle-clock phase counter; advances once per step() (walk only), reset per episode
   }
 
@@ -263,7 +274,7 @@ export class Walker {
   // standing tall, the stance it was trained to hold by default.
   // euler: {roll,pitch,yaw} in rad (base-relative phone euler, same source as the classic obs16 path) —
   // only read by policies declaring euler_* channels; IMU_SIGN applies per-axis exactly as the classic walker.
-  // Returns {l,r} servo degrees (0-180) + raw action.
+  // Returns {l,r} servo degrees (0-180), the sent action, and the net's raw output before any declared filter.
   step(accel, gyro, cmd, euler) {
     cmd = cmd || { fwd: 0, yaw: 0 };
     let E = euler || { roll: 0, pitch: 0, yaw: 0 };
@@ -297,7 +308,14 @@ export class Walker {
       for (const f of ring) for (const v of f) obs.push(v);   // flatten newest-first, frame-major
     }
     this.lastObs = obs;                             // read outside this repo by internal parity and bench tools
-    const a = runForward(this.p, obs);              // [aRight, aLeft] in [-1,1] — honors swish/relu/tanh/linear
+    const raw = runForward(this.p, obs);            // [aRight, aLeft] in [-1,1] — honors swish/relu/tanh/linear
+    const f = this.spec.filter;
+    let a = raw;
+    if (f && this.sent) {
+      const k = cmd.fwd > 0 ? f.forward : f.otherwise;   // as the policy declares: walking keeps more of its fast swing
+      a = raw.map((v, i) => this.sent[i] + k * (v - this.sent[i]));
+    }
+    if (f) this.sent = a;
     this.last = a;                                  // feed the actually-sent action back
     const c = this.cal, rev = this.reverse ? -1 : 1, deg = (v) => v * rev * this.toRad * 180 / Math.PI;   // rev negates both legs' swing = reverse travel
     const [aL, aR] = this.swap ? [a[0], a[1]] : [a[1], a[0]];          // default a[1]=left/a[0]=right; swap = bench override
@@ -305,6 +323,6 @@ export class Walker {
     const r = 90 + c.R_OFF + c.R_SIGN * deg(aR) * c.gain - c.turn;     // right -> port3
     const clamp = (v) => Math.max(0, Math.min(180, v));
     this.stepIndex++;                               // advance the cycle clock (once per walk step)
-    return { l: clamp(l), r: clamp(r), action: a };
+    return { l: clamp(l), r: clamp(r), action: a, raw };
   }
 }

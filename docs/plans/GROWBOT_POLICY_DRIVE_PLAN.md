@@ -147,7 +147,7 @@ reads the same for review.
 
 Each sample also carries, while a walk runs, the policy's own side of its tick (`dt` the real
 interval, `tn` a tick count, `lev` the levelled accelerometer and gyro it read, `fed` the
-command inputs, `act` its raw actions, `fst` the follower's state), and with a face, where it
+command inputs, `act` its actions as sent, `net` the net's own output when a declared filter changed it, `fst` the follower's state), and with a face, where it
 sits across the frame (`fs`), the reading's age (`fa`), whose detector found it (`fsrc`), the
 detector's score (`fsc`), its time (`fms`) and the frame's size (`fwh`); a `bt_face` event marks
 each loss (with where it was last seen) and each find (with how long it took). Free play logs
@@ -159,6 +159,13 @@ each loss (with where it was last seen) and each find (with how long it took). F
   nose; on the robot that is the left port. Unswapped, look held no heading (15°/s
   counter-clockwise at a target of 0) and turned the wrong way; the sim with the legs swapped does
   the same. `walkerFor` now swaps every trained walk's legs.
+- **The legs jittered fast.** The teachers' commands swing 20-30° a tick, mostly above
+  4 Hz, which the sim's servo lag hid and the real servos shook on. A policy may now declare
+  `obs_spec.action_filter` (`{forward, otherwise}`, each in (0, 1]): the runner sends
+  `sent + alpha·(net − sent)` each tick, `forward` while `cmd_forward` is above 0, and feeds
+  the sent action back as `prev_action`. The master declares 0.7 walking and 0.5 otherwise,
+  which in sim cuts the chatter 2-3x at no cost in aim or speed (training repo,
+  `master.ACTION_FILTER`). The body test logs the net's own output as `net` beside `act`.
 - **Nothing detected faces during a walk.** The leg tracker yields for any move and stops
   detecting, but stays enabled, and the eyes' own detector waited for it, so every walking check
   and a walking follow went blind. The eyes now run their own detector while a move runs.

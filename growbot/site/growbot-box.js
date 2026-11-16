@@ -1820,6 +1820,7 @@
       if (w.A) out.lev = [btR(w.A.x, 100), btR(w.A.y, 100), btR(w.A.z, 100), btR(w.G.x, 100), btR(w.G.y, 100), btR(w.G.z, 100)];
       if (w.fed) out.fed = [btR(w.fed.fwd, 100), btR(w.fed.yaw, 1000), btR(w.fed.pitch, 100)];
       if (w.act) out.act = [btR(w.act[0], 1000), btR(w.act[1], 1000)];
+      if (w.net && w.net !== w.act) out.net = [btR(w.net[0], 1000), btR(w.net[1], 1000)];
       if (w.fs) out.fst = w.fs;
     }
     try {
@@ -2453,10 +2454,11 @@
         // What the body test samples: the walk's own heading, command and leg poses.
         // And what the policy was given and gave back, for comparing a run with the sim: the
         // tick's real interval (it trained at a fixed rate), the levelled accelerometer and
-        // gyro it read, the command inputs, and its raw actions before the legs' calibration.
+        // gyro it read, the command inputs, and its actions before the legs' calibration (act, as
+        // sent; net, before the policy's declared low-pass).
         M.tele = {
           h: heading / D, tg: cmd.target, sp: skills ? cmd.speed : cmd.fwd, p: pitch, mode: skills ? mode : "", l: out.l, r: out.r,
-          dt: tickMs, n: (M.tele ? M.tele.n : 0) + 1, A: A, G: G, fed: fed, act: out.action || null,
+          dt: tickMs, n: (M.tele ? M.tele.n : 0) + 1, A: A, G: G, fed: fed, act: out.action || null, net: out.raw || null,
           fs: fol && fol.last ? fol.last.state : "",
         };
         // Each file ticks at the rate it trained at: its clock and history count steps.
