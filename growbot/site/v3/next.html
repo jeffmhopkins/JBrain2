@@ -9883,7 +9883,7 @@ function gbDepthCue(extra){ return (extra&&extra.humanReq&&typeof gbTalkGrown===
 function gbRecentSays(now){ var t=_live&&_live.scratch&&_live.scratch.traces, out=[], i, s;
   for(i=(t?t.length:0)-1;i>=0&&out.length<GB_SAID_QUOTE;i--){ if(now-(+t[i].t||0)>GB_SAID_KEEP_MS) break;
     s=gbSayOf(t[i].a).replace(/\s+/g," ").replace(/"/g,"'").slice(0,220); if(s) out.push('"'+s+'"'); }
-  return out.length?"\nyour last words, newest first: "+out.join(" / ")+" — do not say any of this again, and do not describe what you see unless they asked or something new appeared; say something new. if they ask for something again, still answer and do it, in new words.":""; }
+  return out.length?"\nyour last words, newest first: "+out.join(" / ")+" — do not say any of this again, and do not describe what you see unless they asked or something new appeared; say something new. if they ask for something again, still answer them, in new words.":""; }
 function _calmBefore(now){ var a=0,n=0; for(var i=sensBuf.length-1;i>=0;i--){ var s=sensBuf[i]; if(s.t>now-800) continue; if(s.t<now-3000) break; if(s.lin!=null){ a+=s.lin; n++; } }
   return !n || a/n<2.5; }   // was it CALM before the burst? (walking/carried = 2.5-6 → veto)
 /* 1106 MOTION SILENT. Field 11-05: a German Android Chrome session logged motion_perm state "granted" 36 times and

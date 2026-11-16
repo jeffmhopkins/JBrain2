@@ -3500,14 +3500,14 @@ PATCHES += DREAM_LATER_PATCHES
 # say any of this again", he went silent and did not move, and the depth cue drew talk ("I am
 # walking forward now") with no walk field. On those turns' replays the cue now puts doing it
 # first and forbids claiming a move the reply does not make, and the quote note says a repeated
-# ask still gets answered: walks went from 0 of 6 to 4 of 6, silent replies from 2 of 8 to 1.
+# ask still gets answered (the "do it" stays in the grown-up cue, never kid talk): walks went from 0 of 6 to 4 of 6, silent replies from 2 of 8 to 1.
 _GB_FLOOR_SAID_JS = r"""function gbSayOf(a){ a=String(a||"").trim(); if(a.charAt(0)==="(") return ""; if(a.charAt(0)!=="{") return a;
   try{ var m=JSON.parse(a); return m&&typeof m.say==="string"?m.say.trim():""; }catch(e){ return ""; } }
 function gbDepthCue(extra){ return (extra&&extra.humanReq&&typeof gbTalkGrown==="function"&&gbTalkGrown())?GB_DEPTH_CUE:""; }
 function gbRecentSays(now){ var t=_live&&_live.scratch&&_live.scratch.traces, out=[], i, s;
   for(i=(t?t.length:0)-1;i>=0&&out.length<GB_SAID_QUOTE;i--){ if(now-(+t[i].t||0)>GB_SAID_KEEP_MS) break;
     s=gbSayOf(t[i].a).replace(/\s+/g," ").replace(/"/g,"'").slice(0,220); if(s) out.push('"'+s+'"'); }
-  return out.length?"\nyour last words, newest first: "+out.join(" / ")+" — do not say any of this again, and do not describe what you see unless they asked or something new appeared; say something new. if they ask for something again, still answer and do it, in new words.":""; }
+  return out.length?"\nyour last words, newest first: "+out.join(" / ")+" — do not say any of this again, and do not describe what you see unless they asked or something new appeared; say something new. if they ask for something again, still answer them, in new words.":""; }
 """
 # Grown-up talk drops upstream's brevity from the constitution itself rather than overruling it
 # from a block 20k characters later, and calls him a thoughtful mind rather than a little

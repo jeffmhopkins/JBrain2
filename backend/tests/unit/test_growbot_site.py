@@ -4019,7 +4019,7 @@ def test_each_turn_quotes_his_last_lines_back_so_he_does_not_say_them_again() ->
         '\nyour last words, newest first: "Tamsin waves." / "Quorra calls it \'the big one\'."'
         " — do not say any of this again, and do not describe what"
         " you see unless they asked or something new appeared; say something new. if they ask"
-        " for something again, still answer and do it, in new words."
+        " for something again, still answer them, in new words."
     )
     assert got["cue"][0].startswith(" If they asked you to do something, do it in this reply")
     assert "never say you are moving unless this reply moves you" in got["cue"][0]
