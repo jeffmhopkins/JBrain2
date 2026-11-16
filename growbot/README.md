@@ -358,7 +358,25 @@ as octet-stream for the pose model. Every frame (box, score, face count, eye spa
 the zoom crop, nose and shoulders, brightness, detect ms) goes to the body test log as run
 `bt-cam-…`, with per-station numbers and a verdict per detector in its summary (`kind:
 "camera"`). On synthetic portrait frames (720x960, 60° wide) `now` lost the face past 0.7 m,
-`full` held to 2 m and `zoom` held 98% out to 4 m.
+`full` held to 2 m and `zoom` held 98% out to 4 m. `zoom` is the creature's own tracker
+(`growbot-face-zoom.js`), imported here, so the test measures what ships.
+
+**The face finder.** On the robot's phone (run #223, 2026-11-16) `now` saw a face 0% of the
+time at 1 m and locked onto something else past 2 m, `full` fell to 5% at 2.5 m, and `zoom`
+held 100% at every distance to 3 m and with the light off, at about 27 ms a frame. Its weak
+spot was quick side steps (81%, where `full` held 99%). So the creature's detector is now the
+zoom tracker. `growbot-face-zoom.js` plans one model call a frame. With a face in hand, the
+crop is about five face-widths, widened by how fast the face is moving. A crop that misses is
+followed by a wider look, which takes the one face it sees wherever it went (of several, only
+one near the last): the whole frame for a near face, and a crop three times as wide for a far
+one, which the whole frame shrinks past seeing. Four misses in a row let it go, and it searches the whole frame and
+the tiles in turn. `apply.py` points upstream's detector (`agent-face-track.mjs`) at
+tasks-vision 0.10.35 and the full-range model, and has its worker (`face-detector-worker.js`)
+run each frame through `find`. So the leg tracker, the eyes and the follower all get its boxes,
+in whole-frame fractions with scores. The main-thread fallbacks (no worker, or one that missed its
+deadline) run the same tracker through `growbot-eyes.js` (`gbEyes.zoomed`). The crop needs pixels, so the creature's camera asks for 960x720: a face 3 m away is
+about 26 px across, where at 320x240 it was 9. Low power keeps 240x180, and the frame the brain
+sees is still drawn at 320.
 
 ## Leg calibration (the Body tab's Legs pane)
 
@@ -553,8 +571,8 @@ The pupils follow the person in front of the phone, with no model call (owner, 2
 `growbot-eyes.js` turns a face box into a point on the screen and hands it to the face
 (`gbFace.see`), which eases the pupils and the whole eye toward it. When the box is more than
 1.3 s old, the eyes settle back. A touch's glance outranks it, and so do thinking, looking,
-resting and sleep. The box comes from the BlazeFace detector that the leg tracker already
-ships. While the tracker is on, it passes every box it keeps (`apply.py` hooks both of its
+resting and sleep. The box comes from the face finder that the leg tracker runs (the zoom
+tracker, "The face finder" above). While the tracker is on, it passes every box it keeps (`apply.py` hooks both of its
 result paths). While it is off (no robot paired, a person said stop, or the camera or detector
 failed it), `growbot-eyes.js` runs its own copy of the detector in a worker on the creature's
 open front camera. The two never run at once, because a second GPU worker could make the

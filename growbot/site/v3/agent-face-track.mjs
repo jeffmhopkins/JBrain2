@@ -788,8 +788,8 @@ FaceTrack.prototype.stats = function () {
  * @mediapipe/tasks-vision 0.10.18 files, byte-identical to npm's signed tarball (sha512 integrity
  * NRIlyqhGUz1J...), and the same BlazeFace short-range float16 v1 model, served from growbot.dev
  * under versioned immutable paths. No third-party origin: if growbot.dev is up, so is the detector. */
-export var DETECTOR_BASE = '/vendor/mediapipe/tasks-vision-0.10.18';
-export var DETECTOR_MODEL = '/vendor/mediapipe/models/blaze_face_short_range-float16-1.tflite';
+export var DETECTOR_BASE = '/vendor/mediapipe/tasks-vision-0.10.35';
+export var DETECTOR_MODEL = '/vendor/mediapipe/models/blaze_face_full_range-float16-1.tflite';
 export function faceDetector(canvas) {
   var V = DETECTOR_BASE;
   return import(V + '/vision_bundle.mjs').then(function (mod) {

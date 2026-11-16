@@ -1648,12 +1648,13 @@
     var c = {};
     try { c = JSON.parse(localStorage.getItem(CAM_KEY) || "{}") || {}; } catch (e) { c = {}; }
     return Object.assign({}, lib.CAMERA, {
-      k: typeof c.k === "number" && c.k > 0.2 && c.k < 5 ? c.k : lib.CAMERA.k,
+      k: c.det === lib.DETECTOR && typeof c.k === "number" && c.k > 0.2 && c.k < 5 ? c.k : lib.CAMERA.k,
       flipX: c.flipX === true,
+      det: lib.DETECTOR,
     });
   }
   function saveCamera(c) {
-    try { localStorage.setItem(CAM_KEY, JSON.stringify({ k: c.k, flipX: c.flipX })); } catch (e) {}
+    try { localStorage.setItem(CAM_KEY, JSON.stringify({ k: c.k, flipX: c.flipX, det: c.det })); } catch (e) {}
   }
   function goodBox(b) { return b && isFinite(b.x) && isFinite(b.y) && b.width > 0 && b.height > 0; }
 

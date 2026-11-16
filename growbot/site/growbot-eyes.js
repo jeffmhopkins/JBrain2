@@ -29,6 +29,33 @@
 
   function now() { return performance.now(); }
 
+  /* The zoom tracker (growbot-face-zoom.js) for a detector on the main thread: the worker runs
+     it itself, and the fallback where no worker can run (this file's, and the leg tracker's,
+     patched in apply.py) gets it here, so a phone that lost its worker isn't left with
+     full-range on the whole frame, which fell to 5% at 2.5 m (camera test run #223). Until the
+     module loads, and where there is no canvas, it is the whole frame. */
+  var zoomLib = null, zooms = {};
+  try {
+    import("/growbot-face-zoom.js").then(function (z) { zoomLib = z; }).catch(function () {});
+  } catch (e) {}
+  function zoomed(key, model, video, at) {
+    var w = video.videoWidth, h = video.videoHeight, z = zooms[key];
+    if (!zoomLib || !(w > 0 && h > 0) || typeof document.createElement !== "function") {
+      return model.detectForVideo(video, at);
+    }
+    if (!z) {
+      var c = document.createElement("canvas");
+      c.width = c.height = zoomLib.CROP_PX;
+      z = zooms[key] = { zoom: new zoomLib.Zoom(), canvas: c };
+    }
+    var f = zoomLib.find(model, video, w, h, at, z.zoom, z.canvas);
+    /* Back in MediaPipe's own shape, in the video's pixels, as the callers read it. */
+    return { detections: f.boxes.map(function (b) {
+      return { boundingBox: { originX: b.x * w, originY: b.y * h, width: b.width * w, height: b.height * h },
+        categories: [{ score: b.score }] };
+    }) };
+  }
+
   /* The biggest face is the nearest one; once one is followed, the box closest to it, so two
      people in frame do not make the eyes flick between them. */
   function pick(boxes) {
@@ -136,7 +163,7 @@
     var w = v.videoWidth, h = v.videoHeight;
     if (!(w > 0 && h > 0)) return;
     try {
-      var result = model.detectForVideo(v, t);
+      var result = zoomed("eyes", model, v, t);
       feed((result && result.detections || []).map(function (d) {
         var b = d.boundingBox;
         return { x: b.originX / w, y: b.originY / h, width: b.width / w, height: b.height / h };
@@ -171,7 +198,8 @@
     wants: function () { return !!camera() && !trackerWatching(now()); },
     listen: function (fn) { if (typeof fn === "function" && listeners.indexOf(fn) < 0) listeners.push(fn); },
     toScreen: toScreen,
-    pick: pick
+    pick: pick,
+    zoomed: zoomed
   };
 
   setInterval(tick, TICK_MS);

@@ -91,76 +91,10 @@ export function pct(xs, p) {
   return s[Math.min(s.length - 1, Math.floor(p * s.length))];
 }
 
-// Square search tiles over a W×H frame, each `frac` of its short side, overlapping, so a face
-// too small for the whole-frame pass fills enough of one tile's model input to be found.
-export function tiles(w, h, frac) {
-  var side = Math.round(Math.min(w, h) * (frac || 0.6));
-  function starts(len) {
-    if (len <= side) return [0];
-    var n = Math.ceil((len - side) / (side * 0.7)) + 1, out = [];
-    for (var i = 0; i < n; i++) out.push(Math.round(((len - side) * i) / (n - 1)));
-    return out;
-  }
-  var xs = starts(w), ys = starts(h), out = [];
-  for (var j = 0; j < ys.length; j++) for (var i = 0; i < xs.length; i++) out.push({ x: xs[i], y: ys[j], w: side, h: side });
-  return out;
-}
-
-// The proposed tracker's planner: one model call a frame, so it costs what `full` costs.
-// With a face in hand it crops around where the face should be now, about five face-widths
-// square, so a far face fills the model's input as a near one does. Without one it alternates
-// the whole frame (near faces) with the next search tile (far faces).
-export function Zoom(opts) {
-  var o = opts || {};
-  this.span = o.span || 5;          // crop side, in face widths
-  this.minSide = o.minSide || 160;  // px: under the model's 192 input there is nothing to gain
-  this.keep = o.keep || 4;          // misses in a row before the face is let go
-  this.track = null;                // {cx, cy, w, vx, vy, at} in frame px
-  this.misses = 0;
-  this.turn = 0;
-  this.tiles = null;
-  this.size = "";
-}
-
-Zoom.prototype.plan = function (w, h, at) {
-  var size = w + "x" + h;
-  if (size !== this.size) { this.size = size; this.tiles = tiles(w, h); this.track = null; }
-  var t = this.track;
-  if (t) {
-    var dt = clamp((at - t.at) / 1000, 0, 0.25);
-    var cx = t.cx + t.vx * dt, cy = t.cy + t.vy * dt;
-    var side = Math.round(clamp(t.w * this.span, this.minSide, Math.min(w, h)));
-    return { x: Math.round(clamp(cx - side / 2, 0, w - side)), y: Math.round(clamp(cy - side / 2, 0, h - side)), w: side, h: side, why: "track" };
-  }
-  this.turn++;
-  if (this.turn % 2) return { x: 0, y: 0, w: w, h: h, why: "frame" };
-  var tile = this.tiles[(this.turn / 2 - 1) % this.tiles.length];
-  return { x: tile.x, y: tile.y, w: tile.w, h: tile.h, why: "tile" };
-};
-
-// `boxes` in frame px. Picks the face nearest the predicted one (or the biggest, with none).
-Zoom.prototype.update = function (boxes, at) {
-  var t = this.track, best = null, bestScore = Infinity;
-  for (var i = 0; i < boxes.length; i++) {
-    var b = boxes[i], cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-    var s = t ? Math.hypot(cx - t.cx, cy - t.cy) / Math.max(t.w, 1) : -b.w;
-    if (s < bestScore) { bestScore = s; best = b; }
-  }
-  if (t && best && bestScore > 3) best = null;   // another face, far from ours: not a hit
-  if (!best) {
-    if (t && ++this.misses >= this.keep) { this.track = null; this.misses = 0; }
-    return null;
-  }
-  var ncx = best.x + best.w / 2, ncy = best.y + best.h / 2;
-  var vx = 0, vy = 0;
-  if (t) {
-    var dt = (at - t.at) / 1000;
-    if (dt > 0.01 && dt < 0.5) { vx = 0.5 * t.vx + 0.5 * ((ncx - t.cx) / dt); vy = 0.5 * t.vy + 0.5 * ((ncy - t.cy) / dt); }
-  }
-  this.track = { cx: ncx, cy: ncy, w: best.w, vx: vx, vy: vy, at: at };
-  this.misses = 0;
-  return best;
-};
+// The zoom tracker's planner is the creature's own (growbot-face-zoom.js), so this test measures
+// the tracker that ships.
+import { tiles, Zoom } from "./growbot-face-zoom.js";
+export { tiles, Zoom };
 
 // One frame's row as it is logged: per detector `[x, y, w, h, score, ms]` (fractions of the
 // frame, 3 places) on a hit, `[ms]` on a miss, absent when it didn't run.
@@ -395,7 +329,7 @@ function boot() {
       // canvas is never reallocated as the face's size changes.
       var side = 288, z;
       var t1 = performance.now();
-      if (c.why === "frame") z = detectFace("zoom", frameCanvas, w, h, 0, 0, 1);
+      if (c.why === "frame" || c.why === "again") z = detectFace("zoom", frameCanvas, w, h, 0, 0, 1);
       else {
         if (cropCanvas.width !== side) { cropCanvas.width = side; cropCanvas.height = side; }
         cctx.drawImage(frameCanvas, c.x, c.y, c.w, c.h, 0, 0, side, side);

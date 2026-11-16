@@ -241,7 +241,7 @@ def test_closer_and_further_move_the_distance_within_its_limits() -> None:
 def test_the_camera_height_creeps_once_per_reading_not_per_tick() -> None:
     got = _node(
         "const t = new f.Track(), fo = new f.Follower(); fo.pitch = 0;"
-        "t.lock([f.reading(box(0.5, 0.15))], 0, 0); t.p.up = 10;"
+        "t.lock([f.reading(box(0.5, 0.1))], 0, 0); t.p.up = 10;"
         "fo.command(t, 0, 10); fo.command(t, 0, 50); return fo.command(t, 0, 90).pitch;"
     )
     assert got == pytest.approx(0.2)
@@ -284,3 +284,12 @@ def test_the_camera_height_comes_back_only_well_inside_the_turn_limit() -> None:
         "  return fo.command(t, 0, i * 100).pitch; });"
     )
     assert got == [-0.8, 0, 0, 0, -0.8]
+
+
+def test_the_zoom_trackers_box_at_one_metre_reads_one_metre() -> None:
+    """Camera test run #223: the zoom tracker's box was 0.095 of the frame's width at 1 m, so
+    an uncalibrated phone reads about the right distance; a stored correction is kept only
+    for the detector it was measured on (growbot-box.js)."""
+    dist, det = _node("return [f.reading(box(0.5, 0.095)).dist, f.DETECTOR];")
+    assert dist == pytest.approx(1.0, abs=0.05)
+    assert det == "zoom-full-range"

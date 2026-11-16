@@ -424,8 +424,57 @@ def test_the_eyes_say_whose_detector_found_each_face() -> None:
         "console.log(JSON.stringify(got));"
     )
     assert json.loads(out) == [[1, "tracker", None]]
+    zoom = (_SITE / "growbot-face-zoom.js").read_text(encoding="utf-8")
+    assert "p.s = d.categories && d.categories[0] ? d.categories[0].score : null;" in zoom
+    assert "score: p.s" in zoom
+
+
+def test_the_creature_finds_faces_with_the_zoom_tracker() -> None:
+    """Camera test run #223 (owner, 2026-11-16): short-range on a 320 px frame lost a face at
+    1 m; full-range on a crop that follows the face held to 3 m. The worker runs that tracker,
+    the fallback runs full-range on the whole frame, and the camera asks for the pixels the
+    crop needs, except in low power."""
+    patch = (_GROWBOT / "patches" / "growbot-face-zoom.js").read_bytes()
+    assert (_SITE / "growbot-face-zoom.js").read_bytes() == patch
+    track = (_SITE / "v3" / "agent-face-track.mjs").read_text(encoding="utf-8")
+    assert "DETECTOR_BASE = '/vendor/mediapipe/tasks-vision-0.10.35';" in track
+    assert "blaze_face_full_range-float16-1.tflite';" in track
+    assert "blaze_face_short_range" not in track
+    for name in (
+        "vendor/mediapipe/tasks-vision-0.10.35/vision_bundle.mjs",
+        "vendor/mediapipe/models/blaze_face_full_range-float16-1.tflite",
+    ):
+        assert (_SITE / name).is_file()
     worker = (_SITE / "v3" / "face-detector-worker.js").read_text(encoding="utf-8")
-    assert "score:v.categories&&v.categories[0]?v.categories[0].score:null" in worker
+    assert "import('/growbot-face-zoom.js')" in worker
+    assert "found=zoomer.find(model,bitmap,w,h,d.at,zoom,crop)" in worker
+    assert "var boxes=found.boxes;" in worker
+    assert "model.detectForVideo(bitmap" not in worker
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "var v={width:{ideal:LOW_POWER?240:960},height:{ideal:LOW_POWER?180:720}};" in page
+    # The main-thread fallbacks run the zoom tracker too, through the eyes.
+    assert 'window.gbEyes.zoomed("tracker",model,s.video,now)' in page
+    eyes = (_SITE / "growbot-eyes.js").read_text(encoding="utf-8")
+    assert 'var result = zoomed("eyes", model, v, t);' in eyes
+    assert 'import("/growbot-face-zoom.js")' in eyes
+
+
+def test_the_eyes_fall_back_to_the_whole_frame_until_the_zoom_tracker_loads() -> None:
+    out = _eyes_in_node(
+        "var asked=[];var model={detectForVideo:function(v,t){asked.push(t);"
+        "return {detections:[]};}};"
+        "var r=window.gbEyes.zoomed('eyes',model,{videoWidth:720,videoHeight:960},5);"
+        "console.log(JSON.stringify([asked,r.detections.length]));"
+    )
+    assert json.loads(out) == [[5], 0]
+
+
+def test_a_calibration_from_another_detector_is_dropped() -> None:
+    """A 1 m correction measured on the short-range model's boxes is wrong on the zoom
+    tracker's, so the follower keeps a stored one only when it names this detector."""
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert 'k: c.det === lib.DETECTOR && typeof c.k === "number" && c.k > 0.2 && c.k < 5' in shim
+    assert "JSON.stringify({ k: c.k, flipX: c.flipX, det: c.det })" in shim
 
 
 def test_a_persona_wears_its_own_face_lantern_by_default() -> None:

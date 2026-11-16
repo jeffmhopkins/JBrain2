@@ -1,6 +1,6 @@
 /* Classic worker: MediaPipe's WASM loader may use importScripts. Only model assets are
  * fetched; the transferred camera bitmap is never uploaded. No body/relay access. */
-var model=null,loading=false,flow=null,flowCanvas=null,flowContext=null,flowToken=null,lastDetect=-Infinity;
+var zoomer=null,zoom=null,crop=null,model=null,loading=false,flow=null,flowCanvas=null,flowContext=null,flowToken=null,lastDetect=-Infinity;
 function grayFrame(bitmap){
   var scale=Math.min(160/bitmap.width,120/bitmap.height);
   var w=Math.max(16,Math.round(bitmap.width*scale)),h=Math.max(16,Math.round(bitmap.height*scale));
@@ -17,7 +17,7 @@ self.onmessage=function(ev){
     loading=true;
     Promise.resolve().then(function(){
       if(d.flow)return import('/v3/face-optical-flow.mjs').then(function(f){flow=new f.FaceFlow();});
-    }).then(function(){return import('/v3/agent-face-track.mjs');})
+    }).then(function(){return import('/growbot-face-zoom.js');}).then(function(z){zoomer=z;zoom=new z.Zoom();crop=new OffscreenCanvas(z.CROP_PX,z.CROP_PX);}).then(function(){return import('/v3/agent-face-track.mjs');})
       .then(function(m){return m.faceDetector(new OffscreenCanvas(1,1));})
       .then(function(loaded){
         model=loaded;
@@ -50,10 +50,9 @@ self.onmessage=function(ev){
       self.postMessage({type:'result',id:d.id,boxes:[tracked.box],source:'flow',anchorAt:tracked.anchorAt,flowMs:performance.now()-t0});
       return;
     }
-    var detectStart=performance.now(),result=model.detectForVideo(bitmap,d.at),ms=performance.now()-detectStart;
+    var detectStart=performance.now(),found=zoomer.find(model,bitmap,w,h,d.at,zoom,crop),ms=performance.now()-detectStart;
     lastDetect=d.at;
-    var boxes=(result&&result.detections||[]).map(function(v){var b=v.boundingBox;
-      return {x:b.originX/w,y:b.originY/h,width:b.width/w,height:b.height/h,score:v.categories&&v.categories[0]?v.categories[0].score:null};});
+    var boxes=found.boxes;
     if(allowFlow&&g)flow.seed(g.gray,g.w,g.h,boxes,d.at);
     self.postMessage({type:'result',id:d.id,boxes:boxes,source:'detector',detectMs:ms});
   }catch(err){self.postMessage({type:'error',id:d.id});}

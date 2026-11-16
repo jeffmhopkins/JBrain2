@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=6e1434732a72"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=e590a378bb52"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=4d95846eed71"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -891,7 +891,7 @@ var _ftDial=(function(){ if(!FT_DIAL)return null; var d={fps:null,size:null,pres
     if(FT_DIAL_RATE.indexOf(o.rate)>=0)d.rate=o.rate; }catch(e){}
   return d; })();
 function powerCameraConstraints(facing,normalFps){
-  var v={width:{ideal:LOW_POWER?240:320},height:{ideal:LOW_POWER?180:240}};
+  var v={width:{ideal:LOW_POWER?240:960},height:{ideal:LOW_POWER?180:720}};
   if(facing)v.facingMode=facing;
   if(LOW_POWER)v.frameRate={ideal:10};else if(normalFps)v.frameRate={ideal:normalFps};
   if(FT_DIAL&&_ftDial){ if(_ftDial.size){ v.width={ideal:FT_DIAL_SIZE[_ftDial.size][0]}; v.height={ideal:FT_DIAL_SIZE[_ftDial.size][1]}; }
@@ -16498,7 +16498,7 @@ body.gbkWake #landing{padding-top:76px!important}
             },{token:token+":"+s.epoch,allowFlow:tracker.owns&&!sightOnly&&tracker.lossAt===null&&tracker.seenSince!==null&&now-tracker.seenSince>=tracker.reacquireMs()});
           }else{
           var t0=performance.now();
-          var result=model.detectForVideo(s.video,now);
+          var result=window.gbEyes&&window.gbEyes.zoomed?window.gbEyes.zoomed("tracker",model,s.video,now):model.detectForVideo(s.video,now);
           var t1=performance.now();
           var w=s.video.videoWidth,h=s.video.videoHeight;
           if(w>0&&h>0){
