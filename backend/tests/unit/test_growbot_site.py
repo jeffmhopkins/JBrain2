@@ -4952,3 +4952,85 @@ def test_a_body_test_lifts_a_kept_pause_and_counts_only_a_started_get_up() -> No
     stand = stand[: stand.index("          camFront:")]
     assert 'a.state === "started" ? "getup" : ""' in stand
     assert "_bodyUpright() !== true" in stand
+
+
+def _travel_page(script: str, kept: str = "") -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("/*TRAVEL{*/") : page.index("/*}TRAVEL*/")]
+    out = subprocess.run(
+        [
+            node,
+            "-e",
+            "var store=" + json.dumps({"gb_travel_mode": kept} if kept else {}) + ",calls=[];"
+            "var localStorage={getItem:function(k){return k in store?"
+            "store[k]:null;},setItem:function(k,v){store[k]=String(v);}};"
+            "function toast(m){calls.push(['toast',m]);}"
+            "function resize(){calls.push(['resize',TRAVEL]);}"
+            "var camOn=false,eyeWantOn=false,hidden=false,_camGen=0;"
+            "function stopCam(){calls.push(['stopCam']);camOn=false;}"
+            "function ensureCam(h){calls.push(['ensureCam',!!h]);"
+            "if(!travelBlocksEye(h))camOn=true;}"
+            "function captureBlocked(){return hidden;}function logEv(k,o){calls.push([k,o.on]);}\n"
+            f"{code}\n{script}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout)
+    assert isinstance(got, dict)
+    return got
+
+
+def test_travel_mode_shuts_the_eye_and_keeps_the_wish() -> None:
+    """Owner, 2026-11-16: the phone overheated in a car window, talking to the creature with no
+    body under it. Travel closes the open camera, refuses every reopening (a hand on the eye
+    button is told why), and keeps the eye's wish, so turning travel off opens it again."""
+    got = _travel_page(
+        "var r={};camOn=true;eyeWantOn=true;setTravel(true);"
+        "r.on={T:TRAVEL,cam:camOn,want:eyeWantOn,kept:store.gb_travel_mode};"
+        "r.byHand=travelBlocksEye(true);r.machine=travelBlocksEye(false);"
+        "r.muted=['shake','fall','upright','loud','tap','face'].map(travelMutes);"
+        "calls.length=0;setTravel(false);r.off={T:TRAVEL,cam:camOn,kept:store.gb_travel_mode};"
+        "r.calls=calls;console.log(JSON.stringify(r));"
+    )
+    assert got["on"] == {"T": True, "cam": False, "want": True, "kept": "1"}
+    assert got["byHand"] is True
+    assert got["machine"] is True
+    assert got["muted"] == [True, True, True, False, False, False]
+    assert got["off"] == {"T": False, "cam": True, "kept": "0"}
+    assert got["calls"] == [["resize", False], ["ensureCam", False], ["travel_mode", False]]
+
+
+def test_travel_mode_discards_a_camera_still_opening() -> None:
+    """Review: an acquire in flight has camOn false, so only the generation bump makes its
+    late resolve stale and stops its tracks instead of opening the eye under travel."""
+    got = _travel_page(
+        "var g=_camGen;setTravel(true);console.log(JSON.stringify({bumped:_camGen>g}));"
+    )
+    assert got == {"bumped": True}
+
+
+def test_travel_mode_is_kept_across_a_reload_and_stays_off_by_default() -> None:
+    script = "console.log(JSON.stringify({T:TRAVEL,eye:travelBlocksEye(true)}));"
+    assert _travel_page(script) == {"T": False, "eye": False}
+    assert _travel_page(script, kept="1") == {"T": True, "eye": True}
+
+
+def test_travel_mode_is_wired_into_the_page() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    gate = "function ensureCam(byHand){ if(!camOn&&travelBlocksEye(byHand)) return;"
+    assert page.count(gate) == 1
+    assert page.count("function fireReflex(trig){\n  if(travelMutes(trig))return;\n") == 1
+    assert page.count("DPR=Math.min(window.devicePixelRatio||1,TRAVEL?TRAVEL_DPR:2.5);") == 1
+    assert page.count("if(TRAVEL)setTimeout(function(){requestAnimationFrame(drawFace);}") == 1
+    assert page.count("h+=lowPowerRow();h+=travelRow();") == 1
+    assert page.count("if(!TRAVEL && _jolts.length>=2 && !_rideOn && ") == 1
+    assert page.count('if(c("#gbkTravel")){ window.setTravel(!window.TRAVEL);') == 1
+    # Per phone: the robot's own phone must never inherit it through the persona's prefs.
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "gb_travel_mode" not in shim
+    assert "if (window.TRAVEL && typeof toast" in shim

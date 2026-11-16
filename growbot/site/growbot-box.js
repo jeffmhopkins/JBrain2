@@ -2016,6 +2016,10 @@
             try {
               if (window.camFacing !== "user" && typeof gbEyeTo === "function") gbEyeTo("user", "bodytest");
               if (!window.camOn && typeof ensureCam === "function") ensureCam(false);
+              // A body test is a phone back on its body: say why its camera stays shut.
+              if (window.TRAVEL && typeof toast === "function") {
+                toast("travel mode is on, so the camera stays shut. turn it off in settings first.", 5000);
+              }
             } catch (e) {}
             return frontCamera();
           },
