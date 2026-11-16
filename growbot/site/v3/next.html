@@ -830,6 +830,20 @@ var _live=null, orCfg=null, body=null, inFlight=false, callsSinceDream=0, lastAc
    thought cadence, or autonomous sensor control changes. Camera constraints are best effort. */
 var LOW_POWER=false;
 try{LOW_POWER=localStorage.getItem("gb_low_power")==="1";}catch(e){}
+/*TRAVEL{*/var TRAVEL=false, TRAVEL_FPS=12, TRAVEL_DPR=1;
+try{TRAVEL=localStorage.getItem("gb_travel_mode")==="1";}catch(e){}
+function travelBlocksEye(byHand){ if(!TRAVEL) return false;
+  if(byHand){ try{ toast("travel mode is on, so my eyes stay shut. turn it off in settings to let me see.",4000); }catch(e){} }
+  return true; }
+function travelMutes(trig){ return TRAVEL&&(trig==="shake"||trig==="fall"||trig==="upright"); }
+function setTravel(on){
+  TRAVEL=!!on;
+  try{localStorage.setItem("gb_travel_mode",TRAVEL?"1":"0");}catch(e){try{toast("Changed for now; this phone could not save the setting.");}catch(_e){}}
+  try{resize();}catch(e){}
+  if(TRAVEL){ try{ if(camOn) stopCam(); }catch(e){} }
+  else{ try{ if(eyeWantOn&&!camOn&&!captureBlocked()) ensureCam(); }catch(e){} }
+  try{logEv("travel_mode",{on:TRAVEL});}catch(e){}
+}/*}TRAVEL*/
 /* Staged named recovery: exact ?getupnamed=1, or ?getupauto=1 for the shared automatic owner.
    Default off pending the supervised behavior decision; ?getupnamed=0 disables both in this tab.
    URL only, carried through pairing. Shared motion timing and expression changes remain independent. */
@@ -903,7 +917,8 @@ function setLowPower(on){
   try{logEv("low_power",{on:LOW_POWER});}catch(e){}
 }
 function scheduleFace(){
-  if(LOW_POWER)setTimeout(function(){requestAnimationFrame(drawFace);},1000/15);
+  if(TRAVEL)setTimeout(function(){requestAnimationFrame(drawFace);},1000/TRAVEL_FPS);
+  else if(LOW_POWER)setTimeout(function(){requestAnimationFrame(drawFace);},1000/15);
   else requestAnimationFrame(drawFace);
 }
 var _coolWhy="", _coolShown=false, _coolLine="";
@@ -5003,7 +5018,7 @@ function doBurst(name){                                 // a bloom of feeling it
   else if(name==="ripple"){ for(var ri=0;ri<24;ri++){ var ra=ri/24*Math.PI*2; sparks.push({x:0.5*PW,y:0.48*PH,vx:Math.cos(ra)*2.3,vy:Math.sin(ra)*2.3,life:1,hue:270}); } if(sparks.length>160) sparks=sparks.slice(-160); }
   else if(name==="shiver") spawnSparks(0.5,0.42,16,null,1.0);
   else spawnSparks(0.5,0.4,26,null,1.8); }
-function resize(){ if(!cv) return; DPR=Math.min(window.devicePixelRatio||1,2.5);
+function resize(){ if(!cv) return; DPR=Math.min(window.devicePixelRatio||1,TRAVEL?TRAVEL_DPR:2.5);
   W=cv.clientWidth||300; H=cv.clientHeight||Math.round(W*0.62);                         // sized to the CSS box, NOT the window (re-scoped from v2 full-screen)
   cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR);
   cx.setTransform(DPR,0,0,DPR,0,0); cx.imageSmoothingEnabled=false;
@@ -8076,7 +8091,7 @@ function chromeToggle(){ chromeHidden=!chromeHidden;
   flipCamSync(); chromeTogPlace(); }   // the lens pill is chrome too — hide it with the rest; both re-place on show (the rows reflow)
 var _lensRetried=false;   // one settle+retry per open attempt when the browser hands the WRONG lens (a tester 0804)
 var _camGen=0;   /* 0816 K3 F1/F4: acquire GENERATION. Every ensureCam entry and every stopCam bumps it; a getUserMedia resolve whose generation is stale DISCARDS its stream (tracks stopped, nothing orphaned). Before the brain-tab flip armed runtime camFacing changes this was unreachable — now a flip during the ~0.5-1.5s acquire window would otherwise resolve a FRONT stream under a "rear eye" label (the exact label-vs-frames inversion this feature exists to kill) and a flip's re-open timer racing a pending manual acquire would leak a live orphaned camera. */
-function ensureCam(byHand){ if(camOn){ if(byHand){ eyeWantOn=false; try{ _wishSave(); }catch(e){} } stopCam(); return; }   // 👁 is a toggle: tap again to turn the eyes off. Only a HUMAN tap on that arm declines the eye — a teardown, a recovery or a pause must never clear the wish
+function ensureCam(byHand){ if(!camOn&&travelBlocksEye(byHand)) return; if(camOn){ if(byHand){ eyeWantOn=false; try{ _wishSave(); }catch(e){} } stopCam(); return; }   // 👁 is a toggle: tap again to turn the eyes off. Only a HUMAN tap on that arm declines the eye — a teardown, a recovery or a pause must never clear the wish
   /* 0917 R2b: while deliberately frozen, a human tap is recorded and nothing is acquired. byHand is
      what separates that from a MACHINE re-entry — flipEye's settle beat, the two lens retries, the
      eye-heal and the onmute repair all call ensureCam with no argument, and before this parameter
@@ -8220,6 +8235,7 @@ function _getUpCapFull(now){
   if(_getUpTs.length<GETUP_CAP_N){ _getUpCapped=false; return false; }
   return true; }
 function fireReflex(trig){
+  if(travelMutes(trig))return;
   if(trig==='loud'&&typeof _getupAutoLoud==='function'&&_getupAutoLoud())return;
   if(trig==="fall"&&typeof _getupAutoTry==="function")_getupAutoTry();
   if(!_live||!Array.isArray(_live.scratch.reflexes)||!_live.scratch.reflexes.length) return;
@@ -15039,6 +15055,9 @@ function bHead(t){ return '<div style="font-size:11px;letter-spacing:.1em;text-t
 function lowPowerRow(){var on=!!window.LOW_POWER;
  return '<button type="button" class="gbkWrow" id="gbkLowPower" aria-pressed="'+on+'"><span class="gbkTt"><b>Low power mode</b><small>Lighter camera and animations for older phones</small></span><span style="margin-left:auto;color:'+(on?'#37E0C8':'#7F93AB')+'">'+(on?'On':'Off')+'</span></button>';
 }
+function travelRow(){var on=!!window.TRAVEL;
+ return '<button type="button" class="gbkWrow" id="gbkTravel" aria-pressed="'+on+'"><span class="gbkTt"><b>Travel mode</b><small>Off the body, like in a car: eyes shut and a calmer face so the phone stays cool. Talking still works</small></span><span style="margin-left:auto;color:'+(on?'#37E0C8':'#7F93AB')+'">'+(on?'On':'Off')+'</span></button>';
+}
 function showBrainLogLink(link){
  var row=g("gbkBrainLogs");if(!row)return;
  var old=g("gbkBrainLogLink");if(old){old.focus();old.select();return;}
@@ -15403,7 +15422,7 @@ function roomHTML(){ var h="";
        hands off to it. */
     '</div>'; }
   h+=moveMeRow();
-  h+=lowPowerRow();
+  h+=lowPowerRow();h+=travelRow();
   if(!window.__gbBox)h+=wRow("byok","brain","#FFB24D","your own key","bring your own brain, optional");
   /* 0908 (Brit): these were two dead INPUTS, not just dead buttons — one asked for a real
      sk-or- key and threw it away. Removed, and the row hands off to the host's own key pane where
@@ -15617,6 +15636,7 @@ g("gbkBBody").addEventListener("click",function(e){
    return; }
  if(c("#gbkCreditsBack")){ bTab=W.moveFrom||"c"; W.moveOpen=false; renderBrainP(); g("gbkPackOpen").focus(); return; }
  if((x=c("[data-hand]"))){ handOff(x.getAttribute("data-hand"),x.getAttribute("data-full")==="1"); return; }
+ if(c("#gbkTravel")){ window.setTravel(!window.TRAVEL); renderBrainP(); var tv=g("gbkTravel");if(tv)tv.focus();return; }
  if(c("#gbkLowPower")){ window.setLowPower(!window.LOW_POWER); renderBrainP(); var lp=g("gbkLowPower");if(lp)lp.focus();return; }
  if(c("#gbkBrainLogs")){
    var link=(typeof window.watchLink==="function")?window.watchLink():"";   /* 0929 WATCH ID: the watch id, never LOG_SID (the key that erases the diary) */

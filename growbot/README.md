@@ -610,7 +610,7 @@ The creature's Settings tab is scrubbed of what a box-run creature has no use fo
 soul backup row (the box holds the soul; personas and their checkpoints are the backup), the
 cloud logs link, the old full panel and *Advanced*'s placeholders. `SCRUB_PATCHES` hide them
 behind `window.__gbBox`, which `growbot-box.js` sets, so the page without the shim keeps
-upstream's panel. What stays: the body, *follow my face*, the eye, the voice and low power. The money-code badge, a
+upstream's panel. What stays: the body, *follow my face*, the eye, the voice, low power and travel mode. The money-code badge, a
 saved credits tab and the full panel's key and credits tabs are closed off the same way, and
 *My thoughts* loses its cloud logs link.
 
@@ -630,6 +630,21 @@ them to phone sizes. A phone in desktop-site mode (Safari's *Request Desktop Web
 *Desktop site*) ignores the viewport tag and lays the page out ~980px wide; the shim detects that
 (a touch screen whose window is over 1.25x its screen) and zooms the controls back, leaving the
 face's canvas, which sizes itself to the window.
+
+### Travel mode
+
+A phone talking to the creature with no body under it, mounted in a car window, overheated
+(owner, 2026-11-16). Upstream's *Low power mode* only shrinks the camera and caps the face at
+15 fps; what heats the phone is the open camera (frames decoded, sampled four times a second, and
+BlazeFace run on them by `growbot-eyes.js` or the leg tracker) and a face redrawn at the screen's
+refresh rate on a canvas up to 2.5x the CSS size. *Travel mode* (Settings, under low power;
+`TRAVEL_PATCHES`) closes the eye and keeps it shut: `ensureCam` is the one door every opener
+comes through (the button, a kept wish, a heal, a lens retry, the body test), and a tap on the
+eye button says why instead. The eye's kept wish survives, so turning travel off reopens it. The
+face draws at 12 fps on a 1x canvas, and the motion reflexes (shake, fall, upright) are muted,
+since a car's bumps and a window mount read as both. The ear, the voice and the brain are
+untouched. It is per phone (`gb_travel_mode`), deliberately not in the persona's synced prefs, so
+the robot's own phone never inherits it.
 
 ### Visual memories (wave G4d)
 

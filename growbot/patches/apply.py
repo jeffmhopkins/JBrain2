@@ -2737,6 +2737,66 @@ RUNNER_PATCHES: list[tuple[str, str, str, int]] = [
         " && isFinite(cmd.pitch) ? cmd.pitch : 1,\n",
         1,
     ),
+    # A policy's declared action low-pass (obs_spec.action_filter): trained walks shook the legs,
+    # because the teachers' commands swing 20-30 degrees a tick that the sim's servo lag hid.
+    (
+        "growbot_runner.js",
+        "  return { segments, action_to_rad, swapDeclared };\n",
+        "  // action_filter: a low-pass the policy trained to be scored under (the master, whose\n"
+        "  // teachers chatter 20-30\u00b0 a tick that the sim's servo lag hid and the real servos shook on).\n"
+        "  // Malformed, it throws: half a filter would run the legs on numbers nobody scored.\n"
+        "  let filter = null;\n"
+        "  const af = sp.action_filter;\n"
+        "  if (af != null) {\n"
+        "    const ok = (v) => typeof v === 'number' && v > 0 && v <= 1;\n"
+        "    if (typeof af !== 'object' || !ok(af.forward) || !ok(af.otherwise)) throw new Error("
+        "`action_filter ${JSON.stringify(af)}: forward and otherwise must be in (0, 1]`);\n"
+        "    filter = { forward: af.forward, otherwise: af.otherwise };\n"
+        "  }\n"
+        "  return { segments, action_to_rad, swapDeclared, filter };\n",
+        1,
+    ),
+    (
+        "growbot_runner.js",
+        "    this.last = new Array(this.actSize).fill(0);\n",
+        "    this.last = new Array(this.actSize).fill(0);\n"
+        "    this.sent = null;     // the filter's last output; the first action after a reset goes"
+        " straight through\n",
+        1,
+    ),
+    (
+        "growbot_runner.js",
+        "  // Returns {l,r} servo degrees (0-180) + raw action.\n",
+        "  // Returns {l,r} servo degrees (0-180), the sent action, and the net's raw output before"
+        " any declared filter.\n",
+        1,
+    ),
+    (
+        "growbot_runner.js",
+        "    const a = runForward(this.p, obs);              // [aRight, aLeft] in [-1,1]",
+        "    const raw = runForward(this.p, obs);            // [aRight, aLeft] in [-1,1]",
+        1,
+    ),
+    (
+        "growbot_runner.js",
+        "    this.last = a;                                  // feed the actually-sent action back\n",
+        "    const f = this.spec.filter;\n"
+        "    let a = raw;\n"
+        "    if (f && this.sent) {\n"
+        "      const k = cmd.fwd > 0 ? f.forward : f.otherwise;   // as the policy declares:"
+        " walking keeps more of its fast swing\n"
+        "      a = raw.map((v, i) => this.sent[i] + k * (v - this.sent[i]));\n"
+        "    }\n"
+        "    if (f) this.sent = a;\n"
+        "    this.last = a;                                  // feed the actually-sent action back\n",
+        1,
+    ),
+    (
+        "growbot_runner.js",
+        "    return { l: clamp(l), r: clamp(r), action: a };\n",
+        "    return { l: clamp(l), r: clamp(r), action: a, raw };\n",
+        1,
+    ),
 ]
 PATCHES += RUNNER_PATCHES
 
@@ -3758,6 +3818,87 @@ PROSE_JSON_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += PROSE_JSON_PATCHES
+
+# Travel mode (owner, 2026-11-16: the phone overheated mounted in a car window, talking to the
+# creature with no body under it). Per phone, never synced with the persona's prefs, since the
+# robot's own phone must not inherit it. Upstream's low power only shrinks the camera and caps the
+# face at 15 fps; here the camera is what heats the phone (frames decoded, sampled four times a
+# second, and BlazeFace run on them by the eyes or the leg tracker), so travel keeps it shut, and
+# the face draws at 12 fps on a 1x canvas. The ear, the voice and the brain are untouched. Motion
+# reflexes are muted too: a car's bumps and a window mount read as shakes and falls.
+_GB_TRAVEL_JS = r"""
+/*TRAVEL{*/var TRAVEL=false, TRAVEL_FPS=12, TRAVEL_DPR=1;
+try{TRAVEL=localStorage.getItem("gb_travel_mode")==="1";}catch(e){}
+function travelBlocksEye(byHand){ if(!TRAVEL) return false;
+  if(byHand){ try{ toast("travel mode is on, so my eyes stay shut. turn it off in settings to let me see.",4000); }catch(e){} }
+  return true; }
+function travelMutes(trig){ return TRAVEL&&(trig==="shake"||trig==="fall"||trig==="upright"); }
+function setTravel(on){
+  TRAVEL=!!on;
+  try{localStorage.setItem("gb_travel_mode",TRAVEL?"1":"0");}catch(e){try{toast("Changed for now; this phone could not save the setting.");}catch(_e){}}
+  try{resize();}catch(e){}
+  if(TRAVEL){ try{ if(camOn) stopCam(); }catch(e){} }
+  else{ try{ if(eyeWantOn&&!camOn&&!captureBlocked()) ensureCam(); }catch(e){} }
+  try{logEv("travel_mode",{on:TRAVEL});}catch(e){}
+}/*}TRAVEL*/"""
+_GB_TRAVEL_ROW_JS = (
+    "function travelRow(){var on=!!window.TRAVEL;\n"
+    " return '<button type=\"button\" class=\"gbkWrow\" id=\"gbkTravel\" aria-pressed=\"'+on+'\">"
+    "<span class=\"gbkTt\"><b>Travel mode</b><small>Off the body, like in a car: eyes shut and a"
+    " calmer face so the phone stays cool. Talking still works</small></span>"
+    "<span style=\"margin-left:auto;color:'+(on?'#37E0C8':'#7F93AB')+'\">'+(on?'On':'Off')+'</span>"
+    "</button>';\n}\n"
+)
+TRAVEL_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'try{LOW_POWER=localStorage.getItem("gb_low_power")==="1";}catch(e){}',
+        'try{LOW_POWER=localStorage.getItem("gb_low_power")==="1";}catch(e){}' + _GB_TRAVEL_JS,
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  if(LOW_POWER)setTimeout(function(){requestAnimationFrame(drawFace);},1000/15);",
+        "  if(TRAVEL)setTimeout(function(){requestAnimationFrame(drawFace);},1000/TRAVEL_FPS);\n"
+        "  else if(LOW_POWER)setTimeout(function(){requestAnimationFrame(drawFace);},1000/15);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "DPR=Math.min(window.devicePixelRatio||1,2.5);",
+        "DPR=Math.min(window.devicePixelRatio||1,TRAVEL?TRAVEL_DPR:2.5);",
+        1,
+    ),
+    # Every way the eye opens (the button, a kept wish, a heal, a lens retry, the body test)
+    # comes through here, so this one gate keeps it shut; the wish itself is kept for after.
+    (
+        "v3/next.html",
+        "function ensureCam(byHand){ if(camOn){",
+        "function ensureCam(byHand){ if(!camOn&&travelBlocksEye(byHand)) return; if(camOn){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function fireReflex(trig){\n",
+        "function fireReflex(trig){\n  if(travelMutes(trig))return;\n",
+        1,
+    ),
+    ("v3/next.html", "h+=lowPowerRow();", "h+=lowPowerRow();h+=travelRow();", 1),
+    (
+        "v3/next.html",
+        "function showBrainLogLink(link){",
+        _GB_TRAVEL_ROW_JS + "function showBrainLogLink(link){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(c("#gbkLowPower")){',
+        'if(c("#gbkTravel")){ window.setTravel(!window.TRAVEL); renderBrainP();'
+        ' var tv=g("gbkTravel");if(tv)tv.focus();return; }\n if(c("#gbkLowPower")){',
+        1,
+    ),
+]
+PATCHES += TRAVEL_PATCHES
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
