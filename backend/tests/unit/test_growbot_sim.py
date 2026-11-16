@@ -298,3 +298,32 @@ def test_the_owner_key_never_follows_a_redirect(monkeypatch: pytest.MonkeyPatch)
     (req,) = sent
     assert req.unredirected_hdrs.get("Authorization") == "Bearer secret"
     assert "Authorization" not in req.headers
+
+
+def test_forget_keeps_who_and_whose_and_drops_history() -> None:
+    soul = {
+        "meta": {"name": "Dave"},
+        "body": {"id": "b"},
+        "identityCore": "core",
+        "identity": "grown",
+        "log": [1],
+        "facts": [2],
+        "scratch": {"day": [3]},
+        "goals": {"owner": "Jeff", "selfName": "", "wants": ["w"], "funLog": [4]},
+    }
+    got = simbox.forget(soul)
+    assert got["meta"] == {"name": "Dave"} and got["body"] == {"id": "b"}
+    assert got["identityCore"] == "core" and got["identity"].startswith("I am Dave.")
+    assert got["log"] == [] and got["facts"] == [] and got["scratch"] == {}
+    assert got["goals"] == {"owner": "Jeff", "selfName": "Dave"}
+    assert soul["log"] == [1]  # the original is untouched
+
+
+def test_live_model_says_what_the_box_said_when_its_model_is_down() -> None:
+    down = {"error": {"message": "model needs more memory", "code": "model_unavailable"}}
+    ask = simllm.live_model(FakeApi([down]), busy_wait_s=0)  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="more memory"):
+        _run(ask({"max_tokens": 512}))
+    flat = simllm.live_model(FakeApi([{"error": "model_unavailable"}]), busy_wait_s=0)  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="model_unavailable"):
+        _run(flat({"max_tokens": 512}))

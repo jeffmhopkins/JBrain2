@@ -649,9 +649,13 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
     (`tester/policy.html`) sends each move to the creature on the rider's phone over the
     side channel, since the policies run on that phone's motion sensors (README "Moves from
     JBrain"). Its *Get up* trick (2026-11-14) runs upstream's tested get-up from lying on its
-    back as the person's own explicit ask, since whoever presses it is watching; upstream's
-    spoken and model-chosen get-ups stay behind its `?getupnamed` switch (apply.py
-    `GETUP_PATCHES`).
+    back as the person's own explicit ask, since whoever presses it is watching. Since
+    2026-11-16 upstream's spoken and model-chosen get-ups are on by default (owner chose *"On,
+    and automatic"*; `?getupnamed=0` still turns them off), a fall the creature didn't make
+    itself wakes one turn of the model so it notices, and *"follow me"* (`follow:"me"`) runs
+    the Body tab's trained follower, with every turn while it runs told it is following, for
+    how long, and where the person is. The Dave simulator (`growbot/sim/README.md`) is where
+    those were proven before they reached the robot.
   - **G4d — visual memories.** ✅ Migration 0258 (`growbot_memories`, owner-only under RLS
     with its isolation test); the pictures in the blob store's own `growbot-memories`
     namespace, deleted only once no memory or checkpoint names them. The phone syncs record by

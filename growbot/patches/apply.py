@@ -2486,9 +2486,16 @@ var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false
 function gbTraceMove(o){ if(!o||typeof o!=="object") return undefined; var w={}, n=0, k;
   if(o.walk&&typeof o.walk==="object"&&!Array.isArray(o.walk)){ w.walk={}; for(k in {gait:1,dir:1,secs:1}) if(typeof o.walk[k]==="string"||typeof o.walk[k]==="number") w.walk[k]=typeof o.walk[k]==="string"?o.walk[k].slice(0,24):o.walk[k]; n++; }
   if(typeof o.gesture==="string"&&o.gesture){ w.gesture=o.gesture.slice(0,40); n++; }
+  if(o.follow==="me"&&o._gbFollowed){ w.follow="me"; n++; }
+  if(o.body&&typeof o.body==="object"&&typeof o.body.recover==="string"&&!w.body){ w.body={recover:o.body.recover.slice(0,16)}; n++; }
   if(o.body&&typeof o.body==="object"&&Array.isArray(o.body.steps)&&o.body.steps.length){ w.body={steps:o.body.steps.slice(0,6).map(function(x){ x=x||{}; function f(v){ return typeof v==="number"&&isFinite(v)?v:undefined; } return {l:f(x.l),r:f(x.r),ms:f(x.ms)}; })}; n++; }
   return n?w:undefined; }
-function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}, k; if(t.e) r.emotion=t.e; if(t.w&&typeof t.w==="object") for(k in t.w) if(k==="walk"||k==="gesture"||k==="body") r[k]=t.w[k]; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
+function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}, k; if(t.e) r.emotion=t.e; if(t.w&&typeof t.w==="object") for(k in t.w) if(k==="walk"||k==="gesture"||k==="body"||k==="follow") r[k]=t.w[k]; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":gbClaimNote(r)); }
+/* 1116 (Dave simulator, walk-prompt replays): a reply that SAID it was moving but carried no move
+   is marked in the history as moving nothing, or the model learns from its own past lines that
+   narration is enough ("I am coming to you now", no walk, and the robot never left). */
+function gbClaimNote(r){ return !r.walk&&!r.body&&!r.gesture&&!r.follow&&GB_CLAIM_RE.test(String(r.say||""))?"\n(did: nothing. this reply had no move field, so you did not move)":""; }
+var GB_CLAIM_RE=/\b(?:i(?:['\u2019]m| am)\s+(?:walking|coming|moving|stepping|turning|standing up|getting up|pushing up|heading)|on my way|coming to you|here i come)\b/i;
 /* The box resumes a turn from the longest prefix it read before, so the history ahead of the new
    words has to read the same from turn to turn. Upstream's last-N window dropped the oldest
    exchange every turn and stamped each one "[96s ago]", which changed every turn too, so only the
@@ -2526,7 +2533,13 @@ function gbHistWindow(all){ all=all||[]; var i=-1, k, n, g=gbTalkGrown();
   _gbHistFrom=i<all.length?gbHistKey(all[i]):"";
   return all.slice(i); }
 function gbHist(now){ var tr=gbHistWindow(_live.scratch.traces), msgs=[], i;
-  for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?"["+gbHistStamp(tr[i].t)+"] ":"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
+  /* 1116: a turn the creature stayed quiet on is left out of the history it sees. Replayed as an
+     empty say with the page's own "(stayed quiet)" note, the model copied it verbatim onto later
+     move asks ("take a few steps", "stop!"): silence, and a reply the page could not parse
+     (walk-prompt replays: five such turns in one evening, two of them direct asks). A wordless
+     turn that moved stays, since its move is the record of what it did. Per trace, so the
+     cached prefix stays the same from turn to turn. */
+  for (i=0;i<tr.length;i++){ if(String(tr[i].a||"")==="(stayed quiet)"&&!tr[i].w&&!tr[i].d) continue; msgs.push({role:"user",content:(tr[i].t?"["+gbHistStamp(tr[i].t)+"] ":"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
   return msgs; }
 function gbWarmKey(){ var t=(_live&&_live.scratch&&_live.scratch.traces)||[], l=t[t.length-1]; return t.length+":"+(l?(l.t||0)+":"+gbTraceReply(l):"")+":"+(camOn?1:0)+":"+camFacing; }
 function gbSoulView(){ var v=(MODE==="phone")?Object.assign({},_live,{body:null}):_live;
@@ -3988,6 +4001,163 @@ PATCHES += [
         "v3/next.html",
         "clock-tools2-quiet-since\"",
         "clock-tools2-quiet-since-travel\"",
+        1,
+    ),
+]
+
+# "Follow me" walks after the person (Dave simulator, 2026-11-16): spoken, it only turned on
+# the face tracker's gentle lean, which lost a person walking slowly round the robot within
+# 10 s, while the Body tab's trained-walk follower kept them in view. A `follow` verb starts
+# that follower (growbot-box.js gbFollowMe), which keeps going by itself (up to 2 minutes, or
+# until it loses them or a stop); asked again while it runs, it carries on as it is. A reply
+# issued before a stop ("stop stop" while it was thinking) starts none (the walk's own
+# _motionGen check). Only on a person's ask, like the eye verb, so a past follow replayed in
+# the history can't start one by itself; and it is the reply's only move, since a walk, body
+# or gesture beside it would stop the follower before it began.
+PATCHES += [
+    (
+        "v3/prompts.js",
+        "    '\"eye\":\"OMIT almost always",
+        "    '\"follow\":\"OMIT unless your person asks you to follow them — then \\\\\"me\\\\\": your"
+        " trained walk turns and walks after their face by itself, up to 2 minutes, until it"
+        " loses them or you stop it. Sending it again while you follow changes nothing\",' +\n"
+        "    '\"eye\":\"OMIT almost always",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'gbEyeTo(o.eye==="back"?"environment":"user","self");',
+        'gbEyeTo(o.eye==="back"?"environment":"user","self");'
+        ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen'
+        '&&!document.hidden&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body;'
+        " delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15,_gbIssT); }",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "clock-tools2-quiet-since-travel\"",
+        "clock-tools2-quiet-since-travel-follow\"",
+        1,
+    ),
+]
+
+# Get-up on (owner, 2026-11-16, choosing "on, and automatic" after the Dave simulator showed
+# him unable to stand when asked): upstream stages its tested screen-up get-up off "pending
+# the supervised behavior decision", and this is that decision. Named lets Dave run it when
+# asked; automatic lets the page's shared owner run it when he is left lying screen-up.
+# `?getupnamed=0` still turns both off in a tab.
+PATCHES += [
+    ("v3/next.html", "var GETUP_NAMED_DEFAULT=false;", "var GETUP_NAMED_DEFAULT=true;", 1),
+    ("v3/next.html", "var GETUP_AUTO_DEFAULT=false;", "var GETUP_AUTO_DEFAULT=true;", 1),
+]
+
+# An ask to move is answered by moving (Dave simulator, 2026-11-16): told "come here", a
+# memory-wiped Dave sent a walk in 2 of 4 replies and otherwise said "I'm right here" or
+# wiggled in place while saying he was coming; with this rule, 4 of 4 walked and set a goal
+# to keep walking. Screen-forward is toward whoever the front camera sees. In the sim his
+# first 8 s walk covered 8 of 110 cm and he then declared the goal found, hence the
+# arrival test.
+MOVE_ASK_RULE = (
+    "WHEN YOUR PERSON ASKS YOU TO MOVE (come here, come closer, go, walk, back up, "
+    "turn, stand up, get up, follow me), that ask IS the request: answer it with the move field in THIS "
+    'reply. \\"Come here\\" means walk toward them: your front camera and screen face the '
+    'person you see, so walk:{dir:\\"fwd\\",secs:8} carries you to them; also set '
+    'goal:\\"reach <their name>\\" and keep walking each beat. One walk covers only a little '
+    "ground: you have arrived only when their face looks much bigger than when you set off, or "
+    "they tell you, so until then do not say you are there or set found. Never say you are coming, walking, standing or getting up unless the same reply "
+    'carries walk, body or follow for it. If you cannot do it, say so plainly. \\"Follow me\\" '
+    'is follow:\\"me\\" with your words and no walk, body or gesture beside it.\\n'
+)
+# A fall wakes a turn (Dave simulator, 2026-11-16): rolled screen-down by a shove, Dave said
+# nothing for a minute. The page's fall judge fires only the soul's own fall reflexes, and a
+# soul with none (any fresh one) has no reaction at all, so nothing asks the model. Now the
+# first time the judge reads him down with a robot attached, a turn tells him, once per fall
+# (re-armed when he is upright again on his own) and at most one per 20 s; while another turn
+# is in flight the judge's next read tries again (think() drops a call then), unless a fall
+# reflex of the soul's own latched the fall, which then speaks for it. Lying down on
+# purpose (asleep, or asked down) is no fall: the soul's own fall reflexes hold for the same.
+_GB_FALL_THINK_JS = (
+    "var _gbFallT=0, _gbFallDone=false;function _gbFallThink(){ "
+    "if(_gbFallDone||_wheels||!(window._body&&window._body.ready)||Date.now()-_gbFallT<20000)"
+    "return; if(inFlight||paused||dreaming)return; "
+    "if(_restAsleep()||_restDown(null,null)===\"asked_down\"||(typeof _autoRec===\"object\"&&"
+    "_autoRec&&_autoRec.state===\"requested_down\"))return; "
+    'think("your motion sensor just read you fall: you are lying on your back, face or side, '
+    "not on your feet, and you did not do it yourself. Notice it and say so in a few words. "
+    'If a get-up is offered to you and you are screen-up, you may use it.","event"); '
+    'if(inFlight){ _gbFallT=Date.now(); _gbFallDone=true; try{ logEv("fall_think",{}); }'
+    "catch(e){} } }\n"
+)
+# How far the person's face is, beside the latest move (Dave simulator, 2026-11-16): after
+# one 8 s walk that covered 9 of 110 cm, Dave said "right here, Jeff" and set found, because
+# a face he can see clearly looks the same at 1.1 m as at 1 m. The face tracker's box gives a
+# distance (growbot-follow.js's CAMERA: a face is 0.095 of the frame's width at 1 m), so he
+# is told. While following, the follower's own calibrated read says it instead.
+_GB_FACE_LINE_JS = (
+    "function _gbFaceLine(){ try{ var t=window._faceTrack, b=t&&t.box; if(!b||!(b.width>0.01)"
+    '||window.gbFollow&&window.gbFollow.status&&window.gbFollow.status())return ""; '
+    "var d=0.095/b.width; "
+    "return \" Your person's face, from its size in your camera, is about \"+"
+    '(d<1?Math.round(d*100)+" cm":d.toFixed(1)+" m")+'
+    '" away: you have reached them when it reads under about 60 cm, or they say so.\"; '
+    '}catch(e){ return ""; } }\n'
+)
+# When this thought was issued: a "stop stop" said while the model answered, with the robot
+# standing still, moves no motion generation, and must still stop the follow it answers with.
+PATCHES += [("v3/next.html", "  var _mgen=_motionGen;", "  var _mgen=_motionGen, _gbIssT=Date.now();", 1)]
+# A follow with no words is still an action (the say_missing rescue keeps a wordless walk or
+# gesture the same way), or the reply is dropped and nothing follows.
+PATCHES += [
+    (
+        "v3/next.html",
+        '      if(_sm.length){ _vo.say=""; o=_vo;',
+        '      if(_vo.follow==="me") _sm.push("follow");\n      if(_sm.length){ _vo.say=""; o=_vo;',
+        1,
+    ),
+]
+# Following, said every turn (owner, 2026-11-16: "when he's following me, next turn he
+# should know he's in follow me, and how long we've been following"): the follower's own
+# read (growbot-box.js gbFollow.status): how long, and where it makes the person out to be.
+_GB_FOLLOW_LINE_JS = (
+    "function _gbFollowLine(){ try{ var s=window.gbFollow&&window.gbFollow.status&&"
+    'window.gbFollow.status(); if(!s) return ""; '
+    "var out=\" You are FOLLOWING your person (follow me): \"+s.secs+\" s so far, of up to "
+    '120 s"; if(s.state==="searching") out+=", and you have not found their face yet"; '
+    'else if(s.state==="lost") out+=", and you have lost sight of them (turning to where they '
+    'were last seen)"; else if(s.dist!==null) out+=", they are about "+s.dist.toFixed(1)+'
+    '" m away"+(s.heading===null?"":Math.abs(s.heading)>=10?", "+Math.round(Math.abs(s.heading))'
+    '+" degrees to your "+(s.heading>0?"left":"right"):", straight ahead"); '
+    'return out+". It keeps going by itself: send no walk, body or gesture while it does, as '
+    'any of them ends it; to stop, walk:{dir:\\"stop\\"}."; '
+    '}catch(e){ return ""; } }\n'
+)
+PATCHES += [
+    (
+        "v3/next.html",
+        "function _moveContext(){ var a=",
+        _GB_FACE_LINE_JS
+        + _GB_FOLLOW_LINE_JS
+        + "function _moveContext(){ return _gbMoveContext()+_gbFollowLine()+_gbFaceLine(); }\n"
+        + "function _gbMoveContext(){ var a=",
+        1,
+    ),
+]
+
+PATCHES += [
+    ("v3/next.html", "function fireReflex(trig){", _GB_FALL_THINK_JS + "function fireReflex(trig){", 1),
+    (
+        "v3/next.html",
+        "  if(travelMutes(trig))return;\n  if(trig==='loud'",
+        '  if(travelMutes(trig))return;\n  if(trig==="upright")_gbFallDone=false;\n  if(trig==="fall")_gbFallThink();\n  if(trig===\'loud\'',
+        1,
+    ),
+]
+
+PATCHES += [
+    (
+        "v3/next.html",
+        'A promise is not a report.\\n";',
+        'A promise is not a report.\\n"+\n  "' + MOVE_ASK_RULE + '";',
         1,
     ),
 ]

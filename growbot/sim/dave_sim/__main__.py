@@ -4,7 +4,8 @@
     python -m dave_sim all --scripted
 
 `--live` asks the box's creature lane for every reply and starts from the named persona's
-soul (read once, never written back); it needs an owner debug token. Without it a run uses a
+soul (read once, never written back); it needs an owner debug token. `--live --fresh` wipes
+that soul's memories first (`forget`): the same creature, with no history. Without it a run uses a
 fresh creature and a scripted model, which only tests the plumbing.
 """
 
@@ -20,7 +21,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from dave_sim.box import policy_id
+from dave_sim.box import forget, policy_id
 from dave_sim.llm import BoxApi, debug_token, live_model, scripted_model
 from dave_sim.run import Options, Sim, _growbot_train
 from dave_sim.scenarios import SCENARIOS, SETUP
@@ -66,6 +67,10 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--live", action="store_true", help="the box's model and persona")
     mode.add_argument("--scripted", action="store_true", help="a fresh creature, canned replies")
     ap.add_argument("--persona", default="Dave")
+    ap.add_argument(
+        "--fresh", action="store_true", help="with --live: the persona with its memories wiped "
+        "(name, owner, body and core kept), to tell the prompts' faults from its history"
+    )
     ap.add_argument("--token-file", default=os.environ.get("JBRAIN_DEBUG_TOKEN_FILE", ""))
     ap.add_argument("--skills", default=json.dumps(DEFAULT_SKILLS), help="JSON skill -> slug")
     # Beside the package, where .gitignore covers it, wherever the run starts from: run
@@ -81,8 +86,10 @@ def main(argv: list[str] | None = None) -> int:
     base: dict[str, Any] = {"policies": policies, "skills": skills}
     if args.live:
         api = BoxApi(*debug_token(args.token_file or None))
+        base["model"] = live_model(api)
         persona = api.persona(args.persona)
-        base.update(model=live_model(api), soul=persona["soul"], prefs=persona.get("prefs") or {})
+        soul = forget(persona["soul"]) if args.fresh else persona["soul"]
+        base.update(soul=soul, prefs={} if args.fresh else persona.get("prefs") or {})
     else:
         base["model"] = scripted_model(lambda req: {"say": "okay"})
     results = []

@@ -65,7 +65,14 @@
     try { if (E) Object.defineProperty(E, "requestPermission", { value: undefined, configurable: true }); } catch (e) {}
   }
 
-  window.__simMotion = (m) => {
+  // The sensors fire on the page's own clock, as a phone's do: the run only updates what they
+  // read. Dispatching from the run instead let a slow round trip leave a 250 ms+ gap that the
+  // get-up takes for a dead sensor; a phone's main thread being busy still delays these, as it
+  // would delay the real ones.
+  let latest = null;
+  const fire = () => {
+    const m = latest;
+    if (!m) return;
     const o = m.orientation;
     window.dispatchEvent(new DeviceOrientationEvent("deviceorientation", {
       alpha: o.alpha, beta: o.beta, gamma: o.gamma, absolute: false,
@@ -77,6 +84,8 @@
       interval: 40,
     }));
   };
+  setInterval(fire, 40);
+  window.__simMotion = (m) => { latest = m; };
 
   // What the creature does, for the run's timeline: its own event log, as it happens.
   window.__simEvents = [];

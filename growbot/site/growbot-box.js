@@ -1320,6 +1320,47 @@
     return n ? out : "";
   }
 
+  // "Follow me" by voice (Dave simulator, 2026-11-16): the creature's own follow only leaned
+  // its legs after a face, so a person who walked off was lost within seconds, while the Body
+  // tab's follower (a library skill set's look walk, gbFollow) kept them in view. The
+  // creature's `follow:"me"` starts that same follower, on the skill set the box offers.
+  // Asked again while it follows, it carries on: a restart would drop the face it holds (or
+  // the search for one it lost) and stop the legs to re-stand. A stop that lands while the
+  // skill set loads (the motion generation moves on) starts nothing.
+  var followAskT = -Infinity;
+  // `since`: when the reply's thought was issued, so a "stop stop" said while the model was
+  // still answering refuses the follow it answers with.
+  window.gbFollowMe = function (secs, since) {
+    if (window.gbFollow && window.gbFollow.active()) return Promise.resolve(true);
+    // Nor while one is still loading (the skill set's fetch, the policy): it isn't active yet.
+    // A stop since that ask ends the wait, so the next ask is heard.
+    if (Date.now() - followAskT < 5000 && !((window._gbFollowStopT || 0) >= followAskT)) return Promise.resolve(true);
+    var askT = followAskT = Date.now(), from = Math.min(askT, Number(since) || askT);
+    var gen = typeof _motionGen === "number" ? _motionGen : 0;
+    return fetch("/api/box/skills?robot=" + encodeURIComponent(code), { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("the box said " + r.status);
+        return r.json();
+      })
+      .then(function (j) {
+        var set = skillSet(j && j.skills);
+        if (!set || !set.look) throw new Error("no trained look walk to follow with");
+        if (typeof _motionGen === "number" && _motionGen !== gen) throw new Error("stopped before it began");
+        if ((window._gbFollowStopT || 0) >= from) throw new Error("stopped before it began");
+        // A get-up owns the legs until it ends, and a robot lying down can't walk after anyone.
+        if (typeof _wireRunner !== "undefined" && _wireRunner && _wireRunner.active) throw new Error("getting up");
+        if (typeof _fallSince === "number" && _fallSince > 0) throw new Error("not on my feet");
+        run("look", Math.max(1, Math.min(15, Number(secs) || 15)), set, "", "", true);
+        return true;
+      })
+      .catch(function (e) {
+        if (followAskT === askT) followAskT = -Infinity;
+        try { logEv("follow_me_refused", { why: String((e && e.message) || e).slice(0, 120) }); } catch (_) {}
+        return false;
+      });
+  };
+
+
   // The body's gesture names as the creature's prompt sees them (a soul's saved poses included).
   function gestureNames() {
     var lib = null;
@@ -1759,6 +1800,17 @@
     },
     stop: function (why) { followEnd(why || "stopped"); },
     active: function () { return !!follow; },
+    // What the creature's next turn is told about a follow (_gbFollowLine in next.html): how
+    // long it has run, and what the follower last made of the person ("searching" until it
+    // first holds a face, where the follower itself says "lost").
+    status: function () {
+      var F = follow;
+      if (!F || F.dry) return null;
+      var c = F.last || {};
+      return { secs: Math.round((Date.now() - F.t0) / 1000), state: F.track.p ? String(c.state || "") : "searching",
+        dist: typeof c.dist === "number" && isFinite(c.dist) ? c.dist : null,
+        heading: typeof c.heading === "number" && isFinite(c.heading) ? c.heading : null };
+    },
     closer: function () { return follow ? follow.f.closer() : 0; },
     further: function () { return follow ? follow.f.further() : 0; },
     stay: function (on) { if (follow) follow.f.stay = !!on; },
@@ -2502,6 +2554,8 @@
     var now = Date.now(), twice = STOP2_RE.test(t);
     if (!twice && STOP1_RE.test(t)) { twice = now - lone <= PAIR_MS; lone = twice ? -Infinity : now; }
     if (!twice) return false;
+    // A follow still loading (gbFollowMe) isn't moving yet, but this stop is for it too.
+    window._gbFollowStopT = now;
     var dry = !!(window.gbFollow && window.gbFollow.active());
     if (window.gbFollow) window.gbFollow.stop("estop");
     var M = typeof _motion !== "undefined" ? _motion : null;

@@ -52,6 +52,10 @@ export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa
 JBRAIN_DEBUG_TOKEN_FILE=path/to/token .venv/bin/python -m dave_sim come_here --live
 ```
 
+`--fresh` runs a Dave with no past: the box soul's log, facts, scratch and learned identity
+are dropped before the page loads (`box.forget`), keeping his name, his person and his body.
+It shows what the prompts alone make of a turn, apart from what his history has taught him.
+
 Each scenario writes a folder under `sim-runs/` (ignored by git): `report.html` reads top
 to bottom (the checks, then what was said, what the legs got, and where the robot
 actually was), `run.mp4` shows an onlooker's view beside the camera's, and
@@ -64,6 +68,10 @@ soul, so a run folder stays on the machine that made it.
 names the fault it is there to catch. A new scenario is an `async def name(sim)` under
 `@scenario(start=..., person=..., wiring=..., query=...)` using `sim.say`, `sim.push`,
 `sim.person`, `sim.wait`, `sim.until` and `sim.check`.
+
+`walk_compare` needs no model: it walks the creature's stock forward and then the box skill
+set's forward, 8 s each, and reports how much closer each carried him. In the sim both crawl
+(about 1 to 1.5 cm/s on 2026-11-16).
 
 ## Tests
 

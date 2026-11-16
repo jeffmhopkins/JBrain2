@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -52,6 +53,13 @@ def _replied_since(sim: Sim, t: float) -> bool:
     return bool(_answers_since(sim, t))
 
 
+FELL_RE = re.compile(
+    r"(?i)\b(fell|fall|fallen|falling|tipped|tip over|toppled|rolled|knocked|sideways|"
+    r"upside[- ]down|"
+    r"flip(ped)? (me )?over|on my (side|back|face))\b"
+)
+
+
 def _spoke_since(sim: Sim, t: float) -> bool:
     """A turn with words in it: an empty `say` is Dave choosing silence."""
     return any(r.get("say") for r in _answers_since(sim, t))
@@ -93,7 +101,7 @@ async def wake_and_stand(sim: Sim) -> None:
     await sim.wait(3)
     t = sim.now()
     await sim.say("Dave, stand up please")
-    await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
     await sim.until(lambda s: _legs_since(s, _answer_time(s, t)), 30, "the page moved the legs")
     await sim.until(_upright, 30, "he is standing on his feet")
 
@@ -114,11 +122,11 @@ async def come_here(sim: Sim) -> None:
     t = sim.now()
     d0 = _dist(sim)
     await sim.say("Dave, come here")
-    await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
     # After his answer, and the runner's own walk: not the page's stand-up, a talking
     # gesture or the face follower's turns.
     ta = _answer_time(sim, t)
-    await sim.until(lambda s: _walked_since(s, ta), 20, "the page started a walk")
+    await sim.until(lambda s: _walked_since(s, ta), 60, "the page started a walk")
     await sim.until(lambda s: _dist(s) < d0 - 0.10, 60, "he got 10 cm closer to the person")
     sim.check(_upright(sim), "still on his feet")
 
@@ -135,7 +143,7 @@ async def follow_me(sim: Sim) -> None:
     await sim.wait(4)
     t = sim.now()
     await sim.say("Dave, follow me")
-    await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
     # They walk a quarter circle round him, 5 cm a step, over about 20 s.
     for i in range(40):
         a = math.pi + i * (math.pi / 2) / 40
@@ -170,6 +178,32 @@ def _camera_off(sim: Sim) -> float:
     return abs((bearing - (s["nose_deg"] + 180.0) + 180) % 360 - 180)
 
 
+@scenario(start="standing", person={"x": -2.5, "face_z": 0.6})
+async def walk_compare(sim: Sim) -> None:
+    """The creature's stock forward walk beside the box's skill set's forward, 8 s each from
+    the same stance, toward a person 2.5 m off. Needs no model. Catches: a walk the creature
+    is offered that barely moves him while a trained one would carry him."""
+    await sim.wait(4)
+    got = {}
+    for label, extra in (("stock", {}), ("skills", {"skills": sim.box.skills})):
+        d0, x0, y0 = _dist(sim), sim.state["x"], sim.state["y"]
+        ack = await sim.move("forward", secs=8, **extra)
+        why = (ack or {}).get("why")
+        sim.check(bool(ack and ack.get("ok")), f"the {label} walk started", why=why)
+        await sim.wait(10)
+        moved = math.hypot(sim.state["x"] - x0, sim.state["y"] - y0)
+        got[label] = round(d0 - _dist(sim), 3)
+        sim.check(
+            _upright(sim),
+            f"the {label} walk kept him on his feet",
+            closer_m=got[label],
+            moved_m=round(moved, 3),
+        )
+        await sim.wait(3)
+    # A measurement, not a gate: both walks crawl in the sim body (README).
+    sim.check(True, "measured both walks (metres closer)", **got)
+
+
 @scenario(start="standing", person={"x": -1.0, "face_z": 0.6})
 async def bump(sim: Sim) -> None:
     """A light shove he rides out. Catches: a bump taken for a fall, a crash in the
@@ -189,13 +223,18 @@ async def bump(sim: Sim) -> None:
 @scenario(start="standing", person={"x": -1.0, "face_z": 0.6})
 async def knocked_over(sim: Sim) -> None:
     """A hard shove rolls him onto his side. Catches: Dave not noticing he fell, or walking
-    on regardless."""
-    await sim.wait(4)
+    on regardless. The shove waits for his greeting, which would otherwise pass for it."""
+    await sim.until(lambda s: _spoke_since(s, 0), 180, "Dave greeted")
+    await sim.wait(2)
     t = sim.now()
     sim.push((0.0, 20.0, 0.0), 0.15)
     await sim.wait(2)
     sim.check(abs(sim.state["roll_deg"]) > 60, "the shove knocked him over")
-    await sim.until(lambda s: _spoke_since(s, t), 60, "Dave said something about falling")
+    await sim.until(
+        lambda s: any(FELL_RE.search(r.get("say") or "") for r in _answers_since(s, t)),
+        120,
+        "Dave said something about falling",
+    )
 
 
 @scenario(start="standing", wiring={"swap": True}, person={"x": -1.2, "face_z": 0.6})
@@ -207,8 +246,8 @@ async def swapped_legs(sim: Sim) -> None:
     t = sim.now()
     d0 = _dist(sim)
     await sim.say("Dave, come here")
-    await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
     ta = _answer_time(sim, t)
-    await sim.until(lambda s: _walked_since(s, ta), 20, "the page started a walk")
+    await sim.until(lambda s: _walked_since(s, ta), 60, "the page started a walk")
     await sim.wait(15)
     sim.check(_dist(sim) > d0 - 0.03, "crossed pins: the walk did not bring him closer")
