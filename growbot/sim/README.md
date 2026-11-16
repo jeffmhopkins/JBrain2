@@ -29,8 +29,13 @@ CPU path, because headless Chromium's software GL takes ~250 ms a frame and the 
 drops frames that old. `box.SIM_PATCHES` fails the run if the patch stops matching.
 
 Live runs share the creature lane with the real robot: the box answers 409 while the real
-Dave has spoken in the last two minutes, and a run waits for quiet rather than taking his
-slot.
+Dave has spoken in the last two minutes, and a run waits briefly for quiet rather than
+taking his slot, then lets that turn fail. A run is only meaningful while the robot is
+quiet. Each replayed turn is logged on the box as a `replay` call row.
+
+A scripted run answers every turn "okay", so it exercises the plumbing, not Dave: most
+scenarios fail under it by design. `swapped_legs` passes when the simulator shows the
+crossed-pin fault (a walk that brings him no closer).
 
 ## Running it
 
@@ -43,7 +48,7 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt \
   && .venv/bin/playwright install chromium
 sudo apt-get install -y libosmesa6        # headless MuJoCo rendering
 export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa
-.venv/bin/python -m dave_sim all --scripted               # plumbing only
+.venv/bin/python -m dave_sim bump --scripted              # plumbing only
 JBRAIN_DEBUG_TOKEN_FILE=path/to/token .venv/bin/python -m dave_sim come_here --live
 ```
 

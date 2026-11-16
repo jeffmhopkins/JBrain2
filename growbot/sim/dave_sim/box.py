@@ -60,6 +60,8 @@ class Reply:
     status: int = 200
     body: bytes = b""
     ctype: str = "application/json"
+    # The model call this answers, for the run to log once the page has it.
+    call: dict[str, Any] | None = None
 
     @classmethod
     def json(cls, obj: Any, status: int = 200) -> Reply:
@@ -93,7 +95,6 @@ class FakeBox:
     version: int = 1
     # Every model call and answer, for the run's timeline.
     calls: list[dict[str, Any]] = field(default_factory=list)
-    on_reply: Callable[[str], None] | None = None
     t0: float = field(default_factory=time.monotonic)
 
     # ------------------------------------------------------------------ dispatch
@@ -246,21 +247,12 @@ class FakeBox:
             call["error"] = str(e)
             return Reply.json({"error": {"message": str(e)[:200]}}, 502)
         call["reply"] = text
-        if self.on_reply is not None:
-            self.on_reply(text)
         if not stream:
-            return Reply.json(
-                {
-                    "choices": [
-                        {
-                            "index": 0,
-                            "finish_reason": "stop",
-                            "message": {"role": "assistant", "content": text},
-                        }
-                    ]
-                }
-            )
+            msg = {"role": "assistant", "content": text}
+            out = Reply.json({"choices": [{"index": 0, "finish_reason": "stop", "message": msg}]})
+            out.call = call
+            return out
         chunk = {"choices": [{"index": 0, "delta": {"content": text}}]}
         done = {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
         sse = f"data: {json.dumps(chunk)}\n\ndata: {json.dumps(done)}\n\ndata: [DONE]\n\n"
-        return Reply(200, sse.encode(), "text/event-stream")
+        return Reply(200, sse.encode(), "text/event-stream", call)

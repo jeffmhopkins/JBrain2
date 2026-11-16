@@ -68,7 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--persona", default="Dave")
     ap.add_argument("--token-file", default=os.environ.get("JBRAIN_DEBUG_TOKEN_FILE", ""))
     ap.add_argument("--skills", default=json.dumps(DEFAULT_SKILLS), help="JSON skill -> slug")
-    ap.add_argument("--out", default="sim-runs")
+    # Beside the package, where .gitignore covers it, wherever the run starts from: run
+    # folders hold the persona's soul.
+    ap.add_argument("--out", default=str(Path(__file__).resolve().parents[1] / "sim-runs"))
     ap.add_argument("--timeout", type=float, default=300.0)
     args = ap.parse_args(argv)
     names = list(SCENARIOS) if args.scenarios == ["all"] else args.scenarios

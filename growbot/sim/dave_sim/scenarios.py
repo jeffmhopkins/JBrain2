@@ -28,34 +28,56 @@ def scenario(**setup: Any) -> Callable[[Scenario], Scenario]:
     return add
 
 
+def _reply(e: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        r = json.loads(e["text"])
+    except ValueError:
+        return None
+    return r if isinstance(r, dict) else None
+
+
+def _answers_since(sim: Sim, t: float) -> list[dict[str, Any]]:
+    """Dave's turns asked after `t` and delivered to the page: not warm-ups, not dreams."""
+    out = []
+    for e in sim.timeline:
+        if e["kind"] != "dave" or e.get("warm") or e.get("asked", e["t"]) < t:
+            continue
+        r = _reply(e)
+        if r is not None and "say" in r and "dream_say" not in r:
+            out.append(r)
+    return out
+
+
 def _replied_since(sim: Sim, t: float) -> bool:
-    return any(e["kind"] == "dave" and e["t"] >= t for e in sim.timeline)
+    return bool(_answers_since(sim, t))
 
 
 def _spoke_since(sim: Sim, t: float) -> bool:
-    """A reply with words in it: an empty `say` is Dave choosing silence."""
-    for e in sim.timeline:
-        if e["kind"] == "dave" and e["t"] >= t:
-            try:
-                said = json.loads(e["text"]).get("say")
-            except (ValueError, AttributeError):
-                said = None
-            if said:
-                return True
-    return False
+    """A turn with words in it: an empty `say` is Dave choosing silence."""
+    return any(r.get("say") for r in _answers_since(sim, t))
 
 
-def _legs_since(sim: Sim, t: float) -> bool:
-    """The page sent the legs anything (a walk's poses, a gesture) after `t`."""
+def _legs_since(sim: Sim, t: float, kinds: tuple[str, ...] = ("pose", "act", "routine")) -> bool:
+    """The page sent the legs one of `kinds` after `t` (a walk is a stream of poses)."""
     since = (t + sim.t0) * 1000
-    return any(f["ms"] >= since and f.get("t") in ("pose", "act", "routine") for f in sim.chip.log)
+    return any(f["ms"] >= since and f.get("t") in kinds for f in sim.chip.log)
 
 
-def _face_seen(sim: Sim, t: float) -> bool:
+def _walked_since(sim: Sim, t: float) -> bool:
+    """The page's runner started a walk after `t` (the face follower's poses don't count)."""
     return any(
-        e["kind"] == "page" and e["t"] >= t and e.get("event") in ("face", "faces", "face_seen")
-        for e in sim.timeline
+        e["kind"] == "page" and e.get("event") == "walk_start" and e["t"] >= t for e in sim.timeline
     )
+
+
+def _answer_time(sim: Sim, t: float) -> float:
+    """When the first answer to something said at `t` reached the page."""
+    for e in sim.timeline:
+        if e["kind"] == "dave" and not e.get("warm") and e.get("asked", e["t"]) >= t:
+            r = _reply(e)
+            if r is not None and "say" in r and "dream_say" not in r:
+                return e["t"]
+    return t
 
 
 def _upright(sim: Sim) -> bool:
@@ -72,7 +94,7 @@ async def wake_and_stand(sim: Sim) -> None:
     t = sim.now()
     await sim.say("Dave, stand up please")
     await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
-    await sim.until(lambda s: _legs_since(s, t), 30, "the page moved the legs")
+    await sim.until(lambda s: _legs_since(s, _answer_time(s, t)), 30, "the page moved the legs")
     await sim.until(_upright, 30, "he is standing on his feet")
 
 
@@ -93,7 +115,10 @@ async def come_here(sim: Sim) -> None:
     d0 = _dist(sim)
     await sim.say("Dave, come here")
     await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
-    await sim.until(lambda s: _legs_since(s, t), 20, "the page moved the legs")
+    # After his answer, and the runner's own walk: not the page's stand-up, a talking
+    # gesture or the face follower's turns.
+    ta = _answer_time(sim, t)
+    await sim.until(lambda s: _walked_since(s, ta), 20, "the page started a walk")
     await sim.until(lambda s: _dist(s) < d0 - 0.10, 60, "he got 10 cm closer to the person")
     sim.check(_upright(sim), "still on his feet")
 
@@ -154,7 +179,15 @@ async def knocked_over(sim: Sim) -> None:
 
 @scenario(start="standing", wiring={"swap": True}, person={"x": -1.2, "face_z": 0.6})
 async def swapped_legs(sim: Sim) -> None:
-    """Last night's robot: leg pins crossed, calibration not told. Asked over, he should
-    not end up farther away while saying he's coming. This one is expected to show the
-    fault; it proves the simulator catches it."""
-    await come_here(sim)
+    """Last night's robot: leg pins crossed, calibration not told. Asked over, he walks, and
+    the walk does not bring him closer. This scenario PASSES when the simulator shows that
+    fault; it proves a crossed pin is caught, so it fails if nothing walked at all."""
+    await sim.wait(4)
+    t = sim.now()
+    d0 = _dist(sim)
+    await sim.say("Dave, come here")
+    await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
+    ta = _answer_time(sim, t)
+    await sim.until(lambda s: _walked_since(s, ta), 20, "the page started a walk")
+    await sim.wait(15)
+    sim.check(_dist(sim) > d0 - 0.03, "crossed pins: the walk did not bring him closer")

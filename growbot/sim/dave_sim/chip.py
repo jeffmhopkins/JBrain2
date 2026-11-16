@@ -72,8 +72,9 @@ class Chip:
         self.body.release()
 
     def hello(self) -> list[dict[str, Any]]:
-        """What the relay tells a page that attaches while the chip is online."""
-        return [{"t": "status", "awake": 1, "boot": {"reset": "power", "up_ms": 1000, "fw": "sim"}}]
+        """What the relay tells a page that attaches while the chip is online (serve.py sends
+        no boot report here: that comes only with a chip's own hello)."""
+        return [{"t": "status", "awake": 1}]
 
     def frame(self, text: str) -> list[dict[str, Any]]:
         try:

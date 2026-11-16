@@ -3,7 +3,7 @@
     sim = Sim(Options(...))
     await sim.open()            # page up, legs attached, motion on
     await sim.say("Dave, come here")
-    ok = await sim.until(lambda s: s.moved_m() > 0.1, 60, "walked toward me")
+    ok = await sim.until(lambda s: s.state["x"] < -0.1, 60, "walked toward me")
     await sim.close()           # writes the report
 
 Every control tick (40 ms, the runner's rate) the sim body steps, the chip plays whatever
@@ -62,7 +62,7 @@ class Options:
     policies: dict[str, Path] = field(default_factory=dict)
     skills: dict[str, str] | None = None
     fps: float = 15.0  # the camera's cap; software rendering may manage less
-    out: Path = Path("sim-runs/run")
+    out: Path = Path(__file__).resolve().parents[1] / "sim-runs" / "run"
     query: str = ""  # extra ?flags for the page, e.g. "getupnamed=1"
     eyes: bool = True  # open the camera at the start, as the owner does
 
@@ -87,15 +87,12 @@ class Sim:
         )
         if opts.cal is not None:
             self.box.cal = opts.cal
-        self.box.on_reply = lambda text: self.note("dave", text=text)
         self.t0 = time.monotonic()
         self.epoch0 = time.time()
         self.timeline: list[dict[str, Any]] = []
         self.checks: list[dict[str, Any]] = []
         self.states: list[dict[str, Any]] = []
         self.frames: list[tuple[float, bytes]] = []  # (t, jpeg) of what the camera showed
-        self.start_xy = (self.body.state()["x"], self.body.state()["y"])
-        self._legs_ws: Any = None
         self._agent_ws: Any = None
         self._acks: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._loop: asyncio.Task[None] | None = None
@@ -115,10 +112,6 @@ class Sim:
     @property
     def state(self) -> dict[str, Any]:
         return self.body.state()
-
-    def moved_m(self) -> float:
-        s = self.state
-        return float(((s["x"] - self.start_xy[0]) ** 2 + (s["y"] - self.start_xy[1]) ** 2) ** 0.5)
 
     def check(self, ok: bool, what: str, **detail: Any) -> bool:
         self.checks.append({"t": self.now(), "ok": bool(ok), "what": what, **detail})
@@ -184,8 +177,15 @@ class Sim:
 
     async def _http(self, route: Any) -> None:
         req = route.request
+        asked = self.now()
         got = await self.box.handle(req.method, req.url[len(ORIGIN) :], req.post_data_buffer)
         await route.fulfill(status=got.status, body=got.body, headers={"content-type": got.ctype})
+        # Logged only once the page has it: a reply to a request the page gave up on is
+        # nothing Dave said.
+        call = got.call
+        if call is not None and "reply" in call and int(call["request"].get("max_tokens") or 9) > 2:
+            warm = any(k.lower() == "x-gb-warm" for k in (req.headers or {}))
+            self.note("dave", text=call["reply"], asked=asked, warm=warm)
 
     async def _ws(self, ws: Any) -> None:
         agent = ws.url.endswith("-agent")
@@ -193,7 +193,6 @@ class Sim:
             self._agent_ws = ws
             ws.on_message(lambda m: self._agent_frame(str(m)))
             return
-        self._legs_ws = ws
 
         def on(m: Any) -> None:
             for reply in self.chip.frame(str(m)):
@@ -209,8 +208,9 @@ class Sim:
             m = json.loads(text)
         except ValueError:
             return
-        if m.get("t") in ("box_move_ack", "ack") and m.get("rid") in self._acks:
-            self._acks.pop(m["rid"]).set_result(m)
+        fut = self._acks.pop(m.get("rid"), None) if m.get("t") == "box_ack" else None
+        if fut is not None and not fut.done():
+            fut.set_result(m)
         self.note("agent", frame=m)
 
     # ------------------------------------------------------------------ the loop
@@ -225,8 +225,13 @@ class Sim:
         while True:
             due = int((time.monotonic() - start) / CONTROL_DT) + 1
             while n < due:
-                self.body.tick()
-                self.chip.tick()
+                try:
+                    self.body.tick()
+                    self.chip.tick()
+                except Exception as e:
+                    # A dead physics loop would read as a robot that froze: say why.
+                    self.note("sim_error", error=repr(e)[:300])
+                    raise
                 n += 1
                 if n % 2 == 0:
                     self._record()
@@ -329,6 +334,7 @@ class Sim:
         try:
             return await asyncio.wait_for(fut, 3.0)
         except TimeoutError:
+            self._acks.pop(rid, None)
             return None
 
     async def _drain(self) -> None:

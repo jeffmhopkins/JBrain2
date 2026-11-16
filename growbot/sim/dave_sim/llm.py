@@ -3,7 +3,8 @@
 Live runs send the page's own chat request, untouched, to the box's creature lane through
 the owner debug API (`POST /api/debug/growbot/replay`, docs/runbooks/DEBUG_ACCESS.md): the
 same model, slot and serving path as the robot's phone. The box refuses (409) while the real
-creature has spoken in the last two minutes, so a run never takes the slot from Jeff's.
+creature has spoken in the last two minutes, so a run never takes the slot from Jeff's: a
+turn that stays refused reaches the page as a failed call, as it would on the phone.
 Scripted runs answer from a list, for tests that must not depend on a model.
 """
 
@@ -34,11 +35,14 @@ def debug_token(path: str | None = None) -> tuple[str, str]:
     if not raw:
         raise RuntimeError("no debug token: set JBRAIN_DEBUG_TOKEN or JBRAIN_DEBUG_TOKEN_FILE")
     d = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+    if not str(d["u"]).startswith("https://"):
+        raise RuntimeError("the debug token's box URL is not https")
     return d["u"].rstrip("/"), d["k"]
 
 
 class BoxApi:
-    """The owner debug API, read and the creature lane; nothing here writes the box's state."""
+    """The owner debug API: persona reads and the creature lane. Nothing here changes the
+    persona, though the box logs each replayed turn (soul included) as a `replay` call row."""
 
     def __init__(self, base: str, key: str) -> None:
         self.base, self.key = base, key
@@ -46,7 +50,8 @@ class BoxApi:
     def call(self, method: str, path: str, body: Any = None, timeout: float = 120.0) -> Any:
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(self.base + path, data=data, method=method)
-        req.add_header("Authorization", f"Bearer {self.key}")
+        # Unredirected: a redirect anywhere must never carry the owner key with it.
+        req.add_unredirected_header("Authorization", f"Bearer {self.key}")
         # The tunnel's edge turns away Python's default agent string.
         req.add_header("User-Agent", "dave-sim/1")
         if data is not None:
@@ -64,7 +69,9 @@ class BoxApi:
         return self.call("GET", f"/api/debug/growbot/personas/{hit[0]['id']}")
 
 
-def live_model(api: BoxApi, busy_wait_s: float = 30.0, tries: int = 6):
+# The page gives up on a model call after 30 s, so a busy lane is waited out inside that
+# and then answered as the box would (an error), never after the page has moved on.
+def live_model(api: BoxApi, busy_wait_s: float = 5.0, tries: int = 4):
     """The box's creature lane as the run's model."""
 
     async def ask(req: dict[str, Any]) -> str:

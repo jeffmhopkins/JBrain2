@@ -78,7 +78,7 @@ def _row(e: dict[str, Any]) -> tuple[str, str] | None:
     if k == "you":
         return "you", f'"{e["text"]}"'
     if k == "dave":
-        return "Dave", _said(e["text"])
+        return ("Dave (warm-up)" if e.get("warm") else "Dave"), _said(e["text"])
     if k == "legs":
         f = e["frame"]
         if f.get("t") == "act":
@@ -94,8 +94,8 @@ def _row(e: dict[str, Any]) -> tuple[str, str] | None:
         return k, json.dumps({x: y for x, y in e.items() if x not in ("t", "kind")})[:200]
     if k == "page" and e.get("event") in PAGE_EVENTS:
         return f"page {e['event']}", json.dumps(e.get("data"))[:200]
-    if k in ("page_error",):
-        return "page error", e["error"]
+    if k in ("page_error", "sim_error"):
+        return k.replace("_", " "), e["error"]
     return None
 
 

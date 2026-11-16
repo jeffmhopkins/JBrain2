@@ -54,7 +54,7 @@ def _run(coro: Any) -> Any:
 def test_attach_answers_awake() -> None:
     chip = simchip.Chip(Legs(), Clock())
     (status,) = chip.frame(json.dumps({"t": "attach"}))
-    assert status["t"] == "status" and status["awake"] == 1
+    assert status == {"t": "status", "awake": 1}  # no boot report: serve.py sends none
 
 
 def test_pose_writes_at_once_clamped_and_dead_man_goes_limp() -> None:
@@ -170,15 +170,17 @@ def test_voice_and_hearing_are_stubbed_without_a_model() -> None:
 
 
 def test_model_answers_streamed_and_plain_and_failures_reach_the_page() -> None:
-    seen: list[str] = []
-    fb = simbox.FakeBox(model=simllm.scripted_model([{"say": "hi"}]), on_reply=seen.append)
+    fb = simbox.FakeBox(model=simllm.scripted_model([{"say": "hi"}]))
     sse = _run(fb.handle("POST", "/api/llm-stream?target=openrouter", b'{"messages": []}'))
     assert sse.ctype == "text/event-stream" and sse.body.endswith(b"data: [DONE]\n\n")
     first = json.loads(sse.body.split(b"\n\n")[0][len(b"data: ") :])
     assert json.loads(first["choices"][0]["delta"]["content"]) == {"say": "hi"}
-    plain = json.loads(_run(fb.handle("POST", "/api/llm", b"{}")).body)
-    assert json.loads(plain["choices"][0]["message"]["content"]) == {"say": ""}
-    assert seen == ['{"say": "hi"}', '{"say": ""}'] and len(fb.calls) == 2
+    # The run logs a reply from the answer it delivered, not when the model returned.
+    assert sse.call is fb.calls[0] and sse.call["reply"] == '{"say": "hi"}'
+    plain = _run(fb.handle("POST", "/api/llm", b"{}"))
+    content = json.loads(plain.body)["choices"][0]["message"]["content"]
+    assert json.loads(content) == {"say": ""} and plain.call is fb.calls[1]
+    assert _run(fb.handle("GET", "/api/box/skills", None)).call is None
 
     async def boom(req: dict[str, Any]) -> str:
         raise RuntimeError("lane down")
@@ -264,3 +266,35 @@ def test_persona_lookup_by_name() -> None:
 def test_scripted_model_from_a_function() -> None:
     ask = simllm.scripted_model(lambda req: {"say": str(len(req))})
     assert json.loads(_run(ask({"a": 1}))) == {"say": "1"}
+
+
+def test_debug_token_refuses_a_plain_http_box(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JBRAIN_DEBUG_TOKEN", _token(u="http://box.example"))
+    with pytest.raises(RuntimeError, match="https"):
+        simllm.debug_token(None)
+
+
+def test_the_owner_key_never_follows_a_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.request
+
+    sent: list[urllib.request.Request] = []
+
+    class Resp:
+        def __enter__(self) -> Resp:
+            return self
+
+        def __exit__(self, *a: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"{}"
+
+    def fake_open(req: urllib.request.Request, timeout: float = 0) -> Resp:
+        sent.append(req)
+        return Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_open)
+    simllm.BoxApi("https://b", "secret").call("GET", "/x")
+    (req,) = sent
+    assert req.unredirected_hdrs.get("Authorization") == "Bearer secret"
+    assert "Authorization" not in req.headers
