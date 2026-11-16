@@ -917,7 +917,7 @@ PATCHES += HISTORY_PATCHES
 # frame the brain sees (captureEye) is still drawn at 320. The worker keeps each box's score, so
 # a body test's log can tell a weak detection from a clear one (owner, 2026-11-16: "add verbose
 # logging ... the face reading telemetry"). The main-thread fallback (no worker) runs the same
-# full-range model on the whole frame.
+# tracker through growbot-eyes.js.
 FACE_ZOOM_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/agent-face-track.mjs",
@@ -956,6 +956,15 @@ FACE_ZOOM_PATCHES: list[tuple[str, str, str, int]] = [
         "ms=performance.now()-detectStart;\n"
         "    lastDetect=d.at;\n"
         "    var boxes=found.boxes;",
+        1,
+    ),
+    # The leg tracker's main-thread fallback (no worker, or one that missed its deadline)
+    # runs the zoom tracker too, through growbot-eyes.js, which loads it.
+    (
+        "v3/next.html",
+        "var result=model.detectForVideo(s.video,now);",
+        "var result=window.gbEyes&&window.gbEyes.zoomed?"
+        'window.gbEyes.zoomed("tracker",model,s.video,now):model.detectForVideo(s.video,now);',
         1,
     ),
     (

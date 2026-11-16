@@ -46,6 +46,9 @@ export function Zoom(opts) {
   this.minSide = o.minSide || 160;  // px: under the model's 192 input there is nothing to gain
   this.keep = o.keep || 4;          // misses in a row before the face is let go
   this.lead = o.lead === undefined ? 0.15 : o.lead;   // s of movement the crop is widened by
+  // A face under this many px of the model's input once the whole frame is shrunk to it can't
+  // be seen there: a look after a miss is then a wider crop, not the whole frame.
+  this.seenPx = o.seenPx || 12;
   this.track = null;                // {cx, cy, w, vx, vy, at} in frame px
   this.misses = 0;
   this.turn = 0;
@@ -57,16 +60,27 @@ Zoom.prototype.plan = function (w, h, at) {
   var size = w + "x" + h;
   if (size !== this.size) { this.size = size; this.tiles = tiles(w, h); this.track = null; this.misses = 0; }
   var t = this.track;
-  // Odd misses look at the whole frame: a face that moved faster than the crop's prediction
-  // is still in it, and the next crop is centred on wherever it is found.
-  if (t && this.misses % 2) return { x: 0, y: 0, w: w, h: h, why: "again" };
   if (t) {
     var dt = clamp((at - t.at) / 1000, 0, 0.25);
-    var cx = t.cx + t.vx * dt, cy = t.cy + t.vy * dt;
-    // A moving face gets a wider crop, by how far it could go in the next frame or so: a
-    // crop sized for a still face loses one stepping quickly sideways.
-    var side = Math.round(clamp(t.w * this.span + 2 * this.lead * Math.hypot(t.vx, t.vy), this.minSide, Math.min(w, h)));
-    return { x: Math.round(clamp(cx - side / 2, 0, w - side)), y: Math.round(clamp(cy - side / 2, 0, h - side)), w: side, h: side, why: "track" };
+    var cx = t.cx + t.vx * dt, cy = t.cy + t.vy * dt, short = Math.min(w, h), side;
+    if (this.misses % 2) {
+      // Odd misses look wider: a face that moved faster than the crop's prediction is still
+      // in view, and the next crop is centred on wherever it is found. A near face is looked
+      // for in the whole frame; a far one, which the whole frame shrinks past seeing, in a
+      // crop three times the usual about where it was.
+      if ((t.w * 192) / Math.max(w, h) >= this.seenPx) return { x: 0, y: 0, w: w, h: h, why: "again" };
+      side = Math.round(clamp(t.w * this.span * 3, this.minSide, short));
+    } else {
+      // A moving face gets a wider crop, by how far it could go in the next frame or so: a
+      // crop sized for a still face loses one stepping quickly sideways.
+      side = Math.round(clamp(t.w * this.span + 2 * this.lead * Math.hypot(t.vx, t.vy), this.minSide, short));
+    }
+    // A frame smaller than minSide (a camera that ignored the size asked for) crops to itself.
+    side = Math.min(side, short);
+    return {
+      x: Math.round(clamp(cx - side / 2, 0, w - side)), y: Math.round(clamp(cy - side / 2, 0, h - side)),
+      w: side, h: side, why: this.misses % 2 ? "wide" : "track",
+    };
   }
   this.turn++;
   if (this.turn % 2) return { x: 0, y: 0, w: w, h: h, why: "frame" };
@@ -82,9 +96,9 @@ Zoom.prototype.update = function (boxes, at) {
     var s = t ? Math.hypot(cx - t.cx, cy - t.cy) / Math.max(t.w, 1) : -b.w;
     if (s < bestScore) { bestScore = s; best = b; }
   }
-  // Another face, far from ours, is not a hit. A whole-frame look after a miss is there to
-  // find a face that moved further than the crop's prediction, so the one face it sees is
-  // taken wherever it is; of several, the nearest within a wider gate.
+  // Another face, far from ours, is not a hit. A wider look after a miss is there to find a
+  // face that moved further than the crop's prediction, so the one face it sees is taken
+  // wherever it is; of several, the nearest within a wider gate.
   var again = t && this.misses % 2;
   if (t && best && bestScore > (again ? 6 : 3) && !(again && boxes.length === 1)) best = null;
   if (!best) {
@@ -105,11 +119,11 @@ Zoom.prototype.update = function (boxes, at) {
 // One frame through the planner and a MediaPipe FaceDetector in VIDEO mode. `frame` is anything
 // it takes (an ImageBitmap, a canvas, a video) with its size in `w` and `h`; `canvas` is a
 // CROP_PX square canvas to draw crops on. The boxes come back as fractions of the whole frame,
-// with their scores, every face the model saw (a crop sees only the faces in it); `face` is
-// the one the planner follows, null when it lost it this frame.
+// with their scores, every face the model saw (a crop sees only the faces in it), the one the
+// planner follows first; `face` is that one, null when it lost it this frame.
 export function find(model, frame, w, h, at, zoom, canvas) {
   var c = zoom.plan(w, h, at), src = frame, scale = 1;
-  if (c.why === "track" || c.why === "tile") {
+  if (c.w !== w || c.h !== h) {
     canvas.getContext("2d").drawImage(frame, c.x, c.y, c.w, c.h, 0, 0, canvas.width, canvas.height);
     src = canvas;
     scale = c.w / canvas.width;
@@ -123,6 +137,7 @@ export function find(model, frame, w, h, at, zoom, canvas) {
     px.push(p);
   });
   var face = zoom.update(px, at);
+  if (face) px = [face].concat(px.filter(function (p) { return p !== face; }));
   px.forEach(function (p) {
     boxes.push({ x: p.x / w, y: p.y / h, width: p.w / w, height: p.h / h, score: p.s });
   });

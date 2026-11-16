@@ -452,6 +452,21 @@ def test_the_creature_finds_faces_with_the_zoom_tracker() -> None:
     assert "model.detectForVideo(bitmap" not in worker
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "var v={width:{ideal:LOW_POWER?240:960},height:{ideal:LOW_POWER?180:720}};" in page
+    # The main-thread fallbacks run the zoom tracker too, through the eyes.
+    assert 'window.gbEyes.zoomed("tracker",model,s.video,now)' in page
+    eyes = (_SITE / "growbot-eyes.js").read_text(encoding="utf-8")
+    assert 'var result = zoomed("eyes", model, v, t);' in eyes
+    assert 'import("/growbot-face-zoom.js")' in eyes
+
+
+def test_the_eyes_fall_back_to_the_whole_frame_until_the_zoom_tracker_loads() -> None:
+    out = _eyes_in_node(
+        "var asked=[];var model={detectForVideo:function(v,t){asked.push(t);"
+        "return {detections:[]};}};"
+        "var r=window.gbEyes.zoomed('eyes',model,{videoWidth:720,videoHeight:960},5);"
+        "console.log(JSON.stringify([asked,r.detections.length]));"
+    )
+    assert json.loads(out) == [[5], 0]
 
 
 def test_a_calibration_from_another_detector_is_dropped() -> None:

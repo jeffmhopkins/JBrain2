@@ -139,3 +139,99 @@ def test_a_moving_face_gets_a_wider_crop() -> None:
     )
     assert got[0] == 250
     assert got[1] > got[0] + 100
+
+
+def test_one_model_call_a_frame_with_rising_timestamps() -> None:
+    """MediaPipe's VIDEO mode wants each frame's timestamp above the last: the tracker calls the
+    model exactly once a frame, crop or whole frame, never both."""
+    got = _eval(
+        """
+        const zoom = new z.Zoom(), c = canvas(z.CROP_PX);
+        faces = [face(300, 500, 60)];
+        for (let i = 1; i <= 10; i++) {
+          if (i === 5) faces = [];
+          if (i === 7) faces = [face(320, 520, 60)];
+          z.find(model, frame, W, H, i * 50, zoom, c);
+        }
+        return model.calls;
+        """
+    )
+    assert got == [i * 50 for i in range(1, 11)]
+
+
+def test_a_crop_maps_both_axes_back_and_puts_the_followed_face_first() -> None:
+    got = _eval(
+        """
+        const zoom = new z.Zoom(), c = canvas(z.CROP_PX);
+        faces = [face(300, 500, 60)];
+        z.find(model, frame, W, H, 0, zoom, c);
+        faces = [face(300, 500, 60), face(380, 560, 30)];   // a smaller face inside our crop
+        const r = z.find(model, frame, W, H, 100, zoom, c);
+        return [r.crop.why, r.boxes, r.face];
+        """
+    )
+    why, boxes, followed = got
+    assert why == "track"
+    assert len(boxes) == 2 and boxes[0] == followed
+    assert followed["x"] == pytest.approx(270 / 720, abs=1e-3)
+    assert followed["y"] == pytest.approx(470 / 960, abs=1e-3)
+    assert followed["width"] == pytest.approx(60 / 720, abs=1e-3)
+    assert followed["height"] == pytest.approx(60 / 960, abs=1e-3)
+
+
+def test_a_far_face_missed_is_looked_for_in_a_wider_crop_not_the_whole_frame() -> None:
+    """At 3 m a face is a few px of the model's input once the whole frame is shrunk to it, so
+    a whole-frame look can't find it: the look after a miss is a crop three times as wide."""
+    got = _eval(
+        """
+        const zoom = new z.Zoom(), c = canvas(z.CROP_PX);
+        faces = [face(400, 500, 26)];
+        let r;
+        for (let i = 0; i < 20 && !(r && r.face); i++) {
+          r = z.find(model, frame, W, H, i * 100, zoom, c);
+        }
+        z.find(model, frame, W, H, 2100, zoom, c);
+        faces = [face(520, 520, 26)];                        // stepped out of the crop
+        const miss = z.find(model, frame, W, H, 2200, zoom, c);
+        const wide = z.find(model, frame, W, H, 2300, zoom, c);
+        return [miss.face, wide.crop, !!wide.face];
+        """
+    )
+    miss, crop, found = got
+    assert miss is None
+    assert crop["why"] == "wide" and crop["w"] == 26 * 5 * 3
+    assert found is True
+
+
+def test_a_frame_smaller_than_the_least_crop_crops_to_itself() -> None:
+    got = _eval(
+        """
+        const zoom = new z.Zoom();
+        zoom.plan(176, 144, 0);
+        zoom.update([{ x: 80, y: 60, w: 20, h: 20 }], 0);
+        return zoom.plan(176, 144, 50);
+        """
+    )
+    assert got["w"] == 144 and got["h"] == 144
+    assert 0 <= got["x"] <= 176 - 144 and got["y"] == 0
+
+
+def test_a_new_frame_size_drops_the_face_and_the_search_cycles_the_tiles() -> None:
+    got = _eval(
+        """
+        const zoom = new z.Zoom();
+        zoom.plan(W, H, 0);
+        zoom.update([{ x: 300, y: 300, w: 60, h: 60 }], 0);
+        const before = zoom.plan(W, H, 50).why;
+        const after = zoom.plan(240, 180, 100).why;   // low power's frame
+        const seen = new Set();
+        for (let i = 0; i < 40; i++) {
+          const p = zoom.plan(240, 180, 150 + i * 50);
+          if (p.why === "tile") seen.add(p.x + "," + p.y);
+        }
+        return [before, after, seen.size, z.tiles(240, 180).length];
+        """
+    )
+    assert got[0] == "track"
+    assert got[1] in ("frame", "tile")
+    assert got[2] == got[3]

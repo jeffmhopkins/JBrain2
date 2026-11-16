@@ -367,13 +367,14 @@ held 100% at every distance to 3 m and with the light off, at about 27 ms a fram
 spot was quick side steps (81%, where `full` held 99%). So the creature's detector is now the
 zoom tracker. `growbot-face-zoom.js` plans one model call a frame. With a face in hand, the
 crop is about five face-widths, widened by how fast the face is moving. A crop that misses is
-followed by a whole-frame look, which takes the one face it sees wherever it went (of several,
-only one near the last). Four misses in a row let it go, and it searches the whole frame and
+followed by a wider look, which takes the one face it sees wherever it went (of several, only
+one near the last): the whole frame for a near face, and a crop three times as wide for a far
+one, which the whole frame shrinks past seeing. Four misses in a row let it go, and it searches the whole frame and
 the tiles in turn. `apply.py` points upstream's detector (`agent-face-track.mjs`) at
 tasks-vision 0.10.35 and the full-range model, and has its worker (`face-detector-worker.js`)
 run each frame through `find`. So the leg tracker, the eyes and the follower all get its boxes,
-in whole-frame fractions with scores. The main-thread fallback runs full-range on the whole
-frame. The crop needs pixels, so the creature's camera asks for 960x720: a face 3 m away is
+in whole-frame fractions with scores. The main-thread fallbacks (no worker, or one that missed its
+deadline) run the same tracker through `growbot-eyes.js` (`gbEyes.zoomed`). The crop needs pixels, so the creature's camera asks for 960x720: a face 3 m away is
 about 26 px across, where at 320x240 it was 9. Low power keeps 240x180, and the frame the brain
 sees is still drawn at 320.
 
