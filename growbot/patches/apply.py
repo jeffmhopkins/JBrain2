@@ -3495,13 +3495,19 @@ PATCHES += DREAM_LATER_PATCHES
 #   "do not say this again", where a small model reads it (the end of the turn, not the system
 #   prompt), and the scene-repeat guard covers replies to the person too, unless they asked what
 #   he sees or to hear it again.
+# The body test (owner, 2026-11-15 night) showed both cues working against a command: told
+# "take a couple more steps forward" with his last line about stepping forward quoted as "do not
+# say any of this again", he went silent and did not move, and the depth cue drew talk ("I am
+# walking forward now") with no walk field. On those turns' replays the cue now puts doing it
+# first and forbids claiming a move the reply does not make, and the quote note says a repeated
+# ask still gets answered: walks went from 0 of 6 to 4 of 6, silent replies from 2 of 8 to 1.
 _GB_FLOOR_SAID_JS = r"""function gbSayOf(a){ a=String(a||"").trim(); if(a.charAt(0)==="(") return ""; if(a.charAt(0)!=="{") return a;
   try{ var m=JSON.parse(a); return m&&typeof m.say==="string"?m.say.trim():""; }catch(e){ return ""; } }
 function gbDepthCue(extra){ return (extra&&extra.humanReq&&typeof gbTalkGrown==="function"&&gbTalkGrown())?GB_DEPTH_CUE:""; }
 function gbRecentSays(now){ var t=_live&&_live.scratch&&_live.scratch.traces, out=[], i, s;
   for(i=(t?t.length:0)-1;i>=0&&out.length<GB_SAID_QUOTE;i--){ if(now-(+t[i].t||0)>GB_SAID_KEEP_MS) break;
     s=gbSayOf(t[i].a).replace(/\s+/g," ").replace(/"/g,"'").slice(0,220); if(s) out.push('"'+s+'"'); }
-  return out.length?"\nyour last words, newest first: "+out.join(" / ")+" — do not say any of this again, and do not describe what you see unless they asked or something new appeared; say something new.":""; }
+  return out.length?"\nyour last words, newest first: "+out.join(" / ")+" — do not say any of this again, and do not describe what you see unless they asked or something new appeared; say something new. if they ask for something again, still answer and do it, in new words.":""; }
 """
 # Grown-up talk drops upstream's brevity from the constitution itself rather than overruling it
 # from a block 20k characters later, and calls him a thoughtful mind rather than a little
@@ -3522,8 +3528,10 @@ FLOOR_SAID_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         "function _calmBefore(now){",
-        "var _gbRideEndT=0, GB_RIDE_LINGER_MS=120000, GB_SAID_QUOTE=2, GB_DEPTH_CUE=\" Engage"
-        " with what they actually said: add your own thought, what you know about it, or an"
+        "var _gbRideEndT=0, GB_RIDE_LINGER_MS=120000, GB_SAID_QUOTE=2, GB_DEPTH_CUE=\" If they"
+        " asked you to do something, do it in this reply with the fields that do it and say in a"
+        " line what you are doing; never say you are moving unless this reply moves you. Otherwise"
+        " engage with what they actually said: add your own thought, what you know about it, or an"
         " opinion, in two to four sentences; end with a question only if you truly want to"
         " know.\","
         " GB_ASK_SEE=/\\b(?:see|seeing|look|looking|show|camera|view|again|repeat|describe|colou?r|notice|watch|spot|where are we|what(?:\x27s| is) (?:that|this|it))\\b/i;\n"
