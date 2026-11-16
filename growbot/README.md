@@ -16,6 +16,7 @@ Here all of it runs on the box: this directory holds the app, the server that se
 | `site/` | The web root it serves (built from upstream + patches; committed, so the box needs no build). |
 | `site/csp.json` | Hashes of the inline scripts the patched app still carries, read once at start for the CSP. |
 | `firmware/` | What PWA flashing writes to a robot: the pinned MicroPython UF2, the patched robot firmware, and `SHA256SUMS` over both (built). |
+| `sim/` | The Dave simulator: the real page against GrowBot_Training's MuJoCo sim body, no robot or phone ([sim/README.md](sim/README.md)). |
 
 ## Upstream and patches
 
@@ -713,5 +714,6 @@ blip never stops a walking robot.
 The backend suite loads `server/serve.py` by path (`backend/tests/unit/test_growbot_server.py`:
 static, CSP, cookie gate, `/open`, persona sessions, each shim route against fake api/tts/stt
 servers, the relay, its rider check and WebSocket framing) and runs the Caddy site in a real Caddy
-(`backend/tests/unit/test_growbot_caddy.py`, `test_lan_proxy.py`). CI's backend path filter
+(`backend/tests/unit/test_growbot_caddy.py`, `test_lan_proxy.py`). The Dave simulator's pure halves are
+loaded the same way (`backend/tests/unit/test_growbot_sim.py`). CI's backend path filter
 includes `growbot/**`.

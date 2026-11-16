@@ -1,0 +1,67 @@
+# The Dave simulator
+
+> **Status:** Living · **Last verified:** 2026-11-16
+
+Runs Dave's whole loop with no robot and no phone: the real creature page
+(`growbot/site/v3/next.html`) in headless Chromium, its legs and phone sensors played by
+GrowBot_Training's MuJoCo sim body (`growbot_train/simbody.py`), and its model either the
+box's real creature lane or a script. A scenario says something to Dave, shoves him, or
+moves a person around the room, then checks what actually happened to the body.
+
+It exists to catch, before Jeff does, the faults that only show on the whole creature:
+Dave saying he's walking while the legs don't carry him, a walk on crossed leg pins, face
+tracking lost once he moves, a fall he doesn't notice.
+
+## What is real and what is played
+
+| Part | In a run |
+| --- | --- |
+| The page, its prompts, face tracker, walk runner, reflexes | Real, served from this checkout |
+| Dave's soul and prefs | Read once from the box (live), never written back |
+| The model | The box's creature lane via the owner debug API (live), or a script |
+| The legs | `growbot/firmware/act_engine.py` behind a chip model (`dave_sim/chip.py`) driving the sim body's servos through its wiring |
+| Camera | The sim body's front camera (360x480, 75° tall), with a face on a person who can move |
+| Motion sensors | The sim body's IMU, in `devicemotion` / `deviceorientation` form |
+| Everything else on the box | `dave_sim/box.py`, in memory |
+
+The page is served as written except for one patch: the face detector runs on MediaPipe's
+CPU path, because headless Chromium's software GL takes ~250 ms a frame and the tracker
+drops frames that old. `box.SIM_PATCHES` fails the run if the patch stops matching.
+
+Live runs share the creature lane with the real robot: the box answers 409 while the real
+Dave has spoken in the last two minutes, and a run waits for quiet rather than taking his
+slot.
+
+## Running it
+
+From `growbot/sim/`, with GrowBot_Training checked out beside JBrain2 (or
+`$GROWBOT_TRAINING` pointing at it):
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements.txt \
+  && .venv/bin/pip install -e ../../../GrowBot_Training \
+  && .venv/bin/playwright install chromium
+sudo apt-get install -y libosmesa6        # headless MuJoCo rendering
+export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa
+.venv/bin/python -m dave_sim all --scripted               # plumbing only
+JBRAIN_DEBUG_TOKEN_FILE=path/to/token .venv/bin/python -m dave_sim come_here --live
+```
+
+Each scenario writes a folder under `sim-runs/` (ignored by git): `report.html` reads top
+to bottom (the checks, then what was said, what the legs got, and where the robot
+actually was), `run.mp4` shows an onlooker's view beside the camera's, and
+`model_calls.json` / `requests.json` hold every model exchange. The requests carry Dave's
+soul, so a run folder stays on the machine that made it.
+
+## Scenarios
+
+`python -m dave_sim --help` lists them; each one's docstring in `dave_sim/scenarios.py`
+names the fault it is there to catch. A new scenario is an `async def name(sim)` under
+`@scenario(start=..., person=..., wiring=..., query=...)` using `sim.say`, `sim.push`,
+`sim.person`, `sim.wait`, `sim.until` and `sim.check`.
+
+## Tests
+
+The pure halves (the fake box, the chip model, the model plumbing) are tested by the
+backend suite, which loads them by path: `backend/tests/unit/test_growbot_sim.py`. The sim
+body has its own tests in GrowBot_Training. Nothing in CI runs the browser.

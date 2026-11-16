@@ -419,4 +419,14 @@ fi
 # tested by supervisor's pytest with the system `awk`. Mentioned per rule #8; see
 # docs/runbooks/HOME_DNS.md.
 
+# --- Dave simulator (opt-in, NOT bootstrapped here) ---
+# growbot/sim/ runs the real creature page (headless Chromium) against GrowBot_Training's
+# MuJoCo sim body, so Dave can be tested end to end without the robot or a phone. It needs
+# a sibling GrowBot_Training checkout (installed editable), Playwright for Python with a
+# Chromium, imageio[ffmpeg] for the run video, and libosmesa6 for headless MuJoCo
+# rendering; growbot/sim/requirements.txt pins the Python side and growbot/sim/README.md
+# gives the commands. A live run also needs an owner debug token. None of it is installed
+# by default because nothing in CI runs a browser against it: the backend suite tests its
+# pure halves by path (backend/tests/unit/test_growbot_sim.py). Mentioned per rule #8.
+
 log "done"

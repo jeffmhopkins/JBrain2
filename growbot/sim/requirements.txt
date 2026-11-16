@@ -1,0 +1,5 @@
+# The Dave simulator's own venv (growbot/sim/README.md). GrowBot_Training is installed
+# editable beside it for the sim body: pip install -e ../../../GrowBot_Training
+playwright==1.63.0
+imageio[ffmpeg]==2.38.1
+numpy>=2
