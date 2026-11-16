@@ -5227,7 +5227,9 @@ def test_a_follow_tells_the_next_turn_it_is_following_and_for_how_long() -> None
     assert '\\\\"me\\\\": your trained walk' in prompts
 
 
-def _follow_me(gen_after_fetch: int, active: bool, twice: bool = False) -> dict[str, object]:
+def _follow_me(
+    gen_after_fetch: int, active: bool, twice: bool = False, during: str = ""
+) -> dict[str, object]:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -5235,12 +5237,13 @@ def _follow_me(gen_after_fetch: int, active: bool, twice: bool = False) -> dict[
     start = box.index("  var followAskT = -Infinity;")
     fn = box[start : box.index("\n  };\n", start) + 5]
     script = (
-        "var window={}, _motionGen=1, ran=[], logs=[], code='c1';"
+        "var window={}, _motionGen=1, ran=[], logs=[], code='c1', _wireRunner, _fallSince;"
         f"window.gbFollow={{active:function(){{return {str(active).lower()};}}}};"
         "function skillSet(s){ return s; } function logEv(e,d){ logs.push(d.why); }"
         "function run(){ ran.push([].slice.call(arguments,0,3)); }"
         "function fetch(u){ return Promise.resolve({ok:true,json:function(){"
-        f"_motionGen={gen_after_fetch}; return {{skills:{{look:'L',forward:'F'}}}};}}}}); }}"
+        f"_motionGen={gen_after_fetch}; {during}"
+        " return {skills:{look:'L',forward:'F'}};}}); }"
         + fn
         + ("window.gbFollowMe(15);" if twice else "")
         + "window.gbFollowMe(15).then(function(ok){"
@@ -5255,15 +5258,26 @@ def test_follow_me_starts_the_trained_follower_and_a_stop_wins() -> None:
     """Review: a reply in flight when the person said "stop stop" must not start a follow, and
     asking again while following must not restart it (a restart drops the face it holds)."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert '_hreqAtIssue&&!dreaming&&o.follow==="me"&&_mgen===_motionGen&&!document.hidden' in page
-    assert "{ delete o.walk; delete o.body; delete o.gesture; window.gbFollowMe(15); }" in page
-    assert 'follow:\\"me\\" alone, with no walk' in page
+    assert '_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen' in page
+    assert (
+        "{ delete o.walk; delete o.body; delete o.gesture; o._gbFollowed=true; "
+        "window.gbFollowMe(15); }" in page
+    )
+    assert 'follow:\\"me\\" with your words and no walk' in page
+    assert 'if(_vo.follow==="me") _sm.push("follow");' in page
     started = _follow_me(1, active=False)
     assert started["ok"] is True
     assert started["ran"] == [["look", 15, {"look": "L", "forward": "F"}]]
     stopped = _follow_me(2, active=False)
     assert stopped == {"ok": False, "ran": [], "logs": ["stopped before it began"]}
     assert _follow_me(1, active=True) == {"ok": True, "ran": [], "logs": []}
+    for during, why in (
+        ("window._gbFollowStopT=Date.now();", "stopped before it began"),  # "stop stop"
+        ("_wireRunner={active:true};", "getting up"),
+        ("_fallSince=5;", "not on my feet"),
+    ):
+        got = _follow_me(1, active=False, during=during)
+        assert got == {"ok": False, "ran": [], "logs": [why]}
     assert _follow_me(1, active=False, twice=True)["ran"] == [
         ["look", 15, {"look": "L", "forward": "F"}]
     ]
@@ -5296,7 +5310,7 @@ def test_history_drops_quiet_turns_and_marks_moves_it_only_claimed() -> None:
     h = page.index("function gbHist(now){")
     hist = page[h : h + 1500]
     assert 'if(String(tr[i].a||"")==="(stayed quiet)"&&!tr[i].w&&!tr[i].d) continue;' in hist
-    assert 'if(o.follow==="me"){ w.follow="me"; n++; }' in page
+    assert 'if(o.follow==="me"&&o._gbFollowed){ w.follow="me"; n++; }' in page
 
 
 def test_an_ask_to_move_is_answered_by_moving() -> None:

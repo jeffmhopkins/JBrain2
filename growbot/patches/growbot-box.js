@@ -1343,10 +1343,15 @@
         var set = skillSet(j && j.skills);
         if (!set || !set.look) throw new Error("no trained look walk to follow with");
         if (typeof _motionGen === "number" && _motionGen !== gen) throw new Error("stopped before it began");
+        if ((window._gbFollowStopT || 0) >= followAskT) throw new Error("stopped before it began");
+        // A get-up owns the legs until it ends, and a robot lying down can't walk after anyone.
+        if (typeof _wireRunner !== "undefined" && _wireRunner && _wireRunner.active) throw new Error("getting up");
+        if (typeof _fallSince === "number" && _fallSince > 0) throw new Error("not on my feet");
         run("look", Math.max(1, Math.min(15, Number(secs) || 15)), set, "", "", true);
         return true;
       })
       .catch(function (e) {
+        followAskT = -Infinity;
         try { logEv("follow_me_refused", { why: String((e && e.message) || e).slice(0, 120) }); } catch (_) {}
         return false;
       });
@@ -2545,6 +2550,8 @@
     var now = Date.now(), twice = STOP2_RE.test(t);
     if (!twice && STOP1_RE.test(t)) { twice = now - lone <= PAIR_MS; lone = twice ? -Infinity : now; }
     if (!twice) return false;
+    // A follow still loading (gbFollowMe) isn't moving yet, but this stop is for it too.
+    window._gbFollowStopT = now;
     var dry = !!(window.gbFollow && window.gbFollow.active());
     if (window.gbFollow) window.gbFollow.stop("estop");
     var M = typeof _motion !== "undefined" ? _motion : null;

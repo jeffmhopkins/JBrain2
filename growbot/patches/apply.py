@@ -2486,7 +2486,7 @@ var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false
 function gbTraceMove(o){ if(!o||typeof o!=="object") return undefined; var w={}, n=0, k;
   if(o.walk&&typeof o.walk==="object"&&!Array.isArray(o.walk)){ w.walk={}; for(k in {gait:1,dir:1,secs:1}) if(typeof o.walk[k]==="string"||typeof o.walk[k]==="number") w.walk[k]=typeof o.walk[k]==="string"?o.walk[k].slice(0,24):o.walk[k]; n++; }
   if(typeof o.gesture==="string"&&o.gesture){ w.gesture=o.gesture.slice(0,40); n++; }
-  if(o.follow==="me"){ w.follow="me"; n++; }
+  if(o.follow==="me"&&o._gbFollowed){ w.follow="me"; n++; }
   if(o.body&&typeof o.body==="object"&&typeof o.body.recover==="string"&&!w.body){ w.body={recover:o.body.recover.slice(0,16)}; n++; }
   if(o.body&&typeof o.body==="object"&&Array.isArray(o.body.steps)&&o.body.steps.length){ w.body={steps:o.body.steps.slice(0,6).map(function(x){ x=x||{}; function f(v){ return typeof v==="number"&&isFinite(v)?v:undefined; } return {l:f(x.l),r:f(x.r),ms:f(x.ms)}; })}; n++; }
   return n?w:undefined; }
@@ -4028,9 +4028,9 @@ PATCHES += [
         "v3/next.html",
         'gbEyeTo(o.eye==="back"?"environment":"user","self");',
         'gbEyeTo(o.eye==="back"?"environment":"user","self");'
-        ' if(_hreqAtIssue&&!dreaming&&o.follow==="me"&&_mgen===_motionGen&&!document.hidden'
-        '&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body; delete o.gesture;'
-        " window.gbFollowMe(15); }",
+        ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen'
+        '&&!document.hidden&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body;'
+        " delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15); }",
         1,
     ),
     (
@@ -4065,15 +4065,16 @@ MOVE_ASK_RULE = (
     'goal:\\"reach <their name>\\" and keep walking each beat. One walk covers only a little '
     "ground: you have arrived only when their face looks much bigger than when you set off, or "
     "they tell you, so until then do not say you are there or set found. Never say you are coming, walking, standing or getting up unless the same reply "
-    'carries walk or body for it. If you cannot do it, say so plainly. \\"Follow me\\" is '
-    'follow:\\"me\\" alone, with no walk, body or gesture beside it.\\n'
+    'carries walk, body or follow for it. If you cannot do it, say so plainly. \\"Follow me\\" '
+    'is follow:\\"me\\" with your words and no walk, body or gesture beside it.\\n'
 )
 # A fall wakes a turn (Dave simulator, 2026-11-16): rolled screen-down by a shove, Dave said
 # nothing for a minute. The page's fall judge fires only the soul's own fall reflexes, and a
 # soul with none (any fresh one) has no reaction at all, so nothing asks the model. Now the
 # first time the judge reads him down with a robot attached, a turn tells him, once per fall
 # (re-armed when he is upright again on his own) and at most one per 20 s; while another turn
-# is in flight the judge's next read tries again (think() drops a call then). Lying down on
+# is in flight the judge's next read tries again (think() drops a call then), unless a fall
+# reflex of the soul's own latched the fall, which then speaks for it. Lying down on
 # purpose (asleep, or asked down) is no fall: the soul's own fall reflexes hold for the same.
 _GB_FALL_THINK_JS = (
     "var _gbFallT=0, _gbFallDone=false;function _gbFallThink(){ "
@@ -4101,6 +4102,16 @@ _GB_FACE_LINE_JS = (
     '" away: you have reached them when it reads under about 60 cm, or they say so.\"; '
     '}catch(e){ return ""; } }\n'
 )
+# A follow with no words is still an action (the say_missing rescue keeps a wordless walk or
+# gesture the same way), or the reply is dropped and nothing follows.
+PATCHES += [
+    (
+        "v3/next.html",
+        '      if(_sm.length){ _vo.say=""; o=_vo;',
+        '      if(_vo.follow==="me") _sm.push("follow");\n      if(_sm.length){ _vo.say=""; o=_vo;',
+        1,
+    ),
+]
 # Following, said every turn (owner, 2026-11-16: "when he's following me, next turn he
 # should know he's in follow me, and how long we've been following"): the follower's own
 # read (growbot-box.js gbFollow.status): how long, and where it makes the person out to be.
