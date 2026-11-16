@@ -3849,6 +3849,7 @@ OWN_SCRIPTS = (
     "growbot-status.js",
     "growbot-eyes.js",
     "growbot-talklog.js",
+    "growbot-camtest.js",
 )
 
 
@@ -3893,6 +3894,9 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     shutil.copyfile(HERE / "growbot-drive.js", site / "growbot-drive.js")
     shutil.copyfile(HERE / "growbot-follow.js", site / "growbot-follow.js")
     shutil.copyfile(HERE / "growbot-bodytest.js", site / "growbot-bodytest.js")
+    # The standalone camera test (the wake screen's "camera test"): its page and its script.
+    shutil.copyfile(HERE / "camtest.html", site / "camtest.html")
+    shutil.copyfile(HERE / "growbot-camtest.js", site / "growbot-camtest.js")
     # The installed app (Android): served without a session, since Chrome fetches the
     # manifest and its icons with no cookie.
     (site / "icons").mkdir(exist_ok=True)

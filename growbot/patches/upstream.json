@@ -51,6 +51,36 @@
       "sha256": "b4578f35940bf5a1a655214a1cce5cab13eba73c1297cd78e1a04c2380b0152f"
     },
     {
+      "path": "vendor/mediapipe/tasks-vision-0.10.35/vision_bundle.mjs",
+      "license": "Apache-2.0 (MediaPipe tasks-vision 0.10.35)",
+      "url": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs",
+      "sha256": "55d7ab624fbb70dcc5adc4ae6d7ea9cfcb569139d3dbfbf2b1deafcb966bc0fe"
+    },
+    {
+      "path": "vendor/mediapipe/tasks-vision-0.10.35/wasm/vision_wasm_internal.js",
+      "license": "Apache-2.0 (MediaPipe tasks-vision 0.10.35)",
+      "url": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm/vision_wasm_internal.js",
+      "sha256": "e7fd9858e8e8f221d9b96eddc11f8e077f263e0b7bbd79d3cbe882b134274f8c"
+    },
+    {
+      "path": "vendor/mediapipe/tasks-vision-0.10.35/wasm/vision_wasm_internal.wasm",
+      "license": "Apache-2.0 (MediaPipe tasks-vision 0.10.35)",
+      "url": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm/vision_wasm_internal.wasm",
+      "sha256": "6a5c64584c2ab61c763b6e204afbdbc7ce1caf7f5216187322bca8df94f646bc"
+    },
+    {
+      "path": "vendor/mediapipe/models/blaze_face_full_range-float16-1.tflite",
+      "license": "Apache-2.0 (MediaPipe BlazeFace full-range)",
+      "url": "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/1/blaze_face_full_range.tflite",
+      "sha256": "3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b"
+    },
+    {
+      "path": "vendor/mediapipe/models/pose_landmarker_lite-float16-1.task",
+      "license": "Apache-2.0 (MediaPipe Pose Landmarker lite)",
+      "url": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      "sha256": "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a"
+    },
+    {
       "path": "ml/LICENSE.onnxruntime-web",
       "license": "MIT (ONNX Runtime licence text)",
       "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.19.2/LICENSE",
