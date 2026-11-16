@@ -2072,6 +2072,28 @@
     heard: function (txt) { return !!(bt && bt.phase !== "result" && bt.heard(txt)); },
   };
 
+  // The wake screen's camera test (owner, 2026-11-15: "set up the phone and you do face
+  // tracking on me and make sure that it can keep up"): a plain link, since the test is its own
+  // page (camtest.html) that holds the camera itself, with no legs and no creature running.
+  function ctWakeButton() {
+    if (typeof document.getElementById !== "function") return false;
+    var wake = document.getElementById("wgWake");
+    if (!wake || !wake.parentNode || document.getElementById("wgCamTest")) return false;
+    var id = btRobot(), b = document.createElement("button");
+    b.id = "wgCamTest";
+    b.type = "button";
+    b.textContent = "camera test";
+    b.style.cssText = "font:13px/1 GBEntryMono,'Departure Mono',ui-monospace,monospace;border:2px solid #7F93AB;border-radius:0;background:transparent;color:#E8F6FF;padding:12px 16px;min-height:44px;min-width:240px;margin-top:14px;cursor:pointer";
+    b.onclick = function () { location.href = "/camtest.html" + (id ? "?id=" + encodeURIComponent(id) : ""); };
+    var after = document.getElementById("wgBodyTest") || wake;
+    after.parentNode.insertBefore(b, after.nextSibling);
+    return true;
+  }
+  try {
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ctWakeButton);
+    else ctWakeButton();
+  } catch (e) {}
+
   // The robot this phone wears, as the cal poll reads it: the page's ?id=, else the last one.
   function btRobot() {
     var id = "";

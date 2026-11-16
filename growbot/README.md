@@ -21,7 +21,7 @@ Here all of it runs on the box: this directory holds the app, the server that se
 
 `site/` and `firmware/` are built, never hand-edited. `patches/upstream.json` pins the
 britcruise9/GrowBot commit and every third-party asset (ONNX Runtime Web, Silero VAD,
-MediaPipe tasks-vision and its BlazeFace model) by canonical URL and SHA-256; each matched the
+MediaPipe tasks-vision, its BlazeFace models and the pose model) by canonical URL and SHA-256; each matched the
 copy growbot.dev serves byte for byte when pinned. MediaPipe's non-SIMD wasm fallback is left
 out (every phone browser the creature supports has SIMD), and so is meSpeak.
 `patches/apply.py` copies upstream's `app/` (minus the Custom-agent tab, the superseded face
@@ -344,6 +344,21 @@ While it runs `heardText` gives it every line after `gbEStop`, so no model turn 
 On a robot's phone the wake screen has its own **body test** button, for an owner with one
 phone: it reads the skill set from `/api/box/skills` (only for a robot the phone drives).
 `docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md` "Body test" has the checks.
+
+**The camera test.** `camtest.html` (`growbot-camtest.js`), opened from the wake screen's
+**camera test** button, checks whether the phone can see a face far and fast enough to follow:
+the phone is propped up on its own, the page talks the person through stations (0.7 to 3 m,
+sitting, out past each edge, fast, walking back, the light off) and runs four detectors on the
+same frames: `now` (the creature's BlazeFace short-range, frame at 320 on its long side),
+`full` (BlazeFace full-range on the whole frame), `zoom` (full-range on a crop about five
+face-widths around the last face, searching the whole frame and overlapping tiles in turn
+when it has none) and `body` (Pose Landmarker lite). Full-range and pose need tasks-vision
+0.10.35, vendored beside the creature's 0.10.18 (which can't run full-range); `.task` is served
+as octet-stream for the pose model. Every frame (box, score, face count, eye spacing and roll,
+the zoom crop, nose and shoulders, brightness, detect ms) goes to the body test log as run
+`bt-cam-…`, with per-station numbers and a verdict per detector in its summary (`kind:
+"camera"`). On synthetic portrait frames (720x960, 60° wide) `now` lost the face past 0.7 m,
+`full` held to 2 m and `zoom` held 98% out to 4 m.
 
 ## Leg calibration (the Body tab's Legs pane)
 

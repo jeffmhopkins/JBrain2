@@ -3998,6 +3998,8 @@ export interface GrowbotBodyTestVerdict {
 
 /** A body test run's latest state, as the creature's phone last posted it. */
 export interface GrowbotBodyTestSummary {
+  /** "camera": a run of the camera test (growbot-camtest.js), kept in the same log. */
+  kind?: "camera";
   phase?: "setup" | "run" | "result";
   step?: string;
   step_n?: number;

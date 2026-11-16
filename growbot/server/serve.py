@@ -296,6 +296,7 @@ CONTENT_TYPES = {
     ".wasm": "application/wasm",
     ".onnx": "application/octet-stream",
     ".tflite": "application/octet-stream",
+    ".task": "application/octet-stream",
     ".bin": "application/octet-stream",
     ".svg": "image/svg+xml",
     ".png": "image/png",

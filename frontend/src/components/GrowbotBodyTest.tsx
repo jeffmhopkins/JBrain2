@@ -26,6 +26,8 @@ function message(e: unknown): string {
 }
 
 function live(r: GrowbotBodyTestRun, now: number): boolean {
+  // A camera test shares the log but not the body: it is no body test under way to mirror or stop.
+  if (r.summary.kind === "camera") return false;
   return r.status === "running" && now - Date.parse(r.updated_at) < STALE_MS;
 }
 
@@ -45,7 +47,9 @@ function pastLine(r: GrowbotBodyTestRun): string {
   const fail = v.filter((x) => x.v === "fail").length;
   const said =
     r.status === "running"
-      ? "lost contact"
+      ? r.summary.kind === "camera"
+        ? "running"
+        : "lost contact"
       : r.status === "done"
         ? fail || warn
           ? [fail && `${fail} failed`, warn && `${warn} to look at`].filter(Boolean).join(", ")
@@ -53,7 +57,8 @@ function pastLine(r: GrowbotBodyTestRun): string {
         : r.status === "stopped"
           ? `stopped at ${r.summary.label ?? "setup"}`
           : "hit an error";
-  return `${ago(r.started_at)} · ${clock(r.summary.secs)} · ${said}`;
+  const what = r.summary.kind === "camera" ? "camera test · " : "";
+  return `${what}${ago(r.started_at)} · ${clock(r.summary.secs)} · ${said}`;
 }
 
 export function GrowbotBodyTest({
