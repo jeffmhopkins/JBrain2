@@ -324,3 +324,6 @@ def test_live_model_says_what_the_box_said_when_its_model_is_down() -> None:
     ask = simllm.live_model(FakeApi([down]), busy_wait_s=0)  # type: ignore[arg-type]
     with pytest.raises(RuntimeError, match="more memory"):
         _run(ask({"max_tokens": 512}))
+    flat = simllm.live_model(FakeApi([{"error": "model_unavailable"}]), busy_wait_s=0)  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="model_unavailable"):
+        _run(flat({"max_tokens": 512}))

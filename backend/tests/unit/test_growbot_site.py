@@ -5113,31 +5113,43 @@ def _page_fn(page: str, start: str, end: str) -> str:
     return page[page.index(start) : page.index(end)]
 
 
-def test_a_fall_wakes_one_turn_and_retries_while_another_is_in_flight() -> None:
+def test_a_fall_wakes_one_turn_per_fall_with_a_robot_attached() -> None:
     """Rolled over by a shove, a creature with no fall reflex of its own said nothing at all
-    (Dave simulator): the fall judge now asks the model, once per 20 s, and only counts a call
-    that actually started a turn."""
+    (Dave simulator): the fall judge now asks the model once per fall. The judge re-reads a
+    fall every 500 ms while no reflex latches it, so without a latch of its own a phone lying
+    flat (no robot) or a robot left lying would get a turn every 20 s, forever (review)."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert 'if(trig==="fall")_gbFallThink();' in page
-    fn = _page_fn(page, "var _gbFallT=0;", "function fireReflex(trig){")
+    assert 'if(trig==="upright")_gbFallDone=false;\n  if(trig==="fall")_gbFallThink();' in page
+    fn = _page_fn(page, "var _gbFallT=0, _gbFallDone=false;", "function fireReflex(trig){")
     script = (
-        "var _wheels=false,paused=false,dreaming=false,inFlight=true,calls=[],logs=[];"
-        "function think(e,k){ calls.push(k); if(!inFlight) inFlight=true; }"
+        "var _wheels=false,paused=false,dreaming=false,inFlight=false,calls=[],logs=[];"
+        "var window={}, _now=1000000; Date.now=function(){return _now;};"
+        "function think(e,k){ calls.push(k); inFlight=true; }"
         "function logEv(e){ logs.push(e); }"
         + fn
-        + "_gbFallThink(); var busy=calls.length;"  # a turn in flight: not spent
+        + "_gbFallThink(); var noBody=calls.length;"  # a phone with no robot
+        "window._body={ready:true}; inFlight=true; _gbFallThink(); var busy=calls.length;"
         "inFlight=false; _gbFallThink(); var first=calls.length;"
-        "inFlight=false; _gbFallThink(); var again=calls.length;"  # within 20 s: no second
-        "console.log(JSON.stringify({busy:busy,first:first,again:again,logs:logs,"
-        "kind:calls[0]}));"
+        "inFlight=false; _now+=60000; _gbFallThink(); var still=calls.length;"  # still lying
+        "_gbFallDone=false; _gbFallThink(); var again=calls.length;"  # up and down again
+        "console.log(JSON.stringify({noBody:noBody,busy:busy,first:first,still:still,"
+        "again:again,logs:logs.length,kind:calls[0]}));"
     )
     got = json.loads(
         subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
     )
-    assert got == {"busy": 0, "first": 1, "again": 1, "logs": ["fall_think"], "kind": "event"}
+    assert got == {
+        "noBody": 0,
+        "busy": 0,
+        "first": 1,
+        "still": 1,
+        "again": 2,
+        "logs": 2,
+        "kind": "event",
+    }
 
 
 def test_the_move_context_tells_how_far_the_face_is() -> None:
@@ -5166,37 +5178,74 @@ def test_the_move_context_tells_how_far_the_face_is() -> None:
 
 def test_a_follow_tells_the_next_turn_it_is_following_and_for_how_long() -> None:
     """Jeff: "When he's following me, next turn he should know he's in follow me, and how
-    long we've been following." The line counts the whole follow across renewed stretches."""
+    long we've been following." The follower's own read, every turn it runs."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     fn = _page_fn(page, "function _gbFollowLine(){", "function _moveContext(){")
     script = (
-        "var window={}; var _now=100000; Date.now=function(){return _now;};"
+        "var window={};"
         + fn
-        + "var none=_gbFollowLine(); var st={secs:6,state:'follow',dist:1.84,heading:-25};"
-        "window.gbFollow={status:function(){return st;}}; window._gbFollowSpan={since:60000};"
+        + "var none=_gbFollowLine(); var st={secs:40,state:'follow',dist:1.84,heading:-25};"
+        "window.gbFollow={status:function(){return st;}};"
         "var on=_gbFollowLine(); st={secs:3,state:'follow',dist:2,heading:4};"
         "var ahead=_gbFollowLine(); st={secs:2,state:'lost',dist:null,heading:null};"
-        "var lost=_gbFollowLine();"
-        "console.log(JSON.stringify([none,on,ahead,lost]));"
+        "var lost=_gbFollowLine(); st={secs:1,state:'searching',dist:null,heading:null};"
+        "var looking=_gbFollowLine();"
+        "console.log(JSON.stringify([none,on,ahead,lost,looking]));"
     )
-    none, on, ahead, lost = json.loads(
+    none, on, ahead, lost, looking = json.loads(
         subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
     )
     assert none == ""
-    assert "You are FOLLOWING your person (follow me): 40 s so far, this stretch 6" in on
+    assert "You are FOLLOWING your person (follow me): 40 s so far, of up to 120 s" in on
     assert "about 1.8 m away, 25 degrees to your right" in on
-    assert 'send follow:"me" again' in on
+    assert "It keeps going by itself" in on
     assert "straight ahead" in ahead
     assert "lost sight of them" in lost
-    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
-    assert "window._gbFollowSpan = was && now - was.last < 35000" in box
-    assert "status: function () {" in box
+    assert "not found their face yet" in looking and "lost" not in looking
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert '"follow":"OMIT unless your person asks you to follow them' in prompts
-    assert 'o.follow==="me"&&typeof window.gbFollowMe==="function"' in page
+    assert '\\\\"me\\\\": your trained walk' in prompts
+
+
+def _follow_me(gen_after_fetch: int, active: bool) -> dict[str, object]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    start = box.index("  window.gbFollowMe = function (secs) {")
+    fn = box[start : box.index("\n  };\n", start) + 5]
+    script = (
+        "var window={}, _motionGen=1, ran=[], logs=[], code='c1';"
+        f"window.gbFollow={{active:function(){{return {str(active).lower()};}}}};"
+        "function skillSet(s){ return s; } function logEv(e,d){ logs.push(d.why); }"
+        "function run(){ ran.push([].slice.call(arguments,0,3)); }"
+        "function fetch(u){ return Promise.resolve({ok:true,json:function(){"
+        f"_motionGen={gen_after_fetch}; return {{skills:{{look:'L',forward:'F'}}}};}}}}); }}"
+        + fn
+        + "window.gbFollowMe(15).then(function(ok){"
+        "console.log(JSON.stringify({ok:ok,ran:ran,logs:logs})); });"
+    )
+    return json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+
+
+def test_follow_me_starts_the_trained_follower_and_a_stop_wins() -> None:
+    """Review: a reply in flight when the person said "stop stop" must not start a follow, and
+    asking again while following must not restart it (a restart drops the face it holds)."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert 'o.follow==="me"&&_mgen===_motionGen&&!document.hidden' in page
+    started = _follow_me(1, active=False)
+    assert started["ok"] is True
+    assert started["ran"] == [["look", 15, {"look": "L", "forward": "F"}]]
+    stopped = _follow_me(2, active=False)
+    assert stopped == {"ok": False, "ran": [], "logs": ["stopped before it began"]}
+    assert _follow_me(1, active=True) == {"ok": True, "ran": [], "logs": []}
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert 'state: F.track.p ? String(c.state || "") : "searching"' in box
 
 
 def test_history_drops_quiet_turns_and_marks_moves_it_only_claimed() -> None:
@@ -5211,15 +5260,20 @@ def test_history_drops_quiet_turns_and_marks_moves_it_only_claimed() -> None:
     script = (
         fn + 'console.log(JSON.stringify([gbClaimNote({say:"I\'m walking to you now"}),'
         "gbClaimNote({say:\"I'm walking to you\",walk:{dir:'fwd'}}),"
-        "gbClaimNote({say:'Hello there'}), gbClaimNote({say:'On my way!'})]));"
+        "gbClaimNote({say:'Hello there'}), gbClaimNote({say:'On my way!'}),"
+        "gbClaimNote({say:'I\u2019m coming'}), gbClaimNote({say:'I am coming',follow:'me'})]));"
     )
-    claimed, walked, chat, way = json.loads(
+    claimed, walked, chat, way, curly, following = json.loads(
         subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
     )
     assert "did: nothing" in claimed and "did: nothing" in way
-    assert walked == "" and chat == ""
+    assert "did: nothing" in curly
+    assert walked == "" and chat == "" and following == ""
     assert '(did: "+t.d+")":gbClaimNote(r)); }' in page
-    assert 'if(String(tr[i].a||"")==="(stayed quiet)") continue;' in page
+    h = page.index("function gbHist(now){")
+    hist = page[h : h + 1500]
+    assert 'if(String(tr[i].a||"")==="(stayed quiet)"&&!tr[i].w&&!tr[i].d) continue;' in hist
+    assert 'if(o.follow==="me"){ w.follow="me"; n++; }' in page
 
 
 def test_an_ask_to_move_is_answered_by_moving() -> None:

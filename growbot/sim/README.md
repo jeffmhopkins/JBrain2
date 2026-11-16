@@ -69,6 +69,10 @@ names the fault it is there to catch. A new scenario is an `async def name(sim)`
 `@scenario(start=..., person=..., wiring=..., query=...)` using `sim.say`, `sim.push`,
 `sim.person`, `sim.wait`, `sim.until` and `sim.check`.
 
+`walk_compare` needs no model: it walks the creature's stock forward and then the box skill
+set's forward, 8 s each, and reports how much closer each carried him. In the sim both crawl
+(about 1 to 1.5 cm/s on 2026-11-16).
+
 ## Tests
 
 The pure halves (the fake box, the chip model, the model plumbing) are tested by the

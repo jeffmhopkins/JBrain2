@@ -91,7 +91,9 @@ def live_model(api: BoxApi, busy_wait_s: float = 5.0, tries: int = 4):
                 raise
             if "choices" not in got:
                 # The box answered but its model didn't (not loaded, no room): say what it said.
-                raise RuntimeError(str((got.get("error") or {}).get("message") or got)[:300])
+                err = got.get("error")
+                why = err.get("message") if isinstance(err, dict) else err
+                raise RuntimeError(str(why or got)[:300])
             return got["choices"][0]["message"]["content"]
         raise RuntimeError("the box's creature lane stayed busy")
 
