@@ -203,7 +203,7 @@ export function GrowbotBodyTest({
           </button>
           <p className="gb-hint dim">
             Walks you through a scripted trial on the robot's phone and saves every reading to the
-            box.
+            box. With only the one phone, tap Body test on the creature's wake screen instead.
           </p>
         </>
       )}

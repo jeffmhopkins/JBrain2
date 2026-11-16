@@ -16,7 +16,8 @@ file into the library (`jbrain.growbot.policies`), so it outlives the job.
   `policies/index.toml` lists, read by the launcher. A refresh syncs them into the library;
   the index decides, so a kept walk deleted here comes back until the index drops it.
 - `internal_router` — the sidecar (`growbot.token`): one policy's JSON, which the creature
-  page loads when the Body tab drives it.
+  page loads when the Body tab drives it, and the skill set the creature's wake screen starts
+  a body test with.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from jbrain.api import jlaunch
 from jbrain.api.deps import DebugDep, OwnerDep
 from jbrain.api.internal_auth import require_growbot
 from jbrain.db.session import SessionContext
-from jbrain.growbot.policies import PolicyError, PolicyRepo, PolicyRow, parse
+from jbrain.growbot.policies import PolicyError, PolicyRepo, PolicyRow, parse, skill_set
 from jbrain.jlaunch import JlaunchError
 
 router = APIRouter(prefix="/growbot", tags=["growbot"])
@@ -406,3 +407,9 @@ async def internal_policy(request: Request, pid: PolicyId) -> dict[str, Any]:
     if got is None:
         raise HTTPException(status_code=404, detail="no such policy")
     return got
+
+
+@internal_router.get("/skills")
+async def internal_skills(request: Request) -> dict[str, dict[str, str] | None]:
+    """The library's skill set (look, forward, back), or null when it covers fewer than two."""
+    return {"skills": skill_set(await _repo(request).list(_SYSTEM_OWNER))}

@@ -178,6 +178,9 @@ POLICY_PATH = "/api/box/policy"
 BODYTEST_PATH = "/api/box/bodytest"
 MAX_BODYTEST_BODY = 512 * 1024
 BODYTEST_RUN_RE = re.compile(r"bt-[a-z0-9]{1,16}-[a-z0-9]{1,16}")
+# The library's skill set, which the creature's wake screen starts a body test with (one phone:
+# the PWA can't send it while that phone sits on the body).
+SKILLS_PATH = "/api/box/skills"
 # The id the Body tab's Drive gives the walk it starts, so only that walk takes its steering.
 DRIVE_RE = re.compile(r"[0-9a-f]{8,32}")
 POLICY_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -1848,6 +1851,8 @@ class GrowBot:
             return await self.policy_route(req)
         if req.path == BODYTEST_PATH:
             return await self.bodytest_route(req)
+        if req.path == SKILLS_PATH:
+            return await self.skills_route(req)
         if req.path in (MEMORY_PATH, MEMORY_PATH + "/view", MEMORY_PATH + "/forget"):
             return await self.memory_route(req)
         if req.path == PREFS_PATH:
@@ -1976,6 +1981,37 @@ class GrowBot:
         if not (isinstance(got, dict) and got.get("ok") is True):
             return json_response(409, {"ok": False})
         return json_response(200, {"ok": True})
+
+    async def skills_route(self, req: Request) -> Response:
+        """`GET ?robot=<code>`: the library's skill set (`{"skills": {look, forward, back} |
+        null}`), for a phone that drives that robot, so its wake screen can start a body test
+        with no PWA in hand."""
+        if req.method != "GET":
+            return json_response(405, {"error": "method not allowed"})
+        headers = [("Cache-Control", "no-store")]
+        code = req.arg("robot")
+        if not CODE_RE.fullmatch(code):
+            return json_response(400, {"error": "robot"}, headers)
+        claims = self._claims(req)
+        if claims is None or not await self._drives(claims, code):
+            return json_response(403, {"error": "not this phone's robot"}, headers)
+        url = f"{self.config.api_url}/internal/growbot/skills"
+        up = await self._call(
+            http_call, url, None, self._auth(), "GET", 10.0, pool=self._cal_pool
+        )
+        got = _parse(up.body) if up.status == 200 else None
+        if not isinstance(got, dict) or "skills" not in got:
+            return json_response(502, {"error": "the box didn't answer"}, headers)
+        skills = got["skills"]
+        if skills is not None and not (
+            isinstance(skills, dict)
+            and all(
+                k in SKILL_MODES and POLICY_ID_RE.fullmatch(str(v))
+                for k, v in skills.items()
+            )
+        ):
+            return json_response(502, {"error": "the box didn't answer"}, headers)
+        return json_response(200, {"skills": skills}, headers)
 
     async def policy_route(self, req: Request) -> Response:
         """`GET ?id=<uuid>`: a library policy's JSON for the creature's runner, read from the

@@ -66,6 +66,7 @@ class _Fake(BaseHTTPRequestHandler):
     seen: list[dict[str, Any]] = []
     models: list[dict[str, Any]] = []
     bodytest_reply: tuple[int, bytes] = (200, b'{"ok":true,"number":1}')
+    skills_reply: tuple[int, bytes] = (200, b'{"skills":null}')
     stt_reply: bytes = b""
     root_cert: bytes = b"-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
     tts_status = 200
@@ -134,6 +135,8 @@ class _Fake(BaseHTTPRequestHandler):
                 return
             code = path.split("/")[4]
             self._reply(200, json.dumps({"cal": _Fake.cals.get(code)}).encode())
+        elif path == "/internal/growbot/skills":
+            self._reply(*(_Fake.skills_reply if authed_get(self) else (401, b"{}")))
         elif path.startswith("/internal/growbot/policies/"):
             got = _Fake.policies.get(path.rsplit("/", 1)[1])
             if not authed_get(self) or got is None:
@@ -4014,6 +4017,39 @@ def test_a_body_test_chunk_is_only_for_the_robot_this_phone_drives(run: _Running
     assert _bodytest(run, {**chunk, "robot": "gb-worn"}, cookie)[0] == 200
     sent = [r for r in _Fake.seen if r["path"] == "/internal/growbot/bodytests"]
     assert json.loads(sent[-1]["body"])["persona"] == _PERSONA
+
+
+def _skills(run: _Running, query: str, cookie: bool = True) -> tuple[int, Any]:
+    resp = run.request("GET", "/api/box/skills" + query, cookie=cookie)
+    data = resp.read()
+    return resp.status, (json.loads(data) if data and resp.status != 401 else None)
+
+
+def test_the_wake_screen_reads_the_skill_set_for_its_robot(run: _Running) -> None:
+    assert _skills(run, "?robot=gb-abc123") == (200, {"skills": None})
+    reads = [r for r in _Fake.seen if r["path"] == "/internal/growbot/skills"]
+    assert reads[0]["auth"] == f"Bearer {_TOKEN}"
+    good = {"look": _PID, "forward": _PID}
+    _Fake.skills_reply = (200, json.dumps({"skills": good}).encode())
+    try:
+        assert _skills(run, "?robot=gb-abc123") == (200, {"skills": good})
+        # Only ever ids of the three skills, whatever the api says.
+        _Fake.skills_reply = (200, json.dumps({"skills": {"dance": _PID}}).encode())
+        assert _skills(run, "?robot=gb-abc123")[0] == 502
+        _Fake.skills_reply = (503, b"{}")
+        assert _skills(run, "?robot=gb-abc123")[0] == 502
+    finally:
+        _Fake.skills_reply = (200, b'{"skills":null}')
+
+
+def test_a_skill_set_read_wants_its_robot_a_get_and_a_session(run: _Running) -> None:
+    assert _skills(run, "?robot=../x")[0] == 400
+    assert _skills(run, "")[0] == 400
+    assert _skills(run, "?robot=gb-other")[0] == 403
+    assert _skills(run, "?robot=gb-abc123", cookie=False)[0] in (401, 403)
+    resp = run.request("POST", "/api/box/skills?robot=gb-abc123", b"{}")
+    resp.read()
+    assert resp.status == 405
 
 
 @pytest.mark.parametrize(

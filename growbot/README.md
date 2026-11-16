@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-15
+> **Status:** Living · **Last verified:** 2026-11-16
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -338,6 +338,8 @@ the phone, power the body, say "stand up" and then "1 meter", runs eight checks 
 log in order to `/api/box/bodytest` (`MAX_BODYTEST_BODY`, only for a robot the phone drives),
 which the sidecar hands to the api's `/internal/growbot/bodytests` and answers only once kept.
 While it runs `heardText` gives it every line after `gbEStop`, so no model turn moves the legs.
+On a robot's phone the wake screen has its own **body test** button, for an owner with one
+phone: it reads the skill set from `/api/box/skills` (only for a robot the phone drives).
 `docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md` "Body test" has the checks.
 
 ## Leg calibration (the Body tab's Legs pane)

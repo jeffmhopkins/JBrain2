@@ -4741,3 +4741,59 @@ def test_grown_up_talk_does_not_placate() -> None:
     block = prompts[prompts.index("var GB_TALK_GROWN_BLOCK=") :].split("\n", 1)[0]
     assert "do not flatter them or just agree" in block
     assert "say so plainly and why" in block
+
+
+def test_the_wake_screen_starts_a_body_test_on_a_robots_phone() -> None:
+    """One phone (owner, 2026-11-16): the robot's own wake screen starts the test. The wake tap
+    runs inside the gesture, before the skill set is read; a page with no robot shows nothing."""
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    code = box[box.index("  // The robot this phone wears") : box.index("  function load(pid) {")]
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    program = (
+        "var said=[], errs=[], made=[], started=[], fetched=[];"
+        "function el(id){ return {id:id, style:{},"
+        " parentNode:{insertBefore:function(n){ made.push(n); }},"
+        " click:function(){ said.push('wake:'+fetched.length); }}; }"
+        "var wake=el('wgWake');"
+        "var document={readyState:'complete', createElement:function(){ return el(''); },"
+        " getElementById:function(i){ return i==='wgWake'?wake:"
+        "(made.find(function(m){return m.id===i;})||null); }};"
+        "var location={search:process.argv[1]};"
+        "var window={localStorage:{getItem:function(){ return ''; }},"
+        " gbBodyTest:{start:function(s){ started.push(s); return 'body_test'; }}};"
+        "function setErr(m){ errs.push(m); }"
+        "var reply=JSON.parse(process.argv[2]);"
+        "function fetch(u){ fetched.push(u);"
+        " return Promise.resolve({ok:reply[0]===200, status:reply[0],"
+        " json:function(){ return Promise.resolve(reply[1]); }}); }\n"
+        + code
+        + "\nif(made[0]){ made[0].onclick(); }"
+        "setTimeout(function(){ console.log(JSON.stringify({n:made.length,"
+        " label:made[0]&&made[0].textContent,"
+        " said:said, fetched:fetched, started:started, errs:errs})); }, 20);"
+    )
+
+    def run(search: str, reply: list[Any]) -> dict[str, Any]:
+        out = subprocess.run(
+            [node, "-e", program, search, json.dumps(reply)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(out.stdout)
+
+    skills = {"look": "a", "forward": "b"}
+    got = run("?id=gb-abc123", [200, {"skills": skills}])
+    assert got["n"] == 1 and got["label"] == "body test"
+    # Woken in the tap itself, before the skill set was asked for.
+    assert got["said"] == ["wake:0"]
+    assert got["fetched"] == ["/api/box/skills?robot=gb-abc123"]
+    assert got["started"] == [skills] and got["errs"] == []
+    none = run("?id=gb-abc123", [200, {"skills": None}])
+    assert none["started"] == [] and "no trained walks" in none["errs"][0]
+    other = run("?id=gb-abc123", [403, {}])
+    assert "isn't wearing gb-abc123" in other["errs"][0]
+    # Not a robot's phone: no button at all.
+    assert run("", [200, {"skills": skills}])["n"] == 0
