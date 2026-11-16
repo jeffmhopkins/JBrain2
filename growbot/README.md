@@ -642,7 +642,9 @@ refresh rate on a canvas up to 2.5x the CSS size. *Travel mode* (Settings, under
 comes through (the button, a kept wish, a heal, a lens retry, the body test), and a tap on the
 eye button says why instead. The eye's kept wish survives, so turning travel off reopens it. The
 face draws at 12 fps on a 1x canvas, and the motion reflexes (shake, fall, upright) are muted,
-since a car's bumps and a window mount read as both. The ear, the voice and the brain are
+along with the shake wake's think, since a car's bumps and a window mount read as both; a
+body test asked for under travel says why its camera stays shut. Turning travel on also bumps
+the camera's generation, so an acquire still in flight is discarded when it lands. The ear, the voice and the brain are
 untouched. It is per phone (`gb_travel_mode`), deliberately not in the persona's synced prefs, so
 the robot's own phone never inherits it.
 

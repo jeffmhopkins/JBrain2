@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=fa50f3fc3c6d"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=e590a378bb52"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=6e1434732a72"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=e590a378bb52"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -840,7 +840,7 @@ function setTravel(on){
   TRAVEL=!!on;
   try{localStorage.setItem("gb_travel_mode",TRAVEL?"1":"0");}catch(e){try{toast("Changed for now; this phone could not save the setting.");}catch(_e){}}
   try{resize();}catch(e){}
-  if(TRAVEL){ try{ if(camOn) stopCam(); }catch(e){} }
+  if(TRAVEL){ try{ _camGen++; if(camOn) stopCam(); }catch(e){} }
   else{ try{ if(eyeWantOn&&!camOn&&!captureBlocked()) ensureCam(); }catch(e){} }
   try{logEv("travel_mode",{on:TRAVEL});}catch(e){}
 }/*}TRAVEL*/
@@ -9889,7 +9889,7 @@ function attachMotionListeners(){ if(_motionAttached) return; _motionAttached=tr
       if(lin>7.5){ var _mwn=Date.now();
         if(_mwn<selfMoveUntil){ _jolts=[]; _sjN++; if(_mwn-_sjT>5000){ logEv("self_jolt",{n:_sjN}); _sjN=0; _sjT=_mwn; } }   // [0706] its OWN gesture/walk/slump — never a "you shook me" startle (was the self-echo loop: own fall → "you shake hard" → startle-gesture → next fall). 0810: coalesced to one journal event per 5s with the jolt count — the spam was evicting real events from the 240-cap log
         else { _jolts.push(_mwn); _jolts=_jolts.filter(function(t){ return _mwn-t<700; });
-        if(_jolts.length>=2 && !_rideOn && _mwn-_gbRideEndT>GB_RIDE_LINGER_MS && _mwn-_shakeThinkT>8000 && _calmBefore(_mwn)){ var _jn=_jolts.length; _jolts=[]; _shakeThinkT=_mwn;   // 0706 field: 9×3 ignored medium shakes — 7.5×2 + calm-before still can't fire while walking. !_rideOn (K3 0804): a pothole pair on a smooth road is the ROAD, not a person "deliberately" shaking it — no wrong-attribution think mid-ride
+        if(!TRAVEL && _jolts.length>=2 && !_rideOn && _mwn-_gbRideEndT>GB_RIDE_LINGER_MS && _mwn-_shakeThinkT>8000 && _calmBefore(_mwn)){ var _jn=_jolts.length; _jolts=[]; _shakeThinkT=_mwn;   // 0706 field: 9×3 ignored medium shakes — 7.5×2 + calm-before still can't fire while walking. !_rideOn (K3 0804): a pothole pair on a smooth road is the ROAD, not a person "deliberately" shaking it — no wrong-attribution think mid-ride
           logEv("shake_wake",{hits:_jn}); /*FLEX-TICKS{*/if(inFlight&&typeof _flexYield==="function") _flexYield("tick","shake");/*}FLEX-TICKS*/think("your body was just shaken deliberately — "+_jn+" strong jolts in under a second (your sensor readout has the numbers)","event"); } } }
     }/*WORLD-EYE{*/try{if(typeof _worldEye!=="undefined"&&_worldEye)_worldGravityAt=ag&&[ag.x,ag.y,ag.z].every(function(v){return typeof v==="number"&&isFinite(v);})?Date.now():0;}catch(_wo){}/*}WORLD-EYE*/ }); }
 var _gbRideEndT=0, GB_RIDE_LINGER_MS=120000, GB_SAID_QUOTE=2, GB_DEPTH_CUE=" If they asked you to do something, do it in this reply with the fields that do it and say in a line what you are doing; never say you are moving unless this reply moves you. Otherwise engage with what they actually said: add your own thought, what you know about it, or an opinion, in two to four sentences; end with a question only if you truly want to know.", GB_ASK_SEE=/\b(?:see|seeing|look|looking|show|camera|view|again|repeat|describe|colou?r|notice|watch|spot|where are we|what(?:'s| is) (?:that|this|it))\b/i;

@@ -4969,7 +4969,7 @@ def _travel_page(script: str, kept: str = "") -> dict[str, Any]:
             "store[k]:null;},setItem:function(k,v){store[k]=String(v);}};"
             "function toast(m){calls.push(['toast',m]);}"
             "function resize(){calls.push(['resize',TRAVEL]);}"
-            "var camOn=false,eyeWantOn=false,hidden=false;"
+            "var camOn=false,eyeWantOn=false,hidden=false,_camGen=0;"
             "function stopCam(){calls.push(['stopCam']);camOn=false;}"
             "function ensureCam(h){calls.push(['ensureCam',!!h]);"
             "if(!travelBlocksEye(h))camOn=true;}"
@@ -5005,6 +5005,15 @@ def test_travel_mode_shuts_the_eye_and_keeps_the_wish() -> None:
     assert got["calls"] == [["resize", False], ["ensureCam", False], ["travel_mode", False]]
 
 
+def test_travel_mode_discards_a_camera_still_opening() -> None:
+    """Review: an acquire in flight has camOn false, so only the generation bump makes its
+    late resolve stale and stops its tracks instead of opening the eye under travel."""
+    got = _travel_page(
+        "var g=_camGen;setTravel(true);console.log(JSON.stringify({bumped:_camGen>g}));"
+    )
+    assert got == {"bumped": True}
+
+
 def test_travel_mode_is_kept_across_a_reload_and_stays_off_by_default() -> None:
     script = "console.log(JSON.stringify({T:TRAVEL,eye:travelBlocksEye(true)}));"
     assert _travel_page(script) == {"T": False, "eye": False}
@@ -5019,7 +5028,9 @@ def test_travel_mode_is_wired_into_the_page() -> None:
     assert page.count("DPR=Math.min(window.devicePixelRatio||1,TRAVEL?TRAVEL_DPR:2.5);") == 1
     assert page.count("if(TRAVEL)setTimeout(function(){requestAnimationFrame(drawFace);}") == 1
     assert page.count("h+=lowPowerRow();h+=travelRow();") == 1
+    assert page.count("if(!TRAVEL && _jolts.length>=2 && !_rideOn && ") == 1
     assert page.count('if(c("#gbkTravel")){ window.setTravel(!window.TRAVEL);') == 1
     # Per phone: the robot's own phone must never inherit it through the persona's prefs.
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "gb_travel_mode" not in shim
+    assert "if (window.TRAVEL && typeof toast" in shim

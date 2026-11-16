@@ -3837,7 +3837,7 @@ function setTravel(on){
   TRAVEL=!!on;
   try{localStorage.setItem("gb_travel_mode",TRAVEL?"1":"0");}catch(e){try{toast("Changed for now; this phone could not save the setting.");}catch(_e){}}
   try{resize();}catch(e){}
-  if(TRAVEL){ try{ if(camOn) stopCam(); }catch(e){} }
+  if(TRAVEL){ try{ _camGen++; if(camOn) stopCam(); }catch(e){} }
   else{ try{ if(eyeWantOn&&!camOn&&!captureBlocked()) ensureCam(); }catch(e){} }
   try{logEv("travel_mode",{on:TRAVEL});}catch(e){}
 }/*}TRAVEL*/"""
@@ -3881,6 +3881,13 @@ TRAVEL_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "function fireReflex(trig){\n",
         "function fireReflex(trig){\n  if(travelMutes(trig))return;\n",
+        1,
+    ),
+    # The shake wake thinks without a reflex, so it is muted on its own.
+    (
+        "v3/next.html",
+        "if(_jolts.length>=2 && !_rideOn && ",
+        "if(!TRAVEL && _jolts.length>=2 && !_rideOn && ",
         1,
     ),
     ("v3/next.html", "h+=lowPowerRow();", "h+=lowPowerRow();h+=travelRow();", 1),
