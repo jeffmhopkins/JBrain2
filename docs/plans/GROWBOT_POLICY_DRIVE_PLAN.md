@@ -79,10 +79,12 @@ The real-robot trials after P5 are GrowBot_Training's phase 6.
 ## Follower, voice and walk-for-X (P3–P5)
 
 - **Tracker (built, P3):** `growbot/patches/growbot-follow.js`. It takes the face boxes the
-  creature already detects (`growbot-eyes.js`: upstream's BlazeFace, in the leg tracker or in
-  its own worker, whichever is running), so there is no second detector on the phone. Each box
+  creature already detects (`growbot-eyes.js`: the zoom tracker, BlazeFace full-range on a crop
+  that follows the face, in the leg tracker or in its own worker, whichever is running; see
+  `growbot/README.md` "The face finder"), so there is no second detector on the phone. Each box
   gives a bearing (from the frame's 60° assumed width of view), a vertical offset and a distance
-  (from the face's width, 15 cm, corrected once by **Measure 1 m**). The frames aren't mirrored,
+  (from the box's width, which read 0.095 of the frame at 1 m on the robot's phone, corrected
+  once by **Measure 1 m**; a correction measured on another detector's boxes is dropped). The frames aren't mirrored,
   so a face right of centre is on the robot's left; **Flip frames** reverses that per phone. The
   person is kept in the walk's own frame (the gyro's heading at the reading plus the bearing), so
   the robot turning doesn't look like the person moving. Each frame takes the face nearest where

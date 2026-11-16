@@ -907,19 +907,65 @@ HISTORY_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += HISTORY_PATCHES
 
-# Each face box keeps the detector's score, so a body test's log can tell a weak detection at
-# the size floor (about 0.6 m on a 240x320 frame) from a clear one (owner, 2026-11-16: "add
-# verbose logging ... the face reading telemetry").
-FACE_SCORE_PATCHES: list[tuple[str, str, str, int]] = [
+# The creature's face detector is the zoom tracker (growbot-face-zoom.js): BlazeFace full-range
+# on a crop that follows the face, with a whole-frame look after any miss. On the robot's phone
+# (camera test run #223, owner, 2026-11-16: "you're good to build then to update the face
+# tracking mechanism") the short-range model on a 320 px frame saw a face 0% of the time at 1 m
+# and locked onto something else past 2 m; the zoom tracker held 100% to 3 m, in the dark too.
+# The crop needs pixels to zoom into, so the camera now asks for 960x720 (a face 3 m away is
+# then about 26 px across, where at 320x240 it was 9); low power keeps its 240x180, and the
+# frame the brain sees (captureEye) is still drawn at 320. The worker keeps each box's score, so
+# a body test's log can tell a weak detection from a clear one (owner, 2026-11-16: "add verbose
+# logging ... the face reading telemetry"). The main-thread fallback (no worker) runs the same
+# full-range model on the whole frame.
+FACE_ZOOM_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/agent-face-track.mjs",
+        "export var DETECTOR_BASE = '/vendor/mediapipe/tasks-vision-0.10.18';",
+        "export var DETECTOR_BASE = '/vendor/mediapipe/tasks-vision-0.10.35';",
+        1,
+    ),
+    (
+        "v3/agent-face-track.mjs",
+        "export var DETECTOR_MODEL = '/vendor/mediapipe/models/blaze_face_short_range-float16-1.tflite';",
+        "export var DETECTOR_MODEL = '/vendor/mediapipe/models/blaze_face_full_range-float16-1.tflite';",
+        1,
+    ),
     (
         "v3/face-detector-worker.js",
-        "return {x:b.originX/w,y:b.originY/h,width:b.width/w,height:b.height/h};});",
-        "return {x:b.originX/w,y:b.originY/h,width:b.width/w,height:b.height/h,"
-        "score:v.categories&&v.categories[0]?v.categories[0].score:null};});",
+        "var model=null,loading=false,",
+        "var zoomer=null,zoom=null,crop=null,model=null,loading=false,",
+        1,
+    ),
+    (
+        "v3/face-detector-worker.js",
+        "}).then(function(){return import('/v3/agent-face-track.mjs');})",
+        "}).then(function(){return import('/growbot-face-zoom.js');})"
+        ".then(function(z){zoomer=z;zoom=new z.Zoom();crop=new OffscreenCanvas(z.CROP_PX,z.CROP_PX);})"
+        ".then(function(){return import('/v3/agent-face-track.mjs');})",
+        1,
+    ),
+    (
+        "v3/face-detector-worker.js",
+        "var detectStart=performance.now(),result=model.detectForVideo(bitmap,d.at),"
+        "ms=performance.now()-detectStart;\n"
+        "    lastDetect=d.at;\n"
+        "    var boxes=(result&&result.detections||[]).map(function(v){var b=v.boundingBox;\n"
+        "      return {x:b.originX/w,y:b.originY/h,width:b.width/w,height:b.height/h};});",
+        "var detectStart=performance.now(),found=zoomer.find(model,bitmap,w,h,d.at,zoom,crop),"
+        "ms=performance.now()-detectStart;\n"
+        "    lastDetect=d.at;\n"
+        "    var boxes=found.boxes;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var v={width:{ideal:LOW_POWER?240:320},height:{ideal:LOW_POWER?180:240}};",
+        "var v={width:{ideal:LOW_POWER?240:960},height:{ideal:LOW_POWER?180:720}};",
         1,
     ),
 ]
-PATCHES += FACE_SCORE_PATCHES
+PATCHES += FACE_ZOOM_PATCHES
 
 # Round 2 of the speed work, from the owner's first live session on the new layout (2026-11-12).
 # The automatic reply-language line rewrites itself once the person's speech settles a language
@@ -4107,6 +4153,8 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     # The standalone camera test (the wake screen's "camera test"): its page and its script.
     shutil.copyfile(HERE / "camtest.html", site / "camtest.html")
     shutil.copyfile(HERE / "growbot-camtest.js", site / "growbot-camtest.js")
+    # The zoom tracker: imported by the detector's worker and by the camera test.
+    shutil.copyfile(HERE / "growbot-face-zoom.js", site / "growbot-face-zoom.js")
     # The installed app (Android): served without a session, since Chrome fetches the
     # manifest and its icons with no cookie.
     (site / "icons").mkdir(exist_ok=True)

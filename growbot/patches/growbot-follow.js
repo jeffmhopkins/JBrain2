@@ -19,10 +19,18 @@ var D = Math.PI / 180;
 export var CAMERA = {
   hfov: 60,          // degrees across the frame's width; calibrate per phone
   vfov: 45,
-  faceW: 0.15,       // metres: a face box's width, so its width in the frame gives distance
+  // Metres: what a face box's width stands for, so its width in the frame gives distance. Not a
+  // real face's width: the zoom tracker's box was 0.095 of the frame's width at 1 m on the
+  // robot's phone (camera test run #223), and this reads that as 1 m before any calibration.
+  faceW: 0.11,
   k: 1,              // the person's own correction, from one "stand here at 1 m"
   flipX: false,
 };
+
+// Which detector made the boxes a stored calibration was measured on. Each draws its box a
+// little differently around the same face, so a 1 m correction taken on one is wrong on the
+// next: one stored under another name is dropped (growbot-box.js).
+export var DETECTOR = "zoom-full-range";
 
 export var FOLLOW = {
   near: 0.4, far: 3,       // the set distance's limits (owner, 2026-11-15)
