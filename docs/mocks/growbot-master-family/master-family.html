@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot master walks — built from</title>
+<link rel="stylesheet" href="../growbot-policies/shared.css">
+<style>
+.sheet .sb { display: flex; flex-direction: column; gap: 10px; }
+.sec { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; margin: 8px 0 0; }
+.list { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; }
+.it { border-top: 1px solid var(--border); }
+.it:first-child { border-top: 0; }
+.ih { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 8px 12px; background: none; border: 0; text-align: left; }
+.ih.tap { cursor: pointer; }
+.ih .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ih .t1 { font-size: var(--fs-body); font-weight: 500; }
+.ih .t2 { font-size: var(--fs-micro); color: var(--text-2); }
+.ih .car { color: var(--text-3); font-size: 16px; transition: transform .15s; flex: none; width: 18px; text-align: center; }
+.it.open > .ih .car { transform: rotate(90deg); }
+.mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex: none; font-size: 14px; background: var(--surface); color: var(--text-2); border: 1px solid var(--border); }
+.mark.m { background: var(--violet-tint); color: var(--violet-text); border-color: transparent; }
+.tag.use { background: var(--green-tint); color: var(--ok-text); }
+.tag.off { background: var(--surface); color: var(--text-3); }
+.tag.vi { background: var(--violet-tint); color: var(--violet-text); }
+.kids { padding: 0 12px 12px 52px; display: none; flex-direction: column; gap: 8px; }
+.it.open .kids { display: flex; }
+.kh { font-size: var(--fs-micro); color: var(--text-3); }
+.kid { display: flex; gap: 10px; align-items: flex-start; position: relative; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); }
+.kid::before { content: ""; position: absolute; left: -22px; top: -9px; bottom: 50%; width: 14px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-bottom-left-radius: 8px; }
+.role { font-size: var(--fs-micro); font-weight: 500; min-width: 54px; padding-top: 1px; color: var(--steel-text); }
+.kid .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.kid .n { font-size: var(--fs-secondary); }
+.kid .g { font-size: var(--fs-micro); color: var(--text-2); }
+.kid .cmp { font-size: var(--fs-micro); color: var(--text-3); }
+.kid .cmp b { font-weight: 500; color: var(--ok-text); }
+.kid .cmp b.w { color: var(--warn-text); }
+.diff { color: var(--violet-text); font-weight: 500; }
+.acts2 { display: flex; gap: 8px; flex-wrap: wrap; }
+.acts2 .btn { min-height: 36px; font-size: var(--fs-micro); }
+.note { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.45; }
+.why { width: min(760px, 100%); color: #9a9da3; font-size: 12px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="mockbar">
+  <div class="mb-title">Mock: the Body tab's Trained walks sheet, where a master opens to show the walks it learned from. Tap a master to open or close it.</div>
+  <div class="mb-row">
+    <button data-v="a" class="on">A · open in place</button>
+    <button data-v="b">B · teachers fold under the master</button>
+    <button data-t="dark" class="on">Dark</button>
+    <button data-t="light">Light</button>
+  </div>
+</div>
+<div class="phone">
+  <div class="topbar"><button class="back">‹ Body</button><span class="ttl">Fish</span></div>
+  <div class="scrim">
+    <div class="sheet">
+      <div class="handle"></div>
+      <div class="sh"><span class="t">Trained walks</span><button class="x" aria-label="Close">✕</button></div>
+      <div class="sb" id="sb"></div>
+    </div>
+  </div>
+</div>
+<div class="why" id="why"></div>
+<script>
+// The kept walks as on the box today (policies/index.toml) and which a master learned from
+// (GrowBot_Training README, "the current master"). Numbers are from each master's eval.txt.
+const W = {
+  look9: { n: "Look v10", g: "Turn on the spot to face a target", use: true },
+  lf3: { n: "Lift and fall v5", g: "Walk tall, on the robot as built", use: true },
+  nw1: { n: "Nose walk v3", g: "Back away at a commanded speed", use: false },
+  nw2: { n: "Nose walk, smoothed v1", g: "Back away, less leg chatter", use: true },
+  lf2: { n: "Lift and fall, second slot v1", g: "Walk tall toward a heading", use: false },
+};
+const M = [
+  { id: "v3", n: "Master v3", g: "Turn, walk and back up, calmer backing", tag: ["Newest", "vi"], run: "8775c248",
+    kids: [["Turns", "look9", "aims 2.6-3.7° off, as Look v10 does", 1], ["Forward", "lf3", "5.5-5.8 cm/s, matches its teacher", 1],
+           ["Back", "nw2", "2.4 cm/s, 12° off: a third less leg chatter than v2", 0, "Changed from v2"]] },
+  { id: "v2", n: "Master v2", g: "Turn, walk and back up, all in one", tag: ["Driving", "use"], run: "aa884b2d",
+    kids: [["Turns", "look9", "aims within 0.6° of Look v10", 1], ["Forward", "lf3", "5.5-5.8 cm/s, matches its teacher", 1],
+           ["Back", "nw1", "2.8-2.9 cm/s, matches its teacher", 1]] },
+  { id: "v1", n: "Master v1", g: "The first box master", tag: ["Off", "off"], run: "5e827bc9",
+    kids: [["Turns", "look9", "within 3% of its teachers", 1], ["Forward", "lf2", "4.7-5.0 cm/s", 1], ["Back", "nw1", "1 fall in 208 switches", 0]] },
+];
+const S = { v: "a", open: { v2: true } };
+
+function kid(k) {
+  const w = W[k[1]];
+  return `<div class="kid"><span class="role">${k[0]}</span><span class="tx"><span class="n">${w.n}${k[4] ? ` · <span class="diff">${k[4]}</span>` : ""}</span>
+    <span class="g">${w.g}</span><span class="cmp">The master: <b class="${k[3] ? "" : "w"}">${k[2]}</b></span></span></div>`;
+}
+function master(m) {
+  const open = !!S.open[m.id];
+  return `<div class="it ${open ? "open" : ""}"><button class="ih tap" data-m="${m.id}" aria-expanded="${open}">
+    <span class="car">›</span><span class="mark m">◆</span>
+    <span class="tx"><span class="t1">${m.n}</span><span class="t2">${m.g} · built from ${m.kids.length} walks</span></span>
+    <span class="tag ${m.tag[1]}">${m.tag[0]}</span></button>
+    <div class="kids"><span class="kh">Learned from (run ${m.run}):</span>${m.kids.map(kid).join("")}
+      <div class="acts2"><button class="btn">Drive this master</button><button class="btn">See the run</button><button class="btn">Rename</button></div></div></div>`;
+}
+function plain(key, extra) {
+  const w = W[key];
+  return `<div class="it"><div class="ih"><span class="car"></span><span class="mark">${w.use ? "●" : "○"}</span><span class="tx"><span class="t1">${w.n}</span>
+    <span class="t2">${w.g}${extra ? ` · ${extra}` : ""}</span></span><span class="tag ${w.use ? "use" : "off"}">${w.use ? "On" : "Off"}</span></div></div>`;
+}
+function usedBy(key) {
+  return M.filter((m) => m.kids.some((k) => k[1] === key)).map((m) => m.n.replace("Master ", "")).join(", ");
+}
+function render() {
+  const sb = document.getElementById("sb");
+  if (S.v === "a") {
+    sb.innerHTML = `<div class="sec">Masters</div><div class="list">${M.map(master).join("")}</div>
+      <div class="sec">Single walks</div><div class="list">${Object.keys(W).map((k) => plain(k, `in master ${usedBy(k)}`)).join("")}</div>
+      <p class="note">Every walk stays in its own list too, so you can still drive a teacher on its own or switch it off.</p>`;
+  } else {
+    const inMaster = new Set(M.flatMap((m) => m.kids.map((k) => k[1])));
+    const rest = Object.keys(W).filter((k) => !inMaster.has(k));
+    sb.innerHTML = `<div class="sec">Masters and what they learned from</div><div class="list">${M.map(master).join("")}</div>
+      <div class="sec">Other walks</div>${rest.length ? `<div class="list">${rest.map((k) => plain(k)).join("")}</div>`
+        : `<p class="note">None. Every walk on the box is a teacher of a master, so it lives under that master above.</p>`}
+      <p class="note">A teacher shows only under the masters that use it. Open a master to drive or switch off one of its teachers on its own.</p>`;
+  }
+  document.getElementById("why").textContent = S.v === "a"
+    ? "A: masters get their own section; each opens in place to show the three walks it learned from, with the role each played and how the master compares with it. The single walks list is unchanged, with a note of which master uses each."
+    : "B: the sheet is organised by master. Walks that taught a master live only inside it, so the top level is just the masters plus any walk nobody learned from. Fewer rows, but a teacher is one tap deeper.";
+  document.querySelectorAll("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === S.v));
+}
+document.addEventListener("click", (e) => {
+  const m = e.target.closest("[data-m]");
+  if (m) { S.open[m.dataset.m] = !S.open[m.dataset.m]; render(); }
+  const v = e.target.closest("[data-v]");
+  if (v) { S.v = v.dataset.v; render(); }
+  const t = e.target.closest("[data-t]");
+  if (t) { document.documentElement.dataset.theme = t.dataset.t;
+    document.querySelectorAll("[data-t]").forEach((b) => b.classList.toggle("on", b === t)); }
+});
+render();
+</script>
+</body>
+</html>

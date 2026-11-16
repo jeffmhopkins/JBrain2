@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-11-16 — the GrowBot Body tab is redesigned as a remote plus rows (one walk row and sheet, Tap a move | Steer live in place of the second Drive, tricks on one sideways line, Follow me, Body test and Legs as sheets, the robot's key and Who wears in its sheet, developer tools folded away). Prior: the Jobs Runs list keeps spawn order (newest on top) instead of jumping on every update. Prior: the Ops vitals gain a CPU busy % tile, and the load average reads as threads, not a percent. Prior: leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
+> **Status:** Living · **Last verified:** 2026-11-16 — the Trained walks sheet folds the walks a master learned from under it. Prior: the GrowBot Body tab is redesigned as a remote plus rows (one walk row and sheet, Tap a move | Steer live in place of the second Drive, tricks on one sideways line, Follow me, Body test and Legs as sheets, the robot's key and Who wears in its sheet, developer tools folded away). Prior: the Jobs Runs list keeps spawn order (newest on top) instead of jumping on every update. Prior: the Ops vitals gain a CPU busy % tile, and the load average reads as threads, not a percent. Prior: leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3510,8 +3510,15 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   Legs sheet's. The walk runs on the rider phone's motion sensors, so every move is disabled
   until the robot is on (*Turn the robot on to move it.*) and a creature wearing it is open on
   screen (*Open a persona wearing it and keep the creature on screen. Its phone's motion
-  sensors run the walk.*). The **Trained walks** sheet lists *On the box* (each walk's name,
-  its kind, its size and day; *Rename* inline, *Delete* armed: *Sure?*), then *From finished
+  sensors run the walk.*). The **Trained walks** sheet lists the walks on the box (each walk's name,
+  its kind, its size and day; *Rename* inline, *Delete* armed: *Sure?*). Once a master is on the
+  box they are grouped by it (owner, 2026-11-16, `docs/mocks/growbot-master-family` B): *Masters
+  and what they learned from* shows each master with a *Learned from N walks* toggle, closed at
+  first, that opens its teachers on the box, each under its role (*Turns*, *Forward*, *Back*)
+  with its own controls; a walk that taught a master is listed only there (under each master
+  that shares it). *Other walks* holds the rest (empty: *None. Every walk on the box taught a
+  master, so it is under that master above.*). With no master the one list is *On the box*.
+  Then *From finished
   training jobs* (each finished GrowBot training run that left a walk, with *Add*, or an *On
   the box* tag once added; empty: *No finished GrowBot training yet. Start a GrowBot walk on
   the Jobs screen; when it finishes, its walk shows up here.*). An added walk is named for its

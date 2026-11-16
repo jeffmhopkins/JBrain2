@@ -32,6 +32,7 @@ from jbrain.growbot.policies import (
     parse,
     skill_set,
     summary,
+    teachers,
 )
 from jbrain.jlaunch import FakeJlaunchClient, JlaunchError
 from jbrain.storage import FsInternalSecrets
@@ -56,6 +57,11 @@ def policy(channels: list[str] | None = None, facing: str = "nose", **over: Any)
         },
         **over,
     }
+
+
+def _taught(policy: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    # What the SQL projection reads: policy #> '{training,master,teachers}'.
+    return teachers(((policy.get("training") or {}).get("master") or {}).get("teachers"))
 
 
 class FakePolicies:
@@ -87,6 +93,7 @@ class FakePolicies:
             bytes=size,
             created_at=datetime(2026, 11, 14, tzinfo=UTC),
             contract=summary(policy),
+            teachers=_taught(policy),
         )
         self.rows[row.id] = (row, policy)
         return row
@@ -150,7 +157,8 @@ class FakePolicies:
         if got is None:
             return False
         fields = {**got[0].__dict__, "bytes": size, "source_job": source_job}
-        self.rows[pid] = (PolicyRow(**{**fields, "contract": summary(policy)}), policy)
+        fields = {**fields, "contract": summary(policy), "teachers": _taught(policy)}
+        self.rows[pid] = (PolicyRow(**fields), policy)
         return True
 
     async def delete(self, ctx: SessionContext, pid: str) -> bool:
@@ -621,3 +629,50 @@ async def test_a_bad_index_on_the_launcher_is_a_422(tmp_path: Path) -> None:
     bad = client.post("/api/growbot/policies/refresh")
     assert bad.status_code == 422 and "isn't in the repo" in bad.json()["detail"]
     assert lib.rows == {}
+
+
+def test_a_masters_teachers_are_the_kept_walks_its_file_names() -> None:
+    declared = {
+        "back": "policies/nose-walk-1/policy_nose_walk.json",
+        "look": "policies/look-v9/policy_look.json",
+        "walk": "policies/lift-fall-3/policy_lift_fall.json",
+        "spin": "policies/spin-v1/policy_spin.json",
+        # A run's own scratch path, a bad slug and a non-string name no kept walk.
+        "hop": "runs/teacher/policy.json",
+        "jump": "policies/Bad_Slug/policy.json",
+        "skip": 3,
+    }
+    assert teachers(declared) == (
+        ("look", "look-v9"),
+        ("walk", "lift-fall-3"),
+        ("back", "nose-walk-1"),
+        ("spin", "spin-v1"),
+    )
+    assert teachers(None) == () and teachers(["policies/look-v9/p.json"]) == ()
+
+
+async def test_the_library_lists_a_masters_teachers_and_each_kept_slug(tmp_path: Path) -> None:
+    client, _, jl, _ = _app(tmp_path)
+    master = policy(
+        training={
+            "master": {
+                "teachers": {
+                    "look": "policies/look-v9/policy_look.json",
+                    "back": "policies/nose-walk-1/policy_nose_walk.json",
+                }
+            }
+        }
+    )
+    _keep(jl, "master-v2", "Master v2", json.dumps(master).encode(), "growbot_master")
+    _keep(jl, "look-v9", "Look v10", FINAL, "growbot_look")
+    jid = await _finished(jl, "growbot_heading_walk", {"policy_final.json": FINAL})
+    client.post("/api/growbot/policies", json={"job_id": jid, "name": "Mine"})
+    assert client.post("/api/growbot/policies/refresh").status_code == 200
+    rows = {r["name"]: r for r in client.get("/api/growbot/policies").json()}
+    assert rows["Master v2"]["kept"] == "master-v2"
+    assert rows["Master v2"]["teachers"] == [
+        {"role": "look", "slug": "look-v9"},
+        {"role": "back", "slug": "nose-walk-1"},
+    ]
+    assert rows["Look v10"]["kept"] == "look-v9" and rows["Look v10"]["teachers"] == []
+    assert rows["Mine"]["kept"] is None and rows["Mine"]["teachers"] == []

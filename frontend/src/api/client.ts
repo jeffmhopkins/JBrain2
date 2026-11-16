@@ -3973,6 +3973,10 @@ export interface GrowbotPolicy {
   motion?: GrowbotMotion;
   /** The one of its family (source_spec) the pad offers; with none, the newest enabled. */
   active?: boolean;
+  /** Its slug when kept in the training repo; null for one added from a job (absent: older box). */
+  kept?: string | null;
+  /** A master's teachers: which kept walk taught it each role (look, walk, back). */
+  teachers?: { role: string; slug: string }[];
 }
 
 /** Live steering for the trained walk a Drive started (`drive`, the id its move gave it):

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GrowbotPolicy } from "../api/client";
 import {
   GrowbotPoliciesSheet,
+  families,
   keptText,
   offered,
   offeredFor,
@@ -304,5 +305,91 @@ describe("walkKind", () => {
         skipped: ["C: not a policy"],
       }),
     ).toBe("Updated A. Removed B. Couldn't take C: not a policy (training repo at fffffff).");
+  });
+
+  it("folds the walks a master learned from under it, and lists the rest as other walks", async () => {
+    const look = policy({
+      id: "a1",
+      name: "Look v10",
+      kept: "look-v9",
+      source_spec: "growbot_look",
+    });
+    const back = policy({ id: "a2", name: "Nose walk v3", kept: "nose-walk-1" });
+    const lone = policy({ id: "a3", name: "Mine", kept: null });
+    const master = policy({
+      id: "m1",
+      name: "Master v2",
+      kept: "master-v2",
+      source_spec: "growbot_master",
+      teachers: [
+        { role: "look", slug: "look-v9" },
+        { role: "back", slug: "nose-walk-1" },
+        // Not on the box: left out rather than shown empty.
+        { role: "walk", slug: "lift-fall-3" },
+      ],
+    });
+    serve(() => json([]));
+    const all = [master, look, back, lone];
+    render(<GrowbotPoliciesSheet policies={all} onChange={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByText("Masters and what they learned from")).toBeInTheDocument();
+    expect(screen.getByText("Other walks")).toBeInTheDocument();
+    // Closed, a master shows only itself; the teachers are not listed anywhere yet.
+    expect(screen.getByText("Master v2")).toBeInTheDocument();
+    expect(screen.getByText("Mine")).toBeInTheDocument();
+    expect(screen.queryByText("Look v10")).toBeNull();
+    const toggle = screen.getByRole("button", { name: /Learned from 2 walks/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Look v10")).toBeInTheDocument();
+    expect(screen.getByText("Nose walk v3")).toBeInTheDocument();
+    expect(screen.getByText("Turns")).toBeInTheDocument();
+    expect(screen.getByText("Back")).toBeInTheDocument();
+    // Each teacher keeps its own controls.
+    expect(screen.getByRole("button", { name: "Rename Look v10" })).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.queryByText("Look v10")).toBeNull();
+    await waitFor(() => expect(screen.queryByText(/Looking at Jobs/)).toBeNull());
+  });
+
+  it("groups by master only when a master is on the box", () => {
+    const shared = policy({ id: "t", kept: "look-v9" });
+    const m = (id: string) =>
+      policy({
+        id,
+        kept: id,
+        teachers: [
+          { role: "look", slug: "look-v9" },
+          { role: "x", slug: id },
+        ],
+      });
+    const got = families([m("v2"), m("v3"), shared]);
+    // One teacher can sit under two masters; a master never lists itself; odd roles keep their name.
+    expect(got.masters.map((f) => f.kids.map((k) => `${k.role}:${k.p.id}`))).toEqual([
+      ["Turns:t"],
+      ["Turns:t"],
+    ]);
+    expect(got.rest).toEqual([]);
+    const p = policy({ id: "p", kept: "p" });
+    const plain = [p, policy({ id: "q" })];
+    expect(families(plain)).toEqual({ masters: [], rest: plain });
+    const odd = policy({ id: "o", teachers: [{ role: "spin", slug: "p" }] });
+    expect(families([odd, p]).masters[0]?.kids).toEqual([{ role: "spin", p }]);
+  });
+
+  it("titles a library with no master On the box", () => {
+    serve(() => json([]));
+    render(<GrowbotPoliciesSheet policies={[policy()]} onChange={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByText("On the box", { selector: ".gb-sec-h" })).toBeInTheDocument();
+    expect(screen.queryByText("Other walks")).toBeNull();
+  });
+
+  it("says so when every walk taught a master", () => {
+    serve(() => json([]));
+    const t = policy({ id: "t", kept: "look-v9" });
+    const m = policy({ id: "m", teachers: [{ role: "look", slug: "look-v9" }] });
+    render(<GrowbotPoliciesSheet policies={[m, t]} onChange={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByText(/Every walk on the box taught a master/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Learned from 1 walk$/ })).toBeInTheDocument();
   });
 });

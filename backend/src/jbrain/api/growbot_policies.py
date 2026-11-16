@@ -71,6 +71,13 @@ class ContractOut(BaseModel):
     modes: list[str] = []
 
 
+class TeacherOut(BaseModel):
+    # What it taught the master: look, walk or back.
+    role: str
+    # The kept walk's slug in the training repo; the sheet matches it to a row's `kept`.
+    slug: str
+
+
 class PolicyOut(BaseModel):
     id: str
     name: str
@@ -85,6 +92,10 @@ class PolicyOut(BaseModel):
     motion: Literal["walk", "turn", "trick"]
     # The one of its family (source_spec) the pad offers; with none, the newest enabled one.
     active: bool
+    # Its slug when it is a walk kept in the training repo (None for one added from a job).
+    kept: str | None = None
+    # A master's teachers, so the Trained walks sheet folds them under it; empty otherwise.
+    teachers: list[TeacherOut] = []
 
 
 class AddIn(BaseModel):
@@ -179,6 +190,8 @@ def _out(row: PolicyRow) -> PolicyOut:
         enabled=row.enabled,
         motion=cast(Any, row.motion),
         active=row.active,
+        kept=m.group(1) if (m := _KEPT_RE.match(row.source_job)) else None,
+        teachers=[TeacherOut(role=r, slug=s) for r, s in row.teachers],
     )
 
 

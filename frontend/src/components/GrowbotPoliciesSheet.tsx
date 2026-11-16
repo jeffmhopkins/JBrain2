@@ -108,6 +108,37 @@ export function skillSet(all: GrowbotPolicy[]): GrowbotSkillSet | null {
   return Object.keys(set).length >= 2 ? set : null;
 }
 
+// What each teacher taught its master, in the pad's words.
+const ROLES: Record<string, string> = { look: "Turns", walk: "Forward", back: "Back" };
+
+export interface Family {
+  master: GrowbotPolicy;
+  kids: { role: string; p: GrowbotPolicy }[];
+}
+
+/** The sheet's grouping (owner, 2026-11-16, mock B in docs/mocks/growbot-master-family): each
+ *  master with the walks it learned from that are on the box, and the walks no master names.
+ *  A walk that taught a master shows only under it (under each, when several share it). */
+export function families(all: GrowbotPolicy[]): { masters: Family[]; rest: GrowbotPolicy[] } {
+  const bySlug = new Map<string, GrowbotPolicy>();
+  for (const p of all) if (p.kept) bySlug.set(p.kept, p);
+  const taught = new Set<string>();
+  const masters: Family[] = [];
+  for (const master of all) {
+    if (!master.teachers?.length) continue;
+    const kids: Family["kids"] = [];
+    for (const t of master.teachers) {
+      const p = bySlug.get(t.slug);
+      if (!p || p.id === master.id) continue;
+      kids.push({ role: ROLES[t.role] ?? t.role, p });
+      taught.add(p.id);
+    }
+    masters.push({ master, kids });
+  }
+  const isMaster = new Set(masters.map((f) => f.master.id));
+  return { masters, rest: all.filter((p) => !isMaster.has(p.id) && !taught.has(p.id)) };
+}
+
 /** What kind of walk the pad drives, in words: which end leads and what it takes. */
 export function walkKind(p: GrowbotPolicy): string {
   const lead = p.contract.facing === "camera" ? "camera end first" : "nose first";
@@ -275,6 +306,8 @@ export function GrowbotPoliciesSheet({ policies, onChange, onClose }: Props) {
   const [sources, setSources] = useState<GrowbotPolicySource[] | null>(null);
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null);
+  // Which masters are open to show their teachers; all start closed.
+  const [open, setOpen] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let gone = false;
@@ -327,55 +360,103 @@ export function GrowbotPoliciesSheet({ policies, onChange, onClose }: Props) {
     }
   }
 
+  const { masters, rest } = families(policies);
+
+  function row(p: GrowbotPolicy) {
+    return (
+      <Row
+        key={p.id}
+        p={p}
+        inUse={offered(policies, motionOf(p)).includes(p)}
+        siblings={
+          policies.filter(
+            (x) =>
+              x.id !== p.id &&
+              enabledOf(x) &&
+              x.source_spec === p.source_spec &&
+              motionOf(x) === motionOf(p),
+          ).length
+        }
+        say={say}
+        onRenamed={(n) => onChange((all) => all.map((x) => (x.id === n.id ? n : x)))}
+        onPicked={(n) =>
+          onChange((all) =>
+            all.map((x) =>
+              x.id === n.id
+                ? n
+                : x.source_spec === n.source_spec && motionOf(x) === motionOf(n)
+                  ? { ...x, active: false }
+                  : x,
+            ),
+          )
+        }
+        onDeleted={() => {
+          onChange((all) => all.filter((x) => x.id !== p.id));
+          // Its job can be added again, unless another copy from it is still on the box.
+          const kept = policies.some((x) => x.id !== p.id && x.source_job === p.source_job);
+          if (!kept) {
+            setSources((all) =>
+              (all ?? []).map((s) => (s.job_id === p.source_job ? { ...s, added: false } : s)),
+            );
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <Sheet title="Trained walks" onClose={onClose}>
-      <div className="gb-sec-h">On the box</div>
       {policies.length === 0 ? (
-        <p className="gb-hint dim">None yet. Add one from a finished training job below.</p>
+        <>
+          <div className="gb-sec-h">On the box</div>
+          <p className="gb-hint dim">None yet. Add one from a finished training job below.</p>
+        </>
       ) : (
-        <div className="gb-list">
-          {policies.map((p) => (
-            <Row
-              key={p.id}
-              p={p}
-              inUse={offered(policies, motionOf(p)).includes(p)}
-              siblings={
-                policies.filter(
-                  (x) =>
-                    x.id !== p.id &&
-                    enabledOf(x) &&
-                    x.source_spec === p.source_spec &&
-                    motionOf(x) === motionOf(p),
-                ).length
-              }
-              say={say}
-              onRenamed={(n) => onChange((all) => all.map((x) => (x.id === n.id ? n : x)))}
-              onPicked={(n) =>
-                onChange((all) =>
-                  all.map((x) =>
-                    x.id === n.id
-                      ? n
-                      : x.source_spec === n.source_spec && motionOf(x) === motionOf(n)
-                        ? { ...x, active: false }
-                        : x,
-                  ),
-                )
-              }
-              onDeleted={() => {
-                onChange((all) => all.filter((x) => x.id !== p.id));
-                // Its job can be added again, unless another copy from it is still on the box.
-                const kept = policies.some((x) => x.id !== p.id && x.source_job === p.source_job);
-                if (!kept) {
-                  setSources((all) =>
-                    (all ?? []).map((s) =>
-                      s.job_id === p.source_job ? { ...s, added: false } : s,
-                    ),
-                  );
-                }
-              }}
-            />
-          ))}
-        </div>
+        <>
+          {masters.length > 0 && (
+            <>
+              <div className="gb-sec-h">Masters and what they learned from</div>
+              <div className="gb-list">
+                {masters.map((f) => (
+                  <div key={f.master.id} className="gb-fam">
+                    {row(f.master)}
+                    {f.kids.length > 0 && (
+                      <button
+                        type="button"
+                        className="gb-fam-toggle"
+                        aria-expanded={!!open[f.master.id]}
+                        onClick={() => setOpen((o) => ({ ...o, [f.master.id]: !o[f.master.id] }))}
+                      >
+                        <span className="gb-fam-car" aria-hidden="true">
+                          ›
+                        </span>
+                        Learned from {f.kids.length} {f.kids.length === 1 ? "walk" : "walks"}
+                      </button>
+                    )}
+                    {open[f.master.id] && (
+                      <div className="gb-fam-kids">
+                        {f.kids.map((k) => (
+                          <div key={`${k.role}:${k.p.id}`} className="gb-fam-kid">
+                            <span className="gb-fam-role">{k.role}</span>
+                            <div className="gb-list">{row(k.p)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+          <div className="gb-sec-h">{masters.length > 0 ? "Other walks" : "On the box"}</div>
+          {rest.length === 0 ? (
+            <p className="gb-hint dim">
+              None. Every walk on the box taught a master, so it is under that master above.
+            </p>
+          ) : (
+            <div className="gb-list">{rest.map(row)}</div>
+          )}
+        </>
       )}
 
       <div className="gb-sec-h">From the training repo</div>
