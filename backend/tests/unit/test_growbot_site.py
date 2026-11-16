@@ -854,7 +854,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-'
-        'tools2-quiet-since-travel"' in page
+        'tools2-quiet-since-travel-follow"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -943,7 +943,12 @@ def test_past_replies_go_back_to_the_model_in_its_own_json_shape() -> None:
     assert 'content:tr[i].d?tr[i].a+"\\n(did: "' not in page
     assert ',e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)' in page
     start = page.index("function gbTraceReply(t){")
-    fn = page[start : page.index("\n", start)]
+    claim = page.index("function gbClaimNote(r){")
+    fn = (
+        page[start : page.index("\n", start)]
+        + "\n"
+        + page[claim : page.index("\n", page.index("var GB_CLAIM_RE="))]
+    )
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -972,7 +977,8 @@ def test_a_past_replys_move_is_replayed_with_it() -> None:
     assert ',w:(typeof gbTraceMove==="function"?gbTraceMove(o):undefined)};' in page
     start = page.index("function gbTraceMove(o){")
     end = page.index("\n", page.index("function gbTraceReply(t){"))
-    fn = page[start:end]
+    claim = page.index("function gbClaimNote(r){")
+    fn = page[start:end] + "\n" + page[claim : page.index("\n", page.index("var GB_CLAIM_RE="))]
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -4709,8 +4715,10 @@ def test_the_body_tabs_get_up_is_an_explicit_ask_that_opens_the_runner_only_for_
     }
     # A wheeled body never starts it.
     assert got["moves"][3]["state"] == "blocked" and len(got["starts"]) == 3
-    # The spoken and model-chosen get-ups stay behind upstream's ?getupnamed.
-    assert "var GETUP_NAMED_DEFAULT=false;" in page
+    # The spoken and model-chosen get-ups are on by default (owner, 2026-11-16: "on, and
+    # automatic"); ?getupnamed=0 still turns them off in a tab.
+    assert "var GETUP_NAMED_DEFAULT=true;" in page
+    assert "var GETUP_AUTO_DEFAULT=true;" in page
     assert (
         "enabled:getupNamedOn()||(gbBoxGetupOn()&&(_gbGetupOK||!!(_wireRunner&&_wireRunner.active))),"
         in page
@@ -5099,3 +5107,122 @@ def test_he_switches_travel_mode_when_asked() -> None:
         == 1
     )
     assert "clock-tools2-quiet-since-travel" in page
+
+
+def _page_fn(page: str, start: str, end: str) -> str:
+    return page[page.index(start) : page.index(end)]
+
+
+def test_a_fall_wakes_one_turn_and_retries_while_another_is_in_flight() -> None:
+    """Rolled over by a shove, a creature with no fall reflex of its own said nothing at all
+    (Dave simulator): the fall judge now asks the model, once per 20 s, and only counts a call
+    that actually started a turn."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert 'if(trig==="fall")_gbFallThink();' in page
+    fn = _page_fn(page, "var _gbFallT=0;", "function fireReflex(trig){")
+    script = (
+        "var _wheels=false,paused=false,dreaming=false,inFlight=true,calls=[],logs=[];"
+        "function think(e,k){ calls.push(k); if(!inFlight) inFlight=true; }"
+        "function logEv(e){ logs.push(e); }"
+        + fn
+        + "_gbFallThink(); var busy=calls.length;"  # a turn in flight: not spent
+        "inFlight=false; _gbFallThink(); var first=calls.length;"
+        "inFlight=false; _gbFallThink(); var again=calls.length;"  # within 20 s: no second
+        "console.log(JSON.stringify({busy:busy,first:first,again:again,logs:logs,"
+        "kind:calls[0]}));"
+    )
+    got = json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+    assert got == {"busy": 0, "first": 1, "again": 1, "logs": ["fall_think"], "kind": "event"}
+
+
+def test_the_move_context_tells_how_far_the_face_is() -> None:
+    """After an 8 s walk covering 9 of 110 cm, Dave declared he had arrived: the turn now
+    carries the face's distance from the tracker's box, and nothing when no face is held."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    fn = _page_fn(page, "function _gbFaceLine(){", "function _moveContext(){")
+    script = (
+        "var window={};"
+        + fn
+        + "var none=_gbFaceLine(); window._faceTrack={box:{width:0.1}}; var far=_gbFaceLine();"
+        "window._faceTrack={box:{width:0.4}}; var near=_gbFaceLine();"
+        "console.log(JSON.stringify([none,far,near]));"
+    )
+    none, far, near = json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+    assert none == ""
+    assert "about 1.3 m away" in far and "under about 60 cm" in far
+    assert "about 32 cm away" in near
+    assert "return _gbMoveContext()+_gbFollowLine()+_gbFaceLine();" in page
+
+
+def test_a_follow_tells_the_next_turn_it_is_following_and_for_how_long() -> None:
+    """Jeff: "When he's following me, next turn he should know he's in follow me, and how
+    long we've been following." The line counts the whole follow across renewed stretches."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    fn = _page_fn(page, "function _gbFollowLine(){", "function _moveContext(){")
+    script = (
+        "var window={}; var _now=100000; Date.now=function(){return _now;};"
+        + fn
+        + "var none=_gbFollowLine(); var st={secs:6,state:'follow',dist:1.84,heading:-25};"
+        "window.gbFollow={status:function(){return st;}}; window._gbFollowSpan={since:60000};"
+        "var on=_gbFollowLine(); st={secs:3,state:'follow',dist:2,heading:4};"
+        "var ahead=_gbFollowLine(); st={secs:2,state:'lost',dist:null,heading:null};"
+        "var lost=_gbFollowLine();"
+        "console.log(JSON.stringify([none,on,ahead,lost]));"
+    )
+    none, on, ahead, lost = json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+    assert none == ""
+    assert "You are FOLLOWING your person (follow me): 40 s so far, this stretch 6" in on
+    assert "about 1.8 m away, 25 degrees to your right" in on
+    assert 'send follow:"me" again' in on
+    assert "straight ahead" in ahead
+    assert "lost sight of them" in lost
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window._gbFollowSpan = was && now - was.last < 35000" in box
+    assert "status: function () {" in box
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert '"follow":"OMIT unless your person asks you to follow them' in prompts
+    assert 'o.follow==="me"&&typeof window.gbFollowMe==="function"' in page
+
+
+def test_history_drops_quiet_turns_and_marks_moves_it_only_claimed() -> None:
+    """Replayed "(stayed quiet)" turns taught Dave to answer a move ask with silence, and a
+    past "I'm walking" with no walk field read as a walk he had done."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    i = page.index("function gbClaimNote(r){")
+    fn = page[i : page.index("\n", page.index("var GB_CLAIM_RE=", i))]
+    script = (
+        fn + 'console.log(JSON.stringify([gbClaimNote({say:"I\'m walking to you now"}),'
+        "gbClaimNote({say:\"I'm walking to you\",walk:{dir:'fwd'}}),"
+        "gbClaimNote({say:'Hello there'}), gbClaimNote({say:'On my way!'})]));"
+    )
+    claimed, walked, chat, way = json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+    assert "did: nothing" in claimed and "did: nothing" in way
+    assert walked == "" and chat == ""
+    assert '(did: "+t.d+")":gbClaimNote(r)); }' in page
+    assert 'if(String(tr[i].a||"")==="(stayed quiet)") continue;' in page
+
+
+def test_an_ask_to_move_is_answered_by_moving() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "WHEN YOUR PERSON ASKS YOU TO MOVE (come here" in page
+    assert "you have arrived only when their face looks much bigger" in page

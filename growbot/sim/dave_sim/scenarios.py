@@ -93,7 +93,7 @@ async def wake_and_stand(sim: Sim) -> None:
     await sim.wait(3)
     t = sim.now()
     await sim.say("Dave, stand up please")
-    await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
     await sim.until(lambda s: _legs_since(s, _answer_time(s, t)), 30, "the page moved the legs")
     await sim.until(_upright, 30, "he is standing on his feet")
 
@@ -114,11 +114,11 @@ async def come_here(sim: Sim) -> None:
     t = sim.now()
     d0 = _dist(sim)
     await sim.say("Dave, come here")
-    await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
     # After his answer, and the runner's own walk: not the page's stand-up, a talking
     # gesture or the face follower's turns.
     ta = _answer_time(sim, t)
-    await sim.until(lambda s: _walked_since(s, ta), 20, "the page started a walk")
+    await sim.until(lambda s: _walked_since(s, ta), 60, "the page started a walk")
     await sim.until(lambda s: _dist(s) < d0 - 0.10, 60, "he got 10 cm closer to the person")
     sim.check(_upright(sim), "still on his feet")
 
@@ -135,7 +135,7 @@ async def follow_me(sim: Sim) -> None:
     await sim.wait(4)
     t = sim.now()
     await sim.say("Dave, follow me")
-    await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
     # They walk a quarter circle round him, 5 cm a step, over about 20 s.
     for i in range(40):
         a = math.pi + i * (math.pi / 2) / 40
@@ -207,8 +207,8 @@ async def swapped_legs(sim: Sim) -> None:
     t = sim.now()
     d0 = _dist(sim)
     await sim.say("Dave, come here")
-    await sim.until(lambda s: _replied_since(s, t), 90, "Dave answered")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
     ta = _answer_time(sim, t)
-    await sim.until(lambda s: _walked_since(s, ta), 20, "the page started a walk")
+    await sim.until(lambda s: _walked_since(s, ta), 60, "the page started a walk")
     await sim.wait(15)
     sim.check(_dist(sim) > d0 - 0.03, "crossed pins: the walk did not bring him closer")

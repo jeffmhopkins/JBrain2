@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=4d95846eed71"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=9fea011c02c8"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -192,7 +192,7 @@ function gbAdTag(u){try{var g=function(k){return sessionStorage.getItem("gb_ad_"
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
 <script src="/trim-store.js?v=1016"></script>
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2-quiet-since-travel" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2-quiet-since-travel-follow" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1015-open"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -847,9 +847,9 @@ function setTravel(on){
 /* Staged named recovery: exact ?getupnamed=1, or ?getupauto=1 for the shared automatic owner.
    Default off pending the supervised behavior decision; ?getupnamed=0 disables both in this tab.
    URL only, carried through pairing. Shared motion timing and expression changes remain independent. */
-var GETUP_NAMED_DEFAULT=false;
+var GETUP_NAMED_DEFAULT=true;
 var GETUP_NAMED=(GETUP_NAMED_DEFAULT||new URLSearchParams(location.search).get("getupnamed")==="1"||new URLSearchParams(location.search).get("getupauto")==="1")&&new URLSearchParams(location.search).get("getupnamed")!=="0";
-var GETUP_AUTO_DEFAULT=false;
+var GETUP_AUTO_DEFAULT=true;
 var GETUP_AUTO=GETUP_AUTO_DEFAULT||new URLSearchParams(location.search).get("getupauto")==="1";
 /*LAB-GETUP{*//* 0929 GET UP LAB (Brit's bench, ?getup=lab): the agent may call Motion Lab's physically tested "Get up,
    screen up" (see recoverScreenUp). DEFAULT OFF: with no fresh "lab:<ms>" key (24 h, like ?ftdial) the capability is
@@ -3575,7 +3575,10 @@ function _moveDesc(a,full){ var m=a.mv||{}, o=a.out, s=_moveName(a), E={done:"do
     :"; phone measured policy at full stretch "+o.sat+"% of steps; unverified: lean up to "+o.tilt+"\u00b0 from level; "+_hd;
   if(full&&a.felt&&Date.now()-(a.feltT||0)<120000) s+="; "+a.felt;   // 1005 MOTION STRIP (see _moveEnd). Two minutes, then the line goes back to its short form: the strip matters for the next tries, and the "Latest move" line rides every thought until the next move
   return s; }
-function _moveContext(){ var a=(_moveLast&&!_moveLast.ended)?_moveLast:_moveOut; return "Latest move: "+(a?_moveDesc(a,1):"none")+". Commands and their timed end do not prove physical movement, balance or progress.\n";}
+function _gbFaceLine(){ try{ var t=window._faceTrack, b=t&&t.box; if(!b||!(b.width>0.01))return ""; var d=0.15/(2*Math.tan(Math.PI/6)*b.width); return " Your person's face, from its size in your camera, is about "+(d<1?Math.round(d*100)+" cm":d.toFixed(1)+" m")+" away: you have reached them when it reads under about 60 cm, or they say so."; }catch(e){ return ""; } }
+function _gbFollowLine(){ try{ var s=window.gbFollow&&window.gbFollow.status&&window.gbFollow.status(), sp=window._gbFollowSpan; if(!s) return ""; var all=sp?Math.round((Date.now()-sp.since)/1000):s.secs, out=" You are FOLLOWING your person (follow me): "+all+" s so far, this stretch "+s.secs+" of up to 15 s"; if(s.state==="lost") out+=", and you have lost sight of them (turning to where they were last seen)"; else if(s.dist!==null) out+=", they are about "+s.dist.toFixed(1)+" m away"+(s.heading!==null&&Math.abs(s.heading)>=10?", "+Math.round(Math.abs(s.heading))+" degrees to your "+(s.heading>0?"left":"right"):", straight ahead"); return out+". To keep following, send follow:\"me\" again; to stop, walk:{dir:\"stop\"}."; }catch(e){ return ""; } }
+function _moveContext(){ return _gbMoveContext()+_gbFollowLine()+_gbFaceLine(); }
+function _gbMoveContext(){ var a=(_moveLast&&!_moveLast.ended)?_moveLast:_moveOut; return "Latest move: "+(a?_moveDesc(a,1):"none")+". Commands and their timed end do not prove physical movement, balance or progress.\n";}
 /* 1005 RECENT SPINS, MEASURED (Brit: "x seconds usually spins you x on this surface" - but written by the robot's own
    phone, never by hand: the rate changes with surface, battery and kit). Each spin that ran to its end (done, at least
    1 s) keeps {time, gait, mode, seconds, measured yaw}; the newest 8 per robot live in localStorage, and the move guide
@@ -8234,8 +8237,10 @@ function _getUpCapFull(now){
   _getUpTs=_getUpTs.filter(function(t){ return now-t<GETUP_CAP_MS; });
   if(_getUpTs.length<GETUP_CAP_N){ _getUpCapped=false; return false; }
   return true; }
+var _gbFallT=0;function _gbFallThink(){ if(_wheels||Date.now()-_gbFallT<20000)return; if(inFlight||paused||dreaming)return; think("your motion sensor just read you fall: you are lying on your back, face or side, not on your feet, and you did not do it yourself. Notice it and say so in a few words. If a get-up is offered to you and you are screen-up, you may use it.","event"); if(inFlight){ _gbFallT=Date.now(); try{ logEv("fall_think",{}); }catch(e){} } }
 function fireReflex(trig){
   if(travelMutes(trig))return;
+  if(trig==="fall")_gbFallThink();
   if(trig==='loud'&&typeof _getupAutoLoud==='function'&&_getupAutoLoud())return;
   if(trig==="fall"&&typeof _getupAutoTry==="function")_getupAutoTry();
   if(!_live||!Array.isArray(_live.scratch.reflexes)||!_live.scratch.reflexes.length) return;
@@ -9459,7 +9464,8 @@ function seedMoveGuide(){ var b=bandOf(); var g=(body&&body.gestures)||{};
 }
 var MOVE_DOING="\n\n== MOVING IS DOING (not saying) ==\n"+
   "Your words and your body are SEPARATE channels. Saying \"I'll turn\" / \"I'll come closer\" / \"I'll dance\" moves NOTHING — to actually move you MUST put it in the SAME reply, as either body.steps:[{l,r,ms}] (a free move) OR gesture:\"name\" (one of YOUR SAVED POSES, replayed exactly) OR walk:{gait,dir,secs} (a trained walk). If you intend to move, emit the motion THIS turn; don't only narrate it.\n"+
-  "When asked whether you moved, REPORT THE PAST: say what your last attempt actually did (\"I leaped, my legs swung wide, then they let go\") or say plainly that nothing happened — never answer only with what the NEXT try will do. A promise is not a report.\n";   // 0815 motion bench R8: gemini re-promised the future in 6/8 answers ("watch my legs really kick this time!") — truth-grading tied, but a creature that only ever announces upcoming motion FEELS unaware of its own body (a tester). The kimi register is the target.
+  "When asked whether you moved, REPORT THE PAST: say what your last attempt actually did (\"I leaped, my legs swung wide, then they let go\") or say plainly that nothing happened — never answer only with what the NEXT try will do. A promise is not a report.\n"+
+  "WHEN YOUR PERSON ASKS YOU TO MOVE (come here, come closer, follow, go, walk, back up, turn, stand up, get up), that ask IS the request: answer it with the move field in THIS reply. \"Come here\" means walk toward them: your front camera and screen face the person you see, so walk:{dir:\"fwd\",secs:8} carries you to them; also set goal:\"reach <their name>\" and keep walking each beat. One walk covers only a little ground: you have arrived only when their face looks much bigger than when you set off, or they tell you, so until then do not say you are there or set found. Never say you are coming, walking, standing or getting up unless the same reply carries walk or body for it. If you cannot do it, say so plainly.\n";   // 0815 motion bench R8: gemini re-promised the future in 6/8 answers ("watch my legs really kick this time!") — truth-grading tied, but a creature that only ever announces upcoming motion FEELS unaware of its own body (a tester). The kimi register is the target.
 var MOVE_CONTRACT=MOVE_DOING+
   "To TURN your whole body (look around, search, face a new way), use walk:{gait:\"spin_right\",dir:\"right\",secs:5,gain:0.99}. This spins clockwise, your right. Look again after each short turn; exact angles depend on the surface. For left/counterclockwise use walk:{gait:\"spin_left\",dir:\"left\",secs:5,gain:0.99}. Travel using the effective walk directions listed below; honor the requested duration and observe progress.";   /* 0816 (Brit field: unlogged-true-knowledge again — gain shipped 0728, consumed at the runGait site, and the contract never taught it, so "walk gently" was theater. GESTURE_MIN_AMP does not apply to walks; a gentle gait stays gentle. */
 var WHEELS_MOVE_CONTRACT=MOVE_DOING+   // 0815 WHEELS: same doing-not-saying law, wheeled truth — no gaits, tank turns, rolling always finishes
@@ -10943,7 +10949,12 @@ function gbTraceMove(o){ if(!o||typeof o!=="object") return undefined; var w={},
   if(typeof o.gesture==="string"&&o.gesture){ w.gesture=o.gesture.slice(0,40); n++; }
   if(o.body&&typeof o.body==="object"&&Array.isArray(o.body.steps)&&o.body.steps.length){ w.body={steps:o.body.steps.slice(0,6).map(function(x){ x=x||{}; function f(v){ return typeof v==="number"&&isFinite(v)?v:undefined; } return {l:f(x.l),r:f(x.r),ms:f(x.ms)}; })}; n++; }
   return n?w:undefined; }
-function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}, k; if(t.e) r.emotion=t.e; if(t.w&&typeof t.w==="object") for(k in t.w) if(k==="walk"||k==="gesture"||k==="body") r[k]=t.w[k]; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
+function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}, k; if(t.e) r.emotion=t.e; if(t.w&&typeof t.w==="object") for(k in t.w) if(k==="walk"||k==="gesture"||k==="body") r[k]=t.w[k]; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":gbClaimNote(r)); }
+/* 1116 (Dave simulator, walk-prompt replays): a reply that SAID it was moving but carried no move
+   is marked in the history as moving nothing, or the model learns from its own past lines that
+   narration is enough ("I am coming to you now", no walk, and the robot never left). */
+function gbClaimNote(r){ return !r.walk&&!r.body&&!r.gesture&&GB_CLAIM_RE.test(String(r.say||""))?"\n(did: nothing. this reply had no move field, so you did not move)":""; }
+var GB_CLAIM_RE=/\b(?:i(?:'m| am)\s+(?:walking|coming|moving|stepping|turning|standing up|getting up|pushing up|heading)|on my way|coming to you|here i come)\b/i;
 /* The box resumes a turn from the longest prefix it read before, so the history ahead of the new
    words has to read the same from turn to turn. Upstream's last-N window dropped the oldest
    exchange every turn and stamped each one "[96s ago]", which changed every turn too, so only the
@@ -10981,7 +10992,12 @@ function gbHistWindow(all){ all=all||[]; var i=-1, k, n, g=gbTalkGrown();
   _gbHistFrom=i<all.length?gbHistKey(all[i]):"";
   return all.slice(i); }
 function gbHist(now){ var tr=gbHistWindow(_live.scratch.traces), msgs=[], i;
-  for (i=0;i<tr.length;i++){ msgs.push({role:"user",content:(tr[i].t?"["+gbHistStamp(tr[i].t)+"] ":"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
+  /* 1116: a turn the creature stayed quiet on is left out of the history it sees. Replayed as an
+     empty say with the page's own "(stayed quiet)" note, the model copied it verbatim onto later
+     move asks ("take a few steps", "stop!"): silence, and a reply the page could not parse
+     (walk-prompt replays: five such turns in one evening, two of them direct asks). Per trace,
+     so the cached prefix stays the same from turn to turn. */
+  for (i=0;i<tr.length;i++){ if(String(tr[i].a||"")==="(stayed quiet)") continue; msgs.push({role:"user",content:(tr[i].t?"["+gbHistStamp(tr[i].t)+"] ":"")+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }
   return msgs; }
 function gbWarmKey(){ var t=(_live&&_live.scratch&&_live.scratch.traces)||[], l=t[t.length-1]; return t.length+":"+(l?(l.t||0)+":"+gbTraceReply(l):"")+":"+(camOn?1:0)+":"+camFacing; }
 function gbSoulView(){ var v=(MODE==="phone")?Object.assign({},_live,{body:null}):_live;
@@ -11299,7 +11315,7 @@ function think(event,kind,extra){
     var _brainSaid=typeof _brainAtIssue!=="undefined"&&!!_brainAtIssue,_brainOriginalSay=said; // Keep content for salvage, burst and quiet-turn memory; defer only delivery.
     var phoneDir=(MODE==="phone"&&o.walk&&typeof o.walk==="object"&&o.walk.dir)?String(o.walk.dir).toLowerCase():"";   // phone: a spoken movement instruction
     if(!paused){                                                                          // if paused mid-thought, don't talk/move/overwrite the caption — just keep the memory
-      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()}); if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back")) gbEyeTo(o.eye==="back"?"environment":"user","self"); if(_hreqAtIssue&&!dreaming&&(o.travel==="on"||o.travel==="off")&&(o.travel==="on")!==TRAVEL) setTravel(o.travel==="on");                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
+      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()}); if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back")) gbEyeTo(o.eye==="back"?"environment":"user","self"); if(!dreaming&&o.follow==="me"&&typeof window.gbFollowMe==="function") window.gbFollowMe(15); if(_hreqAtIssue&&!dreaming&&(o.travel==="on"||o.travel==="off")&&(o.travel==="on")!==TRAVEL) setTravel(o.travel==="on");                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
       if(typeof _expressionPendingCancel==="function")_expressionPendingCancel();
       if(typeof _expressionPair==="function")_expressionPair(o);
       // A buffered bench reply cannot revive sound after Stop, pause/hide or a newer request.

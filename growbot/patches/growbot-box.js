@@ -1320,6 +1320,32 @@
     return n ? out : "";
   }
 
+  // "Follow me" by voice (Dave simulator, 2026-11-16): the creature's own follow only leaned
+  // its legs after a face, so a person who walked off was lost within seconds, while the Body
+  // tab's follower (a library skill set's look walk, gbFollow) kept them in view. The
+  // creature's `follow:"me"` starts that same follower, on the skill set the box offers.
+  window.gbFollowMe = function (secs) {
+    // The whole follow, across the 15 s stretches a held goal renews: it began at the first
+    // ask, unless the last stretch ended more than 20 s before this one.
+    var now = Date.now(), was = window._gbFollowSpan;
+    window._gbFollowSpan = was && now - was.last < 35000 ? { since: was.since, last: now } : { since: now, last: now };
+    return fetch("/api/box/skills?robot=" + encodeURIComponent(code), { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("the box said " + r.status);
+        return r.json();
+      })
+      .then(function (j) {
+        var set = skillSet(j && j.skills);
+        if (!set || !set.look) throw new Error("no trained look walk to follow with");
+        run("look", Math.max(1, Math.min(15, Number(secs) || 15)), set, "", "", true);
+        return true;
+      })
+      .catch(function (e) {
+        try { logEv("follow_me_refused", { why: String((e && e.message) || e).slice(0, 120) }); } catch (_) {}
+        return false;
+      });
+  };
+
   // The body's gesture names as the creature's prompt sees them (a soul's saved poses included).
   function gestureNames() {
     var lib = null;
@@ -1759,6 +1785,16 @@
     },
     stop: function (why) { followEnd(why || "stopped"); },
     active: function () { return !!follow; },
+    // What the creature's next turn is told about a follow (gbFollowLine in next.html): how
+    // long this stretch has run, and what the follower last made of the person.
+    status: function () {
+      var F = follow;
+      if (!F || F.dry) return null;
+      var c = F.last || {};
+      return { secs: Math.round((Date.now() - F.t0) / 1000), state: String(c.state || ""),
+        dist: typeof c.dist === "number" && isFinite(c.dist) ? c.dist : null,
+        heading: typeof c.heading === "number" && isFinite(c.heading) ? c.heading : null };
+    },
     closer: function () { return follow ? follow.f.closer() : 0; },
     further: function () { return follow ? follow.f.further() : 0; },
     stay: function (on) { if (follow) follow.f.stay = !!on; },

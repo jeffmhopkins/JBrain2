@@ -82,6 +82,31 @@ def policy_id(slug: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"growbot-sim/{slug}"))
 
 
+# What a creature keeps of itself through a wipe: who it is, whose it is, its body. The rest
+# (its log, facts, wants, the day's scratch and the identity grown from them) is history.
+KEEP_GOALS = ("owner", "selfName", "inputLanguage", "replyLanguage")
+
+
+def forget(soul: dict[str, Any]) -> dict[str, Any]:
+    """A soul with its memories wiped: what a "fresh" Dave run starts from."""
+    goals = soul.get("goals") or {}
+    out = {**soul, "log": [], "facts": [], "scratch": {}, "identity": ""}
+    out["goals"] = {k: goals[k] for k in KEEP_GOALS if k in goals}
+    # A creature named in conversation keeps that name only in its history, so the wipe
+    # would take it: the persona's own name stands in, as if the owner had confirmed it.
+    name = str((soul.get("meta") or {}).get("name") or "")[:32]
+    if not out["goals"].get("selfName"):
+        out["goals"]["selfName"] = name
+    # The page reseeds a short identity with a newborn's stock one (and its stock name), and
+    # a box soul's selfName doesn't survive the load, so the name goes in a full sentence.
+    out["identity"] = (
+        f"I am {name}. I walk on two legs, and I want to explore the real world with my person."
+        if name
+        else ""
+    )
+    return out
+
+
 @dataclass
 class FakeBox:
     model: Model
