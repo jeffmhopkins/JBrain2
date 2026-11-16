@@ -1968,11 +1968,20 @@
           show: function (V) { var n = Date.now(); if (V.phase === "run" && n - drawn < 200) return; drawn = n; btDraw(V); },
           bodyUp: function () { return !!(window._body && window._body.ready && _bodyAlive(true)); },
           upright: function () { return typeof _bodyUpright === "function" ? _bodyUpright() : null; },
+          // "getup" (upstream's get-up from lying screen-up), "tall" (the tall stance, already
+          // up), or "" when lying and the get-up refuses (not set up on this body, or its one
+          // try per ask spent): the tall stance from flat only pushes the legs into the floor.
           standUp: function () {
-            ensureIMU();
-            if (_bodyUpright() === false && typeof window.gbGetUp === "function") { window.gbGetUp(); return; }
+            try { ensureIMU(); } catch (x) {}
+            if (_bodyUpright() === false) {
+              if (typeof window.gbGetUp !== "function") return "";
+              window.gbGetUp();
+              var a = window._moveLast;
+              return a && a.action === "recover_screen_up" && a.state !== "blocked" ? "getup" : "";
+            }
             var t = typeof STAND_TALL !== "undefined" && STAND_TALL ? STAND_TALL : { l: 50, r: 130, ms: 600 };
             window.moveLegs({ body: { steps: [{ l: t.l, r: t.r, ms: t.ms }] } });
+            return "tall";
           },
           camFront: function () {
             try {

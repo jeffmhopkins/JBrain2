@@ -217,3 +217,26 @@ def test_after_a_fall_it_waits_out_the_cool_off_before_walking_again() -> None:
     after = [t for t in got["walkAt"] if t > got["abortAt"][0]]
     assert after[0] - got["abortAt"][0] >= 4000
     assert got["results"]["back"]["v"] == "ok"
+
+
+def test_a_tap_never_skips_power_before_the_legs_answer() -> None:
+    """Run #1 (2026-11-16): a tap passed "power on" with the body off, so nothing could stand."""
+    got = _run(bodyLate=5000)
+    assert got["status"] == "done"
+    assert got["stepAt"]["stand"] >= 5000
+
+
+def test_lying_with_no_get_up_it_asks_to_be_stood_up_by_hand() -> None:
+    """Runs #1, #26 and #36: the get-up was refused, so "stand up" moved nothing and said
+    nothing. Now it says so, and carries on once stood up by hand."""
+    got = _run(upright="hand", standUp="")
+    assert got["status"] == "done", got["stopped"]
+    assert got["stands"][0] == [False, "none"]
+    assert got["stands"][-1] == [True, "by_hand"]
+    assert got["out"]["standUps"] == 1
+
+
+def test_lying_it_gets_up_and_goes_on_once_upright() -> None:
+    got = _run(standUp="getup")
+    assert got["status"] == "done"
+    assert got["stands"] == [[True, "getup"]]

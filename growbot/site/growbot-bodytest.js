@@ -20,7 +20,7 @@
 export var SETUP = [
   { id: "place", title: "Place this phone on the body", sub: "Screen facing out, front camera at the top. Snap it into the cradle." },
   { id: "power", title: "Power on the body", sub: "Flip the switch. This moves on by itself once the legs answer." },
-  { id: "stand", title: "Say “stand up”", sub: "Hands off. It gets up if it's lying down, then stands tall so the camera sees you." },
+  { id: "stand", title: "Say “stand up”", sub: "It gets up if it can, then stands tall so the camera sees you. If it can't, stand it up by hand." },
   { id: "measure", title: "Stand 1 m away and say “1 meter”", sub: "Face the screen. I'll measure you, then the test starts by itself." },
 ];
 
@@ -349,23 +349,42 @@ BodyTest.prototype.setup = async function () {
   await this.waitFor(["ready", "tap"]);
 
   this.setupIdx = 1; this.mark("power");
-  await this.waitFor(["tap"], function () { return e.bodyUp(); });
+  // A tap only moves on once the legs answer (2026-11-16 run #1: a tap skipped this step with the
+  // body off, and "stand up" then had nothing to move).
+  this.say = "";
+  while (!e.bodyUp()) {
+    await this.waitFor(["tap"], function () { return e.bodyUp(); });
+    if (!e.bodyUp()) this.say = "The legs aren't answering yet. Check the switch and the battery.";
+  }
 
   this.setupIdx = 2; this.mark("stand");
+  // Standing counts once it has been upright uprightHoldMs, however it got there: by itself, or
+  // stood up by hand when it can't get up on its own (2026-11-16: the get-up wasn't set up on this
+  // body, so every "stand up" was refused and nothing moved).
+  var upSince = null;
+  var held = function () {
+    if (e.upright() === true) { if (upSince === null) upSince = e.now(); return e.now() - upSince >= T.uprightHoldMs; }
+    upSince = null;
+    return false;
+  };
+  this.say = "";
+  // Lying down at the start: stood up by hand counts too. Already up: it waits for the word, so
+  // the tall stance lifts the camera.
+  var down = e.upright() !== true;
   for (;;) {
-    this.say = "";
-    await this.waitFor(["stand", "tap"]);
-    this.say = "Standing up…";
-    e.standUp();
-    var upSince = null;
-    var stood = await this.wait(T.standWaitMs, function () {
-      if (e.upright() === true) { if (upSince === null) upSince = e.now(); return e.now() - upSince >= T.uprightHoldMs; }
-      upSince = null;
-      return false;
-    });
-    this.log("e", { e: "bt_stand", ok: stood });
+    var how = await this.waitFor(["stand", "tap"], down ? held : null);
+    if (how === "auto") { this.log("e", { e: "bt_stand", ok: true, how: "by_hand" }); break; }
+    // Already being stood up by hand: let the hold finish rather than move the legs under the hands.
+    if (down && e.upright() === true) continue;
+    var did = e.standUp();
+    this.say = did === "getup" ? "Getting up…" : did === "tall" ? "Standing tall…"
+      : "I can't get up on my own yet. Stand me up by hand and I'll carry on.";
+    upSince = null;
+    var stood = did ? await this.wait(T.standWaitMs, held) : false;
+    this.log("e", { e: "bt_stand", ok: stood, how: did || "none" });
     if (stood) break;
-    this.say = "I couldn't get upright. Help me up, then say “stand up” again.";
+    down = true;
+    if (did) this.say = "I couldn't get upright. Stand me up by hand and I'll carry on, or say “stand up” to try again.";
   }
 
   this.setupIdx = 3; this.mark("measure");
