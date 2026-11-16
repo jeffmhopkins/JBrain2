@@ -141,12 +141,33 @@ async def follow_me(sim: Sim) -> None:
         a = math.pi + i * (math.pi / 2) / 40
         sim.person(x=1.0 * math.cos(a), y=1.0 * math.sin(a), face_z=0.6)
         await sim.wait(0.5)
-    s = sim.state
-    p = sim.body.person
-    bearing = math.degrees(math.atan2(p.y - s["y"], p.x - s["x"]))
-    camera_end = s["nose_deg"] + 180.0
-    off = abs((bearing - camera_end + 180) % 360 - 180)
+    off = _camera_off(sim)
     sim.check(off < 45, "his camera end turned toward where they went", off_deg=round(off))
+
+
+@scenario(start="standing", person={"x": -1.0, "face_z": 0.6})
+async def follow_walk(sim: Sim) -> None:
+    """The Body tab's Follow: the trained-walk follower (growbot-follow.js) on the box's skill
+    set, while a person walks a quarter circle round him. Needs no model. Catches: a follower
+    that turns the wrong way, loses the face once it walks, or never starts."""
+    await sim.wait(4)
+    ack = await sim.move("look", secs=15, follow="walk", skills=sim.box.skills)
+    sim.check(bool(ack and ack.get("ok")), "the follower started", why=(ack or {}).get("why"))
+    for i in range(30):
+        a = math.pi + i * (math.pi / 2) / 30
+        sim.person(x=1.0 * math.cos(a), y=1.0 * math.sin(a), face_z=0.6)
+        await sim.wait(0.5)
+    sim.check(
+        _camera_off(sim) < 45,
+        "his camera end turned toward where they went",
+        off_deg=round(_camera_off(sim)),
+    )
+
+
+def _camera_off(sim: Sim) -> float:
+    s, p = sim.state, sim.body.person
+    bearing = math.degrees(math.atan2(p.y - s["y"], p.x - s["x"]))
+    return abs((bearing - (s["nose_deg"] + 180.0) + 180) % 360 - 180)
 
 
 @scenario(start="standing", person={"x": -1.0, "face_z": 0.6})
