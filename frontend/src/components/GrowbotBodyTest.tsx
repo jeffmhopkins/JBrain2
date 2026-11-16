@@ -151,8 +151,7 @@ export function GrowbotBodyTest({
   const s = running?.summary;
   const past = (runs ?? []).filter((r) => r !== running).slice(0, 5);
   return (
-    <fieldset className="gb-drive">
-      <legend className="gb-move-h">Test</legend>
+    <div className="gb-drive gb-bodytest">
       {running && s ? (
         <section className="gb-bt-live" aria-label="Body test running">
           <div className="gb-bt-h">
@@ -200,11 +199,11 @@ export function GrowbotBodyTest({
         <>
           <button
             type="button"
-            className="gb-chip trick gb-bt-go"
+            className="gb-btn primary block gb-bt-go"
             disabled={disabled || busy}
             onClick={() => void start()}
           >
-            {waitUntil > now ? "Starting on the robot's phone…" : "Body test…"}
+            {waitUntil > now ? "Starting on the robot's phone…" : "Start a body test"}
           </button>
           <p className="gb-hint dim">
             Walks you through a scripted trial on the robot's phone and saves every reading to the
@@ -212,6 +211,7 @@ export function GrowbotBodyTest({
           </p>
         </>
       )}
+      {past.length > 0 && <div className="gb-move-h">Past runs</div>}
       {past.length > 0 && (
         <ul className="gb-bt-past" aria-label="Past body tests">
           {past.map((r) => (
@@ -228,6 +228,6 @@ export function GrowbotBodyTest({
           ))}
         </ul>
       )}
-    </fieldset>
+    </div>
   );
 }

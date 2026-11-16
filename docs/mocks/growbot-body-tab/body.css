@@ -1,0 +1,134 @@
+/* The Body tab redesign's own parts. Tokens and chrome come from ../growbot-policies/shared.css
+   (lifted from frontend/src/styles/tokens.css), so only what is new lives here. */
+.body { gap: 12px; padding-bottom: 32px; }
+.card { padding: 14px; }
+.card-head { margin-bottom: 10px; }
+.sub { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; margin: 14px 0 8px; }
+.sub:first-child { margin-top: 0; }
+
+/* Robot summary: one line of who and state, the key behind a row. */
+.who { display: flex; align-items: center; gap: 10px; }
+.who .av { width: 36px; height: 36px; border-radius: 50%; background: var(--violet-tint); border: 1px solid var(--violet);
+  display: grid; place-items: center; color: var(--violet-text); font-weight: 500; flex: none; }
+.who .tx { flex: 1; min-width: 0; font-size: var(--fs-secondary); color: var(--text-2); }
+.who .tx b { color: var(--text); font-weight: 500; }
+
+/* Rows that open a sheet: the whole row is the target. */
+.rows { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-card); overflow: hidden; }
+.rows.flat { background: transparent; border: 0; border-radius: 0; }
+.row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 14px; width: 100%; background: none;
+  border: 0; border-top: 1px solid var(--border); text-align: left; cursor: pointer; }
+.row:first-child { border-top: 0; }
+.row .ic { width: 30px; height: 30px; border-radius: 9px; background: var(--surface-2); display: grid; place-items: center;
+  color: var(--text-2); flex: none; font-size: 15px; }
+.row .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-body); }
+.row .tx em { font-style: normal; font-size: var(--fs-micro); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .chev { color: var(--text-3); font-size: 18px; }
+.row:disabled { cursor: default; } .row:disabled .tx { color: var(--text-3); }
+
+/* The walk picker: the walk's short name, its gist under it. */
+.picker { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 8px 12px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); text-align: left; cursor: pointer; }
+.picker .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.picker .k { font-size: var(--fs-micro); color: var(--text-3); }
+.picker .v { font-size: var(--fs-body); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.picker .chev { color: var(--text-3); }
+
+/* Chips: one line that scrolls sideways, never clipped mid-word. */
+.strip { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 -14px; padding: 2px 14px;
+  scroll-snap-type: x proximity; mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 24px), transparent); }
+.strip::-webkit-scrollbar { display: none; }
+.chip { flex: none; min-height: 40px; padding: 0 14px; border-radius: var(--r-pill); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-size: var(--fs-secondary); white-space: nowrap; cursor: pointer; scroll-snap-align: start; }
+.chip.on { border-color: var(--accent); background: var(--accent-tint); font-weight: 500; }
+.chip:disabled { color: var(--text-3); cursor: default; }
+.chip.lit { border-color: var(--accent); background: var(--accent-tint); }
+
+/* A segmented row: durations, Tap | Steer, the inner tabs. */
+.segs { display: flex; gap: 3px; background: var(--surface-2); border-radius: var(--r-seg); padding: 3px; }
+.segs button { flex: 1; border: 0; background: transparent; color: var(--text-2); min-height: 40px; border-radius: 11px;
+  font-size: var(--fs-secondary); font-weight: 500; cursor: pointer; white-space: nowrap; padding: 0 6px; }
+.segs button.on { background: var(--accent-tint); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
+.segs.tabs button { min-height: 44px; }
+
+/* The pad: four keys round a rose Stop, as the live one. */
+.pad { position: relative; width: 236px; height: 236px; margin: 12px auto 4px; border-radius: 50%;
+  background: var(--bg); border: 1px solid var(--border); }
+.pad .k { position: absolute; width: 66px; height: 66px; border-radius: 16px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text-2); display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 2px; font-size: var(--fs-micro); cursor: pointer; }
+.pad .k svg { width: 24px; height: 24px; }
+.pad .k.n { left: 85px; top: 12px; } .pad .k.s { left: 85px; bottom: 12px; }
+.pad .k.w { left: 12px; top: 85px; } .pad .k.e { right: 12px; top: 85px; }
+.pad .k.on { border-color: var(--accent); background: var(--accent-tint); color: var(--text); }
+.pad .k:disabled { color: var(--text-3); opacity: 0.6; cursor: default; }
+.pad .stop { position: absolute; left: 85px; top: 85px; width: 66px; height: 66px; border-radius: 50%;
+  border: 0; background: var(--danger-tint); color: var(--danger-text); font-size: var(--fs-micro); font-weight: 500; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.pad .stop:disabled { opacity: 0.45; cursor: default; }
+.bar { height: 3px; border-radius: 2px; background: var(--surface-2); margin: 8px 24px 0; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--steel); animation: drain linear forwards; }
+@keyframes drain { from { width: 100%; } to { width: 0; } }
+.said { min-height: 20px; text-align: center; font-size: var(--fs-secondary); color: var(--text-2); margin: 6px 0 2px; }
+.said.bad { color: var(--danger-text); }
+.tip { font-size: var(--fs-secondary); color: var(--text-2); background: var(--surface-2); border-radius: var(--r-input);
+  padding: 9px 12px; margin: 10px 0 0; }
+.tip.blocked { background: var(--amber-tint); color: var(--warn-text); }
+
+/* Sliders, as the live gb-trim rows. */
+.sl { display: grid; grid-template-columns: 92px 1fr 78px; align-items: center; gap: 10px; min-height: 44px; font-size: var(--fs-secondary); }
+.sl label { color: var(--text-2); }
+.sl input { width: 100%; accent-color: var(--steel); }
+.sl output { font-family: var(--font-mono); font-size: var(--fs-micro); text-align: right; color: var(--text); }
+.go { margin-top: 10px; }
+.go.on { background: var(--danger-tint); border-color: transparent; color: var(--danger-text); }
+
+/* The developer disclosure. */
+details.dev { border: 1px dashed var(--border); border-radius: var(--r-card); }
+details.dev > summary { list-style: none; min-height: 52px; padding: 0 14px; display: flex; align-items: center; gap: 10px;
+  cursor: pointer; font-size: var(--fs-secondary); color: var(--text-2); }
+details.dev > summary::-webkit-details-marker { display: none; }
+details.dev > summary .chev { margin-left: auto; color: var(--text-3); transition: transform 150ms ease-out; }
+details.dev[open] > summary .chev { transform: rotate(90deg); }
+details.dev .in { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+.runs { list-style: none; margin: 0; padding: 0; }
+.runs li { display: flex; align-items: center; gap: 8px; min-height: 44px; border-top: 1px solid var(--border); font-size: var(--fs-secondary); }
+.runs li:first-child { border-top: 0; }
+.runs .n { color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-micro); width: 30px; }
+.runs .w { flex: 1; color: var(--text-2); }
+
+/* Walk sheet rows: short name, gist, kind. */
+.walks { display: flex; flex-direction: column; gap: 8px; }
+.walk { display: flex; align-items: center; gap: 10px; min-height: 60px; padding: 8px 12px; border: 1px solid var(--border);
+  border-radius: var(--r-input); background: none; text-align: left; cursor: pointer; width: 100%; }
+.walk.sel { border-color: var(--accent); background: var(--accent-tint); }
+.walk .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.walk .nm { font-size: var(--fs-body); font-weight: 500; }
+.walk .gist { font-size: var(--fs-micro); color: var(--text-2); }
+.walk .kind { font-size: var(--fs-micro); color: var(--text-3); }
+.walk .r { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--text-3); flex: none; }
+.walk.sel .r { border-color: var(--accent); box-shadow: inset 0 0 0 4px var(--surface), inset 0 0 0 10px var(--accent); }
+
+/* C's full-screen remote. */
+.remote { position: absolute; inset: 0; background: var(--bg); z-index: 8; display: flex; flex-direction: column; animation: slidein 180ms ease-out; }
+@keyframes slidein { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.remote .rb { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+.remote .thumb { flex: none; padding: 8px 16px calc(18px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--surface); }
+.joy { position: relative; width: 220px; height: 220px; margin: 6px auto; border-radius: 50%; background: var(--bg);
+  border: 1px solid var(--border); touch-action: none; cursor: grab; }
+.joy::before, .joy::after { content: ""; position: absolute; background: var(--border); }
+.joy::before { left: 50%; top: 14px; bottom: 14px; width: 1px; } .joy::after { top: 50%; left: 14px; right: 14px; height: 1px; }
+.joy .knob { position: absolute; width: 76px; height: 76px; left: 72px; top: 72px; border-radius: 50%; background: var(--surface-2);
+  border: 1px solid var(--accent); z-index: 1; display: grid; place-items: center; font-size: var(--fs-micro); color: var(--text-2); }
+.joy.on .knob { background: var(--accent-tint); color: var(--text); }
+.joy .lbl { position: absolute; font-size: var(--fs-micro); color: var(--text-3); }
+.joy .lbl.n { top: -2px; left: 0; right: 0; text-align: center; transform: translateY(-120%); }
+.joyrow { display: flex; align-items: center; gap: 8px; }
+.joyrow .joy { flex: none; }
+.vsl { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: var(--fs-micro); color: var(--text-3); width: 54px; }
+.vsl input { writing-mode: vertical-lr; direction: rtl; height: 160px; width: 28px; accent-color: var(--steel); }
+.bigstop { width: 100%; min-height: 52px; border-radius: var(--r-input); border: 0; background: var(--danger-tint); color: var(--danger-text);
+  font-weight: 500; font-size: var(--fs-body); cursor: pointer; margin-top: 8px; }
+.bigstop:disabled { opacity: 0.5; }
+.readout { display: flex; justify-content: center; gap: 18px; font: var(--fs-micro) var(--font-mono); color: var(--text-2); }

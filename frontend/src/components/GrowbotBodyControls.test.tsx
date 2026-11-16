@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GrowbotCal, GrowbotRobot } from "../api/client";
 import { GB_CAL_DEFAULTS, GrowbotBodyControls } from "./GrowbotBodyControls";
@@ -197,38 +197,42 @@ describe("GrowbotBodyControls", () => {
     await waitFor(() => expect(document.querySelector(".gb-bad-t")).toBeTruthy());
   });
 
-  it("stops the chip and tells the Move pane too", async () => {
+  it("stops the chip and tells the remote too, and opens Legs from its row", async () => {
     const calls = serve();
     const onStop = vi.fn();
     let said = "";
     render(
       <GrowbotBodyControls
         robot={QUORRA}
-        move={(stop) => (
-          <button
-            type="button"
-            onClick={() =>
-              void stop().then((s) => {
-                said = s.text;
-              })
-            }
-          >
-            pad stop
-          </button>
+        move={(stop, legsRow) => (
+          <>
+            <button
+              type="button"
+              onClick={() =>
+                void stop().then((s) => {
+                  said = s.text;
+                })
+              }
+            >
+              pad stop
+            </button>
+            {legsRow}
+          </>
         )}
         onStop={onStop}
       />,
     );
-    // Move wears the one Stop on its pad, so the card adds none of its own there.
+    // The remote wears the one Stop on its pad, so the card adds none of its own there.
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "pad stop" }));
     expect(onStop).toHaveBeenCalledOnce();
     await waitFor(() => expect(said).toBe("Stopped. The legs are limp."));
     expect(acts(calls)).toEqual([{ kind: "stop" }]);
-    fireEvent.click(screen.getByRole("tab", { name: "Legs" }));
-    expect(await screen.findByRole("button", { name: "Move left leg" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await screen.findByText("Stopped. The legs are limp.");
+    fireEvent.click(screen.getByRole("button", { name: /^Legs/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Legs — Quorra" });
+    expect(within(sheet).getByRole("button", { name: "Move left leg" })).toBeTruthy();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Stop" }));
+    await within(sheet).findByText("Stopped. The legs are limp.");
     expect(onStop).toHaveBeenCalledTimes(2);
   });
 

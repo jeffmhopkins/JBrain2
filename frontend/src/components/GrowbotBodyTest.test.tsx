@@ -62,7 +62,7 @@ describe("GrowbotBodyTest", () => {
     expect(screen.getByText(/stopped at setup/)).toBeTruthy();
     const logs = screen.getAllByRole("link", { name: "log" });
     expect(logs[0]?.getAttribute("href")).toBe("/api/growbot/bodytests/7");
-    fireEvent.click(screen.getByRole("button", { name: "Body test…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start a body test" }));
     await waitFor(() => expect(moves).toHaveLength(1));
     expect(moves[0]).toEqual({ move: "look", secs: 0, skills: SKILLS, follow: "test" });
     await waitFor(() =>
@@ -116,7 +116,7 @@ describe("GrowbotBodyTest", () => {
     show();
     expect(await screen.findByText(/camera test · .* · running/)).toBeTruthy();
     expect(screen.queryByLabelText("Body test running")).toBeNull();
-    expect(screen.getByRole("button", { name: "Body test…" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start a body test" })).toBeTruthy();
   });
 
   it("polls while a test runs, and shows a silent one as lost contact", async () => {
@@ -138,7 +138,7 @@ describe("GrowbotBodyTest", () => {
       await vi.advanceTimersByTimeAsync(6000);
     });
     expect(reads.length).toBe(n);
-    expect(screen.getByRole("button", { name: "Body test…" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start a body test" })).toBeTruthy();
   });
 
   it("says why the creature refused, and works on a box that keeps no tests", async () => {
@@ -150,7 +150,7 @@ describe("GrowbotBodyTest", () => {
       );
     });
     const { props } = show();
-    fireEvent.click(await screen.findByRole("button", { name: "Body test…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start a body test" }));
     await waitFor(() =>
       expect(props.onSaid).toHaveBeenLastCalledWith({
         text: "a body test is already running",

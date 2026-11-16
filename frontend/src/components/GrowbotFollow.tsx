@@ -95,18 +95,26 @@ export function GrowbotFollow({
 
   const off = disabled || busy;
   return (
-    <fieldset className="gb-drive">
-      <legend className="gb-move-h">Follow</legend>
-      <div className="gb-chips">
+    <div className="gb-follow">
+      <p className="gb-hint">
+        It locks onto the nearest face the front camera sees and keeps the distance it was at. A dry
+        run leaves the legs alone and shows the way it would go as an arrow on its screen.
+      </p>
+      <div className="gb-acts two">
         {running ? (
-          <button type="button" className="gb-chip on" aria-pressed onClick={() => void stop()}>
+          <button
+            type="button"
+            className="gb-btn danger block"
+            aria-pressed
+            onClick={() => void stop()}
+          >
             {running === "dry" ? "Stop dry run" : "Stop following"}
           </button>
         ) : (
           <>
             <button
               type="button"
-              className="gb-chip"
+              className="gb-btn primary"
               disabled={off}
               onClick={() => void send("walk")}
             >
@@ -114,7 +122,7 @@ export function GrowbotFollow({
             </button>
             <button
               type="button"
-              className="gb-chip"
+              className="gb-btn"
               disabled={off}
               onClick={() => void send("dry")}
             >
@@ -122,18 +130,21 @@ export function GrowbotFollow({
             </button>
           </>
         )}
+      </div>
+      <div className="gb-move-h">Camera setup</div>
+      <div className="gb-acts two">
         <button
           type="button"
-          className="gb-chip"
+          className="gb-btn"
           disabled={off}
           onClick={() => void send("calibrate")}
         >
           Measure 1 m
         </button>
-        <button type="button" className="gb-chip" disabled={off} onClick={() => void send("flip")}>
+        <button type="button" className="gb-btn" disabled={off} onClick={() => void send("flip")}>
           Flip frames
         </button>
       </div>
-    </fieldset>
+    </div>
   );
 }

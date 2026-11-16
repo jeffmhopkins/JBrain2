@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GrowbotRobot } from "../api/client";
 import { GrowbotMovePanel, moveBlocked, stopCreature } from "./GrowbotMovePanel";
+import { gistOf, shortName } from "./growbotNames";
 
 // The Body tab's remote: every move goes to the creature wearing the robot, and the panel says
 // what it did or why not.
@@ -213,11 +214,12 @@ describe("GrowbotMovePanel", () => {
     localStorage.clear();
     const fetch = serve(json({ ok: true, state: "started", why: "" }), [QUICK]);
     render(<GrowbotMovePanel robot={robot()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Quick trot" }));
-    expect(screen.getByRole("button", { name: "Quick trot" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    fireEvent.click(screen.getByRole("button", { name: /^Walking with/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Walk with" });
+    fireEvent.click(await within(sheet).findByRole("radio", { name: /^Quick trot/ }));
+    // Picking closes the sheet; the row then names the walk.
+    expect(screen.queryByRole("dialog", { name: "Walk with" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Walking with Quick trot/ })).toBeInTheDocument();
     expect(screen.getByText(/nose first, heading only/)).toBeInTheDocument();
     // Heading only: down turns it around rather than backing away.
     expect(screen.getByRole("button", { name: "Turn around 5 s" })).toBeEnabled();
@@ -260,7 +262,9 @@ describe("GrowbotMovePanel", () => {
     };
     const fetch = serve(json({ ok: true, state: "started", why: "" }), [SPIN, LOOK, GONE]);
     render(<GrowbotMovePanel robot={robot()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Tight spin" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Walking with/ }));
+    const turnWith = await screen.findByRole("group", { name: "Turn with" });
+    fireEvent.click(within(turnWith).getByRole("radio", { name: /^Tight spin/ }));
     expect(localStorage.getItem("gb-turn-with:gb-3fa91c")).toBe("s-1");
     // The turn takes the left and right keys; forward stays the creature's own.
     expect(screen.getByRole("button", { name: "Walk forward 5 s" })).toBeEnabled();
@@ -291,12 +295,95 @@ describe("GrowbotMovePanel", () => {
     unmount();
     serve(json({}), []);
     render(<GrowbotMovePanel robot={robot()} />);
-    expect(screen.getByRole("button", { name: "Its own walks" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
     expect(screen.getByRole("button", { name: "Walk forward 5 s" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /^Walking with Built-in walk/ }));
+    expect(screen.getByRole("radio", { name: /^Built-in walk/ })).toBeChecked();
     expect(screen.getByRole("button", { name: "Add a trained walk…" })).toBeInTheDocument();
+  });
+
+  it("shows a long library name short on the pad and whole in the Walk with sheet", async () => {
+    localStorage.clear();
+    const LONG = { ...QUICK, name: "Master v3: turn, walk and back up, calmer backing" };
+    localStorage.setItem("gb-walk-with:gb-3fa91c", LONG.id);
+    serve(json({}), [LONG]);
+    render(<GrowbotMovePanel robot={robot()} />);
+    expect(
+      await screen.findByRole("button", { name: /^Walking with Master v3$/ }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Walking with/ }));
+    expect(screen.getByRole("radio", { name: /^Master v3/ })).toHaveAccessibleName(
+      /turn, walk and back up, calmer backing/,
+    );
+  });
+
+  it("puts every trick on one line, the escape spins and trained tricks among them", async () => {
+    localStorage.clear();
+    const LOOK = { ...QUICK, id: "l-1", name: "Look v10: face a target", motion: "trick" };
+    serve(json({}), [LOOK]);
+    render(<GrowbotMovePanel robot={robot({ gestures: ["happy dance"] })} />);
+    const tricks = screen.getByRole("group", { name: "Tricks" });
+    await within(tricks).findByRole("button", { name: "Look v10: face a target 5 s" });
+    expect(within(tricks).getByRole("button", { name: "Escape spin left 5 s" })).toBeTruthy();
+    expect(within(tricks).getByRole("button", { name: "happy dance" })).toBeTruthy();
+    expect(within(tricks).getByText("Look v10")).toBeTruthy();
+  });
+
+  it("switches the pad to live steering and back, with the durations only for taps", async () => {
+    localStorage.clear();
+    const SET = { ...QUICK, contract: { ...QUICK.contract, modes: ["look", "forward"] } };
+    serve(json({}), [SET]);
+    render(<GrowbotMovePanel robot={robot()} />);
+    const steer = await screen.findByRole("button", { name: "Steer live" });
+    expect(screen.getByRole("group", { name: "Walks and spins run for" })).toBeInTheDocument();
+    fireEvent.click(steer);
+    expect(screen.getByRole("button", { name: "Start driving" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Heading")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Walk forward 5 s" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Walks and spins run for" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Tap a move" }));
+    expect(screen.getByRole("button", { name: "Walk forward 5 s" })).toBeInTheDocument();
+  });
+
+  it("offers no live steering with only the creature's own walks", () => {
+    localStorage.clear();
+    serve(json({}), []);
+    render(<GrowbotMovePanel robot={robot()} />);
+    expect(screen.queryByRole("button", { name: "Steer live" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Follow me/ })).toBeNull();
+  });
+
+  it("opens Follow me and Body test as sheets that say what the creature answered", async () => {
+    localStorage.clear();
+    const SET = { ...QUICK, contract: { ...QUICK.contract, modes: ["look", "forward"] } };
+    serve(json({ ok: true, state: "started", why: "" }), [SET]);
+    render(
+      <GrowbotMovePanel
+        robot={robot()}
+        more={
+          <button type="button" className="gb-li">
+            Legs row
+          </button>
+        }
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^Follow me/ }));
+    const follow = screen.getByRole("dialog", { name: "Follow me" });
+    fireEvent.click(within(follow).getByRole("button", { name: "Dry run" }));
+    await within(follow).findByText(/^Dry run: the arrow/);
+    fireEvent.click(within(follow).getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Body test/ }));
+    expect(screen.getByRole("dialog", { name: "Body test" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Legs row" })).toBeInTheDocument();
+  });
+});
+
+describe("shortName", () => {
+  it("is the part before the colon, and the gist the rest", () => {
+    expect(shortName("Master v3: turn, walk and back up")).toBe("Master v3");
+    expect(gistOf("Master v3: turn, walk and back up")).toBe("turn, walk and back up");
+    expect(shortName("Quick trot")).toBe("Quick trot");
+    expect(gistOf("Quick trot")).toBe("");
+    expect(shortName(": odd")).toBe(": odd");
   });
 });
 

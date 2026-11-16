@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot Body tab — B — tabs inside Controls</title>
+<link rel="stylesheet" href="../growbot-policies/shared.css">
+<link rel="stylesheet" href="body.css">
+</head>
+<body>
+<!-- B: the Controls card holds five tabs, Drive · Tricks · Follow · Test · Legs, each one screen tall. Drive keeps the pad and the live steering together under one walk picker. Developer tools fold away as in A. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const phone = document.getElementById("phone");
+  const S = B.S;
+  function render() {
+    const keep = phone.querySelector(".body, .rb");
+    const top = keep ? keep.scrollTop : 0;
+    const p = S.pane;
+    const pane = p === "drive" ? `${B.picker()}${B.tip()}${B.pad()}${B.said()}${B.secs("Each move runs for")}<details class="dev" style="margin-top:12px"${S.mode === "steer" ? " open" : ""}><summary>Steer live<span class="chev">›</span></summary><div class="in">${B.sliders()}</div></details>`
+      : p === "tricks" ? `${B.tip()}<div class="acts" style="margin-top:0">${["Wiggle","Bow","Sway","Stand tall","Get up","Escape spin left","Escape spin right","Look v10"].map((t) => `<button class="chip" data-act="trick" data-id="${t}" ${S.on ? "" : "disabled"}>${t}</button>`).join("")}</div>${B.said()}${B.secs("Spins and held tricks run for")}`
+      : p === "follow" ? `${B.tip()}${B.follow()}${B.said()}`
+      : p === "test" ? `${B.tip()}${B.test()}`
+      : B.legs();
+    phone.innerHTML = B.chrome(`${B.robot()}
+      <section class="card" aria-label="Controls for Fish">${B.head("Controls for Fish")}
+        <div class="segs tabs" role="tablist" style="margin-bottom:12px">${[["drive","Drive"],["tricks","Tricks"],["follow","Follow"],["test","Test"],["legs","Legs"]].map(([id,l]) => `<button role="tab" class="${p === id ? "on" : ""}" data-act="pane" data-id="${id}">${l}</button>`).join("")}</div>
+        ${pane}
+      </section>
+      <button class="btn block">Add a robot</button>
+      ${B.dev(false)}`) + B.sheet() + B.toast();
+    const after = phone.querySelector(".body, .rb");
+    if (after) after.scrollTop = top;
+  }
+  B.mockbar(document.getElementById("mockbar"), "B", render);
+  B.wire(phone);
+  render();
+})();
+</script>
+</body>
+</html>

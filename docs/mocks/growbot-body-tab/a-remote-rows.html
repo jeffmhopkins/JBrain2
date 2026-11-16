@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot Body tab — A — remote plus rows</title>
+<link rel="stylesheet" href="../growbot-policies/shared.css">
+<link rel="stylesheet" href="body.css">
+</head>
+<body>
+<!-- A (picked): one Controls card that is a remote: the walk as one row opening a sheet, the pad with a Tap / Steer switch that folds the two Drives into one, durations as one segmented row, tricks on one line that scrolls sideways. Follow, Body test and Legs are rows that open sheets. Developer tools fold into one closed section at the foot. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const phone = document.getElementById("phone");
+  const S = B.S;
+  function render() {
+    const keep = phone.querySelector(".body, .rb");
+    const top = keep ? keep.scrollTop : 0;
+    phone.innerHTML = B.chrome(`${B.robot()}
+      <section class="card" aria-label="Controls for Fish">${B.head("Controls for Fish")}
+        ${B.picker()}
+        <div class="segs" style="margin-top:10px" role="group" aria-label="How the pad drives"><button class="${S.mode === "tap" ? "on" : ""}" data-act="mode" data-id="tap">Tap a move</button><button class="${S.mode === "steer" ? "on" : ""}" data-act="mode" data-id="steer">Steer live</button></div>
+        ${B.tip()}
+        ${S.mode === "tap" ? `${B.pad()}${B.said()}${B.secs("")}` : `<div style="margin-top:12px">${B.sliders()}</div>${B.said()}`}
+        <div class="sub">Tricks</div>${B.tricks()}
+      </section>
+      <div class="rows">
+        <button class="row" data-act="sheet" data-id="follow"><span class="ic">◎</span><span class="tx">Follow me<em>${S.follow ? "Following now" : "Walks after the nearest face"}</em></span><span class="chev">›</span></button>
+        <button class="row" data-act="sheet" data-id="test"><span class="ic">✓</span><span class="tx">Body test<em>Last: #40 · 3 failed, 6 to look at</em></span><span class="chev">›</span></button>
+        <button class="row" data-act="sheet" data-id="legs"><span class="ic">⟂</span><span class="tx">Legs<em>Trim L +4° · R −2°, saved on the box</em></span><span class="chev">›</span></button>
+      </div>
+      <button class="btn block">Add a robot</button>
+      ${B.dev(false)}`) + B.sheet() + B.toast();
+    const after = phone.querySelector(".body, .rb");
+    if (after) after.scrollTop = top;
+  }
+  B.mockbar(document.getElementById("mockbar"), "A", render);
+  B.wire(phone);
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-11-15 — the Jobs Runs list keeps spawn order (newest on top) instead of jumping on every update. Prior: the Ops vitals gain a CPU busy % tile, and the load average reads as threads, not a percent. Prior: leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
+> **Status:** Living · **Last verified:** 2026-11-16 — the GrowBot Body tab is redesigned as a remote plus rows (one walk row and sheet, Tap a move | Steer live in place of the second Drive, tricks on one sideways line, Follow me, Body test and Legs as sheets, the robot's key and Who wears in its sheet, developer tools folded away). Prior: the Jobs Runs list keeps spawn order (newest on top) instead of jumping on every update. Prior: the Ops vitals gain a CPU busy % tile, and the load average reads as threads, not a percent. Prior: leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3298,43 +3298,28 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   <name>…* while the link is minted. From an address the creature does not let frame it (the
   owner site, the owner app's WebView, a subdomain PWA), the launch falls back to a *tap here to
   open it* toast. Camera and microphone grants then belong to the app's own name, not `:8444`.
-- **Body.** The robot's card: its name, its state in words beside the dot (on · seen 20 s ago /
-  off · last seen 3 h ago / key revoked — can't connect), who wears it (*Sprout is wearing it,
-  on Pixel 6a.* or *Nobody is wearing Fish — it stands still until a persona connects.*), the
-  pairing code and the key's age, then *New key* and *Revoke key* (rose at rest, a second tap
-  within 3 s, disarming on its own); a revoked body shows *Reflash <name>* instead, and a rose
-  banner says no persona can wear it until it is reflashed. Under it, **Who wears Fish** as a
-  radio list: *Nobody* (*Fish stands still.*), then every persona with where it is. Picking a
-  persona open on a phone hands it the legs there; picking one that is not open opens it on
-  this phone wearing Fish (through the first-time note when it applies). *The one it leaves
-  carries on alone on its phone.* Then **Controls for <name>** (below), whose *Move* pane is the
-  robot's remote (owner, 2026-11-12), a driving pad since the owner called the first form
-  version "crap" (same day): a round recessed pad of four rounded keys, *Forward* (chevron up,
-  toward the phone's screen), *Back*, and a *Spin* on each side (↺ left, ↻ right), with the
-  card's one *Stop* as a rose disc in its middle. A key runs its walk or spin for the chosen
-  time and stays lit in steel while it runs, a thin steel bar under the pad draining over those
-  seconds. Under the bar, what the creature said: *Walking forward for 5 s.*, or its own words
-  for why not, in rose. Then *Walks and spins run for* as pill chips (*2 s*, *5 s* by default,
-  *10 s*, *15 s*, inside the box's 1-15 bound) and *Tricks* as pill chips (*Wiggle*, *Bow*,
-  *Sway*). Above the pad, **Walk with** as pill chips sized to their words: *Its own walks*
-  (the creature's stock walk and spins), one chip per trained walk in the box's library by
-  its name, then a dashed steel *Trained walks…* (*Add a trained walk…* while there are none)
-  that opens the **Trained walks** sheet. The pick is remembered per robot on this phone. With
-  a trained walk picked the keys steer it by heading: *Ahead*, *Left* and *Right* (a 90° turn),
-  and *Back* when the walk takes a speed or *Turn* (around) when it only takes a heading; the
-  answer names it (*Turning left with Quick trot for 5 s.*), and tricks stay the creature's
-  own. The sheet lists *On the box* (each walk's name, *nose first, heading only* or *camera
-  end first, with speed*, its size and day; *Rename* inline, *Delete* armed: *Sure?*), then
-  *From finished training jobs* (each finished GrowBot training run that left a walk, with
-  *Add*, or an *On the box* tag once added; empty: *No finished GrowBot training yet. Start a
-  GrowBot walk on the Jobs screen; when it finishes, its walk shows up here.*). An added walk
-  is named for its kind and day (*Camera walk, Nov 14*). A strip above the pad says how to set
-  the robot down (with a trained walk, its name and kind), or, amber, why nothing can
-  move. The walk runs on the rider phone's motion sensors, so every key is disabled until the
-  robot is on (*Turn the robot on to move it.*) and a creature wearing it is open on screen
-  (*Open a persona wearing it and keep the creature on screen. Its phone's motion sensors run
-  the walk.*). Last,
-  *Add a robot* (secondary). With no robot yet, the tab is *Add a robot*.
+- **Body** (owner, 2026-11-16 — binding mock `docs/mocks/growbot-body-tab/a-remote-rows.html`,
+  variant A "remote plus rows"; rivals B "tabs inside Controls" and C "cockpit", and the
+  problems it fixes, in that set's README). The tab had grown to about five phone screens with
+  two drives, a seven-row walk list, clipped trick chips and developer tools among the everyday
+  controls; now the everyday remote fits about a screen and everything else is one tap away.
+  Per robot, top to bottom:
+  - **The robot's card**: its name, its state in words beside the dot (on · seen 20 s ago /
+    off · last seen 3 h ago / key revoked — can't connect), who wears it (*Sprout is wearing it,
+    on Pixel 6a.* or *Nobody is wearing Fish — it stands still until a persona connects.*), then
+    one row, *Who wears Fish, and its key* (*Pairing code, New key, Revoke key*), that opens the
+    robot's sheet: the pairing code and the key's age, *New key* and *Revoke key* (rose at rest,
+    a second tap within 3 s, disarming on its own), then **Who wears Fish** as a radio list:
+    *Nobody* (*Fish stands still.*), then every persona with where it is. Picking a persona open
+    on a phone hands it the legs there; picking one that is not open opens it on this phone
+    wearing Fish (through the first-time note when it applies). *The one it leaves carries on
+    alone on its phone.* A revoke closes the sheet; a revoked body's card shows the facts and
+    *Reflash <name>* itself, and a rose banner says no persona can wear it until it is
+    reflashed. A robot just paired opens its sheet so its wearer can be picked.
+  - **Controls for <name>** (below), the remote.
+  Then *Add a robot* (secondary), then **For GrowBot's developer**, a dashed disclosure closed
+  by default (*Brain log · walks and spins*) holding *Share a brain log…* and the *Walks and
+  spins* card. With no robot yet, the tab is *Add a robot* and that disclosure.
 - **Phones.** One row per phone that has opened GrowBot (a phone outline, its name, what it
   holds: *Captain Bolt · wearing Fish*, *Sprout · alone*, *nothing open*), with a violet *Fish*
   tag on the one wearing the body. *A phone holds one persona at a time, and a persona is open on
@@ -3447,21 +3432,71 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   Closing the sheet mid-flash leaves *Flashing — tap to watch* on the Body tab. Each failure
   says what happened and the recovery, never "see the log".
 - **Controls for <name>** (owner, 2026-11-12: *"anything they could do in the original
-  application"*) is one card under each robot's *Who wears* on the Body tab
-  (`components/GrowbotBodyControls.tsx`, owner 2026-11-12: the remote and the leg trim in one
-  GUI): its state beside a dot in the head (*Ready*, *No creature* in amber, *Off*), a *Move |
-  Legs* segmented strip, *Move* first (the remote above). One *Stop* stops the chip and the
-  creature walking it together: the pad's middle on *Move*, a full-width rose *Stop* under
-  *Legs*. *Legs* is upstream's tester leg check in its own three steps, each under a rule with
-  a steel number disc: *1 · Which leg* (*Move left leg* / *Move right leg*, then the *Swap left and
-  right* checkbox), *2 · Straighten* (a *Left trim* and *Right trim* row each: −, slider ±30°,
-  +, the value; the legs stand at the new trim once the hand stops), *3 · Direction* (*Sweep
-  left/right forward*), then *Advanced* (each leg's sign, the IMU's roll/pitch/yaw signs, the
-  walk gain) and an armed *Reset calibration*. Every change saves that one setting on the box
-  at once (the line above step 1 says whether anything is saved there yet; a setting never
-  changed here stays each phone's own), and a status line under it says what was
-  done or why a move did not go. A robot that is off keeps its calibration editable but its
-  moves and *Stop* disabled, with *Turn the robot on to move it.*
+  application"*; laid out as the 2026-11-16 variant A) is one card under each robot's card
+  (`components/GrowbotBodyControls.tsx` around `components/GrowbotMovePanel.tsx`): its state
+  beside a dot in the head (*Ready*, *No creature* in amber, *Off*), then:
+  - **Walking with <short name>**, one row opening the **Walk with** sheet. A library name's
+    short name is the part before its first colon (*Master v3: turn, walk and back up, calmer
+    backing* is *Master v3*); the sheet lists *Built-in walk* (*<name>'s stock walk and spins*,
+    *no training needed*) and each trained walk as a radio row with its short name, the rest of
+    its name as the gist and its kind (*nose first, heading only* / *camera end first, with
+    speed*); with turn policies, a second list *Turn with* (*The walk's turns* or *Built-in
+    spins*, then each turn), the row then reading *Master v3 · turns with Tight spin*. Picking
+    closes the sheet and is remembered per robot on this phone. *Trained walks…* (*Add a
+    trained walk…* while there are none) at the sheet's foot opens the **Trained walks** sheet
+    (below).
+  - **Tap a move | Steer live**, a segmented switch shown when a trained walk or a skill set
+    can be steered; the timed pad and the live steering are one control, never two sections.
+  - A strip saying how to set the robot down (with a trained walk, its short name and kind),
+    or, amber, why nothing can move.
+  - *Tap a move*: the driving pad (owner, 2026-11-12, after calling the first form version
+    "crap"): a round recessed pad of four rounded keys, *Forward* (chevron up, toward the
+    phone's screen), *Back*, and a *Spin* on each side (↺ left, ↻ right), with the card's one
+    *Stop* as a rose disc in its middle. A key runs its walk or spin for the chosen time and
+    stays lit in steel while it runs, a thin steel bar under the pad draining over those
+    seconds. With a trained walk picked the keys steer it by heading: *Ahead*, *Left* and
+    *Right* (a 90° turn), and *Back* when the walk takes a speed or *Turn* (around) when it only
+    takes a heading; the answer names it (*Turning left with Quick trot for 5 s.*). Under the
+    bar, what the creature said, or its own words for why not, in rose. Then the durations as
+    one segmented row (*2 s*, *5 s* by default, *10 s*, *15 s*, inside the box's 1-15 bound),
+    shown only here, since only taps use them.
+  - *Steer live*: *Heading* (*straight*, *90° left*), *Speed* and *Camera height* sliders (each
+    shown when the walk takes it; a skill set takes all three), then *Start driving* (primary),
+    which becomes a rose *Stop driving*. With both a skill set and a picked walk, one line says
+    which it steers (*Steering the skill set (look, forward and back).*) with *Steer Master v3
+    instead* as a link, never a second walk picker. Switching back to *Tap a move*, or any pad
+    move, ends the drive.
+  - **Tricks**, one line of pill chips sized to their words that scrolls sideways, never
+    wrapped or clipped: the creature's own (*Wiggle*, *Bow*, *Sway*, *Stand tall*, *Get up*),
+    *Escape spin left* and *right* (for the picked seconds), the library's trick policies by
+    short name, and the soul's own saved gestures. Tricks stay the creature's own whatever walk
+    is picked.
+  - Rows opening sheets: **Follow me** (*Walks after the nearest face*; the sheet: *Follow me*
+    (primary) and *Dry run*, which become a rose *Stop following* / *Stop dry run*, then
+    *Camera setup*: *Measure 1 m* and *Flip frames*) and **Body test** (*A guided trial, with
+    past runs and their logs*; the sheet: *Start a body test*, the live mirror of a run, then
+    *Past runs* with their logs), both only with a skill set; each sheet repeats what the
+    creature answered. Then **Legs** (*Which leg, trim, direction and calibration*), whose sheet
+    (*Legs — <name>*) is upstream's tester leg check in its own three steps, each under a rule
+    with a steel number disc: *1 · Which leg* (*Move left leg* / *Move right leg*, then the *Swap
+    left and right* checkbox), *2 · Straighten* (a *Left trim* and *Right trim* row each: −,
+    slider ±30°, +, the value; the legs stand at the new trim once the hand stops), *3 ·
+    Direction* (*Sweep left/right forward*), then *Advanced* (each leg's sign, the IMU's
+    roll/pitch/yaw signs, the walk gain) and an armed *Reset calibration*, with a full-width
+    rose *Stop* under it. Every change saves that one setting on the box at once (the line
+    above step 1 says whether anything is saved there yet; a setting never changed here stays
+    each phone's own), and a status line under it says what was done or why a move did not
+    go. A robot that is off keeps its calibration editable but its moves and *Stop* disabled.
+  One *Stop* stops the chip and the creature walking it together: the pad's middle, and the
+  Legs sheet's. The walk runs on the rider phone's motion sensors, so every move is disabled
+  until the robot is on (*Turn the robot on to move it.*) and a creature wearing it is open on
+  screen (*Open a persona wearing it and keep the creature on screen. Its phone's motion
+  sensors run the walk.*). The **Trained walks** sheet lists *On the box* (each walk's name,
+  its kind, its size and day; *Rename* inline, *Delete* armed: *Sure?*), then *From finished
+  training jobs* (each finished GrowBot training run that left a walk, with *Add*, or an *On
+  the box* tag once added; empty: *No finished GrowBot training yet. Start a GrowBot walk on
+  the Jobs screen; when it finishes, its walk shows up here.*). An added walk is named for its
+  kind and day (*Camera walk, Nov 14*).
 - **Motion.** Sheets slide up, the restore confirm scales in, the persona page slides in from
   the right, banners drop in and toasts rise, 160–200 ms ease-out, each only when it first
   appears, all off under `prefers-reduced-motion`.
@@ -3471,8 +3506,8 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   robots with their last-seen time and links to the GrowBot screen. Down, it says that no robot
   can connect until it is back.
 - **Walks and spins** (owner, 2026-11-12, binding mock
-  `docs/mocks/growbot-policies/a-body-card.html`, variant A) is the last card on the Body tab,
-  always there, robots or not: its state beside a dot (*Up to date*, *N new or changed*, *No new
+  `docs/mocks/growbot-policies/a-body-card.html`, variant A) sits in the Body tab's *For
+  GrowBot's developer* disclosure (since 2026-11-16), always there, robots or not: its state beside a dot (*Up to date*, *N new or changed*, *No new
   policies*, *Upstream has moved*, *Couldn't check*), the new and changed policy files as rows
   with a new / changed / renamed / removed tag, the commits since the box's copy behind a
   disclosure, then how they come in (*ask Claude to "sync GrowBot to upstream"*, then *Ops →
@@ -3484,8 +3519,8 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
 The owner shares a window of the creature's life with GrowBot's developer as one zip. It is a
 rare, deliberate act, so it lives behind one secondary button and asks everything in one sheet.
 
-- **Where.** The Body tab, under the robots and *Add a robot*: a section head *For GrowBot's
-  developer* and *Share a brain log…* (secondary, block). It shows with no robot too, since a
+- **Where.** The Body tab, under the robots and *Add a robot*: inside the closed *For GrowBot's
+  developer* disclosure (since 2026-11-16), *Share a brain log…* (secondary, block). It shows with no robot too, since a
   persona alone on a phone still thinks, hears and speaks.
 - **The sheet** (*Share a brain log*): a segmented pick *1 hour · 3 hours · 6 hours* (1 hour
   first); *What people said* as two choices, *Hash what people said* (selected; *Recommended.

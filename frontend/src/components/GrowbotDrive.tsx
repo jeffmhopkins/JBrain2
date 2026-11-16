@@ -6,6 +6,7 @@ import {
   type GrowbotSteer,
   api,
 } from "../api/client";
+import { shortName } from "./growbotNames";
 
 // Continuous steering for a trained walk (owner, 2026-11-14: steer heading, speed and camera
 // height as it walks, not only the pad's fixed moves). Drive starts the picked walk for a
@@ -35,7 +36,7 @@ function message(e: unknown): string {
 
 /** Where the heading slider points, in words: 0 is the way it faced when the drive began. */
 export function headingWords(turn: number): string {
-  if (turn === 0) return "straight on";
+  if (turn === 0) return "straight";
   return `${Math.abs(turn)}° ${turn < 0 ? "left" : "right"}`;
 }
 
@@ -119,7 +120,9 @@ export function GrowbotDrive({
         return;
       }
       onSaid({
-        text: set ? `Driving the skill set (${skillWords(set)}).` : `Driving with ${policy?.name}.`,
+        text: set
+          ? `Driving the skill set (${skillWords(set)}).`
+          : `Driving with ${policy ? shortName(policy.name) : "the walk"}.`,
         bad: false,
       });
       // One steer at a time, so a slow answer never lands an older slider value last.
@@ -163,27 +166,14 @@ export function GrowbotDrive({
   const speedOn = set ? true : !!policy?.contract.speed;
   const pitchOn = set ? true : !!policy?.contract.pitch;
   return (
-    <fieldset className="gb-drive">
-      <legend className="gb-move-h">Drive</legend>
+    <fieldset className="gb-drive" aria-label="Steer live">
       {skills && policy && (
-        <div className="gb-chips">
-          <button
-            type="button"
-            className={`gb-chip${withSet ? " on" : ""}`}
-            aria-pressed={withSet}
-            onClick={() => setWithSet(true)}
-          >
-            Skill set: {skillWords(skills)}
+        <p className="gb-hint gb-steer-with">
+          Steering {withSet ? `the skill set (${skillWords(skills)})` : shortName(policy.name)}.{" "}
+          <button type="button" className="gb-linkbtn inline" onClick={() => setWithSet(!withSet)}>
+            {withSet ? `Steer ${shortName(policy.name)} instead` : "Steer the skill set instead"}
           </button>
-          <button
-            type="button"
-            className={`gb-chip${withSet ? "" : " on"}`}
-            aria-pressed={!withSet}
-            onClick={() => setWithSet(false)}
-          >
-            {policy.name}
-          </button>
-        </div>
+        </p>
       )}
       <div className="gb-trim">
         <label htmlFor={`${id}-turn`}>Heading</label>
@@ -236,12 +226,12 @@ export function GrowbotDrive({
       )}
       <button
         type="button"
-        className={`gb-chip${driving ? " on" : ""}`}
+        className={`gb-btn block gb-drive-go${driving ? " danger" : " primary"}`}
         aria-pressed={driving}
         disabled={disabled && !driving}
         onClick={toggle}
       >
-        {driving ? "Stop driving" : "Drive"}
+        {driving ? "Stop driving" : "Start driving"}
       </button>
     </fieldset>
   );
