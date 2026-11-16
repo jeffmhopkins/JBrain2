@@ -6783,7 +6783,7 @@ function sayLooksBroken(s){                               // [P6.5] JSON/scratch
   if(/("say"|"mood"|"scratchpad"|"reflex"|"add_rules"|"remove_rules"|"emotion"|"sing")\s*:/.test(s)) return true;
   return false;
 }
-function tryParse(s){ var o=jparse(s); if(o&&typeof o.say==="string") return o; /*PROSE-JSON{*/ if(o&&typeof o==="object"&&!Array.isArray(o)){ var _pi=String(s).indexOf("{"), _pr=_pi>0?String(s).slice(0,_pi).replace(/```[a-z]*|```/gi,"").trim():""; if(_pr&&_pr.length<=300&&!sayLooksBroken(_pr)){ o.say=_pr.slice(0,180); if(typeof o.emotion!=="string") o.emotion="curious"; return o; } } /*}PROSE-JSON*/
+function tryParse(s){ var o=jparse(s); if(o&&typeof o.say==="string") return o; /*PROSE-JSON{*/ if(o&&typeof o==="object"&&!Array.isArray(o)) return {say:"",emotion:"curious"}; /*}PROSE-JSON*/
   /* 0919: both salvage matches are escape-aware and JSON-unescaped. The old closed match was non-greedy on a bare
      quote, so a say containing \"quoted\" words was cut at its first escaped quote and spoken with a stray backslash. */
   var unq=function(t){ try{ return JSON.parse('"'+t+'"'); }catch(e){ return t; } };

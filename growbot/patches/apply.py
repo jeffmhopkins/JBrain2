@@ -3707,22 +3707,21 @@ HEAR_NOW_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += HEAR_NOW_PATCHES
 
-# A reply written as a sentence and then its JSON (2026-11-16, run #1's evening: "I'm lying flat
-# ... I need to push them down and lever my body upright.\n\n{"body":{"steps":[...]}}"). jparse
-# finds the object, but it has no say, so the plain-prose salvage spoke the whole raw text (or
-# sayLooksBroken silenced it) and the leg steps were dropped; the creature then told its person
-# its motors were dead. The sentence before the object is its say, and the object runs as
-# written: the same reply a model that kept to the format would have sent.
+# A reply written as a sentence and then its JSON (2026-11-16: "I'm lying flat ... lever my body
+# upright.\n\n{"body":{"steps":[...]}}"). jparse found the object, but with no say string the
+# plain-prose salvage took the whole raw text as the say, so the say_missing rescue (person turns
+# only: it keeps an object whose action is real, with say "") never ran, sayLooksBroken blanked
+# the say, and the leg steps were dropped; the creature then told its person its motors were dead.
+# An object jparse found is never re-read as prose: the reply is silent here, and on a person's
+# turn the rescue runs its move. The prose itself is not spoken (it is as often a lead-in or the
+# model thinking aloud as it is speech), and idle ticks keep their silent fallback.
 PROSE_JSON_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         'function tryParse(s){ var o=jparse(s); if(o&&typeof o.say==="string") return o;',
         'function tryParse(s){ var o=jparse(s); if(o&&typeof o.say==="string") return o;'
-        " /*PROSE-JSON{*/ if(o&&typeof o===\"object\"&&!Array.isArray(o)){"
-        " var _pi=String(s).indexOf(\"{\"), _pr=_pi>0?String(s).slice(0,_pi)"
-        ".replace(/```[a-z]*|```/gi,\"\").trim():\"\";"
-        " if(_pr&&_pr.length<=300&&!sayLooksBroken(_pr)){ o.say=_pr.slice(0,180);"
-        " if(typeof o.emotion!==\"string\") o.emotion=\"curious\"; return o; } } /*}PROSE-JSON*/",
+        " /*PROSE-JSON{*/ if(o&&typeof o===\"object\"&&!Array.isArray(o))"
+        " return {say:\"\",emotion:\"curious\"}; /*}PROSE-JSON*/",
         1,
     ),
 ]
