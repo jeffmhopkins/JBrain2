@@ -1328,11 +1328,14 @@
   // the search for one it lost) and stop the legs to re-stand. A stop that lands while the
   // skill set loads (the motion generation moves on) starts nothing.
   var followAskT = -Infinity;
-  window.gbFollowMe = function (secs) {
+  // `since`: when the reply's thought was issued, so a "stop stop" said while the model was
+  // still answering refuses the follow it answers with.
+  window.gbFollowMe = function (secs, since) {
     if (window.gbFollow && window.gbFollow.active()) return Promise.resolve(true);
     // Nor while one is still loading (the skill set's fetch, the policy): it isn't active yet.
-    if (Date.now() - followAskT < 5000) return Promise.resolve(true);
-    followAskT = Date.now();
+    // A stop since that ask ends the wait, so the next ask is heard.
+    if (Date.now() - followAskT < 5000 && !((window._gbFollowStopT || 0) >= followAskT)) return Promise.resolve(true);
+    var askT = followAskT = Date.now(), from = Math.min(askT, Number(since) || askT);
     var gen = typeof _motionGen === "number" ? _motionGen : 0;
     return fetch("/api/box/skills?robot=" + encodeURIComponent(code), { cache: "no-store" })
       .then(function (r) {
@@ -1343,7 +1346,7 @@
         var set = skillSet(j && j.skills);
         if (!set || !set.look) throw new Error("no trained look walk to follow with");
         if (typeof _motionGen === "number" && _motionGen !== gen) throw new Error("stopped before it began");
-        if ((window._gbFollowStopT || 0) >= followAskT) throw new Error("stopped before it began");
+        if ((window._gbFollowStopT || 0) >= from) throw new Error("stopped before it began");
         // A get-up owns the legs until it ends, and a robot lying down can't walk after anyone.
         if (typeof _wireRunner !== "undefined" && _wireRunner && _wireRunner.active) throw new Error("getting up");
         if (typeof _fallSince === "number" && _fallSince > 0) throw new Error("not on my feet");
@@ -1351,11 +1354,12 @@
         return true;
       })
       .catch(function (e) {
-        followAskT = -Infinity;
+        if (followAskT === askT) followAskT = -Infinity;
         try { logEv("follow_me_refused", { why: String((e && e.message) || e).slice(0, 120) }); } catch (_) {}
         return false;
       });
   };
+
 
   // The body's gesture names as the creature's prompt sees them (a soul's saved poses included).
   function gestureNames() {

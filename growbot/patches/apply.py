@@ -4030,7 +4030,7 @@ PATCHES += [
         'gbEyeTo(o.eye==="back"?"environment":"user","self");'
         ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen'
         '&&!document.hidden&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body;'
-        " delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15); }",
+        " delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15,_gbIssT); }",
         1,
     ),
     (
@@ -4102,6 +4102,9 @@ _GB_FACE_LINE_JS = (
     '" away: you have reached them when it reads under about 60 cm, or they say so.\"; '
     '}catch(e){ return ""; } }\n'
 )
+# When this thought was issued: a "stop stop" said while the model answered, with the robot
+# standing still, moves no motion generation, and must still stop the follow it answers with.
+PATCHES += [("v3/next.html", "  var _mgen=_motionGen;", "  var _mgen=_motionGen, _gbIssT=Date.now();", 1)]
 # A follow with no words is still an action (the say_missing rescue keeps a wordless walk or
 # gesture the same way), or the reply is dropped and nothing follows.
 PATCHES += [

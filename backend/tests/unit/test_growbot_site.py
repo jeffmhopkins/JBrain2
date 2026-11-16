@@ -5228,7 +5228,7 @@ def test_a_follow_tells_the_next_turn_it_is_following_and_for_how_long() -> None
 
 
 def _follow_me(
-    gen_after_fetch: int, active: bool, twice: bool = False, during: str = ""
+    gen_after_fetch: int, active: bool, twice: bool = False, during: str = "", before: str = ""
 ) -> dict[str, object]:
     node = shutil.which("node")
     if node is None:
@@ -5245,8 +5245,9 @@ def _follow_me(
         f"_motionGen={gen_after_fetch}; {during}"
         " return {skills:{look:'L',forward:'F'}};}}); }"
         + fn
+        + before
         + ("window.gbFollowMe(15);" if twice else "")
-        + "window.gbFollowMe(15).then(function(ok){"
+        + "window.gbFollowMe(15, Date.now()-2000).then(function(ok){"
         "setTimeout(function(){ console.log(JSON.stringify({ok:ok,ran:ran,logs:logs})); }); });"
     )
     return json.loads(
@@ -5261,10 +5262,12 @@ def test_follow_me_starts_the_trained_follower_and_a_stop_wins() -> None:
     assert '_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen' in page
     assert (
         "{ delete o.walk; delete o.body; delete o.gesture; o._gbFollowed=true; "
-        "window.gbFollowMe(15); }" in page
+        "window.gbFollowMe(15,_gbIssT); }" in page
     )
     assert 'follow:\\"me\\" with your words and no walk' in page
     assert 'if(_vo.follow==="me") _sm.push("follow");' in page
+    assert "window.gbFollowMe(15,_gbIssT); }" in page
+    assert "  var _mgen=_motionGen, _gbIssT=Date.now();" in page
     started = _follow_me(1, active=False)
     assert started["ok"] is True
     assert started["ran"] == [["look", 15, {"look": "L", "forward": "F"}]]
@@ -5278,6 +5281,9 @@ def test_follow_me_starts_the_trained_follower_and_a_stop_wins() -> None:
     ):
         got = _follow_me(1, active=False, during=during)
         assert got == {"ok": False, "ran": [], "logs": [why]}
+    # "Stop stop" while the model was still answering, before the reply reached the page.
+    early = _follow_me(1, active=False, before="window._gbFollowStopT=Date.now()-1000;")
+    assert early == {"ok": False, "ran": [], "logs": ["stopped before it began"]}
     assert _follow_me(1, active=False, twice=True)["ran"] == [
         ["look", 15, {"look": "L", "forward": "F"}]
     ]
