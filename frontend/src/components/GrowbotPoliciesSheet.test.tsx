@@ -336,19 +336,23 @@ describe("walkKind", () => {
     // Closed, a master shows only itself; the teachers are not listed anywhere yet.
     expect(screen.getByText("Master v2")).toBeInTheDocument();
     expect(screen.getByText("Mine")).toBeInTheDocument();
-    expect(screen.queryByText("Look v10")).toBeNull();
+    expect(screen.getByText("Look v10")).not.toBeVisible();
     const toggle = screen.getByRole("button", { name: /Learned from 2 walks/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("Look v10")).toBeInTheDocument();
-    expect(screen.getByText("Nose walk v3")).toBeInTheDocument();
+    expect(screen.getByText("Look v10")).toBeVisible();
+    expect(screen.getByText("Nose walk v3")).toBeVisible();
     expect(screen.getByText("Turns")).toBeInTheDocument();
     expect(screen.getByText("Back")).toBeInTheDocument();
     // Each teacher keeps its own controls.
     expect(screen.getByRole("button", { name: "Rename Look v10" })).toBeInTheDocument();
+    // Closing keeps a teacher's half-done rename for when it opens again.
+    fireEvent.click(screen.getByRole("button", { name: "Rename Look v10" }));
     fireEvent.click(toggle);
-    expect(screen.queryByText("Look v10")).toBeNull();
+    expect(screen.getByText("Nose walk v3")).not.toBeVisible();
+    fireEvent.click(toggle);
+    expect(screen.getByRole("textbox", { name: "New name for Look v10" })).toBeVisible();
     await waitFor(() => expect(screen.queryByText(/Looking at Jobs/)).toBeNull());
   });
 
@@ -370,6 +374,13 @@ describe("walkKind", () => {
       ["Turns:t"],
     ]);
     expect(got.rest).toEqual([]);
+    // A master that taught another is not folded under it.
+    const nested = families([
+      policy({ id: "b", kept: "b", teachers: [{ role: "look", slug: "a" }] }),
+      policy({ id: "a", kept: "a", teachers: [{ role: "look", slug: "look-v9" }] }),
+      shared,
+    ]);
+    expect(nested.masters.map((f) => f.kids.map((k) => k.p.id))).toEqual([[], ["t"]]);
     const p = policy({ id: "p", kept: "p" });
     const plain = [p, policy({ id: "q" })];
     expect(families(plain)).toEqual({ masters: [], rest: plain });

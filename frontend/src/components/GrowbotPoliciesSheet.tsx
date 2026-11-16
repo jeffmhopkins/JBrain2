@@ -124,18 +124,19 @@ export function families(all: GrowbotPolicy[]): { masters: Family[]; rest: Growb
   for (const p of all) if (p.kept) bySlug.set(p.kept, p);
   const taught = new Set<string>();
   const masters: Family[] = [];
+  // A master that taught another stays a master of its own rather than sit at two levels.
+  const isMaster = new Set(all.filter((p) => p.teachers?.length).map((p) => p.id));
   for (const master of all) {
     if (!master.teachers?.length) continue;
     const kids: Family["kids"] = [];
     for (const t of master.teachers) {
       const p = bySlug.get(t.slug);
-      if (!p || p.id === master.id) continue;
+      if (!p || isMaster.has(p.id)) continue;
       kids.push({ role: ROLES[t.role] ?? t.role, p });
       taught.add(p.id);
     }
     masters.push({ master, kids });
   }
-  const isMaster = new Set(masters.map((f) => f.master.id));
   return { masters, rest: all.filter((p) => !isMaster.has(p.id) && !taught.has(p.id)) };
 }
 
@@ -425,6 +426,7 @@ export function GrowbotPoliciesSheet({ policies, onChange, onClose }: Props) {
                         type="button"
                         className="gb-fam-toggle"
                         aria-expanded={!!open[f.master.id]}
+                        aria-controls={`gb-fam-${f.master.id}`}
                         onClick={() => setOpen((o) => ({ ...o, [f.master.id]: !o[f.master.id] }))}
                       >
                         <span className="gb-fam-car" aria-hidden="true">
@@ -433,16 +435,20 @@ export function GrowbotPoliciesSheet({ policies, onChange, onClose }: Props) {
                         Learned from {f.kids.length} {f.kids.length === 1 ? "walk" : "walks"}
                       </button>
                     )}
-                    {open[f.master.id] && (
-                      <div className="gb-fam-kids">
-                        {f.kids.map((k) => (
-                          <div key={`${k.role}:${k.p.id}`} className="gb-fam-kid">
-                            <span className="gb-fam-role">{k.role}</span>
-                            <div className="gb-list">{row(k.p)}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    {/* Hidden, not unmounted: a half-typed rename or an armed delete in a teacher's row
+                        survives closing its master. */}
+                    <div
+                      id={`gb-fam-${f.master.id}`}
+                      className="gb-fam-kids"
+                      hidden={!open[f.master.id]}
+                    >
+                      {f.kids.map((k) => (
+                        <div key={`${k.role}:${k.p.id}`} className="gb-fam-kid">
+                          <span className="gb-fam-role">{k.role}</span>
+                          <div className="gb-list">{row(k.p)}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>

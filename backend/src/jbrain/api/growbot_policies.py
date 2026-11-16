@@ -190,7 +190,7 @@ def _out(row: PolicyRow) -> PolicyOut:
         enabled=row.enabled,
         motion=cast(Any, row.motion),
         active=row.active,
-        kept=m.group(1) if (m := _KEPT_RE.match(row.source_job)) else None,
+        kept=m.group(1) if (m := _KEPT_RE.fullmatch(row.source_job)) else None,
         teachers=[TeacherOut(role=r, slug=s) for r, s in row.teachers],
     )
 

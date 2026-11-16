@@ -1905,6 +1905,10 @@ a.gb-btn {
   gap: 8px;
   padding: 0 14px 14px 36px;
 }
+/* Its display: flex would otherwise beat the hidden attribute. */
+.gb-fam-kids[hidden] {
+  display: none;
+}
 .gb-fam-kid {
   display: flex;
   flex-direction: column;
