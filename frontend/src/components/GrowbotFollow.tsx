@@ -41,12 +41,13 @@ export function GrowbotFollow({
 }) {
   const [busy, setBusy] = useState(false);
   const mounted = useRef(true);
-  useEffect(
-    () => () => {
+  // Set again on mount: StrictMode's rehearsal unmount would otherwise leave it false for good.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
       mounted.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   async function send(what: Exclude<FollowMove, "test">) {
     setBusy(true);
@@ -61,7 +62,7 @@ export function GrowbotFollow({
         skills,
         what,
       );
-      if (!mounted.current) return;
+      // running and onSaid are the remote's, so they land even if this sheet has closed.
       if (!out.ok) {
         onSaid({ text: out.why || "The creature didn't start it.", bad: true });
         return;
@@ -69,7 +70,7 @@ export function GrowbotFollow({
       if (what === "walk" || what === "dry") setRunning(what);
       onSaid({ text: SAID[what], bad: false });
     } catch (e) {
-      if (mounted.current) onSaid({ text: message(e), bad: true });
+      onSaid({ text: message(e), bad: true });
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -78,7 +79,6 @@ export function GrowbotFollow({
   async function stop() {
     try {
       const out = await api.moveGrowbotRobot(code, "stop");
-      if (!mounted.current) return;
       if (!out.ok) {
         onSaid({ text: out.why || "It didn't stop.", bad: true });
         return;
@@ -87,7 +87,7 @@ export function GrowbotFollow({
       setRunning(null);
       onSaid({ text: "Stopped following.", bad: false });
     } catch (e) {
-      if (mounted.current) onSaid({ text: message(e), bad: true });
+      onSaid({ text: message(e), bad: true });
     }
   }
 

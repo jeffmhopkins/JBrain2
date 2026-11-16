@@ -66,22 +66,26 @@ export function GrowbotBodyTest({
   skills,
   disabled,
   onSaid,
+  onStarted,
 }: {
   code: string;
   skills: GrowbotSkillSet;
   disabled: boolean;
   onSaid: (said: DriveSaid) => void;
+  /** Told when a test starts on the creature, which replaces whatever it was doing. */
+  onStarted?: () => void;
 }) {
   const [runs, setRuns] = useState<GrowbotBodyTestRun[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [waitUntil, setWaitUntil] = useState(0);
   const mounted = useRef(true);
-  useEffect(
-    () => () => {
+  // Set again on mount: StrictMode's rehearsal unmount would otherwise leave it false for good.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
       mounted.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -125,6 +129,7 @@ export function GrowbotBodyTest({
         return;
       }
       setWaitUntil(Date.now() + START_WAIT_MS);
+      onStarted?.();
       onSaid({ text: "Body test started: follow the steps on the robot's phone.", bad: false });
     } catch (e) {
       if (mounted.current) onSaid({ text: message(e), bad: true });

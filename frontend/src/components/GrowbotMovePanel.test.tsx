@@ -364,6 +364,27 @@ describe("GrowbotMovePanel", () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
+  it("stops an untimed trick, or a move still on its way, on switching to Steer live", async () => {
+    localStorage.clear();
+    const SET = { ...QUICK, contract: { ...QUICK.contract, modes: ["look", "forward"] } };
+    const answers: ((r: Response) => void)[] = [];
+    withLibrary(
+      vi.fn(
+        () =>
+          new Promise<Response>((r) => {
+            answers.push(r);
+          }),
+      ),
+      [SET],
+    );
+    const shared = vi.fn(async () => ({ text: "Stopped. The legs are limp.", bad: false }));
+    render(<GrowbotMovePanel robot={robot()} onStop={shared} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Wiggle" }));
+    fireEvent.click(screen.getByRole("button", { name: "Steer live" }));
+    expect(shared).toHaveBeenCalledOnce();
+    for (const r of answers) r(json({ ok: true, state: "started", why: "" }));
+  });
+
   it("ends a live drive on switching back to Tap a move", async () => {
     localStorage.clear();
     const SET = { ...QUICK, contract: { ...QUICK.contract, modes: ["look", "forward"] } };

@@ -221,13 +221,14 @@ export function GrowbotMovePanel({
   const [halted, setHalted] = useState(0);
   const mounted = useRef(true);
   const done = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
+  // Set again on mount: StrictMode's rehearsal unmount would otherwise leave it false for good.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
       mounted.current = false;
       if (done.current) clearTimeout(done.current);
-    },
-    [],
-  );
+    };
+  }, []);
   useEffect(() => {
     let gone = false;
     // No library (an older box, or it's down) is just no trained walks to pick.
@@ -336,8 +337,12 @@ export function GrowbotMovePanel({
   const steering = steerable && mode === "steer";
   // A walk that can't be steered sends the remote back to taps, so picking one later
   // doesn't land on live steering unasked.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only steerable turning off counts.
   useEffect(() => {
-    if (!steerable) setMode("tap");
+    if (steerable) return;
+    // A drive that loses its walk is stopped, not left to its lease.
+    if (driving) stop();
+    setMode("tap");
   }, [steerable]);
   const saidLine = (
     <output className={`gb-move-said${said?.bad ? " gb-bad-t" : ""}`} aria-live="polite">
@@ -384,7 +389,8 @@ export function GrowbotMovePanel({
             aria-pressed={steering}
             onClick={() => {
               // A timed move still under way stops here, since its pad and bar go away.
-              if (running) stop();
+              // busy covers a move whose answer is still on its way, and untimed tricks.
+              if (running || busy) stop();
               setMode("steer");
             }}
           >
@@ -411,7 +417,11 @@ export function GrowbotMovePanel({
           halted={halted}
           onSaid={setSaid}
           onStop={stop}
-          onDriving={setDriving}
+          onDriving={(d) => {
+            setDriving(d);
+            // A drive's start replaces a follow on the creature.
+            if (d) setFollowing(null);
+          }}
         />
       ) : (
         <>
@@ -652,6 +662,7 @@ export function GrowbotMovePanel({
             skills={skills}
             disabled={!!blocked}
             onSaid={setSaid}
+            onStarted={() => setFollowing(null)}
           />
           {saidLine}
         </Sheet>
