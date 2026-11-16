@@ -2003,7 +2003,7 @@
             carryLegMotion({ l: 90, r: 90 });
           },
           post: function (chunk) {
-            chunk.robot = new URLSearchParams(location.search).get("id") || "";
+            chunk.robot = btRobot();
             return fetch("/api/box/bodytest", {
               method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(chunk),
             });
@@ -2034,6 +2034,50 @@
     // A transcript: true when the test took it, so no model turn hears it.
     heard: function (txt) { return !!(bt && bt.phase !== "result" && bt.heard(txt)); },
   };
+
+  // The robot this phone wears, as the cal poll reads it: the page's ?id=, else the last one.
+  function btRobot() {
+    var id = "";
+    try { id = new URLSearchParams(location.search).get("id") || window.localStorage.getItem("gb_walk_id") || ""; } catch (e) {}
+    id = String(id).trim();
+    return /^gb-[A-Za-z0-9]{1,32}$/.test(id) ? id : "";
+  }
+
+  // The wake screen's Body test (owner, 2026-11-16: "I only have the one phone"): on a robot's
+  // phone, a button under Wake that wakes the creature and starts the test with the library's
+  // skill set, so the phone that sits on the body never needs the PWA in hand. The wake tap
+  // runs first and in the tap itself, since iOS only unlocks the voice and the motion sensors
+  // inside a gesture; the skill set is read after.
+  function btWakeButton() {
+    var id = btRobot();
+    if (!id || typeof document.getElementById !== "function") return false;
+    var wake = document.getElementById("wgWake");
+    if (!wake || !wake.parentNode || document.getElementById("wgBodyTest")) return false;
+    var b = document.createElement("button");
+    b.id = "wgBodyTest";
+    b.type = "button";
+    b.textContent = "body test";
+    b.style.cssText = "font:13px/1 GBEntryMono,'Departure Mono',ui-monospace,monospace;border:2px solid #7F93AB;border-radius:0;background:transparent;color:#E8F6FF;padding:12px 16px;min-height:44px;min-width:240px;margin-top:14px;cursor:pointer";
+    b.onclick = function () {
+      wake.click();
+      fetch("/api/box/skills?robot=" + encodeURIComponent(id), { cache: "no-store" }).then(function (r) {
+        if (r.status === 403) throw new Error("this phone isn't signed in to drive " + id);
+        if (!r.ok) throw new Error("the box said " + r.status);
+        return r.json();
+      }).then(function (j) {
+        if (!j || !j.skills) throw new Error("no trained walks cover two skills yet");
+        window.gbBodyTest.start(j.skills);
+      }).catch(function (e) {
+        setErr("the body test didn't start (" + ((e && e.message) || e) + ")");
+      });
+    };
+    wake.parentNode.insertBefore(b, wake.nextSibling);
+    return true;
+  }
+  try {
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", btWakeButton);
+    else btWakeButton();
+  } catch (e) {}
 
   function load(pid) {
     var ref = "/api/box/policy?id=" + encodeURIComponent(pid), hit = cache[pid];

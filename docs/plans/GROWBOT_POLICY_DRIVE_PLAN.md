@@ -1,6 +1,6 @@
 # GrowBot policy drive — trained skills on the real robot
 
-> **Status:** In progress · **Last verified:** 2026-11-15 · **Waves:** P1🟡 P2✅ P3🟡 P4◻️ P5◻️
+> **Status:** In progress · **Last verified:** 2026-11-16 · **Waves:** P1🟡 P2✅ P3🟡 P4◻️ P5◻️
 
 The owner's ask (2026-11-14/15): start wiring GrowBot_Training's locomotion policies into the
 robot's software now, without waiting for training to finish. First, follow a face. Then answer the
@@ -121,8 +121,11 @@ The real-robot trials after P5 are GrowBot_Training's phase 6.
 ## Body test (built, owner 2026-11-15)
 
 The Body tab's **Body test…** (`frontend/src/components/GrowbotBodyTest.tsx`, mock
-`docs/mocks/growbot-body-test/screens.html`) sends a skill set's look with `follow: "test"`. The
-creature's phone (`growbot/patches/growbot-bodytest.js`, page glue `gbBodyTest` in
+`docs/mocks/growbot-body-test/screens.html`) sends a skill set's look with `follow: "test"`. With
+only one phone (owner, 2026-11-16) the creature's own wake screen has a **body test** button under
+Wake: it wakes the creature in the tap, then reads the library's skill set from the box
+(`/api/box/skills` → `/internal/growbot/skills`, `skill_set` in `growbot/policies.py`, kept in
+step with the Body tab's `skillSet`) and starts the same test. The creature's phone (`growbot/patches/growbot-bodytest.js`, page glue `gbBodyTest` in
 `growbot-box.js`) then talks the person through setup on its own screen: place the phone on the
 body (tap or "ready"), power on (moves on when the legs answer), "stand up" (get-up if lying,
 else the tall stance, until upright 1 s), stand 1 m away and say "1 meter" (the follower's

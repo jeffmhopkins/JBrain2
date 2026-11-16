@@ -30,6 +30,7 @@ from jbrain.growbot.policies import (
     PolicyError,
     PolicyRow,
     parse,
+    skill_set,
     summary,
 )
 from jbrain.jlaunch import FakeJlaunchClient, JlaunchError
@@ -391,6 +392,46 @@ async def test_the_sidecar_reads_a_policys_json_with_its_token(tmp_path: Path) -
     assert client.get(f"/internal/growbot/policies/{pid}").status_code == 401
     missing = str(uuid.uuid4())
     assert client.get(f"/internal/growbot/policies/{missing}", headers=auth).status_code == 404
+
+
+def _row(pid: str, modes: tuple[str, ...], facing: str = "camera", day: int = 1, **kw: Any):
+    c = summary(policy(["gyro_z", "cmd_yaw"], facing=facing))
+    return PolicyRow(
+        id=pid,
+        name=pid,
+        source_job="j",
+        source_spec="s",
+        bytes=1,
+        created_at=datetime(2026, 11, day, tzinfo=UTC),
+        contract=type(c)(**{**c.__dict__, "modes": modes, "facing": facing}),
+        **kw,
+    )
+
+
+def test_the_skill_set_is_the_body_tabs_pick() -> None:
+    rows = [
+        _row("look-old", ("look", "forward", "back"), day=1),
+        _row("look-new", ("look",), day=2),
+        _row("fwd-active", ("forward",), day=1, active=True),
+        _row("fwd-newer", ("forward",), day=3),
+        _row("cam-back", ("back",), day=5),
+        _row("nose-back", ("back",), facing="nose", day=1),
+        _row("off", ("look", "forward", "back"), day=9, enabled=False),
+    ]
+    assert skill_set(rows) == {"look": "look-new", "forward": "fwd-active", "back": "nose-back"}
+    # One skill alone is just that walk, not a set.
+    assert skill_set([_row("a", ("look",))]) is None
+    assert skill_set([]) is None
+
+
+async def test_the_sidecar_reads_the_skill_set_with_its_token(tmp_path: Path) -> None:
+    client, lib, _, auth = _app(tmp_path)
+    assert client.get("/internal/growbot/skills", headers=auth).json() == {"skills": None}
+    assert client.get("/internal/growbot/skills").status_code == 401
+    lib.rows["a"] = (_row("a", ("look", "forward")), policy())
+    assert client.get("/internal/growbot/skills", headers=auth).json() == {
+        "skills": {"look": "a", "forward": "a"}
+    }
 
 
 def test_the_library_needs_the_owner(tmp_path: Path) -> None:

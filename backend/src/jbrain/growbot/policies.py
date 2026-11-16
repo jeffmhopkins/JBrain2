@@ -423,3 +423,39 @@ class SqlPolicyRepo:
                 {"i": pid},
             )
             return r.first() is not None
+
+
+SKILLS: tuple[str, ...] = ("look", "forward", "back")
+
+
+def skill_set(rows: list[PolicyRow]) -> dict[str, str] | None:
+    """The skill set Drive steers, as the Body tab picks it (GrowbotPoliciesSheet.tsx
+    `skillSet`, kept in step): for each skill the enabled policy serving it, a nose-first one
+    first for back, then active, then newest. None unless it covers two skills. The creature's
+    own wake screen starts a body test with it (owner, 2026-11-16: one phone, so the PWA can't
+    send it while the phone sits on the body)."""
+    out: dict[str, str] = {}
+    for skill in SKILLS:
+        best: PolicyRow | None = None
+        for p in rows:
+            if not p.enabled or skill not in p.contract.modes:
+                continue
+
+            def nose(q: PolicyRow, skill: str = skill) -> bool:
+                return skill == "back" and q.contract.facing == "nose"
+
+            if (
+                best is None
+                or (nose(p) and not nose(best))
+                or (
+                    nose(p) == nose(best)
+                    and (
+                        (p.active and not best.active)
+                        or (p.active == best.active and p.created_at > best.created_at)
+                    )
+                )
+            ):
+                best = p
+        if best is not None:
+            out[skill] = best.id
+    return out if len(out) >= 2 else None

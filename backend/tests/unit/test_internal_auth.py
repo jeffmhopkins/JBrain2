@@ -109,6 +109,7 @@ GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ("GET", "/internal/growbot/body/gb-x", None, 200),
     ("GET", "/internal/growbot/robots/gb-x/cal", None, 200),
     ("GET", f"/internal/growbot/policies/{_POLICY}", None, 200),
+    ("GET", "/internal/growbot/skills", None, 200),
     ("POST", "/internal/growbot/calls", {"kind": "tts", "ok": True, "total_ms": 1}, 204),
     ("POST", "/internal/growbot/journal", {"sid": "nx-abc", "rows": []}, 200),
     # A body test chunk that names no run is refused by its model, never reaching the store.
@@ -155,6 +156,9 @@ class _YesBodyRepo:
 class _YesPolicyRepo:
     async def get_json(self, ctx: object, pid: str) -> dict[str, object]:
         return {}
+
+    async def list(self, ctx: object) -> list[object]:
+        return []
 
 
 class _YesGrowbotRepo:
