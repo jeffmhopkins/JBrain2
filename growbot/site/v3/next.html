@@ -192,7 +192,7 @@ function gbAdTag(u){try{var g=function(k){return sessionStorage.getItem("gb_ad_"
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
 <script src="/trim-store.js?v=1016"></script>
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2-quiet-since" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2-quiet-since-travel" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1015-open"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -11299,7 +11299,7 @@ function think(event,kind,extra){
     var _brainSaid=typeof _brainAtIssue!=="undefined"&&!!_brainAtIssue,_brainOriginalSay=said; // Keep content for salvage, burst and quiet-turn memory; defer only delivery.
     var phoneDir=(MODE==="phone"&&o.walk&&typeof o.walk==="object"&&o.walk.dir)?String(o.walk.dir).toLowerCase():"";   // phone: a spoken movement instruction
     if(!paused){                                                                          // if paused mid-thought, don't talk/move/overwrite the caption — just keep the memory
-      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()}); if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back")) gbEyeTo(o.eye==="back"?"environment":"user","self");                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
+      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()}); if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back")) gbEyeTo(o.eye==="back"?"environment":"user","self"); if(_hreqAtIssue&&!dreaming&&(o.travel==="on"||o.travel==="off")&&(o.travel==="on")!==TRAVEL) setTravel(o.travel==="on");                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
       if(typeof _expressionPendingCancel==="function")_expressionPendingCancel();
       if(typeof _expressionPair==="function")_expressionPair(o);
       // A buffered bench reply cannot revive sound after Stop, pause/hide or a newer request.

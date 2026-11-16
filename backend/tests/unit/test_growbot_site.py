@@ -805,7 +805,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-'
-        'tools2-quiet-since"' in page
+        'tools2-quiet-since-travel"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -5034,3 +5034,19 @@ def test_travel_mode_is_wired_into_the_page() -> None:
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "gb_travel_mode" not in shim
     assert "if (window.TRAVEL && typeof toast" in shim
+
+
+def test_he_switches_travel_mode_when_asked() -> None:
+    """Owner, 2026-11-16: "hey Dave go to travel mode", "we're no longer traveling". A `travel`
+    verb beside `eye`, heeded only on a turn answering the person, never on his own beat."""
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert prompts.count('\'"travel":"OMIT almost always — on or off, ONLY when') == 1
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        page.count(
+            ' if(_hreqAtIssue&&!dreaming&&(o.travel==="on"||o.travel==="off")'
+            '&&(o.travel==="on")!==TRAVEL) setTravel(o.travel==="on");'
+        )
+        == 1
+    )
+    assert "clock-tools2-quiet-since-travel" in page

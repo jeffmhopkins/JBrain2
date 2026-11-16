@@ -3906,6 +3906,36 @@ TRAVEL_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += TRAVEL_PATCHES
+# Travel by voice (owner, 2026-11-16: "hey Dave go to travel mode", "we're no longer traveling,
+# turn travel mode off"). A `travel` verb beside `eye`, heeded like it only on a turn that
+# answers something the person said, so the creature never switches it on its own.
+PATCHES += [
+    (
+        "v3/prompts.js",
+        "    '\"eye\":\"OMIT almost always",
+        "    '\"travel\":\"OMIT almost always — on or off, ONLY when your person asks for travel"
+        " mode (riding in a car, you off your body) or says the trip is over. On shuts your"
+        " eyes and slows your face so the phone stays cool; you can still hear and talk. It"
+        " stays until they ask again\",' +\n"
+        "    '\"eye\":\"OMIT almost always",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'gbEyeTo(o.eye==="back"?"environment":"user","self");',
+        'gbEyeTo(o.eye==="back"?"environment":"user","self");'
+        ' if(_hreqAtIssue&&!dreaming&&(o.travel==="on"||o.travel==="off")&&(o.travel==="on")!==TRAVEL)'
+        ' setTravel(o.travel==="on");',
+        1,
+    ),
+    # A phone that cached the old schema loads the one that offers `travel`.
+    (
+        "v3/next.html",
+        "clock-tools2-quiet-since\"",
+        "clock-tools2-quiet-since-travel\"",
+        1,
+    ),
+]
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (

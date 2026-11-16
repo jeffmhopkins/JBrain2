@@ -648,6 +648,10 @@ the camera's generation, so an acquire still in flight is discarded when it land
 untouched. It is per phone (`gb_travel_mode`), deliberately not in the persona's synced prefs, so
 the robot's own phone never inherits it.
 
+It switches by voice too (owner, 2026-11-16: *"hey Dave go to travel mode"*): a `travel` verb
+(`on` / `off`) beside `eye`, heeded only on a turn that answers something the person said, so
+the creature never turns it on or off by itself.
+
 ### Visual memories (wave G4d)
 
 The saved views upstream keeps in IndexedDB (`v3/visual-memory.js`) live on the box with the
