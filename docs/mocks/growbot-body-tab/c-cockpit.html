@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot Body tab — C — cockpit</title>
+<link rel="stylesheet" href="../growbot-policies/shared.css">
+<link rel="stylesheet" href="body.css">
+</head>
+<body>
+<!-- C: the Body tab is a short overview with a big Drive Fish button that opens a full-screen one-handed remote. A joystick replaces both the pad and the heading/speed sliders (drag to steer live; let go to stop), camera height is a side slider, Stop sits in the thumb zone. Buttons mode keeps the timed four-key pad. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const phone = document.getElementById("phone");
+  const S = B.S;
+  function render() {
+    const keep = phone.querySelector(".body, .rb");
+    const top = keep ? keep.scrollTop : 0;
+    const inner = B.chrome(`${B.robot()}
+      <button class="btn block primary" style="min-height:64px" data-act="remote" data-id="open" onclick="B.S.mode='steer'">Drive Fish</button>
+      <div class="rows">
+        <button class="row" data-act="sheet" data-id="tricks"><span class="ic">✦</span><span class="tx">Tricks<em>Wiggle, Bow, Sway and 5 more</em></span><span class="chev">›</span></button>
+        <button class="row" data-act="sheet" data-id="follow"><span class="ic">◎</span><span class="tx">Follow me<em>Walks after the nearest face</em></span><span class="chev">›</span></button>
+        <button class="row" data-act="sheet" data-id="test"><span class="ic">✓</span><span class="tx">Body test<em>Last: #40 · 3 failed, 6 to look at</em></span><span class="chev">›</span></button>
+        <button class="row" data-act="sheet" data-id="legs"><span class="ic">⟂</span><span class="tx">Legs<em>Trim L +4° · R −2°</em></span><span class="chev">›</span></button>
+      </div>
+      <button class="btn block">Add a robot</button>
+      ${B.dev(false)}`);
+    const remote = S.remote ? `<div class="remote"><div class="topbar"><button class="back" data-act="remote" data-id="close">‹</button><span class="ttl">Drive Fish</span><span class="state"><span class="dot ${S.on ? "ok" : ""}"></span>${S.on ? "Ready" : "Off"}</span></div>
+      <div class="rb">${B.picker()}${B.tip()}<div class="sub">Tricks</div>${B.tricks()}${B.said()}</div>
+      <div class="thumb"><div class="segs" style="margin-bottom:8px"><button class="${S.mode === "steer" ? "on" : ""}" data-act="mode" data-id="steer">Joystick</button><button class="${S.mode === "tap" ? "on" : ""}" data-act="mode" data-id="tap">Buttons</button></div>
+        ${S.mode === "steer" ? `<div class="joyrow"><div class="vsl"><input type="range" min="-1" max="1" step="0.1" value="${S.pitch}" data-sl="pitch" aria-label="Camera height"><span>Camera</span></div><div class="joy${S.driving ? " on" : ""}" id="joy"><span class="knob">${S.driving ? "Steering" : "Drag"}</span></div><div class="vsl"></div></div>
+          <div class="readout"><span>heading ${B.headingWords(S.heading)}</span><span>speed ${(+S.speed).toFixed(1)}</span></div>` : `${B.pad()}${B.secs("")}`}
+        <button class="bigstop" data-act="stop" ${S.on ? "" : "disabled"}>Stop</button></div></div>` : "";
+    phone.innerHTML = inner + remote + B.sheet() + B.toast();
+    const joy = phone.querySelector("#joy");
+    if (joy && S.on) {
+      const knob = joy.querySelector(".knob");
+      const move = (e) => { const r = joy.getBoundingClientRect(); let x = e.clientX - r.left - 110, y = e.clientY - r.top - 110; const d = Math.hypot(x, y), m = 72; if (d > m) { x *= m / d; y *= m / d; } knob.style.transform = `translate(${x}px,${y}px)`; S.heading = Math.round((x / m) * 90 / 5) * 5; S.speed = Math.round((-y / m) * 10) / 10; phone.querySelector(".readout").innerHTML = `<span>heading ${B.headingWords(S.heading)}</span><span>speed ${S.speed.toFixed(1)}</span>`; };
+      joy.addEventListener("pointerdown", (e) => { joy.setPointerCapture(e.pointerId); S.driving = true; joy.classList.add("on"); knob.textContent = "Steering"; move(e); });
+      joy.addEventListener("pointermove", (e) => { if (S.driving) move(e); });
+      joy.addEventListener("pointerup", () => { S.driving = false; S.heading = 0; S.speed = 0; render(); });
+    }
+    const after = phone.querySelector(".body, .rb");
+    if (after) after.scrollTop = top;
+  }
+  B.mockbar(document.getElementById("mockbar"), "C", render);
+  B.wire(phone);
+  render();
+})();
+</script>
+</body>
+</html>

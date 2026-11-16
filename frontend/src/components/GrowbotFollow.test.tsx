@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GrowbotFollow } from "./GrowbotFollow";
+import { type FollowRunning, GrowbotFollow } from "./GrowbotFollow";
 
 // Follow: the face follower from the Body tab, sent as a skill set's look, with its legs-off dry
 // run and the camera's two settings, all without a terminal.
@@ -21,16 +22,15 @@ function serve(move: unknown = { ok: true, state: "accepted", why: "" }) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function follow(over: Partial<Parameters<typeof GrowbotFollow>[0]> = {}) {
-  const props = {
-    code: "gb-3fa91c",
-    skills: SKILLS,
-    disabled: false,
-    halted: 0,
-    onSaid: vi.fn(),
-    ...over,
-  };
-  return { props, view: render(<GrowbotFollow {...props} />) };
+// The remote holds what is running, so a follow outlives its sheet; this stands in for it.
+function Holder(props: Omit<Parameters<typeof GrowbotFollow>[0], "running" | "setRunning">) {
+  const [running, setRunning] = useState<FollowRunning>(null);
+  return <GrowbotFollow {...props} running={running} setRunning={setRunning} />;
+}
+
+function follow() {
+  const props = { code: "gb-3fa91c", skills: SKILLS, disabled: false, onSaid: vi.fn() };
+  return { props, view: render(<Holder {...props} />) };
 }
 
 describe("GrowbotFollow", () => {
@@ -89,14 +89,5 @@ describe("GrowbotFollow", () => {
       }),
     );
     expect(screen.getByRole("button", { name: "Stop following" })).toBeTruthy();
-  });
-
-  it("a move from the pad ends the follow it shows", async () => {
-    serve();
-    const { props, view } = follow();
-    fireEvent.click(screen.getByRole("button", { name: "Follow me" }));
-    await screen.findByRole("button", { name: "Stop following" });
-    view.rerender(<GrowbotFollow {...props} halted={1} />);
-    await screen.findByRole("button", { name: "Follow me" });
   });
 });

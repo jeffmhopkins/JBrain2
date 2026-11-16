@@ -9,7 +9,7 @@ import type { DriveSaid } from "./GrowbotDrive";
 // checked before anything walks. Measure 1 m and Flip frames set that phone's camera, so none of
 // it needs a terminal. Stopping sends a plain stop move, which ends a follow or a dry run.
 
-type Running = "walk" | "dry" | null;
+export type FollowRunning = "walk" | "dry" | null;
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -27,28 +27,27 @@ export function GrowbotFollow({
   code,
   skills,
   disabled,
-  halted,
   onSaid,
+  running,
+  setRunning,
 }: {
   code: string;
   skills: GrowbotSkillSet;
   disabled: boolean;
-  /** Bumped by the pad whenever it sends a move of its own, which ends the follow. */
-  halted: number;
   onSaid: (said: DriveSaid) => void;
+  /** Held by the remote, so a follow outlives its sheet closing and its row can say so. */
+  running: FollowRunning;
+  setRunning: (r: FollowRunning) => void;
 }) {
-  const [running, setRunning] = useState<Running>(null);
   const [busy, setBusy] = useState(false);
   const mounted = useRef(true);
-  useEffect(
-    () => () => {
+  // Set again on mount: StrictMode's rehearsal unmount would otherwise leave it false for good.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
       mounted.current = false;
-    },
-    [],
-  );
-  // The pad's own moves end a follow on the creature (any new move does), so show it.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: halted is the trigger.
-  useEffect(() => setRunning(null), [halted, disabled]);
+    };
+  }, []);
 
   async function send(what: Exclude<FollowMove, "test">) {
     setBusy(true);
@@ -63,7 +62,7 @@ export function GrowbotFollow({
         skills,
         what,
       );
-      if (!mounted.current) return;
+      // running and onSaid are the remote's, so they land even if this sheet has closed.
       if (!out.ok) {
         onSaid({ text: out.why || "The creature didn't start it.", bad: true });
         return;
@@ -71,7 +70,7 @@ export function GrowbotFollow({
       if (what === "walk" || what === "dry") setRunning(what);
       onSaid({ text: SAID[what], bad: false });
     } catch (e) {
-      if (mounted.current) onSaid({ text: message(e), bad: true });
+      onSaid({ text: message(e), bad: true });
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -80,7 +79,6 @@ export function GrowbotFollow({
   async function stop() {
     try {
       const out = await api.moveGrowbotRobot(code, "stop");
-      if (!mounted.current) return;
       if (!out.ok) {
         onSaid({ text: out.why || "It didn't stop.", bad: true });
         return;
@@ -89,24 +87,32 @@ export function GrowbotFollow({
       setRunning(null);
       onSaid({ text: "Stopped following.", bad: false });
     } catch (e) {
-      if (mounted.current) onSaid({ text: message(e), bad: true });
+      onSaid({ text: message(e), bad: true });
     }
   }
 
   const off = disabled || busy;
   return (
-    <fieldset className="gb-drive">
-      <legend className="gb-move-h">Follow</legend>
-      <div className="gb-chips">
+    <div className="gb-follow">
+      <p className="gb-hint">
+        It locks onto the nearest face the front camera sees and keeps the distance it was at. A dry
+        run leaves the legs alone and shows the way it would go as an arrow on its screen.
+      </p>
+      <div className="gb-acts two">
         {running ? (
-          <button type="button" className="gb-chip on" aria-pressed onClick={() => void stop()}>
+          <button
+            type="button"
+            className="gb-btn danger block"
+            aria-pressed
+            onClick={() => void stop()}
+          >
             {running === "dry" ? "Stop dry run" : "Stop following"}
           </button>
         ) : (
           <>
             <button
               type="button"
-              className="gb-chip"
+              className="gb-btn primary"
               disabled={off}
               onClick={() => void send("walk")}
             >
@@ -114,7 +120,7 @@ export function GrowbotFollow({
             </button>
             <button
               type="button"
-              className="gb-chip"
+              className="gb-btn"
               disabled={off}
               onClick={() => void send("dry")}
             >
@@ -122,18 +128,21 @@ export function GrowbotFollow({
             </button>
           </>
         )}
+      </div>
+      <div className="gb-move-h">Camera setup</div>
+      <div className="gb-acts two">
         <button
           type="button"
-          className="gb-chip"
+          className="gb-btn"
           disabled={off}
           onClick={() => void send("calibrate")}
         >
           Measure 1 m
         </button>
-        <button type="button" className="gb-chip" disabled={off} onClick={() => void send("flip")}>
+        <button type="button" className="gb-btn" disabled={off} onClick={() => void send("flip")}>
           Flip frames
         </button>
       </div>
-    </fieldset>
+    </div>
   );
 }

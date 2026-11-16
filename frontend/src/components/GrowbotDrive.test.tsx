@@ -53,15 +53,15 @@ function drive(over: Partial<Parameters<typeof GrowbotDrive>[0]> = {}) {
 }
 
 describe("GrowbotDrive", () => {
-  it("starts the walk, then steers it with the sliders until told to stop", async () => {
+  it("starts the walk, then steers it with the dial until told to stop", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const calls = serve();
     const { props } = drive();
-    fireEvent.change(screen.getByLabelText("Heading"), { target: { value: "-30" } });
-    expect(screen.getByText("30° left")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Speed"), { target: { value: "0.5" } });
+    const dial = screen.getByRole("slider", { name: "Heading and speed" });
+    for (let i = 0; i < 6; i++) fireEvent.keyDown(dial, { key: "ArrowLeft" });
+    expect(dial).toHaveAttribute("aria-valuetext", "30° left, speed 0.5");
     fireEvent.change(screen.getByLabelText("Camera height"), { target: { value: "-1" } });
-    fireEvent.click(screen.getByRole("button", { name: "Drive" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start driving" }));
     await waitFor(() => expect(calls).toHaveLength(2));
     const id = (calls[0]?.body as { drive: string }).drive;
     expect(id).toMatch(/^[0-9a-f]{16}$/);
@@ -75,7 +75,7 @@ describe("GrowbotDrive", () => {
       body: { drive: id, heading: 30, speed: 0.5, pitch: -1 },
     });
     expect(props.onSaid).toHaveBeenCalledWith({ text: "Driving with Camera walk.", bad: false });
-    fireEvent.change(screen.getByLabelText("Heading"), { target: { value: "45" } });
+    for (let i = 0; i < 15; i++) fireEvent.keyDown(dial, { key: "ArrowRight" });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
@@ -92,29 +92,37 @@ describe("GrowbotDrive", () => {
   it("offers only the commands the walk takes", () => {
     serve();
     drive({ policy: { ...CAMERA, contract: { ...CAMERA.contract, speed: false, pitch: false } } });
-    expect(screen.getByLabelText("Heading")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Speed")).toBeNull();
+    // A heading-only walk's arrow is all direction: no length, and no reverse to switch to.
+    const dial = screen.getByRole("slider", { name: "Heading" });
+    // Drawn full length from the start, as it is sent.
+    expect(dial.querySelector(".gb-dial-tip")).toHaveAttribute("cy", "16");
+    fireEvent.keyDown(dial, { key: "ArrowDown" });
+    expect(dial).toHaveAttribute("aria-valuetext", "straight");
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
     expect(screen.queryByLabelText("Camera height")).toBeNull();
   });
 
   it("says why when the walk won't start, and when steering is refused", async () => {
     serve({ ok: false, state: "blocked", why: "robot not answering" });
     const { props } = drive();
-    fireEvent.click(screen.getByRole("button", { name: "Drive" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start driving" }));
     await waitFor(() =>
       expect(props.onSaid).toHaveBeenCalledWith({ text: "robot not answering", bad: true }),
     );
-    expect(screen.getByRole("button", { name: "Drive" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Start driving" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 
   it("stops steering when the pad sends a move of its own", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const calls = serve();
     const { props, view } = drive();
-    fireEvent.click(screen.getByRole("button", { name: "Drive" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start driving" }));
     await waitFor(() => expect(calls).toHaveLength(2));
     view.rerender(<GrowbotDrive {...props} halted={1} />);
-    expect(screen.getByRole("button", { name: "Drive" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start driving" })).toBeInTheDocument();
     const sent = calls.length;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
@@ -133,7 +141,7 @@ describe("GrowbotDrive", () => {
       });
     });
     const { view } = drive();
-    fireEvent.click(screen.getByRole("button", { name: "Drive" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start driving" }));
     view.unmount();
     answer(new Response(JSON.stringify({ ok: true, state: "started", why: "" })));
     await act(async () => {
@@ -145,17 +153,17 @@ describe("GrowbotDrive", () => {
   it("ends the drive, as news rather than a fault, when its walk has ended on the phone", async () => {
     serve(undefined, 410);
     const { props } = drive();
-    fireEvent.click(screen.getByRole("button", { name: "Drive" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start driving" }));
     await waitFor(() =>
       expect(props.onSaid).toHaveBeenLastCalledWith({ text: "The walk ended.", bad: false }),
     );
-    expect(screen.getByRole("button", { name: "Drive" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start driving" })).toBeInTheDocument();
   });
 });
 
 describe("headingWords", () => {
   it("names the way from where it began", () => {
-    expect(headingWords(0)).toBe("straight on");
+    expect(headingWords(0)).toBe("straight");
     expect(headingWords(-90)).toBe("90° left");
     expect(headingWords(180)).toBe("180° right");
   });
@@ -169,13 +177,10 @@ describe("headingWords", () => {
       contract: { ...CAMERA.contract, speed: false, pitch: false },
     };
     const { props } = drive({ policy: heading, skills: set });
-    expect(screen.getByRole("button", { name: "Skill set: look and back" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.getByText(/^Steering the skill set \(look and back\)\./)).toBeInTheDocument();
     // A skill set takes speed and camera height, whatever the picked walk does.
-    fireEvent.change(screen.getByLabelText("Speed"), { target: { value: "-0.5" } });
-    fireEvent.click(screen.getByRole("button", { name: "Drive" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start driving" }));
     await waitFor(() => expect(calls).toHaveLength(2));
     const id = (calls[0]?.body as { drive: string }).drive;
     expect(calls[0]?.body).toEqual({ move: "look", secs: 2, drive: id, skills: set });
@@ -185,8 +190,37 @@ describe("headingWords", () => {
       bad: false,
     });
     fireEvent.click(screen.getByRole("button", { name: "Stop driving" }));
-    fireEvent.click(screen.getByRole("button", { name: CAMERA.name }));
-    expect(screen.queryByLabelText("Speed")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: `Steer ${CAMERA.name} instead` }));
+    expect(screen.getByText(/^Steering Camera walk\./)).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Heading" })).toBeInTheDocument();
+  });
+});
+
+describe("GrowbotSteerDial", () => {
+  it("reads a drag as the arrow's angle and length, all the way round", () => {
+    serve();
+    drive();
+    const dial = screen.getByRole("slider", { name: "Heading and speed" });
+    // The dial's box is its viewBox at 1:1, so the centre is (120, 120) and full length 104.
+    dial.getBoundingClientRect = () => ({ left: 0, top: 0, width: 240, height: 240 }) as DOMRect;
+    fireEvent.pointerDown(dial, { clientX: 120 + 52, clientY: 120, pointerId: 1 });
+    expect(dial).toHaveAttribute("aria-valuetext", "90° right, speed 0.5");
+    fireEvent.pointerMove(dial, { clientX: 120, clientY: 120 - 200, pointerId: 1 });
+    expect(dial).toHaveAttribute("aria-valuetext", "straight, speed 1.0");
+    // Behind it turns it round; just left of behind is 175° left.
+    fireEvent.pointerMove(dial, { clientX: 120, clientY: 120 + 104, pointerId: 1 });
+    expect(dial).toHaveAttribute("aria-valuetext", "180° right, speed 1.0");
+    fireEvent.pointerMove(dial, { clientX: 120 - 9, clientY: 120 + 104, pointerId: 1 });
+    expect(dial).toHaveAttribute("aria-valuetext", "175° left, speed 1.0");
+    fireEvent.pointerUp(dial, { pointerId: 1 });
+    fireEvent.pointerMove(dial, { clientX: 120, clientY: 120, pointerId: 1 });
+    expect(dial.getAttribute("aria-valuetext")).toMatch(/^175° left/);
+    // Left keeps turning it anticlockwise, round through straight behind.
+    fireEvent.keyDown(dial, { key: "ArrowLeft" });
+    fireEvent.keyDown(dial, { key: "ArrowLeft" });
+    expect(dial.getAttribute("aria-valuetext")).toMatch(/^175° right/);
+    fireEvent.keyDown(dial, { key: "Home" });
+    expect(dial.getAttribute("aria-valuetext")).toMatch(/^straight/);
   });
 });
 

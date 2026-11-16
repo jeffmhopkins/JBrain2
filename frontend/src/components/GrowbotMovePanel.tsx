@@ -1,5 +1,10 @@
-// The Body tab's movement remote (owner, 2026-11-12: "if the body is turned on, I want to be
-// able to call the policies directly"; then "this looks like crap, need a way better GUI").
+// The Body tab's movement remote, laid out as the 2026-11-16 redesign's variant A "remote plus
+// rows" (docs/mocks/growbot-body-tab/a-remote-rows.html): the walk is one row opening the Walk
+// with sheet, Tap a move | Steer live makes the timed pad and the live steering one control,
+// tricks run on one line that scrolls sideways, and Follow me and Body test are rows opening
+// sheets, so the everyday remote fits about a screen. Its history (owner, 2026-11-12: "if the
+// body is turned on, I want to be able to call the policies directly"; then "this looks like
+// crap, need a way better GUI").
 // A driving pad instead of a form: up/down walk, left/right spin, Stop in the middle, how
 // long as chips under it, and the gestures as tricks. The walk and spin policies need the
 // motion sensors of the phone riding the robot, so every move goes to the creature page on
@@ -19,7 +24,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotMove, type GrowbotPolicy, type GrowbotRobot, api } from "../api/client";
 import { GrowbotBodyTest } from "./GrowbotBodyTest";
 import { GrowbotDrive } from "./GrowbotDrive";
-import { GrowbotFollow } from "./GrowbotFollow";
+import { type FollowRunning, GrowbotFollow } from "./GrowbotFollow";
 import {
   GrowbotPoliciesSheet,
   offered,
@@ -27,6 +32,8 @@ import {
   skillSet,
   walkKind,
 } from "./GrowbotPoliciesSheet";
+import { Sheet } from "./Sheet";
+import { gistOf, shortName } from "./growbotNames";
 import { ChevronDownIcon, ChevronUpIcon, RotateCcwIcon, RotateCwIcon, StopIcon } from "./icons";
 
 type Policy = "forward" | "back" | "spin_right" | "spin_left";
@@ -100,6 +107,44 @@ const DOING: Record<GrowbotMove, string> = {
 
 type Said = { text: string; bad: boolean };
 
+function WalkChoice({
+  group,
+  name,
+  gist,
+  kind,
+  on,
+  pick,
+  done,
+}: {
+  group: string;
+  name: string;
+  gist?: string | undefined;
+  kind?: string;
+  on: boolean;
+  pick: () => void;
+  done: () => void;
+}) {
+  return (
+    <label className={`gb-choice${on ? " sel" : ""}`}>
+      <input
+        type="radio"
+        name={group}
+        checked={on}
+        onChange={pick}
+        // A tap picks and closes; arrow keys only move the pick, so the sheet stays for them.
+        onClick={(e) => {
+          if (e.detail > 0) done();
+        }}
+      />
+      <span className="gb-tx">
+        {name}
+        {gist ? <em>{gist}</em> : null}
+        {kind ? <em className="gb-dim-t">{kind}</em> : null}
+      </span>
+    </label>
+  );
+}
+
 // Which walk (or turn) this phone last drove a robot with: a per-viewer convenience, so storage
 // may fail.
 function storedWalk(code: string, kind = "walk"): string {
@@ -145,9 +190,12 @@ export function stopCreature(r: GrowbotRobot): void {
 export function GrowbotMovePanel({
   robot,
   onStop,
+  more,
 }: {
   robot: GrowbotRobot;
   onStop?: () => Promise<Said>;
+  /** Rows the controls card adds under Follow me and Body test (its Legs). */
+  more?: ReactNode;
 }) {
   const [secs, setSecs] = useState<number>(DEFAULT_SECS);
   const [busy, setBusy] = useState(false);
@@ -165,17 +213,22 @@ export function GrowbotMovePanel({
   const [policies, setPolicies] = useState<GrowbotPolicy[]>([]);
   const [walkWith, setWalkWith] = useState(() => storedWalk(robot.code));
   const [turnWith, setTurnWith] = useState(() => storedWalk(robot.code, "turn"));
-  const [library, setLibrary] = useState(false);
+  const [sheet, setSheet] = useState<"walks" | "follow" | "test" | "library" | null>(null);
+  const [mode, setMode] = useState<"tap" | "steer">("tap");
+  // Lifted out of their sheets, so closing one never forgets that the robot is still going.
+  const [following, setFollowing] = useState<FollowRunning>(null);
+  const [driving, setDriving] = useState(false);
   const [halted, setHalted] = useState(0);
   const mounted = useRef(true);
   const done = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
+  // Set again on mount: StrictMode's rehearsal unmount would otherwise leave it false for good.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
       mounted.current = false;
       if (done.current) clearTimeout(done.current);
-    },
-    [],
-  );
+    };
+  }, []);
   useEffect(() => {
     let gone = false;
     // No library (an older box, or it's down) is just no trained walks to pick.
@@ -188,6 +241,10 @@ export function GrowbotMovePanel({
     };
   }, []);
   const blocked = moveBlocked(robot);
+  // Any move of the pad's own ends a follow on the creature (a new move replaces it), as does a
+  // robot nobody can drive any more.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: halted and blocked are the triggers.
+  useEffect(() => setFollowing(null), [halted, blocked]);
   const name = robot.name || robot.code;
   const walks = offered(policies, "walk");
   const turns = offered(policies, "turn");
@@ -276,120 +333,82 @@ export function GrowbotMovePanel({
   const off = !!blocked || busy;
   const lit = running?.move;
   const saved = (robot.gestures ?? []).filter((g) => !STOCK_GESTURES.has(g));
+  const steerable = !!(trained || skills);
+  const steering = steerable && mode === "steer";
+  // A walk that can't be steered sends the remote back to taps, so picking one later
+  // doesn't land on live steering unasked.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only steerable turning off counts.
+  useEffect(() => {
+    if (steerable) return;
+    // A drive that loses its walk is stopped, not left to its lease.
+    if (driving) stop();
+    setMode("tap");
+  }, [steerable]);
+  const saidLine = (
+    <output className={`gb-move-said${said?.bad ? " gb-bad-t" : ""}`} aria-live="polite">
+      {said?.text ?? ""}
+    </output>
+  );
   return (
     <div className="gb-move">
-      <fieldset className="gb-chips gb-walk-with">
-        <legend className="gb-move-h">Walk with</legend>
-        <button
-          type="button"
-          className={`gb-chip${trained ? "" : " on"}`}
-          aria-pressed={!trained}
-          onClick={() => pick("")}
-        >
-          Its own walks
-        </button>
-        {walks.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            className={`gb-chip${trained?.id === p.id ? " on" : ""}`}
-            aria-pressed={trained?.id === p.id}
-            onClick={() => pick(p.id)}
-          >
-            {p.name}
-          </button>
-        ))}
-        <button type="button" className="gb-chip add" onClick={() => setLibrary(true)}>
-          {policies.length ? "Trained walks…" : "Add a trained walk…"}
-        </button>
-      </fieldset>
-      {turns.length > 0 && (
-        <fieldset className="gb-chips gb-walk-with">
-          <legend className="gb-move-h">Turn with</legend>
+      <button
+        type="button"
+        className="gb-picker"
+        aria-haspopup="dialog"
+        onClick={() => setSheet("walks")}
+      >
+        <span className="gb-tx">
+          <span className="gb-t2">Walking with</span>
+          <span className="gb-t1">
+            {trained ? shortName(trained.name) : "Built-in walk"}
+            {turner ? ` · turns with ${shortName(turner.name)}` : ""}
+          </span>
+        </span>
+        <span className="gb-chev" aria-hidden="true">
+          ›
+        </span>
+      </button>
+
+      {steerable && (
+        <fieldset className="gb-seg pick gb-mode" aria-label="How the pad drives">
           <button
             type="button"
-            className={`gb-chip${turner ? "" : " on"}`}
-            aria-pressed={!turner}
-            onClick={() => pickTurn("")}
+            className={steering ? "" : "on"}
+            aria-pressed={!steering}
+            onClick={() => {
+              // Leaving live steering ends the drive now, not when its lease runs out.
+              if (driving) stop();
+              setMode("tap");
+            }}
           >
-            {trained ? "The walk's turns" : "Its own spins"}
+            Tap a move
           </button>
-          {turns.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={`gb-chip${turner?.id === p.id ? " on" : ""}`}
-              aria-pressed={turner?.id === p.id}
-              onClick={() => pickTurn(p.id)}
-            >
-              {p.name}
-            </button>
-          ))}
+          <button
+            type="button"
+            className={steering ? "on" : ""}
+            aria-pressed={steering}
+            onClick={() => {
+              // A timed move still under way stops here, since its pad and bar go away.
+              // busy covers a move whose answer is still on its way, and untimed tricks.
+              if (running || busy) stop();
+              setMode("steer");
+            }}
+          >
+            Steer live
+          </button>
         </fieldset>
       )}
 
       <p className={`gb-move-tip${blocked ? " blocked" : ""}`}>
         {blocked ??
-          (trained
-            ? `${trained.name}: ${walkKind(trained)}. Ahead walks the way it faces; left and right turn it 90°.`
-            : `Forward is toward the phone's screen. Set ${name} down still a moment first.`)}
+          (steering
+            ? "Start driving, then move the sliders as it goes. It stops a moment after you stop."
+            : trained
+              ? `${shortName(trained.name)}: ${walkKind(trained)}. Ahead walks the way it faces; left and right turn it 90°.`
+              : `Forward is toward the phone's screen. Set ${name} down still a moment first.`)}
       </p>
 
-      <div className="gb-pad">
-        {PAD.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            className={`gb-pad-b ${p.at}${lit === p.id ? " on" : ""}`}
-            aria-label={`${keyPad(p.id)?.[p.id].run ?? p.run} ${secs} s`}
-            disabled={off}
-            onClick={() => void send(p.id, secs)}
-          >
-            {p.icon}
-            <span aria-hidden="true">{keyPad(p.id)?.[p.id].label ?? p.label}</span>
-          </button>
-        ))}
-        <button
-          type="button"
-          className="gb-pad-stop"
-          aria-label="Stop"
-          disabled={!canStop}
-          onClick={stop}
-        >
-          <StopIcon size={22} />
-          <span aria-hidden="true">Stop</span>
-        </button>
-      </div>
-
-      <div className="gb-move-bar" aria-hidden="true">
-        {running && (
-          <span
-            key={running.n}
-            className="gb-move-drain"
-            style={{ animationDuration: `${running.secs}s` }}
-          />
-        )}
-      </div>
-      <output className={`gb-move-said${said?.bad ? " gb-bad-t" : ""}`} aria-live="polite">
-        {said?.text ?? ""}
-      </output>
-
-      <fieldset className="gb-chips">
-        <legend className="gb-move-h">Walks and spins run for</legend>
-        {SECS.map((s) => (
-          <button
-            key={s}
-            type="button"
-            className={`gb-chip${secs === s ? " on" : ""}`}
-            aria-pressed={secs === s}
-            onClick={() => setSecs(s)}
-          >
-            {s} s
-          </button>
-        ))}
-      </fieldset>
-
-      {(trained || skills) && (
+      {steering ? (
         <GrowbotDrive
           code={robot.code}
           policy={trained}
@@ -398,30 +417,87 @@ export function GrowbotMovePanel({
           halted={halted}
           onSaid={setSaid}
           onStop={stop}
+          onDriving={(d) => {
+            setDriving(d);
+            // A drive's start replaces a follow on the creature.
+            if (d) setFollowing(null);
+          }}
         />
-      )}
+      ) : (
+        <>
+          <div className="gb-pad">
+            {PAD.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`gb-pad-b ${p.at}${lit === p.id ? " on" : ""}`}
+                aria-label={`${keyPad(p.id)?.[p.id].run ?? p.run} ${secs} s`}
+                disabled={off}
+                onClick={() => void send(p.id, secs)}
+              >
+                {p.icon}
+                <span aria-hidden="true">{keyPad(p.id)?.[p.id].label ?? p.label}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className="gb-pad-stop"
+              aria-label="Stop"
+              disabled={!canStop}
+              onClick={stop}
+            >
+              <StopIcon size={22} />
+              <span aria-hidden="true">Stop</span>
+            </button>
+          </div>
 
-      {skills && (
-        <GrowbotFollow
-          code={robot.code}
-          skills={skills}
-          disabled={!!blocked}
-          halted={halted}
-          onSaid={setSaid}
-        />
+          <div className="gb-move-bar" aria-hidden="true">
+            {running && (
+              <span
+                key={running.n}
+                className="gb-move-drain"
+                style={{ animationDuration: `${running.secs}s` }}
+              />
+            )}
+          </div>
+        </>
       )}
+      {steering && !driving && (
+        <button
+          type="button"
+          className="gb-btn danger block gb-steer-stop"
+          disabled={!canStop}
+          onClick={stop}
+        >
+          <StopIcon size={16} />
+          Stop
+        </button>
+      )}
+      {!sheet && saidLine}
 
-      {skills && (
-        <GrowbotBodyTest code={robot.code} skills={skills} disabled={!!blocked} onSaid={setSaid} />
+      {!steering && (
+        <fieldset className="gb-seg pick gb-secs" aria-label="Walks and spins run for">
+          {SECS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={secs === s ? "on" : ""}
+              aria-pressed={secs === s}
+              onClick={() => setSecs(s)}
+            >
+              {s} s
+            </button>
+          ))}
+        </fieldset>
       )}
 
       <div className="gb-move-h">Tricks</div>
-      <div className="gb-chips">
+      <fieldset className="gb-strip" aria-label="Tricks">
         {TRICKS.map((g) => (
           <button
             key={g.id}
             type="button"
-            className="gb-chip trick"
+            className={`gb-chip trick${lit === g.id ? " on" : ""}`}
             disabled={off}
             onClick={() => void send(g.id)}
           >
@@ -449,33 +525,153 @@ export function GrowbotMovePanel({
             disabled={off}
             onClick={() => void send("look", secs, undefined, p)}
           >
-            {p.name}
+            {shortName(p.name)}
           </button>
         ))}
-      </div>
-      {saved.length > 0 && (
-        <>
-          <div className="gb-move-h">Its saved gestures</div>
-          <div className="gb-chips">
-            {saved.map((g) => (
-              <button
-                key={g}
-                type="button"
-                className="gb-chip trick"
-                disabled={off}
-                onClick={() => void send("gesture", 0, g)}
-              >
-                {g}
-              </button>
-            ))}
-          </div>
-        </>
+        {saved.map((g) => (
+          <button
+            key={`saved-${g}`}
+            type="button"
+            className="gb-chip trick"
+            disabled={off}
+            onClick={() => void send("gesture", 0, g)}
+          >
+            {g}
+          </button>
+        ))}
+      </fieldset>
+
+      {(skills || more) && (
+        <div className="gb-list gb-more">
+          {skills && (
+            <button
+              type="button"
+              className="gb-li"
+              aria-haspopup="dialog"
+              onClick={() => setSheet("follow")}
+            >
+              <span className="gb-tx">
+                <span className="gb-t1">Follow me</span>
+                <span className={`gb-t2${following ? " gb-ok-t" : ""}`}>
+                  {following === "walk"
+                    ? "Following now"
+                    : following === "dry"
+                      ? "Dry run on"
+                      : "Walks after the nearest face"}
+                </span>
+              </span>
+              <span className="gb-chev" aria-hidden="true">
+                ›
+              </span>
+            </button>
+          )}
+          {skills && (
+            <button
+              type="button"
+              className="gb-li"
+              aria-haspopup="dialog"
+              onClick={() => setSheet("test")}
+            >
+              <span className="gb-tx">
+                <span className="gb-t1">Body test</span>
+                <span className="gb-t2">A guided trial, with past runs and their logs</span>
+              </span>
+              <span className="gb-chev" aria-hidden="true">
+                ›
+              </span>
+            </button>
+          )}
+          {more}
+        </div>
       )}
-      {library && (
+
+      {sheet === "walks" && (
+        <Sheet title="Walk with" onClose={() => setSheet(null)}>
+          <fieldset className="gb-choices gb-walks">
+            {/* The sheet's title names it, until a Turn with list needs telling apart. */}
+            <legend className={turns.length ? undefined : "gb-sr-only"}>Walk with</legend>
+            <WalkChoice
+              group={`gb-walk-${robot.code}`}
+              name="Built-in walk"
+              gist={`${name}'s stock walk and spins`}
+              kind="no training needed"
+              on={!trained}
+              pick={() => pick("")}
+              done={() => setSheet(null)}
+            />
+            {walks.map((p) => (
+              <WalkChoice
+                key={p.id}
+                group={`gb-walk-${robot.code}`}
+                name={shortName(p.name)}
+                gist={gistOf(p.name)}
+                kind={walkKind(p)}
+                on={trained?.id === p.id}
+                pick={() => pick(p.id)}
+                done={() => setSheet(null)}
+              />
+            ))}
+          </fieldset>
+          {turns.length > 0 && (
+            <fieldset className="gb-choices gb-walks">
+              <legend>Turn with</legend>
+              <WalkChoice
+                group={`gb-turn-${robot.code}`}
+                name={trained ? "The walk's turns" : "Built-in spins"}
+                gist={trained ? "Left and right use the walk above" : undefined}
+                on={!turner}
+                pick={() => pickTurn("")}
+                done={() => setSheet(null)}
+              />
+              {turns.map((p) => (
+                <WalkChoice
+                  key={p.id}
+                  group={`gb-turn-${robot.code}`}
+                  name={shortName(p.name)}
+                  gist={gistOf(p.name)}
+                  kind={walkKind(p)}
+                  on={turner?.id === p.id}
+                  pick={() => pickTurn(p.id)}
+                  done={() => setSheet(null)}
+                />
+              ))}
+            </fieldset>
+          )}
+          <button type="button" className="gb-btn block" onClick={() => setSheet("library")}>
+            {policies.length ? "Trained walks…" : "Add a trained walk…"}
+          </button>
+        </Sheet>
+      )}
+      {sheet === "follow" && skills && (
+        <Sheet title="Follow me" onClose={() => setSheet(null)}>
+          <GrowbotFollow
+            code={robot.code}
+            skills={skills}
+            disabled={!!blocked}
+            onSaid={setSaid}
+            running={following}
+            setRunning={setFollowing}
+          />
+          {saidLine}
+        </Sheet>
+      )}
+      {sheet === "test" && skills && (
+        <Sheet title="Body test" onClose={() => setSheet(null)}>
+          <GrowbotBodyTest
+            code={robot.code}
+            skills={skills}
+            disabled={!!blocked}
+            onSaid={setSaid}
+            onStarted={() => setFollowing(null)}
+          />
+          {saidLine}
+        </Sheet>
+      )}
+      {sheet === "library" && (
         <GrowbotPoliciesSheet
           policies={policies}
           onChange={(update) => setPolicies(update)}
-          onClose={() => setLibrary(false)}
+          onClose={() => setSheet(null)}
         />
       )}
     </div>

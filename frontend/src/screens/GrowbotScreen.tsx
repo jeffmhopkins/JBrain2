@@ -76,6 +76,7 @@ type SheetState =
   | { kind: "new"; seed: string | null }
   | { kind: "import"; over: string | null }
   | { kind: "brainlog" }
+  | { kind: "robot"; code: string }
   | null;
 
 interface Toast {
@@ -428,6 +429,8 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           : s,
       );
       robotsRef.current = robotsRef.current.map((x) => (x.code === out.code ? out : x));
+      // Its card now carries Reflash and the facts, and the banner says why.
+      setSheet((cur) => (cur?.kind === "robot" ? null : cur));
       say(
         `${r.name || r.code}'s key is revoked. It disconnects now and can't come back until it is reflashed.${
           rider?.phone ? ` ${rider.name} carries on alone ${onPhone(rider.phone, pl)}.` : ""
@@ -499,6 +502,8 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
 
   const sheetRobot =
     sheet?.kind === "rekey" ? robots.find((r) => r.code === sheet.code) : undefined;
+  const robotSheetFor =
+    sheet?.kind === "robot" ? robots.find((r) => r.code === sheet.code) : undefined;
   const revoked = robots.filter((r) => r.revoked_at);
   const pagePersona = persona(page);
 
@@ -576,32 +581,13 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     );
   }
 
-  function bodyCard(r: GrowbotRobot) {
-    const s = bodyState(r, up);
+  /** The robot's pairing code, its key and what can be done with it: in the robot's sheet, or
+   *  on its card once the key is revoked (Reflash is then the one thing to do). */
+  function robotKey(r: GrowbotRobot) {
     const name = r.name || r.code;
     const isRevoked = !!r.revoked_at;
-    const rider = overview ? riderOf(overview, r.code) : null;
     return (
-      <section key={r.code} className="gb-card" aria-label={name}>
-        <div className="gb-card-head">
-          <h3>{name}</h3>
-          <span className="gb-state">
-            <span className={`gb-dot ${s.level}`} aria-hidden="true" />
-            <span className={`gb-${s.level}-t`}>{s.text}</span>
-          </span>
-        </div>
-        {overview && (
-          <p className="gb-hint">
-            {rider ? (
-              <>
-                <strong>{rider.name}</strong> is wearing it
-                {rider.phone ? `, ${onPhone(rider.phone, pl)}` : ""}.
-              </>
-            ) : (
-              `Nobody is wearing ${name} — it stands still until a persona connects.`
-            )}
-          </p>
-        )}
+      <>
         <dl className="gb-facts">
           <dt>Pairing code</dt>
           <dd className="gb-mono">{r.code}</dd>
@@ -643,6 +629,55 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             </button>
           </div>
         )}
+      </>
+    );
+  }
+
+  function bodyCard(r: GrowbotRobot) {
+    const s = bodyState(r, up);
+    const name = r.name || r.code;
+    const isRevoked = !!r.revoked_at;
+    const rider = overview ? riderOf(overview, r.code) : null;
+    const facts = robotKey(r);
+    return (
+      <section key={r.code} className="gb-card" aria-label={name}>
+        <div className="gb-card-head">
+          <h3>{name}</h3>
+          <span className="gb-state">
+            <span className={`gb-dot ${s.level}`} aria-hidden="true" />
+            <span className={`gb-${s.level}-t`}>{s.text}</span>
+          </span>
+        </div>
+        {overview && (
+          <p className="gb-hint">
+            {rider ? (
+              <>
+                <strong>{rider.name}</strong> is wearing it
+                {rider.phone ? `, ${onPhone(rider.phone, pl)}` : ""}.
+              </>
+            ) : (
+              `Nobody is wearing ${name} — it stands still until a persona connects.`
+            )}
+          </p>
+        )}
+        {isRevoked ? (
+          facts
+        ) : (
+          <button
+            type="button"
+            className="gb-li gb-robot-more"
+            aria-haspopup="dialog"
+            onClick={() => setSheet({ kind: "robot", code: r.code })}
+          >
+            <span className="gb-tx">
+              <span className="gb-t1">Who wears {name}, and its key</span>
+              <span className="gb-t2">Pairing code, New key, Revoke key</span>
+            </span>
+            <span className="gb-chev" aria-hidden="true">
+              ›
+            </span>
+          </button>
+        )}
       </section>
     );
   }
@@ -652,7 +687,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     const name = r.name || r.code;
     const rider = riderOf(overview, r.code)?.id ?? null;
     return (
-      <section key={`ride-${r.code}`} className="gb-card">
+      <>
         <fieldset className="gb-choices gb-rider-pick">
           <legend>Who wears {name}</legend>
           <label className={`gb-choice${rider === null ? " sel" : ""}`}>
@@ -684,19 +719,34 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           ))}
         </fieldset>
         <p className="gb-hint dim">The one it leaves carries on alone on its phone.</p>
-      </section>
+      </>
     );
   }
 
   // The brain log covers the creature, not one robot, so it sits under the robots and shows
-  // with none too: a persona alone on a phone still thinks, hears and speaks.
-  const brainLog = (
-    <>
-      <div className="gb-sec-h">For GrowBot's developer</div>
-      <button type="button" className="gb-btn block" onClick={() => setSheet({ kind: "brainlog" })}>
-        Share a brain log…
-      </button>
-    </>
+  // with none too: a persona alone on a phone still thinks, hears and speaks. It and the upstream
+  // check are for GrowBot's developer, folded away so they don't sit among the everyday controls
+  // (2026-11-16 redesign, docs/mocks/growbot-body-tab/a-remote-rows.html).
+  const devTools = (
+    <details className="gb-dev">
+      <summary>
+        For GrowBot's developer
+        <span className="gb-t2">Brain log · walks and spins</span>
+        <span className="gb-chev" aria-hidden="true">
+          ›
+        </span>
+      </summary>
+      <div className="gb-dev-in">
+        <button
+          type="button"
+          className="gb-btn block"
+          onClick={() => setSheet({ kind: "brainlog" })}
+        >
+          Share a brain log…
+        </button>
+        <GrowbotUpstreamCard />
+      </div>
+    </details>
   );
 
   function bodyTab() {
@@ -722,8 +772,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
               Add a robot
             </button>
           )}
-          {brainLog}
-          <GrowbotUpstreamCard />
+          {devTools}
         </>
       );
     }
@@ -732,10 +781,9 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
         {robots.map((r) => (
           <div key={r.code} className="gb-stack">
             {bodyCard(r)}
-            {riderPick(r)}
             <GrowbotBodyControls
               robot={r}
-              move={(stop) => <GrowbotMovePanel robot={r} onStop={stop} />}
+              move={(stop, legsRow) => <GrowbotMovePanel robot={r} onStop={stop} more={legsRow} />}
               onStop={() => stopCreature(r)}
             />
           </div>
@@ -749,8 +797,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             Add a robot
           </button>
         )}
-        {brainLog}
-        <GrowbotUpstreamCard />
+        {devTools}
       </>
     );
   }
@@ -955,6 +1002,13 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
         />
       )}
 
+      {sheet?.kind === "robot" && robotSheetFor && (
+        <Sheet title={robotSheetFor.name || robotSheetFor.code} onClose={() => setSheet(null)}>
+          {robotKey(robotSheetFor)}
+          {riderPick(robotSheetFor)}
+        </Sheet>
+      )}
+
       {sheet?.kind === "brainlog" && (
         <GrowbotBrainLogSheet say={say} onClose={() => setSheet(null)} />
       )}
@@ -972,7 +1026,8 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             setPage(null);
             pickTab("body");
             void loadStatus();
-            say(`Pick who wears ${robotName(code, pl)} under Who wears ${robotName(code, pl)}.`);
+            setSheet({ kind: "robot", code });
+            say(`Pick who wears ${robotName(code, pl)}.`);
           }}
           onClose={() => setSheet(null)}
         />

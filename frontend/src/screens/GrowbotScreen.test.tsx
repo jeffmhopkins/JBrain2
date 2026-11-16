@@ -226,6 +226,13 @@ afterEach(() => {
   localStorage.clear();
 });
 
+/** The robot's key and Who wears live in its sheet, behind the row on its card. */
+function openRobot(name = "Fish") {
+  fireEvent.click(
+    screen.getByRole("button", { name: new RegExp(`^Who wears ${name}, and its key`) }),
+  );
+}
+
 describe("GrowbotScreen tabs", () => {
   it("lists each persona with where it is in words, and counts them on the tab", async () => {
     localStorage.setItem(THIS_PHONE_KEY, ME);
@@ -259,9 +266,13 @@ describe("GrowbotScreen tabs", () => {
     const card = screen.getByRole("region", { name: "Fish" });
     expect(within(card).getByText("on · seen just now")).toBeInTheDocument();
     expect(card).toHaveTextContent("Sprout is wearing it, on Pixel 6a.");
-    expect(within(card).getByText("gb-e3b6d8")).toBeInTheDocument();
-    expect(within(card).getByText(/^made .*, only on Fish$/)).toBeInTheDocument();
-    const pick = screen.getByRole("group", { name: "Who wears Fish" });
+    // The key and the pick are one tap away, in the robot's sheet.
+    expect(within(card).queryByText("gb-e3b6d8")).toBeNull();
+    openRobot();
+    const sheet = screen.getByRole("dialog", { name: "Fish" });
+    expect(within(sheet).getByText("gb-e3b6d8")).toBeInTheDocument();
+    expect(within(sheet).getByText(/^made .*, only on Fish$/)).toBeInTheDocument();
+    const pick = within(sheet).getByRole("group", { name: "Who wears Fish" });
     expect(within(pick).getByRole("radio", { name: /Sprout/ })).toBeChecked();
     expect(within(pick).getByRole("radio", { name: /Nobody/ })).toHaveAccessibleName(
       /Fish stands still\./,
@@ -312,6 +323,18 @@ describe("GrowbotScreen tabs", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
     expect(screen.getByText("No robots yet")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add a robot" })).toHaveClass("primary");
+  });
+
+  it("folds the developer's tools away at the foot of the Body tab", async () => {
+    serve(UP);
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    const dev = screen.getByText("For GrowBot's developer").closest("details");
+    expect(dev).not.toHaveAttribute("open");
+    expect(dev).toContainElement(screen.getByRole("button", { name: "Share a brain log…" }));
+    // The everyday controls come first, the robot's key behind its row.
+    expect(screen.getByRole("region", { name: "Controls for Fish" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New key" })).toBeNull();
   });
 
   it("shares a brain log from the Body tab, with or without a robot", async () => {
@@ -570,6 +593,7 @@ describe("GrowbotScreen who wears the body", () => {
     );
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    openRobot();
     fireEvent.click(screen.getByRole("radio", { name: /Captain Bolt/ }));
     expect(
       await screen.findByText(
@@ -591,6 +615,7 @@ describe("GrowbotScreen who wears the body", () => {
     );
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    openRobot();
     fireEvent.click(screen.getByRole("radio", { name: /Nobody/ }));
     expect(
       await screen.findByText(
@@ -606,6 +631,7 @@ describe("GrowbotScreen who wears the body", () => {
     const s = serve(UP, ticketRoute);
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    openRobot();
     fireEvent.click(screen.getByRole("radio", { name: /Quorra's buddy/ }));
     await waitFor(() => expect(tickets(s)[0]?.body).toEqual({ persona: BUDDY, code: "gb-e3b6d8" }));
     expect(s.calls.some((c) => c.method === "PUT")).toBe(false);
@@ -1803,6 +1829,7 @@ describe("GrowbotScreen the body's key and flash", () => {
     );
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    openRobot();
     fireEvent.click(screen.getByRole("button", { name: "Revoke key" }));
     expect(screen.getByRole("button", { name: "Tap again to revoke" })).toBeInTheDocument();
     await act(async () => {
@@ -1825,6 +1852,9 @@ describe("GrowbotScreen the body's key and flash", () => {
       ),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Revoke key" })).toBeNull();
+    // The sheet closes on the revoke: Reflash and the facts are on the card now.
+    expect(screen.queryByRole("dialog", { name: "Fish" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Fish" })).toHaveTextContent("gb-e3b6d8");
   });
 
   it("writes a new key on a second tap and watches it in a sheet", async () => {
@@ -1839,6 +1869,7 @@ describe("GrowbotScreen the body's key and flash", () => {
     });
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    openRobot();
     fireEvent.click(screen.getByRole("button", { name: "New key" }));
     expect(s.calls.some((c) => c.method === "POST")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Tap again for a new key" }));
@@ -1869,6 +1900,7 @@ describe("GrowbotScreen the body's key and flash", () => {
     );
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    openRobot();
     fireEvent.click(screen.getByRole("button", { name: "New key" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap again for a new key" }));
     expect(await screen.findByText(/Nothing Pico is on the box's USB/)).toBeInTheDocument();
@@ -2022,6 +2054,7 @@ describe("GrowbotScreen after review", () => {
     });
     render(<GrowbotScreen />);
     fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    openRobot();
     await act(async () => {
       vi.advanceTimersByTime(15_100);
     });

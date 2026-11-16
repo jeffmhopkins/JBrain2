@@ -1,18 +1,17 @@
-/** The Body tab's one controls card per robot: Move (the driving pad, passed in as `move`;
- *  without it the card is Legs alone) and Legs. Legs is
+/** The Body tab's one controls card per robot: the remote (the driving pad, passed in as
+ *  `move`, which lists Legs among its rows and opens it as a sheet; without it the card is Legs
+ *  alone). Legs is
  *  upstream's tester leg check (tester/motor.html) rebuilt here so nothing needs the original
  *  app: which leg is which and the swap, the by-eye trims, each leg's sweep and sign, the IMU
  *  signs and the walk gain. Each setting changed here is saved on the box for this robot and
  *  every creature that wears it copies it in; a change also moves the legs so it can be
  *  judged by eye, as upstream's sliders do. One Stop serves both: the chip's stop, plus
- *  `onStop` for a creature walking it; Move wears it in the middle of its pad, Legs under. */
+ *  `onStop` for a creature walking it; the pad wears it in its middle, Legs under. */
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type GrowbotCal, type GrowbotRobot, type GrowbotStep, api } from "../api/client";
-import { GrowbotTabs } from "./GrowbotPersonaSheets";
+import { Sheet } from "./Sheet";
 import { useArm } from "./growbotArm";
 import { StopIcon } from "./icons";
-
-type Pane = "move" | "legs";
 
 // Upstream body truth (v3/body.json walk.cal), what Reset puts back.
 export const GB_CAL_DEFAULTS: GrowbotCal = {
@@ -414,19 +413,17 @@ export function GrowbotBodyControls({
   onStop,
 }: {
   robot: GrowbotRobot;
-  /** The Move pane, handed the card's Stop to wear on its pad; without it the card is Legs
-   *  alone. */
-  move?: (stop: () => Promise<GrowbotStopSaid>) => ReactNode;
+  /** The remote, handed the card's Stop to wear on its pad and the Legs row to list with its
+   *  own; without it the card is Legs alone. */
+  move?: (stop: () => Promise<GrowbotStopSaid>, legsRow: ReactNode) => ReactNode;
   /** Also called by Stop, alongside the chip-direct stop: a creature's walk keeps streaming
    *  poses, so it must be told too. */
   onStop?: () => void;
 }) {
-  const [pane, setPane] = useState<Pane>(move ? "move" : "legs");
+  const [legsOpen, setLegsOpen] = useState(false);
   const [stopNote, setStopNote] = useState<GrowbotStopSaid | null>(null);
   const name = robot.name || robot.code;
   const live = robot.connected && !robot.revoked_at;
-  const base = `gb-ctl-${robot.code}`;
-  const shown: Pane = move ? pane : "legs";
   const state = !live
     ? { dot: "", word: "Off" }
     : robot.creature
@@ -441,6 +438,42 @@ export function GrowbotBodyControls({
     );
   }
 
+  const legs = (
+    <>
+      <Legs robot={robot} />
+      <button
+        type="button"
+        className="gb-btn danger block gb-stop"
+        disabled={!live}
+        onClick={() => void stop().then(setStopNote)}
+      >
+        <StopIcon size={16} />
+        Stop
+      </button>
+      {stopNote && (
+        <p className={`gb-hint${stopNote.bad ? " gb-bad-t" : ""}`} aria-live="polite">
+          {stopNote.text}
+        </p>
+      )}
+    </>
+  );
+  const legsRow = (
+    <button
+      type="button"
+      className="gb-li"
+      aria-haspopup="dialog"
+      onClick={() => setLegsOpen(true)}
+    >
+      <span className="gb-tx">
+        <span className="gb-t1">Legs</span>
+        <span className="gb-t2">Which leg, trim, direction and calibration</span>
+      </span>
+      <span className="gb-chev" aria-hidden="true">
+        ›
+      </span>
+    </button>
+  );
+
   if (robot.revoked_at) return null;
   return (
     <section className="gb-card gb-ctl" aria-label={`Controls for ${name}`}>
@@ -451,43 +484,11 @@ export function GrowbotBodyControls({
           {state.word}
         </span>
       </div>
-      {move && (
-        <GrowbotTabs<Pane>
-          base={base}
-          label={`Controls for ${name}`}
-          inner
-          tabs={[
-            { id: "move", label: "Move" },
-            { id: "legs", label: "Legs" },
-          ]}
-          value={pane}
-          onPick={setPane}
-        />
-      )}
-      <div
-        id={`${base}-panel`}
-        role={move ? "tabpanel" : undefined}
-        aria-labelledby={move ? `${base}-tab-${shown}` : undefined}
-      >
-        {shown === "move" && move ? move(stop) : <Legs robot={robot} />}
-      </div>
-      {shown === "legs" && (
-        <>
-          <button
-            type="button"
-            className="gb-btn danger block gb-stop"
-            disabled={!live}
-            onClick={() => void stop().then(setStopNote)}
-          >
-            <StopIcon size={16} />
-            Stop
-          </button>
-          {stopNote && (
-            <p className={`gb-hint${stopNote.bad ? " gb-bad-t" : ""}`} aria-live="polite">
-              {stopNote.text}
-            </p>
-          )}
-        </>
+      {move ? move(stop, legsRow) : legs}
+      {move && legsOpen && (
+        <Sheet title={`Legs — ${name}`} onClose={() => setLegsOpen(false)}>
+          {legs}
+        </Sheet>
       )}
     </section>
   );
