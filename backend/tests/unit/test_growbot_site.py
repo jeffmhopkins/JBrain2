@@ -4797,3 +4797,53 @@ def test_the_wake_screen_starts_a_body_test_on_a_robots_phone() -> None:
     assert "signed in to drive gb-abc123" in other["errs"][0]
     # Not a robot's phone: no button at all.
     assert run("", [200, {"skills": skills}])["n"] == 0
+
+
+def test_a_reply_written_as_a_sentence_then_its_json_keeps_its_move() -> None:
+    """2026-11-16: "I'm lying flat ...\n\n{"body":{...}}" lost its leg steps: the prose salvage
+    took the raw text as the say, so the person-turn say_missing rescue never ran. Now an object
+    jparse finds is silent, and the rescue keeps it (it reads jparse(raw) when the say is empty)."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    start = page.index("function jparse(s){")
+    end = page.index("function detectPitch(buf,sr){")
+    assert (
+        "if(_vmTurn&&_vmTurn.user&&String(_vmTurn.user).trim()&&!o.say){ var _vo=jparse(raw);"
+        in page
+    )
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    program = (
+        "function lastSentenceEnd(){ return -1; }\n"
+        + page[start:end]
+        + "\nvar r=JSON.parse(process.argv[1]);"
+        "console.log(JSON.stringify({t:r.map(tryParse), j:r.map(jparse)}));"
+    )
+    replies = [
+        'I see you, Jeff. Pushing up now.\n\n{"body":{"steps":[{"l":50,"r":130,"ms":600}]}}',
+        '{"say":"hi","emotion":"happy"}',
+        "Just a sentence, no JSON.",
+        'Here: {"say":"from json","emotion":"calm"}',
+    ]
+    out = subprocess.run(
+        [node, "-e", program, json.dumps(replies)], capture_output=True, text=True, check=True
+    )
+    got = json.loads(out.stdout)
+    # Silent, never the raw text, so the rescue's !o.say holds and it finds the move.
+    assert got["t"][0] == {"say": "", "emotion": "curious"}
+    assert got["j"][0] == {"body": {"steps": [{"l": 50, "r": 130, "ms": 600}]}}
+    assert got["t"][1] == {"say": "hi", "emotion": "happy"}
+    assert got["t"][2] == {"say": "Just a sentence, no JSON.", "emotion": "curious"}
+    assert got["t"][3] == {"say": "from json", "emotion": "calm"}
+
+
+def test_a_body_test_lifts_a_kept_pause_and_counts_only_a_started_get_up() -> None:
+    """2026-11-16 runs #1 and #26: a pause kept across the reload refused every get-up."""
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    start = box[box.index("  window.gbBodyTest = {") :]
+    start = start[: start.index("window.gbFollow.stop(")]
+    assert "paused && typeof setPaused" in start and "setPaused(false);" in start
+    stand = box[box.index("          standUp: function () {") :]
+    stand = stand[: stand.index("          camFront:")]
+    assert 'a.state === "started" ? "getup" : ""' in stand
+    assert "_bodyUpright() !== true" in stand

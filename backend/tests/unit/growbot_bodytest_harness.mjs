@@ -8,7 +8,11 @@
 //   cancelIn   a step id ("place", "hold", ...) in which the screen's Stop is tapped
 //   stopStopIn a check id in which "stop stop" halts the legs (the test must end)
 //   noFace     the camera never sees anyone during this check id
-//   upright    false: the robot never reads upright
+//   upright    false: the robot never reads upright; "hand": it lies flat until the screen asks
+//              to be stood up by hand, then reads upright
+//              "lying": it lies flat until env.standUp is called (a get-up that works)
+//   standUp    what env.standUp answers ("getup", "tall", or "" when the get-up refuses)
+//   bodyLate   ms before the legs answer; a tap before then must not skip the power step
 //   sayIn      {step: line}: the person says that line once during that step
 //   neverReady true: nobody ever answers the first step
 const m = await import(process.argv[2]);
@@ -38,7 +42,7 @@ const env = {
       if (w.includes("ready")) test.heard("I'm ready");
       else if (w.includes("stand")) test.heard("Stand up.");
       else if (w.includes("metre")) test.heard("One meter.");
-      else if (w.includes("tap") && !w.includes("ready")) { /* power: waits for the body */ }
+      else if (w.includes("tap") && !w.includes("ready") && step() === "power" && !said.powerTap) { said.powerTap = true; test.tap("tap"); }
     }
     if (/stop stop/.test(ask) && /now/.test(ask)) {
       if (!said.drops) { said.drops = true; for (let i = 0; i < (sc.drops || 0); i++) test.event("self_drop", { ms: 900 }); }
@@ -46,9 +50,14 @@ const env = {
     }
   },
   show: () => { out.shown++; },
-  bodyUp: () => true,
-  upright: () => sc.upright === false ? false : true,
-  standUp: () => { out.standUps++; },
+  bodyUp: () => now - 1e6 >= (sc.bodyLate || 0),
+  upright: () => {
+    if (sc.upright === false) return false;
+    if (sc.upright === "lying") return out.standUps > 0;
+    if (sc.upright === "hand") { if (/by hand/.test(test.say || "")) said.hand = true; return !!said.hand; }
+    return true;
+  },
+  standUp: () => { out.standUps++; return sc.standUp === undefined ? "tall" : sc.standUp; },
   face: () => sc.noFace === step() ? null : ({ t: now, bearing: bearing - heading, up: 10 - (sc.tiltSign || 1) * cmd.pitch * 4, dist, n: 1, box: { x: 0.4, y: 0.2, width: 0.1, height: 0.1 } }),
   tele: () => ({ h: heading, ob: 80 + cmd.pitch * 5, mode: "look", up: true }),
   newId: () => "bt-test-run1",
@@ -82,4 +91,6 @@ console.log(JSON.stringify({
   steps: rows.filter((r) => r.e === "bt_step").map((r) => r.step),
   stills: rows.filter((r) => r.k === "still").map((r) => r.step),
   heard: rows.filter((r) => r.e === "bt_heard").slice(0, 3),
+  stands: rows.filter((r) => r.e === "bt_stand").map((r) => [r.ok, r.how]),
+  stepAt: Object.fromEntries(rows.filter((r) => r.e === "bt_step").map((r) => [r.step, r.t - 1e6])),
 }));

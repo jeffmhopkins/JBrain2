@@ -3707,6 +3707,26 @@ HEAR_NOW_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += HEAR_NOW_PATCHES
 
+# A reply written as a sentence and then its JSON (2026-11-16: "I'm lying flat ... lever my body
+# upright.\n\n{"body":{"steps":[...]}}"). jparse found the object, but with no say string the
+# plain-prose salvage took the whole raw text as the say, so the say_missing rescue (person turns
+# only: it keeps an object whose action is real, with say "") never ran, sayLooksBroken blanked
+# the say, and the leg steps were dropped; the creature then told its person its motors were dead.
+# An object jparse found is never re-read as prose: the reply is silent here, and on a person's
+# turn the rescue runs its move. The prose itself is not spoken (it is as often a lead-in or the
+# model thinking aloud as it is speech), and idle ticks keep their silent fallback.
+PROSE_JSON_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'function tryParse(s){ var o=jparse(s); if(o&&typeof o.say==="string") return o;',
+        'function tryParse(s){ var o=jparse(s); if(o&&typeof o.say==="string") return o;'
+        " /*PROSE-JSON{*/ if(o&&typeof o===\"object\"&&!Array.isArray(o))"
+        " return {say:\"\",emotion:\"curious\"}; /*}PROSE-JSON*/",
+        1,
+    ),
+]
+PATCHES += PROSE_JSON_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
