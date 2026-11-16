@@ -2337,7 +2337,11 @@
           // Each change of the follower's state, with where the face was across the frame:
           // a "lost" row's side is how far round the camera sees before it loses someone, and
           // past is the extra turn the search takes beyond it.
-          if (fol.track.p && (!fol.last || fol.last.state !== fc.state)) {
+          // At most one a second: hold and follow can flip every tick at a turn limit, and the
+          // diary keeps only 240 rows.
+          if (fol.track.p && (!fol.last || fol.last.state !== fc.state) &&
+              (fc.state === "lost" || fnow - (fol.stateLogT || 0) >= 1000)) {
+            fol.stateLogT = fnow;
             var fp = fol.track.p;
             try {
               logEv("follow_state", {

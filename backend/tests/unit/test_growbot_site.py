@@ -403,6 +403,18 @@ def test_the_eyes_watch_for_faces_while_a_walk_has_the_tracker_stood_down() -> N
         "console.log(JSON.stringify(r));"
     )
     assert json.loads(out) == [False, True, False]
+    # The tracker's own phase wins where it has one: a held pose or a careful look yields too.
+    out = _eyes_in_node(
+        "var v={readyState:4,paused:false};"
+        "window.camV=v;window.camOn=true;window.camFacing='user';window.paused=false;"
+        "window.dreaming=false;var ph='tracking';"
+        "window._faceTrack={enabled:true,phase:function(){return ph;}};var r=[];"
+        "r.push(window.gbEyes.wants());ph='yielded';r.push(window.gbEyes.wants());"
+        "console.log(JSON.stringify(r));"
+    )
+    assert json.loads(out) == [False, True]
+    eyes = (_SITE / "growbot-eyes.js").read_text(encoding="utf-8")
+    assert "if (model && (model.busy || t - lastUse > CLOSE_AFTER_MS)) close();" in eyes
 
 
 def test_the_eyes_say_whose_detector_found_each_face() -> None:
@@ -924,15 +936,17 @@ def test_a_past_replys_move_is_replayed_with_it() -> None:
     cases = (
         "[w,g,n===undefined,z===undefined,b.body.steps.length,b.body.steps[0],"
         "gbTraceReply({a:'Walking.',e:'happy',w:w,d:'walk fwd 2 s'}),"
-        "gbTraceReply({a:'x',w:{say:'no',walk:{dir:'fwd'}}})]"
+        "gbTraceReply({a:'x',w:{say:'no',walk:{dir:'fwd'}}}),"
+        "JSON.stringify(gbTraceMove({body:{steps:[{l:'90',r:130,ms:{a:1}}]}}))]"
     )
     script = f"{fn}\n{setup}\nconsole.log(JSON.stringify({cases}));"
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
-    walk, gesture, none, null, steps, first, reply, guarded = json.loads(out.stdout)
+    walk, gesture, none, null, steps, first, reply, guarded, bad = json.loads(out.stdout)
     assert walk == {"walk": {"gait": "official", "dir": "fwd", "secs": 2}}
     assert gesture == {"gesture": "wave"}
     assert none and null
     assert steps == 6 and first == {"l": 51, "r": 130, "ms": 400}
+    assert json.loads(bad) == {"body": {"steps": [{"r": 130}]}}
     body, did = reply.split("\n")
     assert json.loads(body) == {
         "say": "Walking.",

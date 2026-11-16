@@ -219,6 +219,7 @@ def test_a_face_lost_over_the_frames_edge_is_searched_for_past_it() -> None:
     # Fresh, it turns to the face itself; stale or lost, 15 degrees past it on that side.
     assert left[1]["heading"] == pytest.approx(left[0]["heading"] + 15)
     assert left[2]["heading"] == pytest.approx(left[0]["heading"] + 15)
+    assert left[1]["past"] == 15 and left[0]["past"] == 0
     assert left[2]["past"] == 15 and left[2]["state"] == "lost"
     assert right[2]["heading"] == pytest.approx(right[0]["heading"] - 15)
     # A face lost in the middle of the frame (it was covered, or blurred) turns only to it.

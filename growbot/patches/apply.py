@@ -2431,7 +2431,7 @@ var _gbWarm=null, _gbWarmBusy=false, _gbWarmT=0, _gbWarmMiss=0, _gbWarmOff=false
 function gbTraceMove(o){ if(!o||typeof o!=="object") return undefined; var w={}, n=0, k;
   if(o.walk&&typeof o.walk==="object"&&!Array.isArray(o.walk)){ w.walk={}; for(k in {gait:1,dir:1,secs:1}) if(typeof o.walk[k]==="string"||typeof o.walk[k]==="number") w.walk[k]=typeof o.walk[k]==="string"?o.walk[k].slice(0,24):o.walk[k]; n++; }
   if(typeof o.gesture==="string"&&o.gesture){ w.gesture=o.gesture.slice(0,40); n++; }
-  if(o.body&&typeof o.body==="object"&&Array.isArray(o.body.steps)&&o.body.steps.length){ w.body={steps:o.body.steps.slice(0,6).map(function(x){ x=x||{}; return {l:x.l,r:x.r,ms:x.ms}; })}; n++; }
+  if(o.body&&typeof o.body==="object"&&Array.isArray(o.body.steps)&&o.body.steps.length){ w.body={steps:o.body.steps.slice(0,6).map(function(x){ x=x||{}; function f(v){ return typeof v==="number"&&isFinite(v)?v:undefined; } return {l:f(x.l),r:f(x.r),ms:f(x.ms)}; })}; n++; }
   return n?w:undefined; }
 function gbTraceReply(t){ var a=String(t.a||""), note=a==="(stayed quiet)"||a.indexOf("(brain hiccup")===0, r={say:note?"":a}, k; if(t.e) r.emotion=t.e; if(t.w&&typeof t.w==="object") for(k in t.w) if(k==="walk"||k==="gesture"||k==="body") r[k]=t.w[k]; return JSON.stringify(r)+(note?"\n"+a:"")+(t.d?"\n(did: "+t.d+")":""); }
 /* The box resumes a turn from the longest prefix it read before, so the history ahead of the new

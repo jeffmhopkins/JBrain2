@@ -240,5 +240,8 @@ Follower.prototype.command = function (track, heading, t) {
   if (newReading && speed === 0 && facing && isFinite(p.up)) {
     this.pitch = clamp(this.pitch + this.o.pitchGain * p.up, -1, 1);
   }
-  return { heading: err, speed: speed, pitch: facing ? this.pitch : turning, state: state, dist: num(this.dist, q.dist), set: this.set };
+  return {
+    heading: err, speed: speed, pitch: facing ? this.pitch : turning, state: state, dist: num(this.dist, q.dist), set: this.set,
+    past: age > this.o.staleMs ? past : 0,
+  };
 };

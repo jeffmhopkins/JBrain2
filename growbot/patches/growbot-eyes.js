@@ -71,11 +71,17 @@
   /* While a move runs the tracker yields: it stays enabled but asks for no frames until the
      move ends. Counting it as watching then left nothing watching for a whole walk, so the
      follower and the body test walked blind (field, 2026-11-16: body test #40 saw no face in
-     any walking check). A tracker that is still handing boxes over counts either way. */
+     any walking check). A tracker that is still handing boxes over counts either way. Its own
+     phase says when it yields (a move, a held pose, a careful look); a tracker without one is
+     taken as yielding while a move runs. */
   function trackerWatching(t) {
     var ft = window._faceTrack;
     if (t - lastFed < FED_MS) return true;
-    return !!(ft && ft.enabled) && !window._motion;
+    if (!ft || !ft.enabled) return false;
+    if (typeof ft.phase === "function") {
+      try { return ft.phase() !== "yielded"; } catch (e) {}
+    }
+    return !window._motion;
   }
 
   function camera() {
@@ -141,7 +147,10 @@
   function tick() {
     var t = now(), v = camera();
     if (!v || trackerWatching(t)) {
-      if (model && t - lastUse > CLOSE_AFTER_MS) close();
+      /* A frame still in flight when the tracker takes over (a walk just ended) would share the
+         GPU with its first frames, and one of those missing its 350 ms deadline drops leg
+         tracking to the main thread for good: drop ours at once. */
+      if (model && (model.busy || t - lastUse > CLOSE_AFTER_MS)) close();
       return;
     }
     lastUse = t;
