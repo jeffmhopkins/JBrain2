@@ -53,22 +53,23 @@ def test_cmd_pitch_reaches_the_policy() -> None:
     assert out[1][0] == pytest.approx(0.761594, abs=1e-5)  # no pitch sent: tall, tanh(1)
 
 
-def _filtered(af: object, cmds: list[dict[str, float]]) -> list[dict[str, list[float]]]:
+def _filtered(af: object, cmds: list[dict[str, float] | None]) -> list[dict[str, list[float]]]:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
-    # The action is tanh(cmd_yaw), so each tick's raw output is known up front.
+    # Action 0 is tanh(cmd_yaw), so each tick's raw output is known up front; action 1 is
+    # tanh(prev_action_0), so it shows what was fed back. A None in cmds is a reset.
     policy = {
-        "obs_size": 1,
+        "obs_size": 2,
         "act_size": 2,
-        "mean": [0.0],
-        "std": [1.0],
-        "layers": [{"W": [[1.0, 1.0]], "b": [0.0, 0.0], "act": "linear"}],
+        "mean": [0.0, 0.0],
+        "std": [1.0, 1.0],
+        "layers": [{"W": [[1.0, 0.0], [0.0, 1.0]], "b": [0.0, 0.0], "act": "linear"}],
         "obs_spec": {
             "control_hz": 25,
             "action_to_rad": 1.0,
             "imu_frame": {"up": "+z"},
-            "segments": [{"channels": ["cmd_yaw"], "frames": 1}],
+            "segments": [{"channels": ["cmd_yaw", "prev_action_0"], "frames": 1}],
             "action_filter": af,
         },
     }
@@ -76,7 +77,8 @@ def _filtered(af: object, cmds: list[dict[str, float]]) -> list[dict[str, list[f
         f"const {{ Walker }} = await import({json.dumps(_RUNNER.as_uri())});"
         f"const w = new Walker({json.dumps(policy)}, {{ IMU_SIGN: [1, 1, 1] }});"
         "const g = { x: 0, y: 0, z: 9.81 }, z = { x: 0, y: 0, z: 0 };"
-        f"const out = {json.dumps(cmds)}.map((c) => w.step(g, z, c));"
+        f"const out = []; for (const c of {json.dumps(cmds)}) {{"
+        " if (c) out.push(w.step(g, z, c)); else w.reset(); }"
         "console.log(JSON.stringify(out.map((o) => ({ a: o.action, raw: o.raw }))));"
     )
     run = subprocess.run(
@@ -109,3 +111,20 @@ def test_no_filter_sends_the_net_output() -> None:
 def test_a_malformed_action_filter_is_refused(af: object) -> None:
     with pytest.raises(RuntimeError, match="action_filter"):
         _filtered(af, [{"yaw": 0.1}])
+
+
+def test_the_sent_action_is_what_the_policy_reads_back() -> None:
+    import math
+
+    af = {"forward": 0.7, "otherwise": 0.5}
+    out = _filtered(af, [{"yaw": 0.5}, {"yaw": -0.5}, {"yaw": 0.0}])
+    # prev_action_0 is the filtered action sent last tick, not the net's raw output.
+    assert out[2]["raw"][1] == pytest.approx(math.tanh(out[1]["a"][0]))
+    assert out[1]["a"][0] != pytest.approx(out[1]["raw"][0])
+
+
+def test_a_reset_lets_the_next_action_straight_through() -> None:
+    import math
+
+    out = _filtered({"forward": 0.7, "otherwise": 0.5}, [{"yaw": 0.5}, None, {"yaw": -0.5}])
+    assert out[1]["a"][0] == pytest.approx(math.tanh(-0.5))
