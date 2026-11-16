@@ -53,7 +53,7 @@ self.onmessage=function(ev){
     var detectStart=performance.now(),result=model.detectForVideo(bitmap,d.at),ms=performance.now()-detectStart;
     lastDetect=d.at;
     var boxes=(result&&result.detections||[]).map(function(v){var b=v.boundingBox;
-      return {x:b.originX/w,y:b.originY/h,width:b.width/w,height:b.height/h};});
+      return {x:b.originX/w,y:b.originY/h,width:b.width/w,height:b.height/h,score:v.categories&&v.categories[0]?v.categories[0].score:null};});
     if(allowFlow&&g)flow.seed(g.gray,g.w,g.h,boxes,d.at);
     self.postMessage({type:'result',id:d.id,boxes:boxes,source:'detector',detectMs:ms});
   }catch(err){self.postMessage({type:'error',id:d.id});}

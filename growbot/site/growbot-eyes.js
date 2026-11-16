@@ -56,8 +56,10 @@
     return { x: -(cx - 0.5) * 2 * GAIN_X, y: (cy - 0.5) * 2 * GAIN_Y };
   }
 
-  function feed(boxes) {
-    listeners.forEach(function (fn) { try { fn(boxes || []); } catch (e) {} });
+  /* `src` says whose detector found them, "tracker" or "eyes", and `ms` how long it took, for
+     the body test's log. */
+  function feed(boxes, src, ms) {
+    listeners.forEach(function (fn) { try { fn(boxes || [], src, ms); } catch (e) {} });
     var b = pick(boxes);
     previous = b;
     if (!b) return;
@@ -66,9 +68,20 @@
     if (window.gbFace && window.gbFace.see) window.gbFace.see(at.x, at.y);
   }
 
+  /* While a move runs the tracker yields: it stays enabled but asks for no frames until the
+     move ends. Counting it as watching then left nothing watching for a whole walk, so the
+     follower and the body test walked blind (field, 2026-11-16: body test #40 saw no face in
+     any walking check). A tracker that is still handing boxes over counts either way. Its own
+     phase says when it yields (a move, a held pose, a careful look); a tracker without one is
+     taken as yielding while a move runs. */
   function trackerWatching(t) {
     var ft = window._faceTrack;
-    return !!(ft && ft.enabled) || t - lastFed < FED_MS;
+    if (t - lastFed < FED_MS) return true;
+    if (!ft || !ft.enabled) return false;
+    if (typeof ft.phase === "function") {
+      try { return ft.phase() !== "yielded"; } catch (e) {}
+    }
+    return !window._motion;
   }
 
   function camera() {
@@ -116,7 +129,7 @@
     if (model.workerMode) {
       var asked = model;
       model.detectAsync(v, t, function (result) {
-        if (model === asked) { fails = 0; feed(result.boxes); }
+        if (model === asked) { fails = 0; feed(result.boxes, "eyes", result.detectMs); }
       }, function (err) { if (model === asked) failed("frame: " + (err && err.message)); }, null);
       return;
     }
@@ -127,14 +140,17 @@
       feed((result && result.detections || []).map(function (d) {
         var b = d.boundingBox;
         return { x: b.originX / w, y: b.originY / h, width: b.width / w, height: b.height / h };
-      }));
+      }), "eyes");
     } catch (e) { failed("frame"); }
   }
 
   function tick() {
     var t = now(), v = camera();
     if (!v || trackerWatching(t)) {
-      if (model && t - lastUse > CLOSE_AFTER_MS) close();
+      /* A frame still in flight when the tracker takes over (a walk just ended) would share the
+         GPU with its first frames, and one of those missing its 350 ms deadline drops leg
+         tracking to the main thread for good: drop ours at once. */
+      if (model && (model.busy || t - lastUse > CLOSE_AFTER_MS)) close();
       return;
     }
     lastUse = t;
@@ -149,7 +165,7 @@
        means it is watching, so ours stays idle. */
     boxes: function (boxes) {
       lastFed = now();
-      feed(boxes);
+      feed(boxes, "tracker");
     },
     /* Whether this file would run its own detector right now. */
     wants: function () { return !!camera() && !trackerWatching(now()); },

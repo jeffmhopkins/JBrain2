@@ -54,6 +54,13 @@ export var FOLLOW = {
   pitchTurnMax: 20,
   pitchFaceDeg: 15,        // and comes back only within this, so noise at the limit doesn't flip it
   pitchTurnMin: 0,
+  // A face last seen near the frame's edge most likely left over it, and the camera loses it
+  // before the robot faces that way, so turning only to where it was last seen stops short of
+  // seeing it again: a turn past it, on that side, does (owner, 2026-11-16: "keep on spinning in
+  // that direction for another 5 or 10 or 15 degrees"). edgeSide is how far out from the
+  // centre, as a fraction of the half-frame, counts as the edge.
+  edgeSide: 0.7,
+  edgeOvershoot: 15,
 };
 
 function num(v, d) { return typeof v === "number" && isFinite(v) ? v : d; }
@@ -61,7 +68,8 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function wrap180(d) { return ((d + 180) % 360 + 360) % 360 - 180; }
 
 // One face box ({x, y, width, height}, 0..1 of the frame) as the robot sees it: the bearing
-// (deg, + left), the vertical offset (deg, + above centre) and the distance (m).
+// (deg, + left), the vertical offset (deg, + above centre), the distance (m) and where across
+// the frame it sits (-1..1 from the centre, + left like the bearing).
 export function reading(box, cam) {
   cam = cam || CAMERA;
   var cx = box.x + box.width / 2, cy = box.y + box.height / 2;
@@ -72,7 +80,7 @@ export function reading(box, cam) {
   // The face's angular width against its real width; small-angle is plenty at a metre or more.
   var ang = 2 * Math.atan(Math.max(1e-4, box.width) * tx);
   var dist = num(cam.k, 1) * num(cam.faceW, 0.15) / (2 * Math.tan(ang / 2));
-  return { bearing: bearing, up: up, dist: dist, size: box.width };
+  return { bearing: bearing, up: up, dist: dist, size: box.width, side: side };
 }
 
 // The calibration's correction: the person stood at `metres` and the box read `raw` metres.
@@ -100,7 +108,7 @@ Track.prototype.lock = function (reads, heading, t) {
   if (!ok.length) return false;
   ok.sort(function (a, b) { return (a.dist - b.dist) || (Math.abs(a.bearing) - Math.abs(b.bearing)); });
   var r = ok[0];
-  this.p = { az: wrap180(heading + r.bearing), dist: r.dist, raw: r.dist, size: r.size, vaz: 0, vdist: 0, t: t, up: r.up };
+  this.p = { az: wrap180(heading + r.bearing), dist: r.dist, raw: r.dist, size: r.size, vaz: 0, vdist: 0, t: t, up: r.up, side: num(r.side, 0) };
   this.seq++;
   return true;
 };
@@ -136,11 +144,18 @@ Track.prototype.update = function (reads, heading, t) {
     vdist: clamp(0.5 * p.vdist + 0.5 * vdist, -1.5, 1.5),
     t: t,
     up: best.r.up,
+    side: num(best.r.side, 0),
   };
   this.seq++;
   return true;
 };
 Track.prototype.age = function (t) { return this.p ? t - this.p.t : Infinity; };
+
+// The turn past where the person was last seen, toward the edge they were last seen at.
+function edgePast(p, o) {
+  var side = num(p.side, 0), over = num(o.edgeOvershoot, 0);
+  return Math.abs(side) >= num(o.edgeSide, 1) ? (side > 0 ? over : -over) : 0;
+}
 
 // The follower: the person, as tracked, into growbot-drive.js's command. `set` is the distance
 // to hold, taken from the person when following starts (owner, 2026-11-15). `stay` holds speed
@@ -176,14 +191,16 @@ Follower.prototype.command = function (track, heading, t) {
   var age = track.age(t), p = track.p;
   var turning = Math.max(this.pitch, this.o.pitchTurnMin);
   if (!p) { this.reset(); return { heading: 0, speed: 0, pitch: turning, state: "lost" }; }
+  var past = edgePast(p, this.o);
   if (age > this.o.lostMs) {
     this.reset();
-    return { heading: wrap180(p.az - heading), speed: 0, pitch: turning, state: "lost" };
+    return { heading: wrap180(p.az + past - heading), speed: 0, pitch: turning, state: "lost", past: past };
   }
   // Coast on the prediction only while readings are fresh: a stale one holds where they were
   // heading at that moment, so it never spins far on old speed (the step back when lost is at
-  // most half a second of its turning).
-  var q = track.predict(Math.min(t, p.t + this.o.staleMs)), err = wrap180(q.az - heading);
+  // most half a second of its turning), past it when they went over the frame's edge.
+  var q = track.predict(Math.min(t, p.t + this.o.staleMs));
+  var err = wrap180(q.az + (age > this.o.staleMs ? past : 0) - heading);
   // A stale reading forgets the average too, as the trained follower's tracker does after
   // half a second: a gap must not count toward the second of readings a walk waits for, nor
   // let the next reading after it stand in for the whole average.
@@ -223,5 +240,8 @@ Follower.prototype.command = function (track, heading, t) {
   if (newReading && speed === 0 && facing && isFinite(p.up)) {
     this.pitch = clamp(this.pitch + this.o.pitchGain * p.up, -1, 1);
   }
-  return { heading: err, speed: speed, pitch: facing ? this.pitch : turning, state: state, dist: num(this.dist, q.dist), set: this.set };
+  return {
+    heading: err, speed: speed, pitch: facing ? this.pitch : turning, state: state, dist: num(this.dist, q.dist), set: this.set,
+    past: age > this.o.staleMs ? past : 0,
+  };
 };

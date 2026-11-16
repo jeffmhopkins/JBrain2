@@ -328,8 +328,11 @@ left alone and shows the command as an arrow on the creature's screen, and `cali
 stands 1 m away) and `flip` (which way the frames run) set that phone's camera. The Body tab's
 Follow box sends all four. `growbot-follow.js` (copied in by `apply.py`, imported by
 `growbot-box.js`) turns `growbot-eyes.js`'s face boxes into a bearing and a distance, keeps one
-person through a crossing, and steers the skill set; it stands when it loses them and ends after
-8 s. "Stop stop", Stop and any other move end it.
+person through a crossing, and steers the skill set; it stands when it loses them (turning 15°
+past where they were last seen when that was near the frame's edge) and ends after 8 s. While
+any move runs the leg tracker stops detecting, so the eyes run their own detector then. Every
+trained walk swaps the policy's legs: the sim names them from the nose, the robot's ports from
+the other end. "Stop stop", Stop and any other move end it.
 
 **The body test.** `follow: "test"` starts a guided trial on the creature's phone
 (`growbot-bodytest.js`, imported by `growbot-box.js`'s `gbBodyTest`): it asks the person to place

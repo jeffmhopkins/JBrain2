@@ -149,6 +149,13 @@ def test_a_check_without_a_face_says_what_it_could_measure() -> None:
     got = _run(noFace="creep")
     creep = got["results"]["creep"]
     assert creep["cm"] is None and creep["deg"] == 0
+    # The log marks the face going and coming back, with where it was and how long it took.
+    gone = [f for f in got["faces"] if f["seen"] is False]
+    back = [f for f in got["faces"] if f["seen"] is True and f["after"] is not None]
+    assert gone and back and all(f["after"] > 0 for f in back)
+    assert all(isinstance(f["fb"], (int, float)) for f in gone)
+    # Each sample with a face says how old the reading is.
+    assert got["faceRow"]["fa"] >= 0
 
 
 @pytest.mark.parametrize(

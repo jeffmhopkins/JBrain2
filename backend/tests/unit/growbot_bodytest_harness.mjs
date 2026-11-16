@@ -92,5 +92,7 @@ console.log(JSON.stringify({
   stills: rows.filter((r) => r.k === "still").map((r) => r.step),
   heard: rows.filter((r) => r.e === "bt_heard").slice(0, 3),
   stands: rows.filter((r) => r.e === "bt_stand").map((r) => [r.ok, r.how]),
+  faces: rows.filter((r) => r.e === "bt_face").map((r) => ({ seen: r.seen, fb: r.fb, after: r.after })),
+  faceRow: samples.find((r) => typeof r.fb === "number") || null,
   stepAt: Object.fromEntries(rows.filter((r) => r.e === "bt_step").map((r) => [r.step, r.t - 1e6])),
 }));
