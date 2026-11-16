@@ -359,8 +359,8 @@ BodyTest.prototype.setup = async function () {
 
   this.setupIdx = 2; this.mark("stand");
   // Standing counts once it has been upright uprightHoldMs, however it got there: by itself, or
-  // stood up by hand when it can't get up on its own (2026-11-16: the get-up wasn't set up on this
-  // body, so every "stand up" was refused and nothing moved).
+  // stood up by hand when it can't get up on its own (2026-11-16: the get-up refused every "stand
+  // up", so nothing moved and nothing said why).
   var upSince = null;
   var held = function () {
     if (e.upright() === true) { if (upSince === null) upSince = e.now(); return e.now() - upSince >= T.uprightHoldMs; }
@@ -373,7 +373,13 @@ BodyTest.prototype.setup = async function () {
   var down = e.upright() !== true;
   for (;;) {
     var how = await this.waitFor(["stand", "tap"], down ? held : null);
-    if (how === "auto") { this.log("e", { e: "bt_stand", ok: true, how: "by_hand" }); break; }
+    if (how === "auto") {
+      this.log("e", { e: "bt_stand", ok: true, how: "by_hand" });
+      // Up by hand: the tall stance still lifts the camera for the measure.
+      e.standUp();
+      await this.wait(1000);
+      break;
+    }
     // Already being stood up by hand: let the hold finish rather than move the legs under the hands.
     if (down && e.upright() === true) continue;
     var did = e.standUp();

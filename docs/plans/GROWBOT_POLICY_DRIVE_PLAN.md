@@ -128,9 +128,9 @@ Wake: it wakes the creature in the tap, then reads the library's skill set from 
 step with the Body tab's `skillSet`) and starts the same test. The creature's phone (`growbot/patches/growbot-bodytest.js`, page glue `gbBodyTest` in
 `growbot-box.js`) then talks the person through setup on its own screen: place the phone on the
 body (tap or "ready"), power on (moves on only when the legs answer; a tap re-checks), "stand
-up" (get-up if lying, else the tall stance, until upright 1 s; lying with the get-up refused, as on
-2026-11-16 when it wasn't set up on the body, it asks to be stood up by hand and carries on once
-upright), stand 1 m away and say "1 meter" (the follower's
+up" (get-up if lying, else the tall stance, until upright 1 s; lying with the get-up refused, it asks to be
+stood up by hand and carries on once upright, then stands tall). Starting a test lifts a pause kept
+from before, which on 2026-11-16 refused every get-up (runs #1 and #26), stand 1 m away and say "1 meter" (the follower's
 calibration). Then, each check on a Drive-steered walk of its own: the left-right sign (legs still;
 reversed frames are flipped), the camera tilt (pitch -1 then +1 with the face above centre), look
 and hold 10 s, turns to +90 and -90 and back, creep over 15 s of hold after them, 4 s forward and

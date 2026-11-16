@@ -1952,6 +1952,16 @@
       btClose();
       btLoading = true;
       var gen = ++btGen;
+      // A pause kept from before (it survives a reload, and the wake tap keeps it) refuses every
+      // move, the get-up included: 2026-11-16 runs #1 and #26 stood at "stand up" behind one.
+      // Starting a body test is asking it to move.
+      try {
+        if (typeof paused !== "undefined" && paused && typeof setPaused === "function") {
+          setPaused(false);
+          logEv("bodytest_unpause", {});
+        }
+      } catch (x) {}
+      try { ensureIMU(); } catch (x) {}
       // Whatever the legs or the follower were doing stops first.
       window.gbFollow.stop("new_move");
       if (typeof _motion !== "undefined" && _motion) stopMotion();
@@ -1968,16 +1978,16 @@
           show: function (V) { var n = Date.now(); if (V.phase === "run" && n - drawn < 200) return; drawn = n; btDraw(V); },
           bodyUp: function () { return !!(window._body && window._body.ready && _bodyAlive(true)); },
           upright: function () { return typeof _bodyUpright === "function" ? _bodyUpright() : null; },
-          // "getup" (upstream's get-up from lying screen-up), "tall" (the tall stance, already
-          // up), or "" when lying and the get-up refuses (not set up on this body, or its one
-          // try per ask spent): the tall stance from flat only pushes the legs into the floor.
+          // "getup" (upstream's get-up from lying screen-up, its legs under way), "tall" (the
+          // tall stance, already up), or "" when it isn't known to be up and the get-up didn't
+          // start: the tall stance from flat only pushes the legs into the floor.
           standUp: function () {
             try { ensureIMU(); } catch (x) {}
-            if (_bodyUpright() === false) {
+            if (_bodyUpright() !== true) {
               if (typeof window.gbGetUp !== "function") return "";
               window.gbGetUp();
               var a = window._moveLast;
-              return a && a.action === "recover_screen_up" && a.state !== "blocked" ? "getup" : "";
+              return a && a.action === "recover_screen_up" && a.state === "started" ? "getup" : "";
             }
             var t = typeof STAND_TALL !== "undefined" && STAND_TALL ? STAND_TALL : { l: 50, r: 130, ms: 600 };
             window.moveLegs({ body: { steps: [{ l: t.l, r: t.r, ms: t.ms }] } });

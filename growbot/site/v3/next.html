@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=da39de590b7c"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=da90fb6bb05b"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=be425e5b356f"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=da90fb6bb05b"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -6783,7 +6783,7 @@ function sayLooksBroken(s){                               // [P6.5] JSON/scratch
   if(/("say"|"mood"|"scratchpad"|"reflex"|"add_rules"|"remove_rules"|"emotion"|"sing")\s*:/.test(s)) return true;
   return false;
 }
-function tryParse(s){ var o=jparse(s); if(o&&typeof o.say==="string") return o;
+function tryParse(s){ var o=jparse(s); if(o&&typeof o.say==="string") return o; /*PROSE-JSON{*/ if(o&&typeof o==="object"&&!Array.isArray(o)){ var _pi=String(s).indexOf("{"), _pr=_pi>0?String(s).slice(0,_pi).replace(/```[a-z]*|```/gi,"").trim():""; if(_pr&&_pr.length<=300&&!sayLooksBroken(_pr)){ o.say=_pr.slice(0,180); if(typeof o.emotion!=="string") o.emotion="curious"; return o; } } /*}PROSE-JSON*/
   /* 0919: both salvage matches are escape-aware and JSON-unescaped. The old closed match was non-greedy on a bare
      quote, so a say containing \"quoted\" words was cut at its first escaped quote and spoken with a stray backslash. */
   var unq=function(t){ try{ return JSON.parse('"'+t+'"'); }catch(e){ return t; } };

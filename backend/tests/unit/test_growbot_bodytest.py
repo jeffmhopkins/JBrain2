@@ -233,10 +233,12 @@ def test_lying_with_no_get_up_it_asks_to_be_stood_up_by_hand() -> None:
     assert got["status"] == "done", got["stopped"]
     assert got["stands"][0] == [False, "none"]
     assert got["stands"][-1] == [True, "by_hand"]
-    assert got["out"]["standUps"] == 1
+    # The refused try, then the tall stance once it is up.
+    assert got["out"]["standUps"] == 2
 
 
 def test_lying_it_gets_up_and_goes_on_once_upright() -> None:
-    got = _run(standUp="getup")
+    got = _run(upright="lying", standUp="getup")
     assert got["status"] == "done"
     assert got["stands"] == [[True, "getup"]]
+    assert got["out"]["standUps"] == 1

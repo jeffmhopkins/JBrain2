@@ -10,6 +10,7 @@
 //   noFace     the camera never sees anyone during this check id
 //   upright    false: the robot never reads upright; "hand": it lies flat until the screen asks
 //              to be stood up by hand, then reads upright
+//              "lying": it lies flat until env.standUp is called (a get-up that works)
 //   standUp    what env.standUp answers ("getup", "tall", or "" when the get-up refuses)
 //   bodyLate   ms before the legs answer; a tap before then must not skip the power step
 //   sayIn      {step: line}: the person says that line once during that step
@@ -52,6 +53,7 @@ const env = {
   bodyUp: () => now - 1e6 >= (sc.bodyLate || 0),
   upright: () => {
     if (sc.upright === false) return false;
+    if (sc.upright === "lying") return out.standUps > 0;
     if (sc.upright === "hand") { if (/by hand/.test(test.say || "")) said.hand = true; return !!said.hand; }
     return true;
   },
