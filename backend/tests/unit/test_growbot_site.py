@@ -5402,10 +5402,47 @@ def test_daves_own_walks_stay_stock_without_a_skill_set_or_when_asked() -> None:
     # The pad's Built-in walk stays stock; a model echoing "trained" back still gets it.
     pad = _own_walk("window.gbOwnWalk({dir:'fwd',stock:true},'fwd',a)")
     assert pad["out"] == [False]
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "      spec.stock = true;\n      window.runGait(spec);" in box
     echo = _own_walk("window.gbOwnWalk({gait:'trained',dir:'fwd'},'fwd',a)")
     assert echo["out"] == [True]
+    # Turned down, an echoed "trained" must reach runGait as a plain walk: it has no such gait
+    # and would fall back to the screen-backward official one, walking him away.
+    declined = _own_walk(
+        "(s={gait:'trained',dir:'fwd'}, window.gbOwnWalk(s,'fwd',a)), s", query="?ownwalk=0"
+    )
+    assert declined["out"] == [False, {"dir": "fwd"}]
+    # A failed read (the box restarting after an update) keeps the last good set.
+    assert ".catch(function () {});" in box and "if (j === undefined) return;" in box
     # A seek with too little duty left defers in runGait rather than taking a stub walk.
     seek = _own_walk("(seekGoal='door', duty=3000, window.gbOwnWalk({dir:'fwd'},'fwd',a))")
     assert seek["out"] == [False]
     roomy = _own_walk("(seekGoal='door', window.gbOwnWalk({dir:'fwd'},'fwd',a))")
     assert roomy["out"] == [True]
+
+
+def test_a_claimed_move_with_no_move_field_is_asked_about_at_once() -> None:
+    """Dave simulator, 2026-11-17: asked "come here", the owner's Dave said "I am walking toward
+    you now" with no walk in 3 of 8 replies, and nothing asked him again."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        'if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!o.walk&&!o.body&&!o.gesture&&!o.follow'
+        '&&GB_CLAIM_RE.test(String(o.say||""))) _gbClaimFix();' in page
+    )
+    i = page.index("var _gbClaimT=0;")
+    fn = page[i : page.index("\n", i)]
+    script = (
+        "var thought=[], inFlight=true, paused=false, dreaming=false;"
+        "function logEv(){} function think(t,k){ thought.push(k); }"
+        + fn
+        + "_gbClaimFix(); _gbClaimFix();"
+        "setTimeout(function(){ inFlight=false; }, 300);"
+        "setTimeout(function(){ console.log(JSON.stringify(thought)); }, 900);"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    # Waits out the reply in flight, then asks once, on an event turn (not a person's ask).
+    assert json.loads(out) == ["event"]
+    assert "MOVE (come here" in page and "Feet that slipped or walks that fell short" in page

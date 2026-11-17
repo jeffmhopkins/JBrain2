@@ -128,11 +128,25 @@ async def come_here(sim: Sim) -> None:
     ta = _answer_time(sim, t)
     await sim.until(lambda s: _walked_since(s, ta), 60, "the page started a walk")
     await sim.until(lambda s: _dist(s) < d0 - 0.10, 60, "he got 10 cm closer to the person")
+    walks = _page_events_since(sim, ta, "walk_start")
+    sim.check(
+        any(w.get("gait") == "trained" for w in walks),
+        "on his trained walk",
+        gaits=[w.get("gait") for w in walks],
+    )
     sim.check(_upright(sim), "still on his feet")
 
 
 def _page_event_since(sim: Sim, t: float, name: str) -> bool:
     return any(e["kind"] == "page" and e.get("event") == name and e["t"] >= t for e in sim.timeline)
+
+
+def _page_events_since(sim: Sim, t: float, name: str) -> list[dict[str, Any]]:
+    return [
+        e.get("data") or {}
+        for e in sim.timeline
+        if e["kind"] == "page" and e.get("event") == name and e["t"] >= t
+    ]
 
 
 def _dist(sim: Sim) -> float:
@@ -248,11 +262,17 @@ async def follow_me_away(sim: Sim) -> None:
 @scenario(start="standing", person={"x": -2.5, "face_z": 1.55})
 async def stop_stop(sim: Sim) -> None:
     """A long walk, then "stop stop" said mid-walk. Needs no model: the page halts on the
-    words before any turn. Catches: a trained walk (his own, or a follow) that runs on."""
+    words before any turn. The walk is the pad's skill-set one, on the same runner as his own
+    walks and the follower. Catches: a trained walk that runs on."""
     await sim.wait(4)
-    x0, y0 = sim.state["x"], sim.state["y"]
+    x0, y0, t = sim.state["x"], sim.state["y"], sim.now()
     ack = await sim.move("forward", secs=15, skills=sim.box.skills)
     sim.check(bool(ack and ack.get("ok")), "the walk started", why=(ack or {}).get("why"))
+    # A short duty grant would end the walk on its own about when the words land.
+    await sim.until(lambda s: _page_event_since(s, t, "walk_start"), 10, "the runner began")
+    starts = _page_events_since(sim, t, "walk_start")
+    granted = max((w.get("granted") or 0 for w in starts), default=0)
+    sim.check(granted >= 10, "granted long enough to outlast the words", granted_s=granted)
     await sim.wait(5)
     went = math.hypot(sim.state["x"] - x0, sim.state["y"] - y0)
     sim.check(went > 0.05, "he was walking", moved_m=round(went, 3))

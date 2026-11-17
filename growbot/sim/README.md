@@ -91,7 +91,10 @@ skill set's forward, 8 s each, and fails unless the trained one carries him 10 c
 On the robot's wiring the trained walk goes straight at him, about 20 to 39 cm in 8 s
 (2026-11-17), up to nearly the trainer's 45 cm, where the stock forward manages about 9.
 Dave's own reply walks take the trained one (`?ownwalk=0` turns that off in a tab), which
-`come_here` holds; the pad's Built-in walk stays stock, for the A/B. Part of the shortfall
+`come_here` holds; the pad's Built-in walk stays stock, for the A/B. The owner's Dave, whose
+log remembers his stock walk slipping, sometimes says he is walking with no walk; the page
+then asks him again at once (`_gbClaimFix`), and he walked in 5 of 8 runs (2026-11-17). In
+2 of about 36 trained forward walks across all runs he tipped onto his back 2 s in. Part of the shortfall
 is the page's walk loop ticking at 18 to 20 Hz in the sim, late and uneven, not the steady
 25 Hz the policy was trained at: replaying those late ticks
 in the trainer halves its distance.

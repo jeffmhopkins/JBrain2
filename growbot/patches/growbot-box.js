@@ -2559,8 +2559,10 @@
     if (!id || stockOnly || document.hidden || typeof fetch !== "function") return;
     ownT = Date.now();
     fetch("/api/box/skills?robot=" + encodeURIComponent(id), { cache: "no-store" })
-      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (r) { return r.ok ? r.json() : undefined; })
       .then(function (j) {
+        // A failed read (the box restarting after an update) keeps the last good set.
+        if (j === undefined) return;
         var v = j && j.skills, out = null;
         if (v && typeof v === "object" && !Array.isArray(v)) {
           ["look", "forward", "back"].forEach(function (k) {
@@ -2569,7 +2571,7 @@
         }
         ownSet = out;
       })
-      .catch(function () { ownSet = null; });
+      .catch(function () {});
   }
   // Read at load and on each return to the page, and again behind a walk once a minute old:
   // no timer, so a page left open polls nothing.
@@ -2581,11 +2583,14 @@
   // creature's own walk, marked trained.
   window.gbOwnWalk = function (spec, dir, attempt) {
     if (Date.now() - ownT > OWN_MS) { try { readOwnSet(); } catch (e) {} }
+    // The model reads its walks back as "walk fwd (trained)" and may echo the gait. runGait has
+    // no "trained" gait and falls back to the screen-backward official one, so a walk this
+    // turns down must reach it as a plain walk, not walk away from the person.
+    if (spec && spec.gait === "trained") delete spec.gait;
     if (stockOnly || !ownSet || _wheels || (spec && spec.stock)) return false;
     if (typeof _diyGaitFlag === "function" && _diyGaitFlag()) return false;
     var gait = String((spec && spec.gait) || "");
-    // "trained" too: the model reads its walks back as "walk fwd (trained)" and may echo it.
-    if (gait && !/^(official|screen_forward|screen_backward|trained)$/.test(gait)) return false;
+    if (gait && !/^(official|screen_forward|screen_backward)$/.test(gait)) return false;
     var back = /^(back|backward|backwards|screen-backward)$/.test(dir) || gait === "screen_backward";
     var fwd = !back && /^(fwd|forward|ahead|go|straight|walk|closer)$/.test(dir);
     var move = back ? "back" : fwd ? "forward" : "";
