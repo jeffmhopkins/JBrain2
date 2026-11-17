@@ -22,6 +22,7 @@ PAD = 16
 # Speed scale's top, cm/s: the trained forward walks about 3 to 5 in the sim.
 TOP_CM_S = 8.0
 ARROW_EVERY_S = 6.0
+WALKED_STEP_S = 2.0
 ROOM = (-3.0, -3.0, 3.0, 3.0)  # the bare room's walls
 
 
@@ -50,7 +51,15 @@ def stats(sim: Sim) -> dict[str, Any]:
     """How far he went, which rooms he was in and for how long, and how close he came to
     each piece of furniture."""
     tr = track(sim)
-    steps = zip(tr, tr[1:], strict=False)
+    # Over 2 s steps: a stride rocks the body a few cm side to side every beat, which summed
+    # pose by pose triples a short trip.
+    pts: list[dict[str, float]] = []
+    for p in tr:
+        if not pts or p["t"] - pts[-1]["t"] >= WALKED_STEP_S:
+            pts.append(p)
+    if tr and pts[-1] is not tr[-1]:
+        pts.append(tr[-1])
+    steps = zip(pts, pts[1:], strict=False)
     dist = sum(math.hypot(b["x"] - a["x"], b["y"] - a["y"]) for a, b in steps)
     out: dict[str, Any] = {"walked_m": round(dist, 2)}
     if tr:
