@@ -5654,7 +5654,7 @@ def test_on_legs_a_seek_sweeps_all_round_and_tells_finding_from_arriving() -> No
 
 def test_his_goal_reminder_says_how_much_of_the_room_he_has_looked_over() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert '_gbGoalT=Date.now(); _gbFarHolds=0; _gbFarSaid=null; logEv("seek_set"' in page
+    assert '_gbFarSaid=null; _gbLooks=[]; logEv("seek_set"' in page
     assert 'two turns in a row."+_gbLookedLine()) : "";' in page
     spins = (
         "_gbGoalT=now-40000; var _seekSeen=false, seekGoal='find the piano', SEEK_ACTION=/x/;"
@@ -5670,6 +5670,12 @@ def test_his_goal_reminder_says_how_much_of_the_room_he_has_looked_over() -> Non
     # What is left is said too, so a sweep that stops short is his call, made knowing it.
     assert "about 210 degrees around you you have not seen yet" in line
     assert "not seen yet" not in _explore("_gbLookedLine()", spins + "_seekSeen=true;")[0]
+    # With his map's heading, it is the headings he was shown a picture at that count:
+    # at 90 and then 150 that is 90..180 less nothing, 120 degrees.
+    mapped = spins + "var _h=90; window.gbMap={map:function(){ return {here:{h:_h}}; }};"
+    got = _explore("_gbLookedLine(),(_h=150,_gbLookedLine())", mapped)
+    assert "looked over about 60 of the 360" in got[0]
+    assert "looked over about 120 of the 360" in got[1]
     assert _explore("_gbLookedLine()", spins + "MODE='phone';") == [""]
     assert _explore("_gbLookedLine()", spins + "_gbGoalT=0;") == [""]
 

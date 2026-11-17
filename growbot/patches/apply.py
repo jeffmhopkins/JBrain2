@@ -4239,12 +4239,21 @@ _GB_EXPLORE_JS = (
     "var _gbGoalT=0, GB_FAR_M=0.8, _gbFarHolds=0, _gbFarSaid=null;\n"
     "function _gbMapFar(){ try{ return window.gbMap&&window.gbMap.goalDist?"
     "window.gbMap.goalDist(seekGoal):null; }catch(e){ return null; } }\n"
+    # Better, when his map keeps a heading: the headings he was actually shown a picture at
+    # (this line is built with each turn's frame). Live w8: a frame taken before a spin
+    # ended counted as having looked where the spin stopped, and the piano sat in the gap.
+    "var _gbLooks=[];\n"
+    "function _gbLookedArc(){ var h=null; try{ var m=window.gbMap&&window.gbMap.map&&"
+    "window.gbMap.map(); if(m&&m.here&&isFinite(+m.here.h)) h=+m.here.h; }catch(e){}"
+    " if(h===null) return null; _gbLooks.push(h); if(_gbLooks.length>200) _gbLooks.shift();"
+    " var b={}, n=0; _gbLooks.forEach(function(a){ for(var d=-30;d<30;d++){"
+    " var k=((Math.round(a)+d)%360+360)%360; if(!b[k]){ b[k]=1; n++; } } }); return n; }\n"
     "function _gbLookedLine(){ try{ if(MODE!==\"legs\"||!_gbGoalT) return \"\";"
     " var L=_spinMeasLoad().filter(function(x){ return x.t>=_gbGoalT; }).sort(function(a,b){"
     " return a.t-b.t; }), h=0, lo=0, hi=0, tot=0;"
     " L.forEach(function(x){ var y=+x.y;"
     " h+=y; tot+=Math.abs(y); lo=Math.min(lo,h); hi=Math.max(hi,h); });"
-    " var seen=Math.min(360,Math.round(hi-lo+60));"
+    " var arc=_gbLookedArc(), seen=arc!==null?arc:Math.min(360,Math.round(hi-lo+60));"
     " return \" Since you took this goal \"+Math.round((Date.now()-_gbGoalT)/1000)+\" s ago your"
     " spins have turned you \"+Math.round(tot)+\" degrees in all, measured; with your camera's"
     " 60 degrees across, you have looked over about \"+seen+\" of the 360 degrees around"
@@ -4502,7 +4511,7 @@ SEEK_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         'logEv("seek_set",{what:seekGoal,raw:raw?1:0});',
-        '_gbGoalT=Date.now(); _gbFarHolds=0; _gbFarSaid=null;'
+        '_gbGoalT=Date.now(); _gbFarHolds=0; _gbFarSaid=null; _gbLooks=[];'
         ' logEv("seek_set",{what:seekGoal,raw:raw?1:0});',
         1,
     ),
