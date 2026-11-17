@@ -5845,5 +5845,6 @@ def test_an_explore_goal_that_has_kept_him_on_one_spot_says_how_to_get_out() -> 
     )
     assert "of here: you have seen what this spot shows" not in got[0] + got[1]
     assert "For the last 90 s your map has you within 0.2 m of here" in got[2]
+    assert "turn until the way ahead looks open" in got[2]
     assert "walk that way a metre or more before you turn again" in got[2]
     assert "of here: you have seen" not in got[3]

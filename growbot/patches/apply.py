@@ -4272,7 +4272,8 @@ _GB_EXPLORE_JS = (
     # been through, so turning in place reads as the start of it, not all of it.
     # Live m2: five minutes turning in the couch corner, "Wall again", "Corner again", each
     # spin a few centimetres from the last. Where his map has him not moving for a while, the
-    # line says so and how to get out.
+    # line says so and how to get out. Not "see floor": m4, told so, spun for five minutes
+    # hunting floor his upward-tilted camera barely shows.
     "var _gbExpTrail=[], GB_STUCK_MS=90000, GB_STUCK_M=0.4;\n"
     # Live e1/e2 (explore_alone): quiet beats on his legs got "I see a tall bookshelf" and
     # "I'll peek left", and no walk or spin, ten minutes through. On legs the beat says what
@@ -4302,9 +4303,10 @@ _GB_EXPLORE_JS = (
     " When you see something you can't name for sure, walk in until it is about 30 cm (a"
     " foot) away and look again before you put it on your map.\"+(stuck?\" For the last \"+"
     "Math.round((now-_gbExpTrail[0].t)/1000)+\" s your map has you within \"+Math.round(near*10)"
-    "/10+\" m of here: you have seen what this spot shows. If your picture is mostly wall up"
-    " close, you are facing a wall or in a corner, so turn until you see floor running away"
-    " from you, then walk that way a metre or more before you turn again.\":\"\")+"
+    "/10+\" m of here: you have seen what this spot shows. If a wall or furniture fills your"
+    " picture up close, turn until the way ahead looks open, things across the room and far"
+    " walls small in your picture (your camera looks up a little, so you see little floor,"
+    " and ceiling is normal), then walk that way a metre or more before you turn again.\":\"\")+"
     "(open.length?\" Your map has a doorway you have not been through, to \"+open.slice(0,3)"
     ".join(\", to \")+\": go through it.\":\" You have no doorway on your map you have not been"
     " through: walk across this room, so you see what its far side and corners hide, and look"
