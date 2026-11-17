@@ -237,17 +237,34 @@ async def knocked_over(sim: Sim) -> None:
     )
 
 
-@scenario(start="standing", wiring={"swap": True}, person={"x": -1.2, "face_z": 0.6})
-async def swapped_legs(sim: Sim) -> None:
-    """Last night's robot: leg pins crossed, calibration not told. Asked over, he walks, and
-    the walk does not bring him closer. This scenario PASSES when the simulator shows that
-    fault; it proves a crossed pin is caught, so it fails if nothing walked at all."""
+async def _turned(sim: Sim, move: str) -> float:
+    n0 = sim.state["nose_deg"]
+    ack = await sim.move(move, secs=6, skills=sim.box.skills)
+    why = (ack or {}).get("why")
+    sim.check(bool(ack and ack.get("ok")), f"the trained {move} started", why=why)
+    await sim.wait(8)
+    return (sim.state["nose_deg"] - n0 + 180) % 360 - 180
+
+
+@scenario(start="standing", person={"x": -2.5, "face_z": 0.6})
+async def trained_turns(sim: Sim) -> None:
+    """The box's trained spins, on the robot's wiring. Needs no model. Catches: the page's
+    leg swap for trained walks and the robot's wiring disagreeing, which turns every
+    trained turn the wrong way and walks forward into a veer that stalls."""
     await sim.wait(4)
-    t = sim.now()
-    d0 = _dist(sim)
-    await sim.say("Dave, come here")
-    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
-    ta = _answer_time(sim, t)
-    await sim.until(lambda s: _walked_since(s, ta), 60, "the page started a walk")
-    await sim.wait(15)
-    sim.check(_dist(sim) > d0 - 0.03, "crossed pins: the walk did not bring him closer")
+    left = await _turned(sim, "spin_left")
+    sim.check(left > 15, "a trained spin left turns counter-clockwise", turned_deg=round(left, 1))
+    right = await _turned(sim, "spin_right")
+    sim.check(right < -15, "a trained spin right turns him clockwise", turned_deg=round(right, 1))
+
+
+@scenario(start="standing", wiring={"swap": False}, person={"x": -2.5, "face_z": 0.6})
+async def stock_wired(sim: Sim) -> None:
+    """The sim's stock build, its legs the other way round from the robot's. This scenario
+    PASSES when the simulator shows that fault, a trained spin left turning clockwise; it
+    proves the sim tells the two wirings apart, so it fails if the turn went the right way."""
+    await sim.wait(4)
+    left = await _turned(sim, "spin_left")
+    sim.check(
+        left < -15, "stock wiring: a trained spin left goes clockwise", turned_deg=round(left)
+    )

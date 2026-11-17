@@ -47,14 +47,19 @@ def _growbot_train() -> Any:
     return simbody
 
 
+ROBOT_WIRING: dict[str, Any] = {"swap": True}
+
+
 @dataclass
 class Options:
     model: Model
     soul: dict[str, Any] | None = None
     prefs: dict[str, str] = field(default_factory=dict)
     start: str = "lying"
-    # simbody.Wiring fields: {"swap": True} is a robot with its leg pins crossed.
-    wiring: dict[str, Any] = field(default_factory=dict)
+    # simbody.Wiring fields. The default is the owner's robot, not the sim's stock build:
+    # its trained walks only turn the right way with the page's leg swap (body test #40),
+    # and the stock-wired body under that swap inverted every trained turn.
+    wiring: dict[str, Any] = field(default_factory=lambda: dict(ROBOT_WIRING))
     # simbody.Person fields; None: nobody in the room.
     person: dict[str, Any] | None = field(default_factory=lambda: {"x": -1.0, "face_z": 0.6})
     # The calibration the PWA saved for the robot; None: the stock one.

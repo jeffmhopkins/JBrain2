@@ -1,6 +1,6 @@
 # The Dave simulator
 
-> **Status:** Living · **Last verified:** 2026-11-16
+> **Status:** Living · **Last verified:** 2026-11-17
 
 Runs Dave's whole loop with no robot and no phone: the real creature page
 (`growbot/site/v3/next.html`) in headless Chromium, its legs and phone sensors played by
@@ -34,8 +34,12 @@ taking his slot, then lets that turn fail. A run is only meaningful while the ro
 quiet. Each replayed turn is logged on the box as a `replay` call row.
 
 A scripted run answers every turn "okay", so it exercises the plumbing, not Dave: most
-scenarios fail under it by design. `swapped_legs` passes when the simulator shows the
-crossed-pin fault (a walk that brings him no closer).
+scenarios fail under it by design. `stock_wired` passes when the simulator shows the
+wrong-wiring fault (a trained spin left turning clockwise).
+
+The body is wired as the owner's robot (`run.ROBOT_WIRING`), not as the sim's stock build:
+the robot's trained walks only turn the right way with the page's leg swap, so the stock
+build under that swap turned every trained turn the wrong way. `trained_turns` holds that.
 
 ## Running it
 
@@ -70,8 +74,10 @@ names the fault it is there to catch. A new scenario is an `async def name(sim)`
 `sim.person`, `sim.wait`, `sim.until` and `sim.check`.
 
 `walk_compare` needs no model: it walks the creature's stock forward and then the box skill
-set's forward, 8 s each, and reports how much closer each carried him. In the sim both crawl
-(about 1 to 1.5 cm/s on 2026-11-16).
+set's forward, 8 s each, and reports how much closer each carried him. On the robot's
+wiring the stock walk crawls (about 1.4 cm in 8 s) and the trained one walks straight at
+about 1.9 cm/s (2026-11-17), a third of its trainer speed: the page's walk loop ticks at
+18 to 20 Hz in the sim, not the 25 Hz the policy was trained at.
 
 ## Tests
 
