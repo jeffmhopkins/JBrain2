@@ -180,9 +180,11 @@
       if (!n) return "";
       var w = num(size[0], ROOM_MIN, ROOM_MAX), d = num(size[1], ROOM_MIN, ROOM_MAX), r = roomOf(m, n), cur = here(m);
       if (!r && cur && /^room \d+$/.test(cur.n) && inside(cur, m.here.x, m.here.y)) {
-        // The room sketched before he named it is this one.
+        // The room sketched before he named it is this one: its doorways and things too.
+        var old = cur.n;
         cur.n = n; r = cur;
-        m.doors.forEach(function (o) { if (o.a === cur.n) o.a = n; if (o.b === cur.n) o.b = n; });
+        m.doors.forEach(function (o) { if (o.a === old) o.a = n; if (o.b === old) o.b = n; });
+        m.things.forEach(function (t) { if (t.room === old) t.room = n; });
       }
       if (r) {
         if (w) { r.w = w; } if (d) { r.d = d; }
@@ -505,11 +507,14 @@
 
   /* ------------------------------------------------------------------ the page half */
 
-  var changed = [], changedT = 0, CHANGED_MS = 60000, whereT = 0, WHERE_GAP_MS = 20000;
+  var changed = [], changedT = 0, CHANGED_MS = 60000, whereT = 0, WHERE_GAP_MS = 20000, checked = null;
+  /* A map that came from storage, a soul file or the box is checked once, whole, before it is
+     used (norm): its names go into his prompt, and a malformed entry must not break every turn.
+     Each new object (a load, a merge from another tab) is checked again. */
   function soulMap() {
     var s = typeof _live !== "undefined" && _live ? _live : null;
     if (!s) return null;
-    if (!s.map || s.map.v !== 1 || !s.map.here) s.map = norm(s.map, Date.now());
+    if (s.map !== checked) { s.map = norm(s.map, Date.now()); checked = s.map; }
     return s.map;
   }
 
@@ -555,8 +560,14 @@
     var M = typeof _motion !== "undefined" ? _motion : null;
     if (!M || M.loading || M.kind !== "walk") return "";
     if (M.own) return M.own;
-    if (mv(M).kind !== "walk") return "";
-    return /^(back|backward|backwards)$/.test(String(mv(M).dir || "")) ? "back" : "forward";
+    // What physically ran, as the page's own move line reads it: the official gait walks
+    // screen-backward (away from where his camera looks) even when asked "fwd", and a turn
+    // carries him nowhere.
+    var v = mv(M);
+    if (v.kind !== "walk" || v.direction === "turn") return "";
+    if (v.direction === "screen-forward") return "forward";
+    if (v.direction === "screen-backward" || v.gait === "official") return "back";
+    return "";
   }
   setInterval(function () {
     try {
@@ -579,12 +590,14 @@
     // Only the spin this turn started is ever stopped: once it ends or another move takes the
     // legs, the watch lapses.
     if (w.M === undefined) {
-      if (spinning(M)) w.M = M;
+      // The spin's placeholder motion is replaced once its policy loads, so the watch holds
+      // the move's own report, which both carry.
+      if (spinning(M)) w.M = M.report;
       else if (Date.now() - w.t0 < 3000) { w.done += dy * w.sign; return; }
       else w.M = null;
     }
     w.done += dy * w.sign;
-    var lapsed = !M || M !== w.M || Date.now() > w.until;
+    var lapsed = !M || M.report !== w.M || Date.now() > w.until;
     if (lapsed || w.done >= w.want - STOP_EARLY) {
       turnWatch = null;
       try { logEv("map_turn", { want: Math.round(w.want * w.sign), did: Math.round(w.done * w.sign), stop: lapsed ? 0 : 1 }); } catch (e) {}
@@ -593,7 +606,11 @@
   }
   function turnSpec(spec) {
     var m = soulMap(), deg = m && turnFor(m, spec);
-    if (deg === null || deg === undefined || !isFinite(deg)) return spec;
+    if (deg === null || deg === undefined || !isFinite(deg)) {
+      // A turn toward something not on his map (or not a number) is no move; say so in the log.
+      try { logEv("map_turn", { want: null, why: "unknown" }); } catch (e) {}
+      return null;
+    }
     deg = wrap(deg);
     if (Math.abs(deg) < 8) { try { logEv("map_turn", { want: Math.round(deg), did: 0 }); } catch (e) {} return null; }
     var left = deg > 0, secs = Math.min(15, Math.max(1.5, Math.abs(deg) / SPIN_DEG_S * 1.6));
@@ -632,8 +649,8 @@
         var why = extra && extra.recallFollow ? "follow" : kind !== "event" && Date.now() - whereT < WHERE_GAP_MS ? "gap" : "";
         if (why) { try { logEv("where_skip", { why: why }); } catch (e) {} return false; }
         whereT = Date.now();
-        var found = "you looked at your map for \"" + String(o.where).slice(0, 40) + "\": " + where(m, o.where, Date.now());
-        try { logEv("where", { q: String(o.where).slice(0, 40) }); } catch (e) {}
+        var found = "you looked at your map for \"" + name(o.where) + "\": " + where(m, o.where, Date.now());
+        try { logEv("where", { q: name(o.where) }); } catch (e) {}
         asked = typeof gbToolFollow === "function" && gbToolFollow("where", found,
           "you looked at your map (what it says is under WHAT YOU JUST LOOKED UP). now act on it or tell your person, in your own voice; it is a rough sketch, so look with your camera too.");
       }

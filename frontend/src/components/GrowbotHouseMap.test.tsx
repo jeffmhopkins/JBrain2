@@ -56,13 +56,19 @@ describe("GrowbotHouseMap", () => {
     const m = readMap({
       map: {
         v: 1,
-        rooms: [{ n: "hall", x: 0, y: 0, w: "4", d: 4 }, { n: 5 }],
+        rooms: [
+          { n: "hall", x: 0, y: 0, w: "4", d: 4 },
+          { n: 5 },
+          { n: "den", x: 0, y: 0, w: -1, d: 4 },
+          { n: "den", x: 0, y: 0, w: 2, d: 2 },
+          { n: "den", x: 5, y: 5, w: 2, d: 2 },
+        ],
         doors: [{ x: null, y: 0 }],
         things: [{ n: "x".repeat(80), x: 1, y: 2 }],
         here: { x: "far" },
       },
     });
-    expect(m?.rooms).toEqual([]);
+    expect(m?.rooms).toEqual([{ n: "den", x: 0, y: 0, w: 2, d: 2 }]);
     expect(m?.doors).toEqual([]);
     expect(m?.things[0]?.n).toHaveLength(32);
     expect(m?.here).toEqual({ x: 0, y: 0, h: 90, room: "" });

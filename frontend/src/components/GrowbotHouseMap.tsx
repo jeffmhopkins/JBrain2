@@ -40,6 +40,11 @@ function finite(v: unknown): v is number {
 function text(v: unknown): string {
   return typeof v === "string" ? v.slice(0, 32) : "";
 }
+/** One of each name: the creature keeps names unique, a hand-edited soul might not. */
+function once<T extends { n: string }>(list: T[]): T[] {
+  const seen = new Set<string>();
+  return list.filter((x) => !seen.has(x.n) && seen.add(x.n));
+}
 function obj(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 }
@@ -50,7 +55,10 @@ export function readMap(soul: GrowbotSoul): HouseMap | null {
   if (m.v !== 1) return null;
   const list = (k: string) => (Array.isArray(m[k]) ? (m[k] as unknown[]).map(obj) : []);
   const rooms = list("rooms")
-    .filter((r) => text(r.n) && finite(r.x) && finite(r.y) && finite(r.w) && finite(r.d))
+    .filter(
+      (r) =>
+        text(r.n) && finite(r.x) && finite(r.y) && finite(r.w) && finite(r.d) && r.w > 0 && r.d > 0,
+    )
     .map((r) => ({
       n: text(r.n),
       x: r.x as number,
@@ -78,7 +86,7 @@ export function readMap(soul: GrowbotSoul): HouseMap | null {
     h: finite(h.h) ? h.h : 90,
     room: text(h.room),
   };
-  return { rooms, doors, things, here };
+  return { rooms: once(rooms), doors, things: once(things), here };
 }
 
 const PAD = 0.6;
