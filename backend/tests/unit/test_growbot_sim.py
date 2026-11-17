@@ -310,15 +310,21 @@ def test_forget_keeps_who_and_whose_and_drops_history() -> None:
         "identity": "grown",
         "log": [1],
         "facts": [2],
-        "scratch": {"day": [3]},
+        "scratch": {"day": [3], "rules": ["my feet slip"], "reflexes": [{"on": "fall"}]},
         "goals": {"owner": "Jeff", "selfName": "", "wants": ["w"], "funLog": [4]},
     }
     got = simbox.forget(soul)
     assert got["meta"] == {"name": "Dave"} and got["body"] == {"id": "b"}
     assert got["identityCore"] == "core" and got["identity"].startswith("I am Dave.")
-    assert got["log"] == [] and got["facts"] == [] and got["scratch"] == {}
+    assert got["log"] == [] and got["facts"] == []
+    assert got["scratch"] == {"reflexes": [{"on": "fall"}]}
     assert got["goals"] == {"owner": "Jeff", "selfName": "Dave"}
     assert soul["log"] == [1]  # the original is untouched
+    # The PWA's Forget history is the wipe these runs test.
+    from jbrain.growbot import souls
+
+    assert souls.forgotten(soul, "Dave") == got
+    assert simbox.forget({**soul, "scratch": {}})["scratch"] == {}
 
 
 def test_live_model_says_what_the_box_said_when_its_model_is_down() -> None:

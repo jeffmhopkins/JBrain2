@@ -16,8 +16,8 @@ screen").
 Visual memories (wave G4d) name people the camera saw, so they never leave the box: the owner
 sees and deletes them here, a checkpoint keeps them, and an export leaves them out.
 
-Every edit, restore, reset and import makes an automatic checkpoint first, so each one can be
-undone (a rename changes only the name, so it makes none). Every write bumps the persona's
+Every edit, restore, reset, forget and import makes an automatic checkpoint first, so each one
+can be undone (a rename changes only the name, so it makes none). Every write bumps the persona's
 version, so the phone holding it reloads instead of overwriting it.
 """
 
@@ -538,6 +538,18 @@ async def reset_persona(request: Request, owner: OwnerDep, pid: Pid) -> WrittenO
         souls.fresh(p.name),
         ("Before reset", "made before a reset"),
         mems="clear",
+    )
+
+
+@router.post("/personas/{pid}/forget-history")
+async def forget_history(request: Request, owner: OwnerDep, pid: Pid) -> WrittenOut:
+    """The creature without its history, keeping its name, its person, its personality, its
+    body and the faces it knows; the checkpoint saved first keeps all of it."""
+    ctx = _owner_ctx(owner)
+    p = await _get(request, ctx, pid)
+    soul = souls.forgotten(p.soul or {}, p.name)
+    return await _written(
+        request, ctx, pid, soul, ("Before forgetting history", "made before a forget")
     )
 
 

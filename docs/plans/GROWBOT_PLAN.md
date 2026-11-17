@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** In progress · **Last verified:** 2026-11-16 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
+> **Status:** In progress · **Last verified:** 2026-11-17 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4✅ (G4a✅ G4b✅ G4c✅ G4d✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -300,6 +300,11 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
   - A PWA edit (or restore, reset, import) is a newer soul: it bumps the box's version, so the
     open phone's next push is refused and the phone reloads the box's copy when idle, never
     overwriting it with its cache.
+  - *Forget history* (owner, 2026-11-17), beside Reset, drops the diary, fact book, wants, the
+    day's notes and the grown identity, and keeps the name, the person, the personality, the
+    body, the reflexes and the faces it knows, checkpointed first. It is the Dave simulator's
+    fresh Dave (`growbot/sim/README.md`), which walked when asked where the owner's Dave, whose
+    diary remembered his stock walk slipping, often only said he was walking.
   - The body's rider can be set from the PWA (B's *Who wears Fish*): for a persona open on
     another phone, the box moves the rider and that phone takes the legs at its next check,
     without anyone touching it. Only the owner's session can do this; a phone's own session

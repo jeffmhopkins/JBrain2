@@ -1501,6 +1501,34 @@ describe("GrowbotScreen a persona's page", () => {
     expect(s.calls.find((c) => c.path.endsWith("/import"))?.body).toEqual({ soul, over: SPROUT });
   });
 
+  it("forgets its history only on a second tap, keeping who it is", async () => {
+    const s = serve(
+      UP,
+      pageRoutes((path) => {
+        if (path.endsWith("/forget-history")) {
+          return json({ persona: detail(), checkpoint: cp({ name: "Before forgetting history" }) });
+        }
+        return null;
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Forget history" }));
+    expect(s.calls.some((c) => c.path.endsWith("/forget-history"))).toBe(false);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Tap again — its diary and facts go; a checkpoint is saved first",
+      }),
+    );
+    expect(
+      await screen.findByText(
+        /^Sprout has forgotten its history and kept its name, its person, its personality and the faces it knows\. “Before forgetting history” keeps everything it was\./,
+      ),
+    ).toBeTruthy();
+    expect(s.calls.find((c) => c.path.endsWith("/forget-history"))?.method).toBe("POST");
+  });
+
   it("resets and deletes only on a second tap, saying what goes", async () => {
     const s = serve(
       UP,

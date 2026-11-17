@@ -347,3 +347,28 @@ def test_a_template_is_born_fresh() -> None:
     assert soul["identity"] == raw["identity"]
     bare = souls.from_file({"soul_format": 3, "goals": {"longing": True}})
     assert bare["goals"]["longing"] == 0.2 and bare["scratch"]["rules"] == []
+
+
+def test_forget_history_keeps_who_whose_and_how_and_drops_what_happened() -> None:
+    soul = {
+        "meta": {"name": "Dave"},
+        "persona": {"constitution": "You are Dave."},
+        "body": {"id": "b"},
+        "identityCore": "core",
+        "identity": "I am Dave and my feet always slip on this floor.",
+        "log": [{"t": 1, "s": "slipped"}],
+        "facts": ["Jeff is looking at trucks"],
+        "scratch": {"rules": ["walking never works"], "reflexes": [{"on": "fall"}]},
+        "goals": {"owner": "Jeff", "selfName": "Davey", "replyLanguage": "en", "wants": ["w"]},
+    }
+    got = souls.forgotten(soul, "Dave")
+    assert got["persona"] == soul["persona"] and got["body"] == soul["body"]
+    assert got["identityCore"] == "core"
+    assert got["identity"].startswith("I am Davey.")
+    assert got["log"] == [] and got["facts"] == []
+    assert got["scratch"] == {"reflexes": [{"on": "fall"}]}
+    assert got["goals"] == {"owner": "Jeff", "selfName": "Davey", "replyLanguage": "en"}
+    assert soul["log"] and soul["scratch"]["rules"]  # the original is untouched
+    # A creature never named in conversation takes the persona's name; a soul with none, none.
+    assert souls.forgotten({"meta": {}}, "Pip")["goals"] == {"selfName": "Pip"}
+    assert souls.forgotten({}, "")["identity"] == ""
