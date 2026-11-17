@@ -4281,7 +4281,11 @@ _GB_EXPLORE_JS = (
     "&&o.b&&been[o.b]); }).map(function(o){ return o.a&&been[o.a]?(o.b||\"somewhere unnamed\")"
     ":(o.a||\"somewhere unnamed\"); });"
     " return \" Exploring is going places, not only turning on the spot: by your map you have"
-    " got about \"+Math.round(_gbExpFrom.far*10)/10+\" m from where you took this goal.\"+"
+    " got about \"+Math.round(_gbExpFrom.far*10)/10+\" m from where you took this goal."
+    # Jeff, 2026-11-17: to identify a thing, go in close, to about a foot from it (m1 put
+    # down a "green cactus" and a "red box" from across the room).
+    " When you see something you can't name for sure, walk in until it is about 30 cm (a"
+    " foot) away and look again before you put it on your map.\"+"
     "(open.length?\" Your map has a doorway you have not been through, to \"+open.slice(0,3)"
     ".join(\", to \")+\": go through it.\":\" You have no doorway on your map you have not been"
     " through: walk across this room, so you see what its far side and corners hide, and look"

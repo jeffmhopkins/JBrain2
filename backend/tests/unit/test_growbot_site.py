@@ -5798,6 +5798,7 @@ def test_an_explore_goal_hears_how_far_he_has_gone_and_where_he_has_not_been() -
         setup,
     )
     assert "got about 0 m from where you took this goal" in got[0]
+    assert "walk in until it is about 30 cm (a foot) away and look again" in got[0]
     assert "no doorway on your map you have not been through: walk across" in got[0]
     assert (
         "got about 1.2 m" in got[1] and "a doorway you have not been through, to kitchen" in got[1]
