@@ -2747,7 +2747,9 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     words = next(line for line in page.splitlines() if line.startswith("var GB_EXPLORE_TXT="))
     beat = re.search(
-        r'think\((window\.__gbBoxExplore!==false\?GB_EXPLORE_TXT:"QUIET COMPANY[^"]*")', page
+        r"think\((window\.__gbBoxExplore!==false\?GB_EXPLORE_TXT\+_gbQuietLegs\(\):"
+        r'"QUIET COMPANY[^"]*")',
+        page,
     )
     assert beat is not None
     # The beat's own gates are the ones the 90 s test above pins; only its words are chosen.
@@ -2757,7 +2759,7 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     setting = "" if explore is None else f"window.__gbBoxExplore={explore};"
     # Inside a function, so the page's globals never meet whatever this Node version ships.
     script = (
-        f"(function(){{var window={{}};{setting}{words}\n"
+        f"(function(){{var window={{}}, _gbQuietLegs=function(){{ return ''; }};{setting}{words}\n"
         f"console.log(JSON.stringify({beat.group(1)}));}})();"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
@@ -5548,7 +5550,7 @@ def test_quiet_time_on_a_body_comes_round_often_while_he_uses_it() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "    if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>_gbQuietGap(now)){" in page
     assert "walk somewhere you have not looked yet" in page
-    assert 'event===GB_EXPLORE_TXT&&MODE!=="phone"' in page
+    assert 'String(event).indexOf(GB_EXPLORE_TXT)===0&&MODE!=="phone"' in page
     # Ten minutes since his person: half that; but a quiet turn he used a minute ago brings
     # it back to the 90 s floor. A phone, or exploring switched off, keeps four minutes.
     ten = "_quietWakeT=now-600000;"
@@ -5807,3 +5809,31 @@ def test_an_explore_goal_hears_how_far_he_has_gone_and_where_he_has_not_been() -
     )
     assert "walk across this room" in got[2]
     assert got[3] == ""
+
+
+def test_on_legs_the_quiet_beat_says_exploring_takes_a_walk() -> None:
+    """Live e2: ten minutes of quiet beats on his legs answered with words and no move."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "GB_EXPLORE_TXT+_gbQuietLegs():" in page
+    legs, phone = _explore("_gbQuietLegs(), (MODE='phone', _gbQuietLegs())")
+    assert 'make it your goal (goal:"explore the house") and send a walk or a spin' in legs
+    assert phone == ""
+
+
+def test_an_explore_goal_that_has_kept_him_on_one_spot_says_how_to_get_out() -> None:
+    """Live m2: five minutes turning in the couch corner. Ninety seconds within 0.4 m of one
+    spot by his map, and the line tells him to find open floor and walk a metre."""
+    setup = (
+        "var seekGoal='explore the house', _gbGoalT=now-200000;"
+        " var M={here:{x:0,y:0}, rooms:[], doors:[]}; window.gbMap={map:function(){ return M; }};"
+        " var _t=now; Date.now=function(){ return _t; };"
+    )
+    got = _explore(
+        "_gbExploreLine(), (_t+=50000, M.here={x:0.2,y:0}, _gbExploreLine()),"
+        " (_t+=40000, _gbExploreLine()), (_t+=30000, M.here={x:1.5,y:0}, _gbExploreLine())",
+        setup,
+    )
+    assert "of here: you have seen what this spot shows" not in got[0] + got[1]
+    assert "For the last 90 s your map has you within 0.2 m of here" in got[2]
+    assert "walk that way a metre or more before you turn again" in got[2]
+    assert "of here: you have seen" not in got[3]

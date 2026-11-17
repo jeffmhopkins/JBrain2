@@ -4270,13 +4270,28 @@ _GB_EXPLORE_JS = (
     # spot, then "I have scanned the full circle. Map is done." From his own map, an explore
     # goal's reminder now says how far he has actually gone and which doorways he has not
     # been through, so turning in place reads as the start of it, not all of it.
+    # Live m2: five minutes turning in the couch corner, "Wall again", "Corner again", each
+    # spin a few centimetres from the last. Where his map has him not moving for a while, the
+    # line says so and how to get out.
+    "var _gbExpTrail=[], GB_STUCK_MS=90000, GB_STUCK_M=0.4;\n"
+    # Live e1/e2 (explore_alone): quiet beats on his legs got "I see a tall bookshelf" and
+    # "I'll peek left", and no walk or spin, ten minutes through. On legs the beat says what
+    # exploring takes: a goal of it, and a move in the same reply.
+    "function _gbQuietLegs(){ return MODE===\"legs\"?\" You are on your legs, so exploring"
+    " means walking: make it your goal (goal:\\\"explore the house\\\") and send a walk or a"
+    " spin in this same reply. Saying where you will look moves nothing; only a walk or a spin"
+    " does.\":\"\"; }\n"
     "var _gbExpFrom=null, GB_EXPLORE_RE=/\\b(explor|map (the|this|my|your|every)|wander|look around"
     "|roam)/i;\n"
     "function _gbExploreLine(){ try{ if(MODE!==\"legs\"||!_gbGoalT||!GB_EXPLORE_RE.test(seekGoal))"
     " return \"\"; var m=window.gbMap&&window.gbMap.map&&window.gbMap.map(); if(!m||!m.here)"
     " return \"\"; if(!_gbExpFrom||_gbExpFrom.g!==_gbGoalT) _gbExpFrom={g:_gbGoalT,x:+m.here.x,"
     "y:+m.here.y,far:0}; var d=Math.hypot(m.here.x-_gbExpFrom.x,m.here.y-_gbExpFrom.y);"
-    " _gbExpFrom.far=Math.max(_gbExpFrom.far,d); var been={}; (m.rooms||[]).forEach(function(r){"
+    " _gbExpFrom.far=Math.max(_gbExpFrom.far,d); var now=Date.now(); _gbExpTrail.push({t:now,"
+    "x:+m.here.x,y:+m.here.y}); _gbExpTrail=_gbExpTrail.filter(function(p){ return now-p.t<="
+    "GB_STUCK_MS; }); var near=0; _gbExpTrail.forEach(function(p){ near=Math.max(near,"
+    "Math.hypot(p.x-m.here.x,p.y-m.here.y)); }); var stuck=_gbExpTrail.length>2&&now-"
+    "_gbExpTrail[0].t>=GB_STUCK_MS*0.8&&near<GB_STUCK_M; var been={}; (m.rooms||[]).forEach(function(r){"
     " been[r.n]=1; }); var open=(m.doors||[]).filter(function(o){ return !(o.a&&been[o.a]"
     "&&o.b&&been[o.b]); }).map(function(o){ return o.a&&been[o.a]?(o.b||\"somewhere unnamed\")"
     ":(o.a||\"somewhere unnamed\"); });"
@@ -4285,7 +4300,11 @@ _GB_EXPLORE_JS = (
     # Jeff, 2026-11-17: to identify a thing, go in close, to about a foot from it (m1 put
     # down a "green cactus" and a "red box" from across the room).
     " When you see something you can't name for sure, walk in until it is about 30 cm (a"
-    " foot) away and look again before you put it on your map.\"+"
+    " foot) away and look again before you put it on your map.\"+(stuck?\" For the last \"+"
+    "Math.round((now-_gbExpTrail[0].t)/1000)+\" s your map has you within \"+Math.round(near*10)"
+    "/10+\" m of here: you have seen what this spot shows. If your picture is mostly wall up"
+    " close, you are facing a wall or in a corner, so turn until you see floor running away"
+    " from you, then walk that way a metre or more before you turn again.\":\"\")+"
     "(open.length?\" Your map has a doorway you have not been through, to \"+open.slice(0,3)"
     ".join(\", to \")+\": go through it.\":\" You have no doorway on your map you have not been"
     " through: walk across this room, so you see what its far side and corners hide, and look"
@@ -4661,6 +4680,22 @@ STAND_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += STAND_PATCHES
+
+QUIET_LEGS_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "think(window.__gbBoxExplore!==false?GB_EXPLORE_TXT:",
+        "think(window.__gbBoxExplore!==false?GB_EXPLORE_TXT+_gbQuietLegs():",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(event===GB_EXPLORE_TXT&&MODE!=="phone"',
+        'if(String(event).indexOf(GB_EXPLORE_TXT)===0&&MODE!=="phone"',
+        1,
+    ),
+]
+PATCHES += QUIET_LEGS_PATCHES
 
 
 # Dave's sketch map of the house (owner, 2026-11-17), growbot-map.js: kept in the soul, added to
