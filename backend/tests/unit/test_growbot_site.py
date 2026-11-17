@@ -5446,7 +5446,7 @@ def test_a_claimed_move_with_no_move_field_is_asked_about_at_once() -> None:
     you now" with no walk in 3 of 8 replies, and nothing asked him again."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
-        'if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait))'
+        'if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait||o.walk.secs))'
         '&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||""))) '
         "_gbClaimFix(_mgen,_gbIssT);" in page
     )
@@ -5457,4 +5457,6 @@ def test_a_claimed_move_with_no_move_field_is_asked_about_at_once() -> None:
     assert _claim_fix("window._gbFollowStopT=200; _gbClaimFix(1, 100);") == []
     assert _claim_fix("_motionGen=2; _gbClaimFix(1, 100);") == []
     assert _claim_fix("pendingUser='back up'; _gbClaimFix(1, 100);") == []
+    # The handler's drainUser sent the person's next words first: that turn's reply is theirs.
+    assert _claim_fix("_gbClaimFix(1, 100); inFlight=true;") == []
     assert "MOVE (come here" in page and "Feet that slipped or walks that fell short" in page

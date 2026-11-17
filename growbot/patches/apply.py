@@ -4031,7 +4031,7 @@ PATCHES += [
         ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen'
         '&&!document.hidden&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body;'
         " delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15,_gbIssT); }"
-        ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait))'
+        ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait||o.walk.secs))'
         '&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||"")))'
         " _gbClaimFix(_mgen,_gbIssT);",
         1,
@@ -4117,12 +4117,12 @@ _GB_FALL_THINK_JS = (
 # Deferred past the claiming reply's own handler (inFlight is already clear there), so its
 # speech, trace and history land first and the repair turn sees the ask it answers again.
 # Dropped once anything happened since the claiming thought was issued: "stop stop", another
-# motion, or the person's own queued words, which get their own turn.
+# motion, or another turn under way (the handler's drainUser sends the person's queued words
+# before this runs; a repair after that turn would read its reply as the claim).
 _GB_CLAIM_FIX_JS = (
     "var _gbClaimT=0;function _gbClaimFix(gen,issT){ if(Date.now()-_gbClaimT<30000)return; "
-    "var n=0; setTimeout(function go(){ "
-    "if(gen!==_motionGen||(window._gbFollowStopT||0)>=issT||pendingUser)return; "
-    "if(inFlight){ if(++n<40) setTimeout(go,250); return; } "
+    "setTimeout(function(){ "
+    "if(gen!==_motionGen||(window._gbFollowStopT||0)>=issT||pendingUser||inFlight)return; "
     "if(paused||dreaming||document.hidden)return; "
     'think("(your body, not your person:) your last reply said you were moving, but it carried '
     "no walk, body or follow field, so you did not move at all. Answer that same ask again "
