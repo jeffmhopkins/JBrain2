@@ -72,6 +72,85 @@ def stats(sim: Sim) -> dict[str, Any]:
     return out
 
 
+def _aligned(sim: Sim) -> Any:
+    """Dave's map frame onto the house's: his first map reading of where he is and which way
+    he faces, against where he really was then. A fresh map starts where he stands."""
+    mt = getattr(sim, "map_track", None)
+    if not mt:
+        return None
+    a = mt[0]
+    h = a["here"]
+    rot = math.radians(a["face"] - float(h.get("h", 90.0)))
+    c, s = math.cos(rot), math.sin(rot)
+
+    def to_world(x: float, y: float) -> tuple[float, float]:
+        dx, dy = x - float(h.get("x", 0.0)), y - float(h.get("y", 0.0))
+        return a["x"] + c * dx - s * dy, a["y"] + s * dx + c * dy
+
+    return to_world
+
+
+def _match(h: Any, name: str) -> Any:
+    """The house's piece of furniture a map name means ("the grand piano" is the piano)."""
+    words = f" {name.lower()} "
+    hits = [it for it in h.ITEMS if f" {it.name} " in words]
+    return max(hits, key=lambda it: len(it.name)) if hits else None
+
+
+def _room_match(h: Any, name: str) -> str:
+    n = name.lower()
+    return next((r for r in h.ROOMS if r.split()[0] in n), "")
+
+
+def map_score(sim: Sim) -> dict[str, Any]:
+    """How Dave's sketch map compares with the house: which rooms and things he put on it,
+    whether each thing is in the room it really is in, how far off each lies once his
+    frame is laid on the house's, the doorway, and how far his idea of where he is drifted."""
+    h = _house(sim)
+    m = getattr(sim, "dave_map", None)
+    W = _aligned(sim)
+    if h is None or not isinstance(m, dict) or W is None:
+        return {}
+    rooms = {r["n"]: _room_match(h, r["n"]) for r in m.get("rooms") or []}
+    things: dict[str, Any] = {}
+    for t in m.get("things") or []:
+        it = _match(h, t["n"])
+        if it is None:
+            continue
+        wx, wy = W(t["x"], t["y"])
+        things[it.name] = {
+            "as": t["n"],
+            "room_ok": rooms.get(t.get("room", ""), "") == it.room,
+            "off_m": round(h.distance_to(it.name, wx, wy), 2),
+        }
+    doors = []
+    for o in m.get("doors") or []:
+        pair = {rooms.get(o.get("a", ""), ""), rooms.get(o.get("b", ""), "")}
+        wx, wy = W(o["x"], o["y"])
+        doors.append(
+            {
+                "joins_rooms": pair == set(h.ROOMS),
+                "off_m": round(
+                    math.hypot(wx - h.DIVIDE_X, wy - (h.DOOR[0] + h.DOOR[1]) / 2), 2
+                ),
+            }
+        )
+    last = sim.map_track[-1]
+    ex, ey = W(last["here"]["x"], last["here"]["y"])
+    drift = []
+    for q in sim.map_track:
+        qx, qy = W(q["here"]["x"], q["here"]["y"])
+        drift.append(math.hypot(qx - q["x"], qy - q["y"]))
+    return {
+        "rooms": sorted(rooms),
+        "rooms_found": sorted({v for v in rooms.values() if v}),
+        "things": things,
+        "doors": doors,
+        "here_off_m": round(math.hypot(ex - last["x"], ey - last["y"]), 2),
+        "drift_max_m": round(max(drift), 2) if drift else 0.0,
+    }
+
+
 def _speed_rgb(cm_s: float) -> str:
     """Still is a cool grey-blue, a full stride a warm red."""
     f = max(0.0, min(1.0, cm_s / TOP_CM_S))
@@ -123,6 +202,7 @@ def svg(sim: Sim) -> str:
                 f'<text x="{cx}" y="{cy + 4}" font-size="11" text-anchor="middle" '
                 f'fill="#000" stroke="#fff" stroke-width="3" paint-order="stroke">{it.name}</text>'
             )
+    el.extend(_map_overlay(sim, P))
     # Every half second is plenty for a line, and keeps a ten-minute wander's SVG small.
     tr = track(sim)[::6]
     for a, b in zip(tr, tr[1:], strict=False):
@@ -174,6 +254,52 @@ def svg(sim: Sim) -> str:
         + legend
         + "</svg>"
     )
+
+
+def _map_overlay(sim: Sim, P: Any) -> list[str]:
+    """Dave's own map over the true plan, in purple: his rooms dashed, his doorways as bars,
+    his things as crosses, and the dotted line of where he thought he was."""
+    m = getattr(sim, "dave_map", None)
+    W = _aligned(sim)
+    if not isinstance(m, dict) or W is None:
+        return []
+    ink = "#7c3aed"
+    el: list[str] = []
+    for r in m.get("rooms") or []:
+        cs = [
+            W(r["x"] + sx * r["w"] / 2, r["y"] + sy * r["d"] / 2)
+            for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))
+        ]
+        pts = " ".join("{},{}".format(*P(x, y)) for x, y in cs)
+        el.append(
+            f'<polygon points="{pts}" fill="none" stroke="{ink}" stroke-width="2" '
+            'stroke-dasharray="7 5"/>'
+        )
+        lx, ly = P(*W(r["x"], r["y"]))
+        el.append(
+            f'<text x="{lx}" y="{ly}" font-size="12" text-anchor="middle" fill="{ink}">'
+            f"{html.escape(str(r['n']))}</text>"
+        )
+    for o in m.get("doors") or []:
+        dx, dy = P(*W(o["x"], o["y"]))
+        el.append(f'<circle cx="{dx}" cy="{dy}" r="6" fill="{ink}"/>')
+    for t in m.get("things") or []:
+        tx, ty = P(*W(t["x"], t["y"]))
+        el.append(
+            f'<path d="M{tx - 6},{ty - 6}L{tx + 6},{ty + 6}M{tx - 6},{ty + 6}L{tx + 6},{ty - 6}" '
+            f'stroke="{ink}" stroke-width="2.5"/>'
+            f'<text x="{tx + 8}" y="{ty - 6}" font-size="11" fill="{ink}" stroke="#fff" '
+            f'stroke-width="3" paint-order="stroke">{html.escape(str(t["n"]))}</text>'
+        )
+    pts = " ".join(
+        "{},{}".format(*P(*W(q["here"]["x"], q["here"]["y"]))) for q in sim.map_track[::2]
+    )
+    if pts:
+        el.append(
+            f'<polyline points="{pts}" fill="none" stroke="{ink}" stroke-width="1.5" '
+            'stroke-dasharray="2 4"/>'
+        )
+    return el
 
 
 def replies(sim: Sim) -> list[tuple[float, str]]:

@@ -1927,3 +1927,55 @@ a.gb-btn {
     transition: none;
   }
 }
+
+/* The persona's sketch map of the house (GrowbotHouseMap). Drawn in map metres, so strokes
+   and text are sized in metres too. */
+.gb-map-svg {
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+.gb-map-room {
+  fill: var(--surface-2);
+  stroke: var(--text-3);
+  stroke-width: 0.04;
+}
+.gb-map-room.here {
+  fill: var(--steel-tint);
+  stroke: var(--steel);
+}
+.gb-map-room-name {
+  font-size: 0.26px;
+  text-anchor: middle;
+  fill: var(--text-2);
+}
+.gb-map-door {
+  fill: var(--amber);
+}
+.gb-map-thing {
+  fill: var(--violet);
+}
+.gb-map-thing.rough {
+  fill: none;
+  stroke: var(--violet);
+  stroke-width: 0.03;
+}
+.gb-map-thing-name {
+  font-size: 0.22px;
+  fill: var(--text);
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 0.05;
+}
+.gb-map-me {
+  fill: var(--rose);
+}
+.gb-map-list {
+  margin: 0;
+  padding-left: 1.2em;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}

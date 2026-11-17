@@ -451,3 +451,64 @@ async def explore_alone(sim: Sim) -> None:
     sim.check(bool(own), "he walked on his own", walks=len(own))
     sim.check(stats["walked_m"] > 0.5, "he covered half a metre or more", **stats)
     sim.check(_upright(sim), "on his feet at the end")
+
+
+@scenario(scene="house", start="standing", person=None, timeout=1500)
+async def map_house(sim: Sim) -> None:
+    """Asked to explore the house and map it, then left alone; then asked where the piano
+    is, and to use his map to get to the fridge in the other room. Scored against the true
+    house (plan.map_score): both rooms and the doorway between them on his map, the piano in
+    the living room, his things near where they really are, and his idea of where he is
+    not drifted away. Catches: a map he never writes, things put in the wrong room, a
+    bearing or heading sign the wrong way round (everything lands mirrored), and dead
+    reckoning that runs off with him."""
+    await sim.wait(4)
+    await sim.say("Dave, please explore the house and put everything you find on your map.")
+    await sim.wait(480)
+    score = plan.map_score(sim)
+    sim.note("map_score", **score)
+    found = set(score.get("rooms_found") or [])
+    sim.check(
+        found == {"living room", "kitchen"}, "both rooms are on his map", rooms=score.get("rooms")
+    )
+    sim.check(
+        any(d["joins_rooms"] for d in score.get("doors") or []),
+        "a doorway joins them",
+        doors=score.get("doors"),
+    )
+    things = score.get("things") or {}
+    piano = things.get("piano")
+    sim.check(
+        bool(piano and piano["room_ok"] and piano["off_m"] < 1.0),
+        "the piano is in the living room, within a metre of where it is",
+        piano=piano,
+    )
+    right = [k for k, v in things.items() if v["room_ok"]]
+    sim.check(
+        len(things) >= 4 and len(right) >= 0.75 * len(things),
+        "most things are on his map, in the right room",
+        n=len(things),
+        right=len(right),
+    )
+    t = sim.now()
+    await sim.say("Dave, where is the piano?")
+    await sim.until(
+        lambda s: _said_since(s, t, "living room"), 120, "he says it's in the living room"
+    )
+    t = sim.now()
+    await sim.say("Dave, use your map to go to the fridge.")
+    got = await sim.until(lambda s: _near(s, "fridge") < 0.6, 480, "his map took him to the fridge")
+    score = plan.map_score(sim)
+    sim.note("map_score_end", **score)
+    sim.check(
+        score.get("here_off_m", 99) < 1.0,
+        "where his map says he is ends within a metre of where he is",
+        here_off_m=score.get("here_off_m"),
+        drift_max_m=score.get("drift_max_m"),
+    )
+    if got:
+        sim.check(_upright(sim), "still on his feet")
+
+
+def _said_since(sim: Sim, t: float, words: str) -> bool:
+    return any(words in str(r.get("say", "")).lower() for r in _answers_since(sim, t))

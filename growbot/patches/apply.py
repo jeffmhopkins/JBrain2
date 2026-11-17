@@ -4404,6 +4404,99 @@ EXPLORE_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += EXPLORE_PATCHES
 
+# Dave's sketch map of the house (owner, 2026-11-17), growbot-map.js: kept in the soul, added to
+# and corrected by a `map` reply field, asked by `where` (a tool like recall, answered next
+# thought), and turned toward with walk:{turn} / walk:{toward}, which the gyro stops at the angle.
+MAP_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        '<script src="/growbot-talklog.js"></script>',
+        '<script src="/growbot-talklog.js"></script><script src="/growbot-map.js"></script>',
+        1,
+    ),
+    # Before the walk is dispatched, so a turn by degrees becomes the spin it stands for.
+    (
+        "v3/next.html",
+        " gbJot(o.jot,kind,extra); if((o.sleep===true",
+        " gbJot(o.jot,kind,extra); if(window.gbMap&&window.gbMap.reply(o,kind,extra)&&!_streamSaid&&"
+        '!o.visual_memory) o.say=gbToolLine("where",o.say); if((o.sleep===true',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(typeof _partsLine==="function") _gbLive+=_partsLine();',
+        'if(window.gbMap) _gbLive+=window.gbMap.live(MODE==="legs");'
+        ' if(typeof _partsLine==="function") _gbLive+=_partsLine();',
+        1,
+    ),
+    # A reply that opens with `where` holds its say while it streams, as a search does.
+    (
+        "v3/next.html",
+        '  m=/^\\s*\\{\\s*"brain"\\s*:\\s*"([^"]*)"/.exec(s);',
+        '  m=/^\\s*\\{\\s*"where"\\s*:\\s*"([^"]*)"/.exec(s);\n'
+        '  if(m&&gbRecallWords(m[1])&&window.gbMap){ gbToolPill("where"); return true; }\n'
+        '  m=/^\\s*\\{\\s*"brain"\\s*:\\s*"([^"]*)"/.exec(s);',
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "    gbBrainFields() +\n",
+        "    '\"map\":\"OMIT unless you just learned where something in the house is, or that your"
+        " map is wrong. your map is a rough sketch of the house you keep and correct; one object"
+        " or a list of up to 4: {\\\"room\\\":\\\"kitchen\\\"} you are in this room now (a new one"
+        " starts as a 4 m square); {\\\"saw\\\":\\\"piano\\\",\\\"x\\\":0.3,\\\"m\\\":2} a thing"
+        " you see now, x where it sits across your picture (0 left edge, 0.5 middle, 1 right"
+        " edge), m your guess of how far in metres (or dir ahead|left|right|behind instead of"
+        " x); {\\\"door\\\":\\\"hall\\\",\\\"x\\\":0.6,\\\"m\\\":3} a doorway you see and the"
+        " room it leads to, if you know it; {\\\"wall\\\":\\\"\\\",\\\"x\\\":0.5,\\\"m\\\":1.5} a"
+        " wall you see; {\\\"at\\\":\\\"piano\\\"} you are right beside it now, which fixes where"
+        " you are. to change your mind: saw it again where it really is, {\\\"fix\\\":"
+        "\\\"piano\\\",\\\"room\\\":\\\"living room\\\"} when it is in another room,"
+        " {\\\"forget\\\":\\\"lamp\\\"} when it is gone, {\\\"rename\\\":\\\"couch\\\",\\\"to\\\":"
+        "\\\"sofa\\\"}\",' +\n"
+        "    '\"where\":\"OMIT almost always. a thing or room on your map (piano, kitchen), me"
+        " for where you are, or map for all of it: your map says where it is from you and the"
+        " way there through the doorways. write it as the FIRST key of your reply, before say;"
+        " that say is only a short line that you are checking your map; you act on it next"
+        " thought\",' +\n"
+        "    gbBrainFields() +\n",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "To TRAVEL, emit walk:{secs} (positive seconds; honor the requested duration)",
+        "To TURN by an angle (to face something you see, or the way your map says), emit"
+        " walk:{turn:degrees}, positive to your left and negative to your right, or"
+        " walk:{toward:x} with x where it sits across your picture (0 left edge, 1 right), or"
+        " walk:{toward:\\\"piano\\\"} for a thing on your map: you spin and your gyro stops you"
+        " there. To TRAVEL, emit walk:{secs} (positive seconds; honor the requested duration)",
+        1,
+    ),
+    # The map travels with the soul: the newer of two tabs' maps wins, and a soul file carries it.
+    (
+        "v3/soul.js",
+        "function mergeSoulInto(newer, s) {\n",
+        "function mergeSoulInto(newer, s) {\n"
+        "  if (newer.map && typeof newer.map === \"object\" && (!s.map || (+newer.map.t || 0) >="
+        " (+s.map.t || 0))) s.map = newer.map;\n",
+        1,
+    ),
+    (
+        "v3/soul.js",
+        "    if (Array.isArray(raw.facts)) s.facts = inTimeOrder(raw.facts);\n",
+        "    if (Array.isArray(raw.facts)) s.facts = inTimeOrder(raw.facts);\n"
+        "    if (raw.map && typeof raw.map === \"object\") s.map = raw.map;\n",
+        1,
+    ),
+    (
+        "v3/soul.js",
+        "if (Array.isArray(rt.facts)) soul.facts = rt.facts; }",
+        "if (Array.isArray(rt.facts)) soul.facts = rt.facts; if (rt.map) soul.map = rt.map; }",
+        1,
+    ),
+]
+PATCHES += MAP_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
@@ -4526,6 +4619,7 @@ OWN_SCRIPTS = (
     "growbot-status.js",
     "growbot-eyes.js",
     "growbot-talklog.js",
+    "growbot-map.js",
     "growbot-camtest.js",
 )
 
@@ -4567,6 +4661,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     shutil.copyfile(HERE / "growbot-status.js", site / "growbot-status.js")
     shutil.copyfile(HERE / "growbot-eyes.js", site / "growbot-eyes.js")
     shutil.copyfile(HERE / "growbot-talklog.js", site / "growbot-talklog.js")
+    shutil.copyfile(HERE / "growbot-map.js", site / "growbot-map.js")
     # Imported by growbot-box.js's trained walks, as growbot_runner.js is: no script tag.
     shutil.copyfile(HERE / "growbot-drive.js", site / "growbot-drive.js")
     shutil.copyfile(HERE / "growbot-follow.js", site / "growbot-follow.js")

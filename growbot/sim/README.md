@@ -125,6 +125,25 @@ near. It answers 4 s after each ask, near the box's pace. That tests the page's 
 (goals that stick, walks that carry on, looks while walking, the no-look stop) with no box,
 so a live run only has to prove the thinking.
 
+### His map
+
+`map_house` asks him to explore the house and put what he finds on his map
+(`growbot-map.js`), leaves him alone for eight minutes, asks where the piano is, then asks him
+to use his map to get to the fridge in the other room. The run polls the page's map each second
+(`Sim.dave_map`, `Sim.map_track`) and `plan.map_score` scores it against the true house: his
+frame laid on the house's by where he started, which rooms he drew, whether each thing he put
+down is in the room it is really in and how far off it lies, whether a doorway joins the two
+rooms, and how far his idea of where he is drifted. `plan.svg` draws his map over the true plan
+in purple: his rooms dashed, doorways as dots, things as crosses, and a dotted line for where he
+thought he was.
+
+Under `--pilot`, the stand-in brain keeps the map the way a careful Dave would: it names each
+room it walks into, puts what is in view on the map (`view.py` projects the furniture and the
+doorway into the camera's picture from the sim's ground truth), says `at` on arriving, and asked
+to "use your map" it steers by `where` answers alone. So a pilot run tests the map's own
+geometry (bearings, heading, dead reckoning, routes), and a live run only has to show that the
+model uses it.
+
 ## Tests
 
 The pure halves (the fake box, the chip model, the model plumbing) are tested by the

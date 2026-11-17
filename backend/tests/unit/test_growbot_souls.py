@@ -335,10 +335,12 @@ def test_a_template_is_born_fresh() -> None:
         "goals": {"wants": list("abcdef"), "selfName": "Bolt", "owner": "Q", "longing": 0.5},
         "scratch": {"rules": ["be brave"], "mood": {"v": 1, "e": 1}, "glows": [1]},
         "facts": [{"t": 1, "txt": "Q saw the doctor"}],
+        "map": {"v": 1, "rooms": [{"n": "Q's bedroom"}]},
     }
     soul = souls.from_file(raw)
     assert soul["identityCore"] == "" and soul["log"] == [] and soul["bornAt"] == 0
     assert soul["facts"] == []
+    assert "map" not in soul  # the uploader's house
     assert soul["goals"]["wants"] == list("abcd") and soul["goals"]["longing"] == 0.5
     assert "selfName" not in soul["goals"] and "owner" not in soul["goals"]
     assert soul["scratch"]["rules"] == ["be brave"] and soul["scratch"]["mood"] == {"v": 1, "e": 1}
@@ -358,10 +360,12 @@ def test_forget_history_keeps_who_whose_and_how_and_drops_what_happened() -> Non
         "identity": "I am Dave and my feet always slip on this floor.",
         "log": [{"t": 1, "s": "slipped"}],
         "facts": ["Jeff is looking at trucks"],
+        "map": {"v": 1, "rooms": [{"n": "living room"}]},
         "scratch": {"rules": ["walking never works"], "reflexes": [{"on": "fall"}]},
         "goals": {"owner": "Jeff", "selfName": "Davey", "replyLanguage": "en", "wants": ["w"]},
     }
     got = souls.forgotten(soul, "Dave")
+    assert "map" not in got and "map" in soul
     assert got["persona"] == soul["persona"] and got["body"] == soul["body"]
     assert got["identityCore"] == "core"
     assert got["identity"].startswith("I am Davey.")

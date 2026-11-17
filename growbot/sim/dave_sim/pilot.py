@@ -8,6 +8,13 @@ no-look stop) with no box: the real model then only has to prove the thinking. `
 stands in for the box's slower turns.
 
     python -m dave_sim find_piano --pilot
+
+It also keeps Dave's map (growbot-map.js) the way a careful Dave would: it names each room
+it enters, puts each piece of furniture and the doorway it sees on the map (where it sits
+across the picture and how far, from view.py), and says `at` when it reaches one. Asked to
+"use your map" to get somewhere, it steers by the map alone: `where`, then the turn and the
+distance the answer gives, then `where` again, so the map's own directions are what is
+tested.
 """
 
 from __future__ import annotations
@@ -18,6 +25,8 @@ import math
 import re
 from typing import TYPE_CHECKING, Any
 
+from dave_sim import view
+
 if TYPE_CHECKING:
     from dave_sim.run import Sim
 
@@ -27,6 +36,14 @@ FACING_DEG = 25.0
 # again rather than trusting it.
 SPIN_DEG_S = 30.0
 EXPLORE_RE = re.compile(r"QUIET — nothing has happened for a while")
+MAP_NAV_RE = re.compile(r"\buse your map to (?:go to|get to|find) (?:the )?([a-z ]+?)[.?!]")
+WHERE_RE = re.compile(r'you looked at your map for "([^"]*)": ([^\n]*)')
+TURN_RE = re.compile(r"walk:\{turn:(-?\d+)\}")
+DIST_RE = re.compile(r"about ([\d.]+) m")
+# A thing goes on the map again only after this long, as a Dave who glanced back would.
+REMARK_S = 40.0
+# The map's guess of his pace (growbot-map.js PACE.forward), so a walk covers what it says.
+PACE_M_S = 0.04
 
 
 def _wrap(a: float) -> float:
@@ -50,6 +67,11 @@ class Pilot:
         self.target = ""
         self.seen: set[str] = set()
         self.log: list[dict[str, Any]] = []
+        self.room = ""
+        self.marked: dict[str, float] = {}
+        self.nav = ""
+        self.nav_walk = 0.0
+        self.turn_until = 0.0
 
     def bind(self, sim: Sim) -> None:
         self.sim = sim
@@ -67,7 +89,58 @@ class Pilot:
         house = sim.sb.house if sim is not None and sim.o.scene == "house" else None
         if house is None:
             return {"say": ""}
+        ops = self._map_ops(house)
+        out = self._answer(house, text)
+        if ops:
+            out["map"] = ops + ([out["map"]] if isinstance(out.get("map"), dict) else [])
+        return out
+
+    def _map_ops(self, house: Any) -> list[dict[str, Any]]:
+        """What a careful Dave adds to his map on this look: the room when he has walked
+        into a new one, and each thing in view not marked for a while."""
+        assert self.sim is not None
+        s = self.sim.state
+        now = self.sim.now()
+        ops: list[dict[str, Any]] = []
+        room = house.room_at(s["x"], s["y"])
+        if room and room != self.room:
+            ops.append({"room": room})
+            self.room = room
+        for v in view.visible(self.sim):
+            if len(ops) >= 4:
+                break
+            if now - self.marked.get(v["name"], -1e9) < REMARK_S:
+                continue
+            self.marked[v["name"]] = now
+            if v["name"] == "door":
+                ops.append({"door": v["to"], "x": v["x"], "m": round(v["m"], 1)})
+            else:
+                ops.append({"saw": v["name"], "x": v["x"], "m": round(v["m"], 1)})
+        return ops
+
+    def _answer(self, house: Any, text: str) -> dict[str, Any]:
         tail = text[-600:].lower()
+        got = WHERE_RE.search(text)
+        if got and not self.nav:
+            # Asked where something is: say what the map said.
+            room = re.search(r"is in the ([a-z ]+?)[,.]", got.group(2))
+            what = got.group(1)
+            if room:
+                return {"say": f"The {what} is in the {room.group(1)}."}
+            return {"say": f"My map doesn't have the {what}."}
+        ask = re.search(r"where is (?:the |my )?([a-z ]+?)\?", tail)
+        if ask and not self.nav:
+            return {"where": ask.group(1), "say": "Let me check my map."}
+        nav = MAP_NAV_RE.search(tail)
+        if nav and nav.group(1).strip() in house.ITEM:
+            self.nav, self.target = nav.group(1).strip(), ""
+            return {
+                "where": self.nav,
+                "say": "Let me check my map.",
+                "goal": f"go to the {self.nav}",
+            }
+        if self.nav:
+            return self._by_map(house, text)
         for it in house.ITEMS:
             asked = rf"\bfind (the |a |my )?{re.escape(it.name)}\b"
             if it.name != "rug" and re.search(asked, tail):
@@ -94,7 +167,12 @@ class Pilot:
         if house.distance_to(name, s["x"], s["y"]) < ARRIVED_M:
             self.seen.add(name)
             self.target = ""
-            return {"say": f"I found the {name}!", "found": True, "phase": "finished"}
+            return {
+                "say": f"I found the {name}!",
+                "found": True,
+                "phase": "finished",
+                "map": {"at": name},
+            }
         it = house.ITEM[name]
         facing = s["nose_deg"] + 180.0  # the camera looks out of the tail
         bearing = math.degrees(math.atan2(it.y - s["y"], it.x - s["x"]))
@@ -112,3 +190,37 @@ class Pilot:
                 **goal,
             }
         return {"say": f"Walking to the {name}.", "walk": {"dir": "fwd", "secs": 8}, **goal}
+
+    def _by_map(self, house: Any, text: str) -> dict[str, Any]:
+        """Steering by the map's answers alone: turn the way it says, walk the distance it
+        says, ask again. The ground truth only says when he has arrived."""
+        assert self.sim is not None
+        s = self.sim.state
+        name = self.nav
+        goal = {"goal": f"go to the {name}", "phase": "acting"}
+        if house.distance_to(name, s["x"], s["y"]) < ARRIVED_M:
+            self.nav = ""
+            return {
+                "say": f"I made it to the {name}!",
+                "found": True,
+                "phase": "finished",
+                "map": {"at": name},
+            }
+        got = WHERE_RE.search(text)
+        if got:
+            ans = got.group(2)
+            turn = TURN_RE.search(ans)
+            dist = DIST_RE.search(ans)
+            self.nav_walk = float(dist.group(1)) if dist else 0.5
+            if turn and abs(int(turn.group(1))) >= 12:
+                deg = int(turn.group(1))
+                # The gyro stops the spin at the angle; the looks while it turns wait for it.
+                self.turn_until = self.sim.now() + abs(deg) / 25.0 * 1.6 + 2.0
+                return {"say": "This way.", "walk": {"turn": deg}, **goal}
+        if self.sim.now() < self.turn_until:
+            return {"say": "", **goal}
+        if self.nav_walk > 0:
+            secs = round(max(3.0, min(15.0, self.nav_walk / PACE_M_S)), 1)
+            self.nav_walk = 0.0
+            return {"say": f"Heading for the {name}.", "walk": {"dir": "fwd", "secs": secs}, **goal}
+        return {"where": name, "say": "Let me check my map.", **goal}

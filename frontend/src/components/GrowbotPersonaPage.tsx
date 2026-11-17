@@ -47,6 +47,7 @@ import {
 import { BOX_DEFAULT_VOICE, voiceLabel } from "../voices";
 import { Dialog } from "./Dialog";
 import { GrowbotCheckpoints } from "./GrowbotCheckpoints";
+import { GrowbotHouseMap } from "./GrowbotHouseMap";
 import { GrowbotMemoryGrid } from "./GrowbotMemories";
 import { GrowbotMemoryEditor } from "./GrowbotMemoryEditor";
 import { GrowbotTabs, type Say } from "./GrowbotPersonaSheets";
@@ -54,7 +55,7 @@ import { Sheet } from "./Sheet";
 import { useArm } from "./growbotArm";
 import { ChevronLeftIcon } from "./icons";
 
-type PTab = "soul" | "vm" | "cps" | "manage";
+type PTab = "soul" | "map" | "vm" | "cps" | "manage";
 
 interface Props {
   persona: GrowbotPersona;
@@ -952,6 +953,7 @@ export function GrowbotPersonaPage({
         onPick={setPtab}
         tabs={[
           { id: "soul", label: "Soul" },
+          { id: "map", label: "Map" },
           { id: "vm", label: "Memories", count: vmCount },
           { id: "cps", label: "Checkpoints", count: n },
           { id: "manage", label: "Manage" },
@@ -970,6 +972,7 @@ export function GrowbotPersonaPage({
         )}
         {!detail && !error && <p className="gb-hint dim">Loading {p.name}…</p>}
         {detail && ptab === "soul" && soulTab()}
+        {detail && ptab === "map" && <GrowbotHouseMap soul={soul} name={me} />}
         {ptab === "vm" && vmTab()}
         {ptab === "cps" && cpsTab()}
         {ptab === "manage" && manageTab()}

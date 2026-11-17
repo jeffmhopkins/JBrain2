@@ -95,6 +95,7 @@ def forget(soul: dict[str, Any]) -> dict[str, Any]:
     scratch = soul.get("scratch") or {}
     keep = {"reflexes": scratch["reflexes"]} if isinstance(scratch.get("reflexes"), list) else {}
     out = {**soul, "log": [], "facts": [], "scratch": keep, "identity": ""}
+    out.pop("map", None)  # his house map is learned too (growbot-map.js)
     out["goals"] = {k: goals[k] for k in KEEP_GOALS if k in goals}
     # A creature named in conversation keeps that name only in its history, so the wipe
     # would take it: the persona's own name stands in, as if the owner had confirmed it.

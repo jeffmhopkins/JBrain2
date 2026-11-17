@@ -242,8 +242,10 @@ def _as_template(soul: dict[str, Any]) -> None:
     creature whose person made them."""
     soul["identityCore"] = ""
     soul["log"] = []
-    # The fact book is about the uploader's person (growbot/patches/apply.py RECALL_PATCHES).
+    # The fact book is about the uploader's person (growbot/patches/apply.py RECALL_PATCHES),
+    # and the map (growbot-map.js) is of the uploader's house.
     soul["facts"] = []
+    soul.pop("map", None)
     soul["bornAt"] = 0
     scratch = obj(soul.get("scratch"))
     soul["scratch"] = {
@@ -441,13 +443,15 @@ KEEP_GOALS = ("owner", "selfName", "inputLanguage", "replyLanguage", "call")
 
 
 def forgotten(soul: dict[str, Any], name: str) -> dict[str, Any]:
-    """The soul with its history gone (diary, fact book, wants, the day's scratch and the
-    identity grown from them) and its config, bond line and reflexes kept. Reflexes are what
+    """The soul with its history gone (diary, fact book, house map, wants, the day's scratch
+    and the identity grown from them) and its config, bond line and reflexes kept. Reflexes are what
     its person taught it to do, not what it believes about itself."""
     out = copy.deepcopy(soul)
     goals = obj(out.get("goals"))
     scratch = obj(out.get("scratch"))
     out["log"], out["facts"] = [], []
+    # The house map is learned like the rest (growbot-map.js): a fresh creature draws its own.
+    out.pop("map", None)
     out["scratch"] = (
         {"reflexes": scratch["reflexes"]} if isinstance(scratch.get("reflexes"), list) else {}
     )

@@ -1,0 +1,338 @@
+"""Dave's sketch map of the house (growbot/patches/growbot-map.js, owner 2026-11-17): the map
+he adds to, asks and corrects, run in node; the page half (heading from the gyro, position
+from his walks, a turn stopped at its angle) against a fake page; and the wiring apply.py
+puts into the built creature page."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+_GROWBOT = Path(__file__).resolve().parents[3] / "growbot"
+_SITE = _GROWBOT / "site"
+_MAP = _GROWBOT / "patches" / "growbot-map.js"
+
+
+def _node(script: str) -> Any:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    prog = f"const L=require({json.dumps(str(_MAP))});const now=1e12;{script}"
+    out = subprocess.run([node, "-e", prog], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def test_the_built_site_carries_the_map_script_as_written() -> None:
+    assert (_SITE / "growbot-map.js").read_bytes() == _MAP.read_bytes()
+
+
+def test_a_room_starts_as_a_square_and_a_doorway_seen_reshapes_it_and_sketches_the_next() -> None:
+    got = _node(
+        "const m=L.fresh(now);"
+        "const a=L.apply(m,{room:'Living Room'},now);"
+        "const r0=JSON.parse(JSON.stringify(m.rooms[0]));"
+        # A doorway straight behind him, 0.6 m off: the room's back wall moves to it, and the
+        # kitchen he has not been in is sketched beyond.
+        "const b=L.apply(m,{door:'kitchen',dir:'behind',m:0.6},now);"
+        "console.log(JSON.stringify({a,b,r0,rooms:m.rooms,doors:m.doors,here:m.here}));"
+    )
+    assert got["a"] == ["a new room on your map: the living room (sketched as 4 by 4 m)"]
+    assert got["r0"] == {"n": "living room", "x": 0, "y": 0, "w": 4, "d": 4, "t": 1e12}
+    living, kitchen = got["rooms"]
+    # He faces +y (heading 90), so behind is -y: the south wall moved from -2 to -0.6.
+    assert living["d"] == pytest.approx(2.6) and living["y"] == pytest.approx(0.7)
+    assert kitchen["n"] == "kitchen" and kitchen["y"] == pytest.approx(-2.6)
+    assert kitchen["w"] == 4 and kitchen["d"] == 4
+    (door,) = got["doors"]
+    assert {door["a"], door["b"]} == {"living room", "kitchen"}
+    assert door["y"] == pytest.approx(-0.6) and abs(door["x"]) < 1e-9
+    assert "the kitchen is sketched beyond it" in got["b"][0]
+
+
+def test_a_thing_is_placed_from_where_it_sits_in_his_picture() -> None:
+    got = _node(
+        "const m=L.fresh(now);L.apply(m,{room:'living room'},now);"
+        # Left of the middle of his picture is to his left: counter-clockwise from his heading.
+        "L.apply(m,[{saw:'piano',x:0.2,m:2},{saw:'lamp',dir:'right',m:1},"
+        "{saw:'plant',x:0.5,h:0.5,size:1.2}],now);"
+        "const t=Object.fromEntries(m.things.map(x=>[x.n,x]));"
+        "console.log(JSON.stringify({t,hfov:L.CAM_HFOV,b:[L.bearingOf({x:0}),L.bearingOf({x:0.5}),"
+        "L.bearingOf({x:1}),L.bearingOf({dir:'behind-left'})]}));"
+    )
+    assert got["hfov"] == pytest.approx(59.84, abs=0.01)
+    assert got["b"][0] == pytest.approx(29.92, abs=0.01)
+    assert got["b"][1] == 0 and got["b"][2] == pytest.approx(-29.92, abs=0.01)
+    assert got["b"][3] == 135
+    piano, lamp, plant = got["t"]["piano"], got["t"]["lamp"], got["t"]["plant"]
+    assert piano["x"] < -0.5 and piano["y"] > 1.5 and piano["room"] == "living room"
+    assert lamp["x"] == pytest.approx(1) and abs(lamp["y"]) < 1e-9
+    # Filling half the picture's height, a 1.2 m thing is 1.2 / (0.5 * 2 tan 37.5) m away.
+    assert plant["y"] == pytest.approx(1.2 / (2 * 0.5 * 0.76733), abs=0.01)
+
+
+def test_he_refines_a_thing_he_sees_again_and_moves_one_that_moved() -> None:
+    got = _node(
+        "const m=L.fresh(now);L.apply(m,{room:'living room'},now);"
+        "L.apply(m,{saw:'couch',dir:'ahead',m:2},now);"
+        "const near=L.apply(m,{saw:'couch',dir:'ahead',m:2.4},now+1);"
+        "const y1=m.things[0].y;"
+        "const moved=L.apply(m,{saw:'couch',dir:'left',m:2},now+2);"
+        "const fix=L.apply(m,{fix:'couch',room:'nowhere'},now+3);"
+        "L.apply(m,{door:'kitchen',dir:'behind',m:1},now);"
+        "const fix2=L.apply(m,{fix:'couch',room:'kitchen'},now+4);"
+        "console.log(JSON.stringify({near,y1,moved,fix,fix2,c:m.things[0]}));"
+    )
+    assert got["near"] == []
+    assert got["y1"] == pytest.approx(2.2)  # the two sightings, averaged
+    assert got["moved"][0].startswith("the couch moved on your map")
+    assert got["fix"] == ["there is no nowhere on your map yet"]
+    assert got["fix2"][0].startswith("the couch moved on your map, now in the kitchen")
+    assert got["c"]["room"] == "kitchen" and got["c"]["rough"] == 1
+
+
+def test_reaching_a_thing_he_knows_puts_him_back_beside_it() -> None:
+    got = _node(
+        "const m=L.fresh(now);L.apply(m,{room:'living room'},now);"
+        "L.apply(m,{saw:'piano',dir:'ahead',m:3},now);"
+        # Dead reckoning said he walked 1 m; he is really at the piano.
+        "m.here.y=1;const said=L.apply(m,{at:'piano'},now);"
+        "const fresh=L.apply(m,{at:'bench'},now);"
+        "console.log(JSON.stringify({said,fresh,here:m.here,bench:m.things[1]}));"
+    )
+    assert got["said"] == ["you are at the piano (your place on the map moved 1.65 m)"]
+    assert got["here"]["y"] == pytest.approx(2.65) and abs(got["here"]["x"]) < 1e-9
+    assert got["fresh"] == ["the bench is on your map, beside you"]
+    assert got["bench"]["y"] == pytest.approx(3.0)
+
+
+def test_forget_and_rename_change_his_mind() -> None:
+    got = _node(
+        "const m=L.fresh(now);L.apply(m,[{room:'den'},{saw:'couch',m:1},{saw:'lamp',m:2}],now);"
+        "L.apply(m,{door:'hall',dir:'left',m:1.5},now);"
+        "const out=[...L.apply(m,{rename:'couch',to:'sofa'},now),...L.apply(m,{forget:'lamp'},now),"
+        "...L.apply(m,{rename:'den',to:'lounge'},now),...L.apply(m,{rename:'sofa',to:'hall'},now),"
+        "...L.apply(m,{forget:'hall'},now)];"
+        "console.log(JSON.stringify({out,m}));"
+    )
+    assert got["out"] == [
+        "the couch is the sofa now",
+        "the lamp is off your map",
+        "the den is the lounge now",
+        "the hall is off your map",
+    ]
+    m = got["m"]
+    assert [t["n"] for t in m["things"]] == ["sofa"] and m["things"][0]["room"] == "lounge"
+    assert [r["n"] for r in m["rooms"]] == ["lounge"] and m["doors"] == []
+    assert m["here"]["room"] == "lounge"
+
+
+def test_where_answers_from_him_and_gives_the_way_through_the_doorways() -> None:
+    got = _node(
+        "const m=L.fresh(now);"
+        "const empty=L.where(m,'piano',now);"
+        "L.apply(m,[{room:'living room'},{saw:'piano',x:0.2,m:2.5},"
+        "{door:'kitchen',dir:'behind',m:0.6}],now);"
+        "const here=L.where(m,'piano',now+120000), miss=L.where(m,'tuba',now),"
+        " me=L.where(m,'me',now);"
+        "const all=L.where(m,'map',now), kitchen=L.where(m,'kitchen',now);"
+        "L.apply(m,{room:'kitchen'},now);"
+        "const back=L.where(m,'the piano',now);"
+        "console.log(JSON.stringify({empty,here,miss,me,all,kitchen,back}));"
+    )
+    assert got["empty"].startswith("your map is empty")
+    assert got["here"] == (
+        "the piano is in the living room, last seen 2 min ago. by your map it is about 2.5 m"
+        " away, 19 degrees to your left: turn 19 degrees left (walk:{turn:19}) to face it."
+    )
+    assert got["miss"] == "the tuba is not on your map yet."
+    assert got["me"].startswith("by your map you are in the living room; nearest: the piano")
+    assert (
+        "the living room (you are here), about 4 by 2.6 m, with piano, doorways to kitchen"
+        in (got["all"])
+    )
+    assert got["kitchen"] == (
+        "to get to the kitchen: turn 180 degrees left (walk:{turn:180}) and walk about 0.6 m to"
+        " the doorway into the kitchen."
+    )
+    assert "to get there, go straight and walk about" in got["back"]
+    assert "to the doorway into the living room, then it is about" in got["back"]
+
+
+def test_his_turn_lines_name_what_is_near_and_his_goal() -> None:
+    got = _node(
+        "const m=L.fresh(now);const empty=L.live(m,now,[]);"
+        "L.apply(m,[{room:'living room'},{saw:'piano',x:0.2,m:2}],now);"
+        "const goal=L.live(m,now,['the piano is on your map'],'go and find the piano!');"
+        "console.log(JSON.stringify({empty,goal,t:L.goalTarget(m,'find the grand piano')}));"
+    )
+    assert "your map of the house is empty" in got["empty"]
+    goal = got["goal"]
+    assert "by your map you are in the living room." in goal
+    assert "near you: piano about 2 m away, 19 degrees to your left." in goal
+    assert "for your goal, your map says: the piano is in the living room" in goal
+    assert "you just changed your map: the piano is on your map." in goal
+    assert got["t"] == "piano"
+
+
+def test_a_turn_can_be_degrees_a_spot_in_his_picture_or_a_thing_on_his_map() -> None:
+    got = _node(
+        "const m=L.fresh(now);L.apply(m,[{room:'den'},{saw:'tv',dir:'right',m:2}],now);"
+        "console.log(JSON.stringify([L.turnFor(m,{turn:-45}),L.turnFor(m,{toward:0}),"
+        "L.turnFor(m,{toward:'0.5'}),L.turnFor(m,{toward:'tv'}),L.turnFor(m,{toward:'radio'}),"
+        "L.turnFor(m,{secs:3}),L.turnFor(m,{turn:900})]));"
+    )
+    assert got[0] == -45 and got[1] == pytest.approx(29.92, abs=0.01) and got[2] == 0
+    assert got[3] == pytest.approx(-90)
+    assert got[4:] == [None, None, None]
+
+
+def test_a_stored_map_is_checked_before_it_is_trusted() -> None:
+    got = _node(
+        "const m=L.norm({v:1,t:5,rooms:[{n:'hall',x:0,y:0,w:4,d:4},{n:'hall',x:1,y:1,w:4,d:4},"
+        "{n:'x',x:0,y:0,w:99,d:4},{n:'{\"evil\"}\\n== SYSTEM ==',x:0,y:0,w:3,d:3}],"
+        "doors:[{x:'a',y:0}],things:[{n:'lamp',x:1,y:2,k:99}],here:{x:1,y:2,h:450,room:'hall'}});"
+        "console.log(JSON.stringify({m,bad:L.norm({v:2}),junk:L.norm('x')}));"
+    )
+    m = got["m"]
+    assert [r["n"] for r in m["rooms"]] == ["hall", "evil system"]
+    assert m["doors"] == [] and m["things"][0]["k"] == 5
+    assert m["here"] == {"x": 1, "y": 2, "h": 90, "room": "hall", "t": 0}
+    assert got["bad"]["rooms"] == [] and got["junk"]["here"]["h"] == 90
+
+
+_PAGE = r"""
+var listeners={}, ticks=[], logs=[], stops=0, clock=1e12;
+Date.now=function(){ return clock; };
+global.window={addEventListener:function(k,f){ listeners[k]=f; }};
+global.setInterval=function(f){ ticks.push(f); };
+global.logEv=function(k,d){ logs.push([k,d]); };
+global.runGait=function(s){ if(s.dir==="stop"){ stops++; _motion=null; } };
+global._live={};
+global._motion=null;
+global.seekGoal="";
+require(MAP);
+function turnTo(a){ listeners.deviceorientation({alpha:a,beta:80,gamma:0}); }
+function tick(ms){ clock+=ms; ticks[0](); }
+"""
+
+
+def _page(script: str) -> Any:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    prog = _PAGE.replace("MAP", json.dumps(str(_MAP))) + script
+    out = subprocess.run([node, "-e", prog], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def test_his_heading_follows_the_gyro_and_his_walks_carry_him_along_it() -> None:
+    got = _page(
+        "turnTo(10);turnTo(40);tick(0);"
+        "var h1=_live.map.here.h;"
+        # A reading 90 degrees on in one step is a sensor re-reference: ignored.
+        "turnTo(130);var h2=_live.map.here.h;"
+        "_motion={kind:'walk',own:'forward',report:{mv:{kind:'walk'}}};"
+        "for(var i=0;i<40;i++) tick(250);"
+        "var walked={x:_live.map.here.x,y:_live.map.here.y};"
+        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};for(i=0;i<8;i++) tick(250);"
+        "console.log(JSON.stringify({h1,h2,walked,after:{x:_live.map.here.x,y:_live.map.here.y}}));"
+    )
+    # Phone upright (beta 80): a 30 degree turn of alpha is 30 degrees about the vertical.
+    assert got["h1"] == pytest.approx(120, abs=0.5)
+    assert got["h2"] == pytest.approx(120, abs=0.5)
+    # 10 s of his trained forward at 0.04 m/s, along heading 120.
+    import math
+
+    assert got["walked"]["x"] == pytest.approx(0.4 * math.cos(math.radians(120)), abs=0.01)
+    assert got["walked"]["y"] == pytest.approx(0.4 * math.sin(math.radians(120)), abs=0.01)
+    assert got["after"] == got["walked"]  # a spin carries him nowhere
+
+
+def test_a_turn_by_degrees_spins_and_the_gyro_stops_it_at_the_angle() -> None:
+    got = _page(
+        "turnTo(0);var o={walk:{turn:-60}};window.gbMap.reply(o,'event',{});"
+        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};"
+        "for(var a=0;a>-50;a-=5) turnTo((a+360)%360);var early=stops;"
+        "turnTo(360-55);var o2={walk:{turn:4}};window.gbMap.reply(o2,'event',{});"
+        "console.log(JSON.stringify({walk:o.walk,early,stops,small:o2.walk===undefined,"
+        "turn:logs.filter(function(l){ return l[0]==='map_turn'; })}));"
+    )
+    assert got["walk"] == {"gait": "spin_right", "dir": "right", "secs": 3.8, "gain": 0.99}
+    assert got["early"] == 0 and got["stops"] == 1
+    assert got["turn"][0] == ["map_turn", {"want": -60, "did": -55, "stop": 1}]
+    assert got["small"] is True  # too small to spin for: dropped
+
+
+def test_a_turn_whose_spin_was_replaced_stops_nothing() -> None:
+    got = _page(
+        "turnTo(0);window.gbMap.reply({walk:{turn:90}},'event',{});"
+        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};turnTo(10);"
+        "_motion={kind:'walk',own:'forward',report:{mv:{kind:'walk'}}};turnTo(95);turnTo(100);"
+        "console.log(JSON.stringify({stops}));"
+    )
+    assert got["stops"] == 0
+
+
+def test_where_is_a_tool_with_a_follow_up_and_map_changes_show_next_turn() -> None:
+    got = _page(
+        "var follows=[];"
+        "global.gbToolFollow=function(tag,found,ev){ follows.push([tag,found]); return true; };"
+        "global.gbToolPill=function(){};"
+        "var a=window.gbMap.reply({map:[{room:'den'},{saw:'tv',dir:'left',m:2}]},'event',{});"
+        "var live1=window.gbMap.live(true), live2=window.gbMap.live(true);"
+        "var b=window.gbMap.reply({where:'tv'},'event',{});"
+        "var c=window.gbMap.reply({where:'tv'},'event',{recallFollow:true});"
+        "var d=window.gbMap.reply({where:'tv'},'tick',{});"
+        "clock+=21000;var e=window.gbMap.reply({where:'tv'},'tick',{});"
+        "var f=window.gbMap.reply({where:'omit'},'event',{});"
+        "console.log(JSON.stringify({a,b,c,d,e,f,follows,live1,live2}));"
+    )
+    assert got["a"] is False
+    assert "you just changed your map: a new room on your map: the den" in got["live1"]
+    assert "you just changed your map" not in got["live2"]
+    assert [got[k] for k in "bcdef"] == [True, False, False, True, False]
+    assert got["follows"][0][0] == "where"
+    assert got["follows"][0][1].startswith('you looked at your map for "tv": the tv is in the den')
+
+
+def test_the_creature_page_is_wired_to_the_map() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    soul = (_SITE / "v3" / "soul.js").read_text(encoding="utf-8")
+    assert '<script src="/growbot-talklog.js?v=' in page
+    assert '<script src="/growbot-map.js?v=' in page
+    # Before the walk is dispatched, so walk:{turn} is a spin by the time runGait sees it.
+    hook = page.index("window.gbMap.reply(o,kind,extra)")
+    assert hook < page.index("var walkIntent=o.walk&&")
+    assert 'if(window.gbMap) _gbLive+=window.gbMap.live(MODE==="legs");' in page
+    assert 'm=/^\\s*\\{\\s*"where"\\s*:\\s*"([^"]*)"/.exec(s);' in page
+    assert '\'"map":"OMIT unless you just learned where something in the house is' in prompts
+    assert '\'"where":"OMIT almost always. a thing or room on your map' in prompts
+    assert "emit walk:{turn:degrees}, positive to your left" in prompts
+    assert 'if (newer.map && typeof newer.map === "object"' in soul
+    assert 'if (raw.map && typeof raw.map === "object") s.map = raw.map;' in soul
+    assert "if (rt.map) soul.map = rt.map;" in soul
+
+
+def test_the_newer_map_wins_a_merge_and_a_soul_file_carries_it() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    soul = (_SITE / "v3" / "soul.js").read_text(encoding="utf-8")
+    start = soul.index("function unionByTime(")
+    end = soul.index("function adoptStore(")
+    prog = (
+        "function soulTagOf(){ return ''; } function mergeGoals(){}"
+        " function unionList(a){ return a; } function mergeRulesGone(){}\n"
+        + soul[start:end]
+        + "var s={log:[],map:{v:1,t:5}};mergeSoulInto({log:[],map:{v:1,t:9}},s);var a=s.map.t;"
+        "mergeSoulInto({log:[],map:{v:1,t:2}},s);var b=s.map.t;"
+        "mergeSoulInto({log:[]},s);console.log(JSON.stringify([a,b,s.map.t]));"
+    )
+    out = subprocess.run([node, "-e", prog], capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout) == [9, 9, 9]

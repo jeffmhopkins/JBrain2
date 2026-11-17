@@ -111,6 +111,10 @@ class Sim:
         self.checks: list[dict[str, Any]] = []
         self.states: list[dict[str, Any]] = []
         self.frames: list[tuple[float, bytes]] = []  # (t, jpeg) of what the camera showed
+        # Dave's sketch map (growbot-map.js) as the page holds it: the newest whole, and each
+        # second where it says he is beside where he really is (plan.py scores the two).
+        self.dave_map: dict[str, Any] | None = None
+        self.map_track: list[dict[str, Any]] = []
         self._agent_ws: Any = None
         self._acks: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._loop: asyncio.Task[None] | None = None
@@ -367,6 +371,22 @@ class Sim:
             evs = await self.page.evaluate("() => window.__simEvents.splice(0)")
         except Exception:
             return
+        try:
+            m = await self.page.evaluate("() => window.gbMap ? window.gbMap.map() : null")
+        except Exception:
+            m = None
+        if isinstance(m, dict) and isinstance(m.get("here"), dict) and self.states:
+            st = self.states[-1]
+            self.dave_map = m
+            self.map_track.append(
+                {
+                    "t": st["wall"],
+                    "here": dict(m["here"]),
+                    "x": st["x"],
+                    "y": st["y"],
+                    "face": (st["nose_deg"] + 360.0) % 360.0 - 180.0,
+                }
+            )
         for ev in evs:
             t = round(ev.get("t", 0) / 1000 - self.epoch0, 2)
             self.timeline.append(
