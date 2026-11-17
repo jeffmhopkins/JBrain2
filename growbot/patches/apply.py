@@ -4233,6 +4233,20 @@ _GB_EXPLORE_JS = (
     " GB_QUIET_USED_MS=1800000, _gbGoalBeatT=0, _gbQuietUsedT=0, _gbDoneGen={};\n"
     "function _gbOnlyDone(a,b){ for(var g=a+1;g<=b;g++) if(!_gbDoneGen[g]) return false;"
     " return b>a; }\n"
+    # Spins since the goal began, in order, give the span of headings he has faced (a spin's
+    # stored yaw is signed, + to his left); his camera adds its 60 degrees to it. Measured by
+    # the phone, not commanded.
+    "var _gbGoalT=0;\n"
+    "function _gbLookedLine(){ try{ if(MODE!==\"legs\"||!_gbGoalT) return \"\";"
+    " var L=_spinMeasLoad().filter(function(x){ return x.t>=_gbGoalT; }).sort(function(a,b){"
+    " return a.t-b.t; }), h=0, lo=0, hi=0, tot=0;"
+    " L.forEach(function(x){ var y=+x.y;"
+    " h+=y; tot+=Math.abs(y); lo=Math.min(lo,h); hi=Math.max(hi,h); });"
+    " var seen=Math.min(360,Math.round(hi-lo+60));"
+    " return \" Since you took this goal \"+Math.round((Date.now()-_gbGoalT)/1000)+\" s ago your"
+    " spins have turned you \"+Math.round(tot)+\" degrees in all, measured; with your camera's"
+    " 60 degrees across, you have looked over about \"+seen+\" of the 360 degrees around"
+    " you.\"; }catch(e){ return \"\"; } }\n"
     'function _gbGoalStick(){ return MODE!=="phone"; }\n'
     "function _gbPersonT(){ return Math.max(_quietWakeT,_quietWordT,tapReflexT); }\n"
     'function _gbOwnWalking(){ return MODE==="legs"&&typeof window.gbOwnWalking==="function"'
@@ -4419,6 +4433,58 @@ EXPLORE_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += EXPLORE_PATCHES
+
+OLD_SEEK_LEGS = (
+    ':"SEEK — when your person says \\"find X\\" or \\"let\'s play seek\\", hold that ONE '
+    'goal across beats. Each beat: look at what you SEE now and either WALK toward '
+    'it (walk:{\\"gait\\":\\"official\\",\\"dir\\":\\"fwd\\",\\"secs\\":4-10} to travel, or '
+    'dir \\"left\\"|\\"right\\" with secs 1-2 to turn), OR if you can plainly see you '
+    'REACHED it, celebrate in your say AND add \\"found\\":true, OR if it\'s nowhere '
+    'say what you need. Never spin in circles or forget the goal.\\n")+'
+)
+NEW_SEEK_LEGS = (
+    ':"SEEK — when your person says \\"find X\\", \\"go to X\\" or \\"let\'s play seek\\", '
+    'hold that ONE goal across beats. Each beat, look at what you SEE now. NOT IN '
+    'VIEW: it could be anywhere around you, behind you too. Turn to look, a good way '
+    'each time (walk:{\\"gait\\":\\"spin_left\\",\\"dir\\":\\"left\\",\\"secs\\":5}, or right; '
+    'a spin under 3 s barely turns you, and your Recent spins line says how far a '
+    'second takes you). Your goal reminder says how much of the room around you you '
+    'have looked over so far. IN VIEW: your camera sees about 60 degrees across, so '
+    'a thing at the edge of your picture is about 30 degrees off; turn until it is '
+    'near the middle, then WALK toward it '
+    '(walk:{\\"gait\\":\\"official\\",\\"dir\\":\\"fwd\\",\\"secs\\":8-15}), and send that '
+    'walk again on each look while it stays ahead, so you keep going. Asked only to '
+    'FIND it: plainly seeing it is finding it, so celebrate and add \\"found\\":true. '
+    'Asked to GO TO it (or bring, touch, sit by it): you are there only when it is '
+    'close and big in your view; then celebrate and add \\"found\\":true. Never claim '
+    'to see something that is not in your picture, or forget the goal.\\n")+'
+)
+SEEK_PATCHES: list[tuple[str, str, str, int]] = [
+    # A fresh Dave, asked to walk over to the piano in the sim house (2026-11-17), did three
+    # 2 s spins (about 20 degrees each) the long way round and then asked where to look:
+    # upstream's legs seek says to turn with 1-2 s spins and to say what it needs when the
+    # thing is nowhere. He now sweeps in real turns all the way round first, centres what he
+    # sees with the camera's real width, walks long, and tells finding apart from arriving.
+    ("v3/next.html", OLD_SEEK_LEGS, NEW_SEEK_LEGS, 1),
+    # ...and no rule for how far to look: the reminder gives him what he could not know,
+    # how much of the room his measured spins have shown him since he took the goal.
+    (
+        "v3/next.html",
+        'logEv("seek_set",{what:seekGoal,raw:raw?1:0});',
+        '_gbGoalT=Date.now(); logEv("seek_set",{what:seekGoal,raw:raw?1:0});',
+        1,
+    ),
+    (
+        "v3/next.html",
+        " Your person outranks the goal: when they speak, answer them first, then return to"
+        " it. Never repeat the same goal line two turns in a row.\") : \"\";",
+        " Your person outranks the goal: when they speak, answer them first, then return to"
+        " it. Never repeat the same goal line two turns in a row.\"+_gbLookedLine()) : \"\";",
+        1,
+    ),
+]
+PATCHES += SEEK_PATCHES
+
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (

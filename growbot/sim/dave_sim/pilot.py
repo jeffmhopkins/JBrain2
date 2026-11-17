@@ -96,6 +96,15 @@ class Pilot:
             self.target = ""
             return {"say": f"I found the {name}!", "found": True, "phase": "finished"}
         it = house.ITEM[name]
+        # In another room: make for the doorway first (a point just on this side of it, then
+        # one just through), not straight at the wall between.
+        here, there = house.room_at(s["x"], s["y"]), it.room
+        door_y = sum(house.DOOR) / 2.0
+        if here and here != there:
+            side = 1.0 if s["x"] > house.DIVIDE_X else -1.0
+            near_door = abs(s["y"] - door_y) < 0.2 and abs(s["x"] - house.DIVIDE_X) < 0.45
+            tx = house.DIVIDE_X - side * 0.4 if near_door else house.DIVIDE_X + side * 0.35
+            it = type("Point", (), {"x": tx, "y": door_y})()
         facing = s["nose_deg"] + 180.0  # the camera looks out of the tail
         bearing = math.degrees(math.atan2(it.y - s["y"], it.x - s["x"]))
         err = _wrap(bearing - facing)
