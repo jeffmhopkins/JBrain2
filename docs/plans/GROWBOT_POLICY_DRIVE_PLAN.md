@@ -1,6 +1,6 @@
 # GrowBot policy drive — trained skills on the real robot
 
-> **Status:** In progress · **Last verified:** 2026-11-16 · **Waves:** P1🟡 P2✅ P3🟡 P4◻️ P5◻️
+> **Status:** In progress · **Last verified:** 2026-11-17 · **Waves:** P1🟡 P2✅ P3🟡 P4◻️ P5◻️
 
 The owner's ask (2026-11-14/15): start wiring GrowBot_Training's locomotion policies into the
 robot's software now, without waiting for training to finish. First, follow a face. Then answer the
@@ -105,7 +105,7 @@ The real-robot trials after P5 are GrowBot_Training's phase 6.
   before it backs, since backing travels opposite the camera and would close on them. No reading for 0.5 s drops
   speed to 0. After 3 s it stands and turns toward where the person was last seen. A walk that
   never locks within 6 s, or loses the person for 8 s, ends with the legs released and says why.
-  A follow runs up to 2 minutes and spends the legs' duty budget as any walk does. "stop stop",
+  A follow runs up to 5 minutes (owner, 2026-11-17; a Drive keeps 2) and spends the legs' duty budget as any walk does. "stop stop",
   the Body tab's Stop and any other move end it.
 - **Dry run (built, P3):** the same tracker and follower with the legs left alone. The
   creature's screen (which faces the person) shows an arrow the way it would turn, the skill the
@@ -183,7 +183,7 @@ each loss (with where it was last seen) and each find (with how long it took). F
   else Flip frames), the 60° width of view, whether a positive pitch raises the camera toward a
   face above centre, and the box's latency (a reading is placed with the heading when it lands,
   not when the frame was taken).
-- **The Body tab doesn't hear a follow end on the creature** (lost, nobody seen, 2 minutes):
+- **The Body tab doesn't hear a follow end on the creature** (lost, nobody seen, 5 minutes):
   its button stays on Stop following until tapped. The creature's own screen and caption say it.
 - **Pose as the fallback** (a person facing away has no face box) isn't built; a face is needed.
 
