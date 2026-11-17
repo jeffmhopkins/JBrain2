@@ -168,7 +168,9 @@ def test_his_turn_lines_name_what_is_near_and_his_goal() -> None:
         "const m=L.fresh(now);const empty=L.live(m,now,[]);"
         "L.apply(m,[{room:'living room'},{saw:'piano',x:0.2,m:2}],now);"
         "const goal=L.live(m,now,['the piano is on your map'],'go and find the piano!');"
-        "console.log(JSON.stringify({empty,goal,t:L.goalTarget(m,'find the grand piano')}));"
+        "L.apply(m,[{saw:'lamp',x:0.5,m:0.4}],now);"
+        "const near=L.live(m,now,[],'walk over to the lamp');"
+        "console.log(JSON.stringify({empty,goal,near,t:L.goalTarget(m,'find the grand piano')}));"
     )
     assert "your map of the house is empty" in got["empty"]
     goal = got["goal"]
@@ -176,6 +178,9 @@ def test_his_turn_lines_name_what_is_near_and_his_goal() -> None:
     assert "near you: piano about 2 m away, 19 degrees to your left." in goal
     assert "for your goal, your map says: the piano is in the living room" in goal
     assert "you just changed your map: the piano is on your map." in goal
+    # Past arm's length his own map says he isn't there, however close it looks.
+    assert "so by your map you are not at the piano yet." in goal
+    assert "not at the lamp" not in got["near"]
     assert got["t"] == "piano"
 
 

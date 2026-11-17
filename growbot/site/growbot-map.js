@@ -456,6 +456,10 @@
     }
     var gt = goal && goalTarget(m, goal);
     if (gt) lines.push("for your goal, your map says: " + where(m, gt, now));
+    // The low camera makes everything look close (live w5: "I made it" with his own map
+    // saying 1.5 m): past arm's length, the map says plainly he is not there yet.
+    var gth = gt && thingOf(m, gt);
+    if (gth && !gth.rough && relTo(m, gth.x, gth.y).d > 0.6) lines.push("so by your map you are not at the " + gth.n + " yet.");
     if (changed && changed.length) lines.push("you just changed your map: " + changed.join("; ") + ".");
     return "\n\n== YOUR MAP (a rough sketch you keep; where you are is a guess from your own walking) ==\n" + lines.join("\n");
   }

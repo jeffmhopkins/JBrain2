@@ -53,8 +53,66 @@ def _through(d: Any, x: float, y: float) -> tuple[float, float]:
     pos, mid = (x, y), (d.x, d.y)
     side = 1.0 if pos[n] > mid[n] else -1.0
     lined = abs(pos[1 - n] - mid[1 - n]) <= 0.25 and abs(pos[n] - mid[n]) <= 0.7
-    off = -0.6 * side if lined else 0.5 * side
+    # In front of it, close enough to fit the gap a couch leaves along the wall.
+    off = -0.6 * side if lined else 0.25 * side
     return (d.x + off, d.y) if n == 0 else (d.x, d.y + off)
+
+
+# How far off furniture the stand-in steers its corners: about his body's half length and
+# some slack, inside the flat's 0.45 m gaps.
+CLEAR_M = 0.18
+
+
+def _crosses(ax: float, ay: float, bx: float, by: float, r: tuple[float, ...]) -> float | None:
+    """Where along a->b (0..1) the segment first enters rectangle r (x0, y0, x1, y1), or
+    None if it misses (Liang-Barsky)."""
+    t0, t1 = 0.0, 1.0
+    dx, dy = bx - ax, by - ay
+    for p, q in ((-dx, ax - r[0]), (dx, r[2] - ax), (-dy, ay - r[1]), (dy, r[3] - ay)):
+        if p == 0:
+            if q < 0:
+                return None
+            continue
+        t = q / p
+        if p < 0:
+            t0 = max(t0, t)
+        else:
+            t1 = min(t1, t)
+        if t0 > t1:
+            return None
+    return t0
+
+
+def _around(house: Any, x: float, y: float, tx: float, ty: float) -> tuple[float, float]:
+    """(tx, ty), or the corner of the first piece of furniture in the way that is shortest
+    round it: the stand-in has no eyes for obstacles, so it walks round the true footprint."""
+    hits = []
+    for it in house.ITEMS:
+        if it.name in ("rug",):
+            continue
+        r = (it.x - it.hx - CLEAR_M, it.y - it.hy - CLEAR_M)
+        r += (it.x + it.hx + CLEAR_M, it.y + it.hy + CLEAR_M)
+        inside = r[0] < x < r[2] and r[1] < y < r[3]
+        if r[0] < tx < r[2] and r[1] < ty < r[3]:
+            continue  # the thing he is going to
+        t = _crosses(x, y, tx, ty, r)
+        if t is not None and not inside and math.hypot(tx - x, ty - y) * t > 0.05:
+            hits.append((t, r))
+    if not hits:
+        return tx, ty
+    _, r = min(hits)
+    m = 0.05  # just off the corner, so the leg to it doesn't graze the box
+    corners = [
+        (r[0] - m, r[1] - m),
+        (r[2] + m, r[1] - m),
+        (r[0] - m, r[3] + m),
+        (r[2] + m, r[3] + m),
+    ]
+    clear = [c for c in corners if _crosses(x, y, c[0], c[1], r) is None]
+    pick = clear or corners
+    return min(
+        pick, key=lambda c: math.hypot(c[0] - x, c[1] - y) + math.hypot(tx - c[0], ty - c[1])
+    )
 
 
 def _wrap(a: float) -> float:
@@ -247,6 +305,7 @@ class Pilot:
             # Through the next doorway on the way, not into the wall beside it: first to a
             # spot in front of it on this side, then straight through.
             tx, ty = _through(house.route(here, there)[0], s["x"], s["y"])
+        tx, ty = _around(house, s["x"], s["y"], tx, ty)
         facing = s["nose_deg"] + 180.0  # the camera looks out of the tail
         bearing = math.degrees(math.atan2(ty - s["y"], tx - s["x"]))
         err = _wrap(bearing - facing)
