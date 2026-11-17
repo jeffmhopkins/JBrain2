@@ -5654,7 +5654,7 @@ def test_on_legs_a_seek_sweeps_all_round_and_tells_finding_from_arriving() -> No
 
 def test_his_goal_reminder_says_how_much_of_the_room_he_has_looked_over() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert '_gbGoalT=Date.now(); logEv("seek_set"' in page
+    assert '_gbGoalT=Date.now(); _gbFarHolds=0; _gbFarSaid=null; logEv("seek_set"' in page
     assert 'two turns in a row."+_gbLookedLine()) : "";' in page
     spins = (
         "_gbGoalT=now-40000; var _seekSeen=false, seekGoal='find the piano', SEEK_ACTION=/x/;"
