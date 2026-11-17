@@ -101,6 +101,30 @@ is the page's walk loop ticking at 18 to 20 Hz in the sim, late and uneven, not 
 25 Hz the policy was trained at: replaying those late ticks
 in the trainer halves its distance.
 
+## The house
+
+`Options(scene="house")` sets him down in GrowBot_Training's furnished house
+(`growbot_train/house.py`) instead of the bare room: a living room, where he starts at the
+origin facing its far wall, and a kitchen behind him through a doorway. The living room has a
+piano in its far corner, out of his first view, a couch, a bookshelf, a plant and a lamp; the
+kitchen a fridge, a counter and a table. Its walls and furniture stop him, where the bare
+room's walls let him walk through. `Options.at` sets where he starts and which way he faces.
+
+`find_piano` asks him to find the piano and checks he gets within 60 cm and says so;
+`explore_alone` leaves him alone for ten minutes and scores how far he went. They run for
+minutes, so their reports skip the onlooker video, which re-renders every pose. Every run
+instead draws `plan.svg` (`dave_sim/plan.py`): his path from above, coloured by speed, with
+arrows for where his camera faced and a numbered dot wherever he said something, and the
+report lists how far he walked, how long he spent in each room and how close he came to each
+piece of furniture.
+
+`--pilot` swaps the box for a stand-in brain (`dave_sim/pilot.py`) that answers from the
+sim's ground truth: told to find something it turns toward it, sends long forward walks and
+says it found it once there; left alone it heads for the nearest furniture it hasn't been
+near. It answers 4 s after each ask, near the box's pace. That tests the page's plumbing
+(goals that stick, walks that carry on, looks while walking, the no-look stop) with no box,
+so a live run only has to prove the thinking.
+
 ## Tests
 
 The pure halves (the fake box, the chip model, the model plumbing) are tested by the

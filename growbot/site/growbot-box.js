@@ -2284,7 +2284,7 @@
     });
   }
 
-  function start(pid, move, secs, attempt, drive, following) {
+  function start(pid, move, secs, attempt, drive, following, own) {
     // `pid` is one library policy, or a skill set {look?, forward?, back?} of them.
     var skills = pid && typeof pid === "object" ? pid : null;
     if (following && !skills) { refuse(attempt, "no_skills", "following needs a skill set"); return; }
@@ -2301,6 +2301,12 @@
     var dflt = move === "forward" || move === "back" ? 8 : 4, walkS = policySeconds(secs, dflt, left);
     carryLegMotion();
     var gen = _motionGen, M = { kind: "walk", loading: true, report: attempt, drive: following ? "" : drive || "" };
+    // Dave's own walk (gbOwnWalk): another ask for the same walk while this one runs carries
+    // it on (M.extend) instead of a new stance glide, and it stops itself when he stops looking.
+    if (own) M.own = move;
+    // Until the stride starts, a longer ask is a longer walk; once it runs, extend() below.
+    // Each returns the walk's whole length in seconds when it grew, else 0.
+    M.extend = function (s) { if (s <= walkS) return 0; walkS = s; return walkS; };
     _motion = M;
     var fol = null;
     _moveReport(attempt, "accepted", "loading_policy");
@@ -2356,6 +2362,17 @@
       var L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0;
       var prepEnd = Date.now() + PREP_MS, grav = { x: 0, y: 0, z: 0, n: 0 };
       var R = null, heading = 0, lastT = 0, endT = 0, upB = null, tipN = 0, jerkN = 0;
+      // At least `s` more seconds from now; an ask within what is left changes nothing (only a
+      // stop ever shortens a walk).
+      M.extend = function (s) {
+        if (!endT) { if (s <= walkS) return 0; walkS = s; return walkS; }
+        var want = Date.now() + s * 1000;
+        if (want <= endT) return 0;
+        _walkLog.push({ t: Date.now(), ms: want - endT });
+        endT = want;
+        selfMoveUntil = Math.max(selfMoveUntil, endT + 3500);
+        return Math.round((endT - walkT) / 100) / 10;
+      };
       M.loading = false;
       _walkLog.push({ t: Date.now(), ms: walkS * 1000 });
       selfMoveUntil = Date.now() + PREP_MS + walkS * 1000 + 3500;
@@ -2462,10 +2479,11 @@
             selfMoveUntil = Math.max(selfMoveUntil, endT + 3500);
           }
         }
-        if (Date.now() >= endT) {
+        var noLook = M.own && ownNoLook(walkT);
+        if (Date.now() >= endT || noLook) {
           _imuWhy = "done";
           carryLegMotion({ l: 90, r: 90 });
-          try { logEv("walk_end", { gait: "trained", policy: label, why: "done", heading: Math.round(heading / D) }); } catch (e) {}
+          try { logEv("walk_end", { gait: "trained", policy: label, why: noLook ? "no_look" : "done", heading: Math.round(heading / D) }); } catch (e) {}
           $("brainTxt").textContent = "awake";
           return;
         }
@@ -2581,6 +2599,18 @@
   } catch (e) {}
   // True when it took the walk: `attempt` is runGait's, so the move's history reads as the
   // creature's own walk, marked trained.
+  // A long walk is only safe while he keeps looking (upstream's LONG WALK dead-man, 11-16): with
+  // no thought issued or answered for OWN_LOOK_MS since the stride began he stops, as he does
+  // when the brain can't answer. A thought still in flight is a look, for twice as long: the
+  // box's model can take tens of seconds over one with pictures.
+  var OWN_LOOK_MS = 30000;
+  function ownNoLook(t0) {
+    var fl = typeof inFlight !== "undefined" && inFlight && !(typeof dreaming !== "undefined" && dreaming);
+    var last = Math.max(t0, typeof lastCallT === "number" ? lastCallT : 0, typeof lastReplyT === "number" ? lastReplyT : 0);
+    return !!t0 && Date.now() - last >= OWN_LOOK_MS * (fl ? 2 : 1);
+  }
+  // For the page's walk look (apply.py EXPLORE_PATCHES): his own walk is under way.
+  window.gbOwnWalking = function () { return !!(_motion && _motion.own); };
   window.gbOwnWalk = function (spec, dir, attempt) {
     if (Date.now() - ownT > OWN_MS) { try { readOwnSet(); } catch (e) {} }
     // The model reads its walks back as "walk fwd (trained)" and may echo the gait. runGait has
@@ -2595,6 +2625,24 @@
     var fwd = !back && /^(fwd|forward|ahead|go|straight|walk|closer)$/.test(dir);
     var move = back ? "back" : fwd ? "forward" : "";
     if (!move || !ownSet[move]) return false;
+    // The same walk, asked again while it runs (he sends walk each look to keep going): carry
+    // it on, no new stance. The ask itself is reported merged; the running walk stays his
+    // latest move, its granted length and continuation count updated.
+    var M = _motion;
+    if (M && M.own === move && typeof M.extend === "function" && M.report && M.report.mv) {
+      var s = policySeconds(+spec.secs || 0, 8, Infinity), mv = M.report.mv;
+      var grew = M.extend(s);
+      attempt.mv = { kind: "walk", gait: "trained", dir: dir, policy: mv.policy };
+      _moveReport(attempt, "merged", grew ? "continued" : "already_going");
+      attempt.ended = 1;
+      _moveLast = M.report;
+      if (grew) {
+        mv.ext = (mv.ext || 0) + 1;
+        mv.secs = grew;
+      }
+      try { logEv("walk_extend", { s: s, n: mv.ext || 0, grew: grew ? 1 : 0 }); } catch (e) {}
+      return true;
+    }
     // A seek waits for a full walk rather than a stub (runGait's defer); let it.
     var left = dutyLeftMs();
     if (typeof seekGoal !== "undefined" && seekGoal && left < Math.min((+spec.secs || 8) * 1000, dutyCapMs())) return false;
@@ -2604,7 +2652,7 @@
     };
     if (+spec.secs > 0) attempt.mv.ask = +spec.secs;
     attempt.mv.secs = policySeconds(+spec.secs || 0, 8, left);
-    start(ownSet, move, +spec.secs || 0, attempt, "", false);
+    start(ownSet, move, +spec.secs || 0, attempt, "", false, true);
     return true;
   };
 })();

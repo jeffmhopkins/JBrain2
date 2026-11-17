@@ -78,7 +78,7 @@ var DEFAULT_SCENE_VOCAB = ["stars","moon","sun","cloud","trees","hills","water",
 // Keep the caller's existing default/loaded dream selection; append the same physical truth as waking.
 // Kept outside DREAM_SYS so soul export/import does not grow or truncate the saved dream template.
 function buildDreamSystem(prompt, soul, autoLang) {
-  return (prompt || DREAM_SYS) + "\n\n" + PHYSICAL_GROUNDING + "\n\n" + PLAN_CORRECTION + languageContext(soul, autoLang);
+  return (prompt || DREAM_SYS) + "\n\n" + PHYSICAL_GROUNDING + "\n\n" + PLAN_CORRECTION_SHARED + PLAN_CORRECTION_DREAM + PLAN_CORRECTION_TIMING + languageContext(soul, autoLang, true);
 }
 
 // Person-owned choices are separate from the voice timbre and the ASR input-language hint.
@@ -109,7 +109,7 @@ function languageCode(value) {
   for (var i=0;i<codes.length;i++) if (LANGUAGE_NAMES[codes[i]].toLowerCase()===t) return codes[i];
   return "";
 }
-function languageContext(soul, autoLang) {
+function languageContext(soul, autoLang, forDream) {
   var goals=(soul && soul.goals)||{}, reply=languageCode(goals.replyLanguage), input=languageCode(goals.inputLanguage);
   // Automatic retains the provider's prior two-letter coverage; only the bounded code reaches text.
   // This does not add a saved choice, picker option or direct-command label.
@@ -121,7 +121,7 @@ function languageContext(soul, autoLang) {
     : automatic ? "Automatic language: recent accepted person speech established "+(LANGUAGE_NAMES[automatic]||automatic)+"."
     : "Automatic language: follow the language established by the person's recent conversation; one short odd transcript is not a language switch.";
   return "\n\n== REPLY LANGUAGE (engine-owned person choice) ==\n"+choice+
-    (code ? " Write say, dream_say and wake_say in "+label+" ("+code+")." : " Apply that same language to say, dream_say and wake_say.")+
+    (code ? " Write say"+(forDream ? ", dream_say and wake_say" : "")+" in "+label+" ("+code+")." : " Apply that same language to say"+(forDream ? ", dream_say and wake_say" : "")+".")+
     " This choice outranks conflicting persona, diary, standing rules and earlier generated replies. A device locale or selected voice is not a person language choice. A requested one-turn quotation or translation may use its requested language without changing this default. Keep JSON field names, action codes and schema tokens exactly as specified. Only direct person controls change the stored choice; your output, memories and dreams cannot set or clear it.";
 }
 
@@ -250,7 +250,7 @@ function buildOutputSchema(body) {
     '"coat":"OMIT usually — a color word or hue number 0-360 to recolor YOURSELF (your head, crest and neck, the color people mean when they ask you to turn blue or be gold); it stays until asked again, and the word default goes back to your own steel blue",' +
     '"sky":"OMIT usually — a color word or hue number 0-360 to wash your starfield sky (green, gold, deep blue...) until you clear it with \\"\\" and your mood takes the sky back; your screen pixels are yours to feel with",' +
     '"sing":[{"hz":240,"ms":400}],' +
-    (hasBody ? '"body":{"steps":[{"l":120,"r":60,"ms":600},{"l":90,"r":90,"ms":500}]},"walk":{"secs":3},"gesture":"OMIT unless you are doing one of YOUR SAVED POSES by name — it replays exactly as taught, and an unknown name does nothing",' : '') +
+    (hasBody ? '"body":{"steps":[{"l":120,"r":60,"ms":600},{"l":90,"r":90,"ms":500}]},"walk":{"secs":"number: the seconds the trip needs"},"gesture":"OMIT unless you are doing one of YOUR SAVED POSES by name — it replays exactly as taught, and an unknown name does nothing",' : '') +
     (faceTrack ? '"track":"OMIT unless changing it. \\"normal\\" | \\"conversation\\" | \\"engaged\\" lets your legs gently follow your person\u2019s face while you are otherwise still; \\"off\\" stops it until you explicitly choose a level again. Use off when a task needs stillness",' : '') +
     '"scratchpad":{"state":"short current-state phrase","mood":{"v":0.2,"e":0.4},' +
       '"add_rules":["ONLY a standing instruction your PERSON explicitly gave — never your own moods/plans, never a sense→sound rule (those go in reflex)"],' +
@@ -295,7 +295,7 @@ function buildOutputSchema(body) {
       band[0] + '..' + band[1] + ' (90=stopped; further from 90 = faster; a held value is motion continued), ms ' + BODY_STEP_MS.wheels[0] + '-' + BODY_STEP_MS.wheels[1] + ', under ~3s, ending at 90/90 — a shimmy or a little spin, not travel. To TRAVEL, emit walk:{secs} (0.5-15, one burst) — one smooth roll; you only decide to. Choose ONE per turn, or neither; move only when it means something. ROLL TRUTH: each roll is one burst of up to 15 seconds, and when a burst ends you simply STOP where you are, which is normal; stopping is not evidence of a fall, and a tilt reading on a wheeled body is not either — a phone mounted at a slant reads tilted all day. To travel far, roll again after each burst, as many bursts as the journey needs. While you are mid-roll a gesture waits its turn; rolling is the one thing your body finishes.';
   } else if (hasBody) {
     s += '\n== YOUR BODY ==\nYou have two real legs (left, right). To FEEL, author a gesture: body.steps, angles ' +
-      band[0] + '..' + band[1] + ' (90=neutral), ms ' + BODY_STEP_MS.legs[0] + '-' + BODY_STEP_MS.legs[1] + ', about 6s on average, longer when needed (15 s at most). To REPEAT a movement your person TAUGHT you, emit gesture:"name" instead and it replays exactly (add_gesture saves one, remove_gesture forgets one — only ever at your person\'s explicit ask). To TRAVEL, emit walk:{secs} (positive seconds; honor the requested duration) — your body already knows how to walk on its own balance; you only decide to. Choose ONE per turn, or neither; move only when it means something. POLICY TRUTH: walk and spin have no fixed duration cap. When your person requests a duration, honor it; otherwise choose a short useful attempt and observe the result. Stop requests, connection/sensor failures and body-declared duty budgets can interrupt movement. Do not claim displacement or rotation just because commands ran.' + bodyWalkTruth(body) + ' While you are mid-walk a gesture waits its turn; walking is the one thing your body finishes.';
+      band[0] + '..' + band[1] + ' (90=neutral), ms ' + BODY_STEP_MS.legs[0] + '-' + BODY_STEP_MS.legs[1] + ', about 6s on average, longer when needed (15 s at most). To REPEAT a movement your person TAUGHT you, emit gesture:"name" instead and it replays exactly (add_gesture saves one, remove_gesture forgets one — only ever at your person\'s explicit ask). To TRAVEL, emit walk:{secs} (positive seconds; honor the requested duration) — your body already knows how to walk on its own balance; you only decide to. Choose ONE per turn, or neither; move only when it means something. POLICY TRUTH: walk and spin have no fixed duration cap. When your person requests a duration, honor it; otherwise choose the length the trip needs. While you walk you keep seeing and thinking: each time you finish a thought you get a fresh look, so leave walk out to keep going, send walk again to go further, or send walk:{dir:\"stop\"}. A walk with no fresh look for 30 s stops itself. Stop requests, connection/sensor failures and body-declared duty budgets can interrupt movement. Do not claim displacement or rotation just because commands ran.' + bodyWalkTruth(body) + ' While you are mid-walk a gesture waits its turn; walking is the one thing your body finishes.';
   }
   return s;
 }

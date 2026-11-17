@@ -854,7 +854,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-'
-        'tools2-quiet-since-travel-follow5"' in page
+        'tools2-quiet-since-travel-follow5-explore"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -1197,7 +1197,7 @@ def test_a_streamed_utterance_outlives_the_old_twelve_second_cap() -> None:
 def test_an_ordinary_quiet_beat_waits_ninety_seconds_after_the_last_activity() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "var GB_QUIET_AFTER_MS=90000;" in page
-    assert "if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){" in page
+    assert "if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>_gbQuietGap(now)){" in page
     assert "idle>=8000 && now-lastBeatT" not in page
     assert page.index("var GB_QUIET_AFTER_MS") < page.index("if(idle>=GB_QUIET_AFTER_MS")
     assert "90 seconds after anything last happened" in page
@@ -5259,7 +5259,10 @@ def test_follow_me_starts_the_trained_follower_and_a_stop_wins() -> None:
     """Review: a reply in flight when the person said "stop stop" must not start a follow, and
     asking again while following must not restart it (a restart drops the face it holds)."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert '_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen' in page
+    assert (
+        '_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"'
+        "&&(_mgen===_motionGen||_gbOnlyDone(_mgen,_motionGen))" in page
+    )
     assert (
         "{ delete o.walk; delete o.body; delete o.gesture; o._gbFollowed=true; "
         "window.gbFollowMe(15,_gbIssT); }" in page
@@ -5337,20 +5340,26 @@ def _own_walk(
     start = box.index("  // Dave's own forward and back walks can take")
     fn = box[start : box.index("\n})();", start)]
     script = (
-        "var window={}, started=[], _wheels=false, seekGoal='', duty=60000;"
+        "var window={}, started=[], _wheels=false, seekGoal='', duty=60000, _motion=null,"
+        " _moveLast=null, outcomes=[];"
+        "function _moveReport(a,s,r){ a.state=s; a.reason=r; outcomes.push([s,r]); }"
+        "function logEv(){}"
         "function dutyCapMs(){ return 60000; }"
         f"var location={{search:'{query}'}};"
         "var document={hidden:false,addEventListener:function(){}};"
         "function btRobot(){ return 'gb-1'; }"
         "function policySeconds(s,d){ return s||d; } function dutyLeftMs(){ return duty; }"
-        "function start(set,move,secs,a){ started.push([move,secs,Object.keys(set).join('+')]); }"
+        "function start(set,move,secs,a,drive,fol,own){"
+        " started.push([move,secs,Object.keys(set).join('+')]);"
+        " var M={report:a,left:secs||8}; if(own) M.own=move;"
+        " M.extend=function(s){ if(s<=M.left) return 0; M.left=s; return s+1; }; _motion=M; }"
         "function fetch(){ return Promise.resolve({ok:true,json:function(){"
         f" return {{skills:{skills}}};}}}}); }}"
         + fn
         + "setTimeout(function(){ var a={}, b={}, out=["
         + calls
-        + "]; console.log(JSON.stringify("
-        "{out:out,started:started,mv:a.mv||null,bmv:b.mv||null})); });"
+        + "]; console.log(JSON.stringify({out:out,started:started,mv:a.mv||null,"
+        "bmv:b.mv||null,outcomes:outcomes,last:_moveLast===a?'a':_moveLast===b?'b':null})); });"
     )
     return json.loads(
         subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
@@ -5419,6 +5428,153 @@ def test_daves_own_walks_stay_stock_without_a_skill_set_or_when_asked() -> None:
     assert seek["out"] == [False]
     roomy = _own_walk("(seekGoal='door', window.gbOwnWalk({dir:'fwd'},'fwd',a))")
     assert roomy["out"] == [True]
+
+
+def test_asking_for_the_same_walk_while_it_runs_carries_it_on() -> None:
+    """Exploring the house (owner, 2026-11-17): he sends walk again each look to keep going,
+    and each new walk used to glide back to its stance first, a stutter every few seconds."""
+    got = _own_walk(
+        "window.gbOwnWalk({dir:'fwd'},'fwd',a), window.gbOwnWalk({dir:'fwd',secs:20},'fwd',b)"
+    )
+    assert got["out"] == [True, True]
+    assert got["started"] == [["forward", 0, "look+forward+back"]]
+    assert got["outcomes"] == [["merged", "continued"]]
+    # The running walk stays his latest move, its length and continuations updated.
+    assert got["last"] == "a" and got["mv"]["ext"] == 1 and got["mv"]["secs"] == 21
+    short = _own_walk(
+        "window.gbOwnWalk({dir:'fwd',secs:20},'fwd',a),"
+        " window.gbOwnWalk({dir:'fwd',secs:3},'fwd',b)"
+    )
+    # A shorter ask never trims it: only a stop does.
+    assert short["outcomes"] == [["merged", "already_going"]] and "ext" not in short["mv"]
+    turn = _own_walk(
+        "window.gbOwnWalk({dir:'fwd'},'fwd',a), window.gbOwnWalk({dir:'back'},'back',b)"
+    )
+    assert [m for m, _, _ in turn["started"]] == ["forward", "back"] and turn["outcomes"] == []
+
+
+def test_his_own_walk_stops_when_he_stops_looking() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    i = box.index("  var OWN_LOOK_MS = 30000;")
+    fn = box[i : box.index("  window.gbOwnWalking", i)]
+    script = (
+        "var inFlight=false, dreaming=false, lastCallT=0, lastReplyT=0, now=Date.now();"
+        + fn
+        + "var out=[ownNoLook(now-29000), ownNoLook(now-31000), ownNoLook(0)];"
+        "lastReplyT=now-10000; out.push(ownNoLook(now-60000));"
+        "lastCallT=now-40000; lastReplyT=now-45000; inFlight=true; out.push(ownNoLook(now-90000));"
+        "dreaming=true; out.push(ownNoLook(now-90000));"
+        "console.log(JSON.stringify(out));"
+    )
+    out = json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+    # 30 s since the stride began with no thought; a reply 10 s ago is a look; a thought in
+    # flight counts for 60 s, but a dream is no look at the room.
+    assert out == [False, True, False, False, False, True]
+    assert 'why: noLook ? "no_look" : "done"' in box
+
+
+def _explore(calls: str, setup: str = "") -> list[Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    i = page.index("var GB_GOAL_PACE_K=")
+    fn = page[i : page.index("\nvar lastBeatT=", i)]
+    script = (
+        "var window={}, MODE='legs', WATCH_GAP_MS=90000, now=Date.now(), _quietWakeT=now,"
+        " _quietWordT=0, tapReflexT=0, lastReplyT=0, lastCallT=0, speakingUntil=0;"
+        + fn
+        + ";"
+        + setup
+        + "console.log(JSON.stringify(["
+        + calls
+        + "]));"
+    )
+    return json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+
+
+def test_a_goal_on_a_body_sticks_and_thins_out_when_he_is_alone() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "if(seekTicks>=SEEK_MAX_TICKS&&!_gbGoalStick()){" in page
+    seek = "    if(seekGoal && actFloors && (timerDue || !_gbGoalPaced(now))){ _gbGoalBeatT=now;"
+    assert seek in page
+    # An hour alone: a goal turn a minute; just after his person spoke: no wait at all.
+    hour = "_quietWakeT=now-3600000; _gbGoalBeatT=now-"
+    assert _explore("_gbGoalPaced(now)", hour + "30000;") == [True]
+    assert _explore("_gbGoalPaced(now)", hour + "61000;") == [False]
+    assert _explore("_gbGoalPaced(now)", "_gbGoalBeatT=now-5000;") == [False]
+    # Never while his own walk runs (it needs its looks), and never in a phone.
+    walking = hour + "30000; window.gbOwnWalking=function(){ return true; };"
+    assert _explore("_gbGoalPaced(now)", walking) == [False]
+    assert _explore("_gbGoalPaced(now), _gbGoalStick()", hour + "30000; MODE='phone';") == [
+        False,
+        False,
+    ]
+
+
+def test_his_own_walk_gets_a_look_once_each_answer_has_landed() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "    if(!seekGoal&&!(actOn&&!actQuiet)&&_gbWalkLookDue(now)){ think(" in page
+    walking = "window.gbOwnWalking=function(){ return true; };"
+    assert _explore("_gbWalkLookDue(now)", walking + "lastReplyT=now-3500;") == [True]
+    assert _explore("_gbWalkLookDue(now)", walking + "lastReplyT=now-1000;") == [False]
+    talking = walking + "lastReplyT=now-9000; speakingUntil=now+500;"
+    assert _explore("_gbWalkLookDue(now)", talking) == [False]
+    assert _explore("_gbWalkLookDue(now)", "lastReplyT=now-9000;") == [False]
+
+
+def test_quiet_time_on_a_body_comes_round_often_while_he_uses_it() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "    if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>_gbQuietGap(now)){" in page
+    assert "walk somewhere you have not looked yet" in page
+    assert 'event===GB_EXPLORE_TXT&&MODE!=="phone"' in page
+    # Ten minutes since his person: half that; but a quiet turn he used a minute ago brings
+    # it back to the 90 s floor. A phone, or exploring switched off, keeps four minutes.
+    ten = "_quietWakeT=now-600000;"
+    assert _explore("_gbQuietGap(now)", ten) == [300000]
+    assert _explore("_gbQuietGap(now)", ten + "_gbQuietUsedT=now-60000;") == [90000]
+    assert _explore("_gbQuietGap(now)", ten + "MODE='phone';") == [240000]
+    assert _explore("_gbQuietGap(now)", ten + "window.__gbBoxExplore=false;") == [240000]
+
+
+def test_a_walk_that_ends_on_its_own_does_not_cancel_the_next_reply() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '_motionGen++; if(why==="done") _gbDoneGen[_motionGen]=1;' in page
+    # The stance a finished walk settles into stops it again, and that is the finish too.
+    # The get-up brain's own currency check counts a finish the same way.
+    assert "q.input===_autoRec.input&&(q.gen===_motionGen||_gbOnlyDone(q.gen,_motionGen))&&" in page
+    settle = 'if(why==="done") for(var _gbG=_gbG1+1;_gbG<=_motionGen;_gbG++) _gbDoneGen[_gbG]=1;'
+    assert settle in page
+    assert (
+        "var _mCancelled=(_motionGen!==_mgen&&!_gbOnlyDone(_mgen,_motionGen))||document.hidden;"
+        in page
+    )
+    # Unchanged is no cancel either way; a finish (gen 4) alone is not one; a stop or newer
+    # move (gen 5, unmarked) still is, even after a finish.
+    done = "_gbDoneGen[4]=1;"
+    assert _explore("_gbOnlyDone(3,3), _gbOnlyDone(3,4), _gbOnlyDone(3,5)", done) == [
+        False,
+        True,
+        False,
+    ]
+
+
+def test_he_picks_a_walks_length_and_dreams_get_only_dream_rules() -> None:
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert "otherwise choose the length the trip needs" in prompts
+    assert "A walk with no fresh look for 30 s stops itself." in prompts
+    assert '"walk":{"secs":3}' not in prompts
+    assert (
+        "PLAN_CORRECTION_SHARED + PLAN_CORRECTION_DREAM + PLAN_CORRECTION_TIMING +"
+        " languageContext(soul, autoLang, true);" in prompts
+    )
 
 
 def _claim_fix(setup: str) -> list[str]:

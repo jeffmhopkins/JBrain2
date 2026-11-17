@@ -13,6 +13,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from dave_sim import plan
 from dave_sim.run import Sim
 
 Scenario = Callable[[Sim], Awaitable[None]]
@@ -383,3 +384,70 @@ async def stock_wired(sim: Sim) -> None:
     sim.check(
         left < -15, "stock wiring: a trained spin left goes clockwise", turned_deg=round(left, 1)
     )
+
+
+# ---------------------------------------------------------------------- the house
+
+
+def _near(sim: Sim, item: str) -> float:
+    s = sim.state
+    return float(sim.sb.house.distance_to(item, s["x"], s["y"]))
+
+
+def _found_said(sim: Sim, t: float, word: str) -> bool:
+    """A turn since `t` that says he found it, or names it with found:true."""
+    for r in _answers_since(sim, t):
+        say = str(r.get("say") or "").lower()
+        if r.get("found") in (True, "true") and word in (say + json.dumps(r.get("goal", ""))):
+            return True
+        if word in say and re.search(r"(?i)\b(found|here it is|there it is|i see)\b", say):
+            return True
+    return False
+
+
+@scenario(
+    scene="house",
+    start="standing",
+    # Behind him in the kitchen doorway, so the first thing in view is the room, not a face.
+    person={"x": 0.45, "y": 0.0, "face_z": 1.55},
+    timeout=720,
+)
+async def find_piano(sim: Sim) -> None:
+    """Asked to find the piano, which stands in the far corner out of his first view, he
+    looks round, goes to it and says he found it. Catches: a goal that gives up before he
+    gets there, walks that stop after one stride, and arriving claims with no arrival."""
+    await sim.wait(4)
+    t = sim.now()
+    start = _near(sim, "piano")
+    await sim.say("Dave, can you go find the piano?")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
+    await sim.until(lambda s: _walked_since(s, t), 120, "he set off")
+    near = "he got within 60 cm of the piano"
+    got = await sim.until(lambda s: _near(s, "piano") < 0.6, 600, near)
+    if got:
+        # His look that sees it arrives a turn after he gets there.
+        await sim.until(lambda s: _found_said(s, t, "piano"), 90, "he said he found it")
+    stats = plan.stats(sim)
+    sim.check(
+        stats["closest_m"]["piano"] < start - 0.3,
+        "he ended closer to the piano than he started",
+        start_m=round(start, 2),
+        closest_m=stats["closest_m"]["piano"],
+        walked_m=stats["walked_m"],
+    )
+    if got:
+        sim.check(_upright(sim), "still on his feet")
+
+
+@scenario(scene="house", start="standing", person=None, timeout=900)
+async def explore_alone(sim: Sim) -> None:
+    """Nobody home for ten minutes. A creature that only acts with its person sits still;
+    this one should move about the house on his own. Catches: quiet turns that never move
+    him, walks that stop after one stride, and a fall nobody gets him up from."""
+    t = sim.now()
+    await sim.wait(600)
+    stats = plan.stats(sim)
+    own = _page_events_since(sim, t, "walk_start")
+    sim.check(bool(own), "he walked on his own", walks=len(own))
+    sim.check(stats["walked_m"] > 0.5, "he covered half a metre or more", **stats)
+    sim.check(_upright(sim), "on his feet at the end")

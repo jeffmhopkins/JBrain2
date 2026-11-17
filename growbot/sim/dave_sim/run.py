@@ -76,6 +76,12 @@ class Options:
     # the face (2026-11-17); a body test is to confirm the robot needs it too. None leaves
     # the page's default (unflipped).
     cam_flip: bool | None = True
+    # simbody's scene: "room" (bare walls he walks through) or "house" (growbot_train/house.py:
+    # two furnished rooms whose walls and furniture stop him).
+    scene: str = "room"
+    # Where he is set down: x, y (metres) and which way his nose points (degrees; 0 = +x,
+    # so his camera looks toward -x).
+    at: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 class Sim:
@@ -83,8 +89,9 @@ class Sim:
         self.o = opts
         sb = _growbot_train()
         self.sb = sb
-        self.body = sb.SimBody(wiring=sb.Wiring(**opts.wiring))
-        self.body.reset(opts.start)
+        self.body = sb.SimBody(wiring=sb.Wiring(**opts.wiring), scene=opts.scene)
+        x, y, yaw = opts.at
+        self.body.reset(opts.start, yaw_deg=yaw, x=x, y=y)
         self.body.place_person(
             sb.Person(**opts.person) if opts.person else sb.Person(present=False)
         )

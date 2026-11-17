@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-16
+> **Status:** Living · **Last verified:** 2026-11-17
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -456,6 +456,17 @@ Whether it explores when it's quiet is the persona's too (`growbot_personas.expl
 0266, on by default): `growbot-box.js` keeps it in `__gbBoxExplore`, and the page's ordinary
 quiet beat reads it each time (`apply.py` `QUIET_TEXT_PATCHES`), so only an explicit `false`
 brings back upstream's old "quiet company" words. No URL switch or phone storage holds it.
+
+On a body, exploring is more than the words (`apply.py` `EXPLORE_PATCHES`, after upstream's
+EXPLORE and LONG WALK of 2026-11-13 to 11-16, rebuilt for the trained walks and the box's
+slower model). Quiet time comes round every 90 s rather than four minutes, thinning by
+half-life only while he leaves it unused (a quiet turn that moves him or starts a goal resets
+it, within 30 minutes of his person). A goal sticks until he finds it, finishes it, swaps it or
+is stopped, never upstream's 24-beat give-up; alone, its turns wait (time since his person) / 60
+after the last, except while he walks. His own walk keeps looking: with no goal or activity
+turn to do it, a look turn goes out 3 s after each answer lands; sending the same walk again
+carries it on without a new stance (`gbOwnWalk`), and a walk with no look for 30 s stops
+itself. The Dave simulator's house (`sim/README.md`) is where this is tried.
 
 ### Settings (migration 0263)
 

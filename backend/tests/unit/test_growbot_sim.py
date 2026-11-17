@@ -24,6 +24,7 @@ simchip = importlib.import_module("dave_sim.chip")
 simllm = importlib.import_module("dave_sim.llm")
 simrun = importlib.import_module("dave_sim.run")
 simscen = importlib.import_module("dave_sim.scenarios")
+simplan = importlib.import_module("dave_sim.plan")
 
 
 class Legs:
@@ -361,3 +362,72 @@ def test_the_sim_body_is_mirrored_as_the_robot_and_one_scenario_unmirrors_it() -
     assert simscen.SETUP["follow_walks_after"]["person"]["face_z"] == 1.55
     # The body test's asks have a scenario each: come here, follow me by voice, stop stop.
     assert {"come_here", "follow_me_away", "stop_stop"} <= set(simscen.SCENARIOS)
+
+
+# ---------------------------------------------------------------------- the house's floor plan
+
+
+class _Item:
+    def __init__(self, name: str, x: float, y: float) -> None:
+        self.name, self.x, self.y, self.hx, self.hy, self.rgb = name, x, y, 0.2, 0.2, (9, 9, 9)
+
+
+class _House:
+    """GrowBot_Training's house.py as plan.py reads it (MuJoCo isn't in the backend's env)."""
+
+    OUTER = (-3.0, -2.0, 2.0, 2.0)
+    DIVIDE_X = 0.0
+    DOOR = (-0.4, 0.4)
+    ROOMS = {"living room": (-3.0, -2.0, 0.0, 2.0), "kitchen": (0.0, -2.0, 2.0, 2.0)}
+    ITEMS = (_Item("piano", -2.0, 1.0), _Item("rug", -1.0, 0.0))
+
+    @staticmethod
+    def room_at(x: float, y: float) -> str:
+        return "kitchen" if x > 0 else "living room"
+
+    @staticmethod
+    def distance_to(name: str, x: float, y: float) -> float:
+        it = {i.name: i for i in _House.ITEMS}[name]
+        return max(0.0, ((x - it.x) ** 2 + (y - it.y) ** 2) ** 0.5 - 0.2)
+
+
+class _PlanSim:
+    def __init__(self, scene: str = "house") -> None:
+        self.o = type("O", (), {"scene": scene})()
+        self.sb = type("SB", (), {"house": _House})()
+        # Two seconds still, then 4 cm/s along -x for 25 s, as states every 0.08 s.
+        self.states = [
+            {"wall": t * 0.08, "x": 0.5 - max(0.0, t * 0.08 - 2) * 0.04, "y": 0.0, "nose_deg": 0.0}
+            for t in range(int(27 / 0.08))
+        ]
+        self.timeline = [
+            {"t": 3.0, "kind": "dave", "text": json.dumps({"say": "Off to find the <piano>"})},
+            {"t": 4.0, "kind": "dave", "text": json.dumps({"say": ""})},
+            {"t": 5.0, "kind": "dave", "warm": True, "text": json.dumps({"say": "warm"})},
+        ]
+
+
+def test_the_floor_plan_scores_where_he_went() -> None:
+    sim = _PlanSim()
+    st = simplan.stats(sim)  # type: ignore[arg-type]
+    assert st["walked_m"] == pytest.approx(1.0, abs=0.02)
+    assert set(st["rooms_s"]) == {"living room", "kitchen"}
+    assert abs(st["rooms_s"]["kitchen"] - 14.5) <= 1
+    assert "rug" not in st["closest_m"] and st["closest_m"]["piano"] < 2.0
+    tr = simplan.track(sim)  # type: ignore[arg-type]
+    # The camera looks out of the tail: nose at 0 degrees faces 180.
+    assert abs(tr[-1]["face"]) == 180 and tr[-1]["speed"] == pytest.approx(4.0, abs=0.2)
+    assert tr[10]["speed"] == 0.0
+    assert simplan.replies(sim) == [(3.0, "Off to find the <piano>")]  # type: ignore[arg-type]
+    svg = simplan.svg(sim)  # type: ignore[arg-type]
+    assert svg.startswith("<svg") and "piano" in svg and "&lt;piano&gt;" in svg
+    assert "living room" in svg and 'marker-end="url(#ah)"' in svg
+
+
+def test_the_bare_room_has_a_plan_too() -> None:
+    sim = _PlanSim(scene="room")
+    assert "rooms_s" not in simplan.stats(sim)  # type: ignore[arg-type]
+    assert "living room" not in simplan.svg(sim)  # type: ignore[arg-type]
+    assert simscen.SETUP["find_piano"]["scene"] == "house"
+    assert simscen.SETUP["explore_alone"]["person"] is None
+    assert simrun.Options(model=None).scene == "room"  # type: ignore[arg-type]

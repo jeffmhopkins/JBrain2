@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=df74f38603ad"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=fb86ff9ca88e"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -192,7 +192,7 @@ function gbAdTag(u){try{var g=function(k){return sessionStorage.getItem("gb_ad_"
 
 <!-- LOAD ORDER MATTERS: prompts.js before soul.js (S()/buildSystem reference CONSTITUTION/DREAM_SYS). -->
 <script src="/trim-store.js?v=1016"></script>
-<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2-quiet-since-travel-follow5" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
+<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-tools2-quiet-since-travel-follow5-explore" onerror="window.__loadErr=(window.__loadErr||'')+'prompts.js '"></script>
 <script src="/v3/expression.js?v=1015-open"></script>
 <script src="/v3/visual-memory.js?v=1005-mem-box-fixed2"></script>
 <script src="/v3/visual-memory-ui.js?v=1005-mem"></script>
@@ -4187,7 +4187,7 @@ var _brainGetupSeq=0,_brainGetupPermit=0,_brainLanding=null,_brainSpeechTurn=fal
 function _brainGetupIssue(req){if(!_getupBrainOn())return null;var r=_wireRunner,e=_autoRec.episode;
   return {id:++_brainGetupSeq,available:_brainGetupState().s==='ready',humanN:_humanReqN,req:req,input:_autoRec.input,gen:_motionGen,hush:_brainSpeechHush,connection:_wireContext(),cal:localStorage.getItem('gb_walk_cal'),at:Date.now(),
     hold:r&&r.active&&r.confirmed&&e&&e.ready?{serial:r.serial,motion:_motion,episode:e}:null};}
-function _brainGetupCurrent(q){return !!(q&&!q.used&&q.id===_brainGetupSeq&&q.humanN===_humanReqN&&_getupBrainOn()&&q.input===_autoRec.input&&q.gen===_motionGen&&(!q.req||q.req===_humanReq)&&_getupAutoConnection(q.connection)&&q.cal===localStorage.getItem('gb_walk_cal')&&!paused&&!document.hidden&&!_restAsleep()&&Date.now()-q.at>=0&&Date.now()-q.at<=60000);}
+function _brainGetupCurrent(q){return !!(q&&!q.used&&q.id===_brainGetupSeq&&q.humanN===_humanReqN&&_getupBrainOn()&&q.input===_autoRec.input&&(q.gen===_motionGen||_gbOnlyDone(q.gen,_motionGen))&&(!q.req||q.req===_humanReq)&&_getupAutoConnection(q.connection)&&q.cal===localStorage.getItem('gb_walk_cal')&&!paused&&!document.hidden&&!_restAsleep()&&Date.now()-q.at>=0&&Date.now()-q.at<=60000);}
 function _brainGetupHandoff(q){var r=_wireRunner,e=_autoRec.episode,h=q&&q.hold;
   return !!(_brainGetupCurrent(q)&&q.complete&&h&&r&&r.active&&r.confirmed&&e&&e.ready&&h.episode===e&&h.serial===r.serial&&h.motion===_motion&&_motion===_wireMotion&&_getupAutoCurrent(r)&&window.GBGetupWire.posture(_wireSamples,performance.now()).kind==='up');}
 function _brainSpeechAnswerOnly(o,intent){return !intent&&!o.track&&!(o.body&&o.body.rest);}
@@ -6663,7 +6663,7 @@ function lastSentenceEnd(s){ var m=0,re=/([.!?…]+)\s/g,x;
    The `yield` event carries the streak so the next read is a number, not a reconstruction: the 17.4%
    above had to be inferred from log geometry because this moment logged nothing at all. */
 var GB_QUIET_AFTER_MS=90000;
-var GB_EXPLORE_TXT="QUIET — nothing has happened for a while. This time is yours: you may reach for one of your wants with your own body.";
+var GB_EXPLORE_TXT="QUIET — nothing has happened for a while. This time is yours: you may reach for one of your wants with your own body, or go and explore: walk somewhere you have not looked yet and see what is there.";
 var YIELD_MAX=3, _yieldRun=0, _yieldSaid=0;              // _yieldSaid: 0 undecided this reply · 1 committed to HOLD · 2 committed to SPEAK THROUGH
 var GB_NOISE_LP=-1.5, GB_NOISE_LP_DUTY=0.35, GB_NOISE_MX=0.2, GB_NOISE_DUTY=0.25, GB_SAID_KEEP_MS=600000, GB_SAID_MAX=40,
   GB_SAID_STOP={i:1,a:1,an:1,the:1,and:1,or:1,but:1,of:1,to:1,in:1,on:1,at:1,is:1,are:1,am:1,was:1,it:1,its:1,
@@ -9536,7 +9536,7 @@ function activityContract(){ return "\n\n== CONTINUING AN ACTIVITY ==\n"+
   "If an action is already running, observe its progress; do not restart it merely because another thought arrived. Stop or change it when the task calls for that. Evaluate completion using actual evidence, not sent commands or your own narration. If required evidence is unavailable, explain what is missing rather than claiming success. There is no need to speak during every observation.\n"; }
 function goalBlock(){ if(!seekGoal && !actOn) return "";                          // DYNAMIC state only — the "how" now lives in editable memory (gamesGuide)
   var b = seekGoal ? ("\n\n== YOUR CURRENT GOAL — stay on it, the SEEK way (see your skills) ==\n"+
-    "You are trying to: "+seekGoal+".  (beat "+seekTicks+" of up to "+SEEK_MAX_TICKS+")"+
+    "You are trying to: "+seekGoal+"."+(_gbGoalStick()?" It is yours until you find it, finish it or change it, or your person stops it.":"  (beat "+seekTicks+" of up to "+SEEK_MAX_TICKS+")")+
     " Your person outranks the goal: when they speak, answer them first, then return to it. Never repeat the same goal line two turns in a row.") : "";   // FIELD 0727 (a tester's 20-turn RAIN monomania + another tester "nearly bullied"): the every-beat reminder over-weighted the goal into imperative loops — the yield rule restores conversation priority without dropping the want
   /* 0908: the activity line rides alongside, and stands ALONE when there is no goal — otherwise a
      goal-less activity (watching the clouds) would be invisible to the very model that set it, and
@@ -9556,7 +9556,7 @@ function updateStatus(){ if(!_statusEl){ _statusEl=document.createElement("div")
     _statusEl.style.cssText="position:fixed;top:8px;left:8px;z-index:60;font:12px/1.3 system-ui;color:#bfe;background:rgba(0,0,0,.5);padding:3px 9px;border-radius:9px;pointer-events:none;max-width:66vw"; document.body.appendChild(_statusEl); }
   if(!seekGoal){ _statusEl.style.display="none"; return; }   // idle → hide it (Brit 0703: no top-left overlay when nothing's happening)
   _statusEl.style.display="";
-  _statusEl.textContent = "🎯 "+seekGoal+"  ["+seekTicks+"/"+SEEK_MAX_TICKS+"]"; }   // only shown during a goal
+  _statusEl.textContent = "🎯 "+seekGoal+(_gbGoalStick()?"":"  ["+seekTicks+"/"+SEEK_MAX_TICKS+"]"); }   // only shown during a goal
 /* 0925 M5 A FINISHED GOAL DOES NOT COME BACK AFTER A RELOAD (Brit's bench). The goal itself lives only in this page
    (seekGoal), but each seek beat is kept in the soul's trace ring, which is saved, and the first thought after a reload
    replays that ring. So an ended goal still read "KEEP AT YOUR GOAL, lay down flat" to the next page: 18:10:21 seek_set
@@ -9745,7 +9745,7 @@ function seekProgress(o,said,gr){ if(!seekGoal) return;
   if(foundIt&&(SEEK_ACTION.test(seekGoal)||SEEK_MULTI.test(seekGoal))){ if(!_seekSeen){ _seekSeen=true; try{ logEv("seek_sight",{what:seekGoal}); }catch(e){} toast("👁 in sight: "+seekGoal); } updateStatus(); return; }   // in view, not yet done — keep going
   if(foundIt){ seekWin(); return; }
   if(actPhase==="waiting"){ actWaitBeats++; return; }   // WAITING IS NOT ACTING: an idle wait never spends the give-up budget
-  seekTicks++; if(seekTicks>=SEEK_MAX_TICKS){ var g2=seekGoal; try{ _goalOver(g2,"giveup"); }catch(e){} seekGoal=""; seekTicks=0; _seekSeen=false; actPhase="acting"; actWhy=""; actWake=""; actNotBefore=0; actWaitBeats=0; actOn=false; /* same as seekWin: giving up ends the activity too */ try{ soulLog(_live,"couldn't find "+g2+" — gave up"); }catch(e){} logEv("seek_giveup",{what:g2}); toast("gave up on: "+g2); } updateStatus(); }
+  seekTicks++; if(seekTicks>=SEEK_MAX_TICKS&&!_gbGoalStick()){ var g2=seekGoal; try{ _goalOver(g2,"giveup"); }catch(e){} seekGoal=""; seekTicks=0; _seekSeen=false; actPhase="acting"; actWhy=""; actWake=""; actNotBefore=0; actWaitBeats=0; actOn=false; /* same as seekWin: giving up ends the activity too */ try{ soulLog(_live,"couldn't find "+g2+" — gave up"); }catch(e){} logEv("seek_giveup",{what:g2}); toast("gave up on: "+g2); } updateStatus(); }
 
 var FIELD_CONTRACT="\n\n== FIELD CONTRACT (current rules; these outrank any older note above) ==\ngoal: your one current objective in plain words; restating it changes nothing; leaving it out or blank NEVER finishes it. phase:\"finished\" is the only way to end it on purpose. found:true only when you can plainly SEE the thing; a sighting does not finish an action (touch, go to, bring). waiting: wake user only when you need your person to do or say something; wake timer with afterMs to look again later; wake event only for a tap or shake.";   /* 0915: runtime-owned and appended AFTER the editable games text, so a saved older games guide (gb_next_games3 in localStorage) cannot re-teach goal:""; custom games and the soul are untouched */
 function moveGuideText(){ var t=$("moveGuide").value.trim(); if(_getupBrainOn())t=t.replace(/^.*(?:FULL TALL|STAND TALL \/ PUSH UP|that is your push-up).*$/gm,""); var base=(t?("\n\n"+t):""), games="\n\n"+gamesGuide()+FIELD_CONTRACT+(typeof _soundGuide==="function"?_soundGuide():"");   // games = editable-memory strategy
@@ -10173,11 +10173,12 @@ function carryLegMotion(restPose){   // restPose (0923, Brit): a COMPLETED walk 
   if(paused||document.hidden||!window._body||!window._body.ready||!_bodyAlive()){stopMotion();return false;}
   if(_wheels){ stopMotion(); return false; }
   var why=_imuWhy||"superseded", last=(restPose&&why==="done")?restPose:(_motion&&_motion.lastPose), report=_motion&&_motion.report;   /* 0923 bench: the idle hold pinned wherever the stride stopped (e.g. L40/R124, a wide split), re-sent every 200ms and renewed for 60s past the last interaction — one servo strained audibly and drained the pack. Only a finished walk passes restPose; a superseding move still carries the live frame so the next motion doesn't jerk. */
-  _motionGen++;
+  _motionGen++; if(why==="done") _gbDoneGen[_motionGen]=1;
   try{ _bodyBootClose(_motion); }catch(_be){}
   if(_motion){ if(_motion.loopIv)clearTimeout(_motion.loopIv); if(_motion.timer)clearTimeout(_motion.timer); _motion=null; }
   if(last&&window._body&&window._body.ready&&_bodyAlive()&&!paused&&!document.hidden){
-    holdPose(last,0,HOLD_IDLE_S,true);
+    var _gbG1=_motionGen; holdPose(last,0,HOLD_IDLE_S,true);
+    if(why==="done") for(var _gbG=_gbG1+1;_gbG<=_motionGen;_gbG++) _gbDoneGen[_gbG]=1;
     // Renew immediately; don't spend a timer beat of the firmware's dead-man margin.
     try{window._body.pose(last.l,last.r);}catch(e){stopMotion();return false;}
   }
@@ -11322,7 +11323,7 @@ function think(event,kind,extra){
     var _brainSaid=typeof _brainAtIssue!=="undefined"&&!!_brainAtIssue,_brainOriginalSay=said; // Keep content for salvage, burst and quiet-turn memory; defer only delivery.
     var phoneDir=(MODE==="phone"&&o.walk&&typeof o.walk==="object"&&o.walk.dir)?String(o.walk.dir).toLowerCase():"";   // phone: a spoken movement instruction
     if(!paused){                                                                          // if paused mid-thought, don't talk/move/overwrite the caption — just keep the memory
-      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()}); if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back")) gbEyeTo(o.eye==="back"?"environment":"user","self"); if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen&&!document.hidden&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body; delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15,_gbIssT); } if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait||o.walk.secs))&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||""))) _gbClaimFix(_mgen,_gbIssT); if(_hreqAtIssue&&!dreaming&&(o.travel==="on"||o.travel==="off")&&(o.travel==="on")!==TRAVEL) setTravel(o.travel==="on");                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
+      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()}); if(_hreqAtIssue&&!dreaming&&(o.eye==="front"||o.eye==="back")) gbEyeTo(o.eye==="back"?"environment":"user","self"); if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&(_mgen===_motionGen||_gbOnlyDone(_mgen,_motionGen))&&!document.hidden&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body; delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15,_gbIssT); } if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait||o.walk.secs))&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||""))) _gbClaimFix(_mgen,_gbIssT); if(_hreqAtIssue&&!dreaming&&(o.travel==="on"||o.travel==="off")&&(o.travel==="on")!==TRAVEL) setTravel(o.travel==="on");                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
       if(typeof _expressionPendingCancel==="function")_expressionPendingCancel();
       if(typeof _expressionPair==="function")_expressionPair(o);
       // A buffered bench reply cannot revive sound after Stop, pause/hide or a newer request.
@@ -11392,7 +11393,7 @@ function think(event,kind,extra){
        The THOUGHT still lands — caption, memory, telemetry, seek bookkeeping are all real and the
        creature did think it. Only the BODY is refused, and `moved` is corrected so the episode never
        claims a movement that did not happen. */
-    var _mCancelled=(_motionGen!==_mgen)||document.hidden; _brainLanding=typeof _brainAtIssue!=="undefined"?_brainAtIssue:null;if(_brainLanding)_brainLanding.complete=!!(_burstComplete&&jparse(raw)); var _brainReplyCurrent=!_brainLanding||!o._expressionStale&&_brainLanding.complete&&_brainGetupCurrent(_brainLanding);if(!_brainReplyCurrent)_mCancelled=true; if(typeof _getupAutoReplyBlocked==="function"&&_getupAutoReplyBlocked(typeof _hreqAtIssue!=="undefined"?_hreqAtIssue:_humanReq))_mCancelled=true;
+    var _mCancelled=(_motionGen!==_mgen&&!_gbOnlyDone(_mgen,_motionGen))||document.hidden; _brainLanding=typeof _brainAtIssue!=="undefined"?_brainAtIssue:null;if(_brainLanding)_brainLanding.complete=!!(_burstComplete&&jparse(raw)); var _brainReplyCurrent=!_brainLanding||!o._expressionStale&&_brainLanding.complete&&_brainGetupCurrent(_brainLanding);if(!_brainReplyCurrent)_mCancelled=true; if(typeof _getupAutoReplyBlocked==="function"&&_getupAutoReplyBlocked(typeof _hreqAtIssue!=="undefined"?_hreqAtIssue:_humanReq))_mCancelled=true;
     try{if(typeof _getupAutoRestStop==='function'&&_getupAutoRestStop(o,typeof _autoRestAtIssue!=='undefined'?_autoRestAtIssue:null,_mCancelled,_burstComplete&&jparse(raw)))_mCancelled=true;}catch(_ars){}
     if(typeof _autoRestAtIssue!=='undefined'&&_autoRestAtIssue&&_autoRestAtIssue.recovery&&!_namedStopReply(o))_mCancelled=true; // An early answer never acquires a new move, even if readiness changed while thinking.
     var _nmA=typeof _namedAsked==="function"&&_namedAsked(o); try{ if(typeof _namedNote==="function") _namedNote(); }catch(_nn){}   /* 1006 named get-up: does this reply claim it (ready only, see _namedState); the state the prompt showed, logged once per change */
@@ -11458,6 +11459,7 @@ function think(event,kind,extra){
        writes its own vm_lib row. 1109: ph = how many reply fields held a placeholder word and were treated as absent
        (_phDrop), left out when none. */
     /*FLEX-TICKS{*/_u0+=((typeof _flexYdUsd==="number")?_flexYdUsd:0)-_y0;   /* 1109: a dropped flight that landed during this turn is not this turn's cost (FLEX TICKS, WHAT IT COSTS) *//*}FLEX-TICKS*/
+    try{ if(event===GB_EXPLORE_TXT&&MODE!=="phone"&&((moved&&moved!=="still")||_gr.started||_gr.swapped)&&Date.now()-_gbPersonT()<GB_QUIET_USED_MS) _gbQuietUsedT=Date.now(); }catch(_gq){}
     logEv("think",{k:kind,nf:frames.length,eye:frames.length?_eyeAt:undefined,vs:_visStripped?1:0,lum:_lumAt,fd:_fdAt,mo:slug,usd:Math.round(Math.max(0,((typeof _sessUsd==="number")?_sessUsd:0)-_u0)*1e6)/1e6,emo:(typeof o.emotion==="string"?o.emotion.slice(0,12):undefined),gd:_gr.gd,ap:actOn?actPhase:undefined,aw:(actOn&&actPhase==="waiting")?actWake:undefined,say:said.slice(0,400),dir:phoneDir||"",snd:(typeof _soundBench==="function"&&_soundBench()?_soundLabel(o.sound):o.sound||""),found:!!(o&&o.found),moved:moved,seek:seekGoal||"",ms:Date.now()-_t0,g:[Math.round(accel.x||0),Math.round(accel.y||0),Math.round(accel.z||0)],tb:(ori?ori.b|0:0),tg:(ori?ori.g|0:0),src:_srcAtIssue,dw:(_live.log[_live.log.length-1]!==_lgAt)?1:0,dl:_dl,dr:_recall?_recall.n:0/*FLEX-TICKS{*/,fx:_fxT?_flexTag(_fxT):undefined/*}FLEX-TICKS*/,hid:_hidAtLand?1:undefined,ph:_phN||undefined,gl:_glAt,sg:_sgAt,np:_npAt,pc:_pcAt,vmc:_vmcAt,mr:_mrAt,nd:_ndAt,fsw:_fsw,fmv:_fmv});   // ms = model latency (Brit 0702); g = gravity vector + tb/tg = orient tilt → POSTURE CALIBRATION (0706 bench: standing@45° misread as flat-on-back — need real mounting axes)
     try{ if(window.pbEpisodes){ epStamp(slug);   // re-stamp with the slug that ACTUALLY answered (the dial can switch brains mid-session)
       pbEpisodes.turn({vision_txt:redactQ(("moment: "+event).slice(0,300)), mood:(_live.scratch&&_live.scratch.mood)||null, stage:"agent",
@@ -12084,6 +12086,14 @@ var DREAM_DEEP=false;   // 0814: dreams ask for NO hidden reasoning — see the 
 var lastDreamT=0, dreamFails=0, _dreamT0=0, DREAM_COOLDOWN=300000;   // _dreamT0 (0814): stamped at dream_start so dream_err can report how long the attempt RAN — with a 90s fuse, duration is the diagnosis: a fail at ~90s is the abort/budget-burn case, a fail at 4s is something else entirely   // [P5] cadence hardening: post-dream cooldown + failure backoff (180s→300s Brit 0805 "5min floor everywhere" — matches agent.html + v2; the 12-thought threshold stays, phone play paces slower than agent sessions and the floor binds either way)
 function _localDay(){ var d=new Date(); return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2); }   // LOCAL calendar day for the mood trail + dwell latch (review S3): toISOString is UTC — an EDT evening reload straddling 00:00 UTC minted two "nights" in one sitting
 var REST_AFTER_MS=35000, WATCH_GAP_MS=90000, EXPR_GAP_MS=30000;   // [P6] REST_AFTER_MS now marks quiet watch/dream eligibility, never automatic sleep
+var GB_GOAL_PACE_K=60, GB_WALK_LOOK_MS=3000, GB_QUIET_USED_MS=1800000, _gbGoalBeatT=0, _gbQuietUsedT=0, _gbDoneGen={};
+function _gbOnlyDone(a,b){ for(var g=a+1;g<=b;g++) if(!_gbDoneGen[g]) return false; return b>a; }
+function _gbGoalStick(){ return MODE!=="phone"; }
+function _gbPersonT(){ return Math.max(_quietWakeT,_quietWordT,tapReflexT); }
+function _gbOwnWalking(){ return MODE==="legs"&&typeof window.gbOwnWalking==="function"&&window.gbOwnWalking(); }
+function _gbGoalPaced(n){ return _gbGoalStick()&&!_gbOwnWalking()&&n-_gbGoalBeatT<(n-_gbPersonT())/GB_GOAL_PACE_K; }
+function _gbWalkLookDue(n){ return _gbOwnWalking()&&n-lastReplyT>=GB_WALK_LOOK_MS&&n-lastCallT>=GB_WALK_LOOK_MS&&n>speakingUntil; }
+function _gbQuietGap(n){ if(MODE==="phone"||window.__gbBoxExplore===false) return 240000; return Math.max(WATCH_GAP_MS,(n-Math.max(_gbPersonT(),_gbQuietUsedT))/2); }
 var lastBeatT=0, beatN=0, lastWatchT=0, lastSpokeT=-1e9, lastReplyT=0;   // [P6] LIFE-BEATS + WATCH + read-the-room state; lastReplyT anchors beat pacing to call END (audit: slow calls caused zero-gap back-to-back beats)
 var _dreamPt0=0, _dreamRetry=false;   // 1021: the person's turns when this dream started; turns taken while it ran count toward the next one (review 3). The plain retry keeps the first attempt's count (fix-check 1022)
 var _typedT=0;   // 1021: the last keystroke in #txt or the design bar's #gbkTxt (one capture listener on the document); maybeDream holds a dream while someone is typing
@@ -14265,11 +14275,12 @@ function bootOwned(){
        Consuming drops the wait back to a wake nothing polls, so a reply that omits activity fields
        leaves it QUIET rather than silently returning to a 6s beat. Another stretch must be asked for. */
     var wakeConsume=function(){ actNotBefore=0; actWake="user"; actWaitBeats=0; /*WAIT-LOOK{*/try{ actWaitT=Date.now(); _wlLook=false; }catch(_wc){} /*}WAIT-LOOK*/try{ logEv("activity_wake",{why:actWhy.slice(0,40),goal:seekGoal?1:0}); }catch(e){} };
+    if(!seekGoal&&!(actOn&&!actQuiet)&&_gbWalkLookDue(now)){ think("(your body, not your person:) you are mid-walk. Look RIGHT NOW at where you are going and what is ahead. Leave walk out to keep going, send walk again to go further, turn, or send walk:{dir:\"stop\"}.","tick"); return; }
     if(actQuiet && seekGoal) return;                                                       // a waiting/slowed SEEK: awake and silent, no beat
-    if(actOn && !seekGoal && !actQuiet && (timerDue || !actWaiting) && actFloors){                                       // The same cadence serves acting activities and due intentional waits, with or without a seek goal.
+    if(actOn && !seekGoal && !actQuiet && (timerDue || !actWaiting) && actFloors && (timerDue || !_gbGoalPaced(now))){ _gbGoalBeatT=now;                                       // The same cadence serves acting activities and due intentional waits, with or without a seek goal.
       think((timerDue?(/*WAIT-LOOK{*/(typeof _wlLook!=="undefined"&&_wlLook)?"IT HAS BEEN QUIET FOR A WHILE, SO TAKE ONE LOOK":/*}WAIT-LOOK*/"YOUR WAIT IS UP"):"CONTINUE YOUR CURRENT ACTIVITY")+(actWhy?" — "+actWhy:"")+". Use your senses RIGHT NOW to evaluate the current activity. If acting, choose the next useful step toward its purpose, without restarting an action that is already running. If waiting, check whether the awaited condition has happened; if it has, take the next step. If it has not, say nothing and wait again — set phase:\"waiting\" with a wake, and afterMs if you want another stretch of time. If you are done with it entirely, set phase:\"finished\".","event",{beat:true});
       if(timerDue && inFlight) wakeConsume(); return; }                                                // inFlight is false above this line, so think() SETTING it is the proof a turn went out — think refuses on a 429 cool-off, an unowned soul or sleep, and a wake spent on a refused turn would be lost forever
-    if(seekGoal && actFloors){                                                             // SEEK: pursue every ~6s from call start AND ≥4s after the last reply AND only once the mouth is free (0703 walk: beats mid-sentence caused the stomp-restart chatter)
+    if(seekGoal && actFloors && (timerDue || !_gbGoalPaced(now))){ _gbGoalBeatT=now;                                                             // SEEK: pursue every ~6s from call start AND ≥4s after the last reply AND only once the mouth is free (0703 walk: beats mid-sentence caused the stomp-restart chatter)
       think("KEEP AT YOUR GOAL — "+seekGoal+". Use your senses RIGHT NOW and make REAL progress toward it — travel toward it, count it, check it, watch for it, or answer it, whatever the goal needs"+(MODE==="phone"?" (to move, emit walk:{dir}, spoken so they turn or carry you)":" (choose from your current body capabilities according to the goal and observed results; a completed action does not necessarily complete the activity)")+". If it's done, say so and set \"phase\":\"finished\" (a blank goal does not end it). If it's a place/thing you can plainly see you reached, add \"found\":true. If stuck, say what you need.","event",{beat:true});
       if(timerDue && inFlight) wakeConsume(); return; }                                    // same rule for the seek lane: the beat that actually went out IS the one turn
     /* Quiet is awake company, not automatic sleep. Explicit activity waits still own timing;
@@ -14285,7 +14296,7 @@ function bootOwned(){
         return;
       }
     }
-    if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){                                                // ordinary awake initiative: existing four-minute spacing, no upper idle cutoff
+    if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>_gbQuietGap(now)){                                                // ordinary awake initiative: existing four-minute spacing, no upper idle cutoff
       lastBeatT=now;
       think(window.__gbBoxExplore!==false?GB_EXPLORE_TXT:"QUIET COMPANY — you are awake together. If something in your available senses, context or remembered interests is worth noticing, you may offer one small expression: a familiar cute sound, a light effect, or a brief remark. Silence is equally welcome. Do not invent sensory evidence, repeat an unanswered invitation, demand stimulation, or start a competing game. There is no requirement to speak or make a sound.","event"); return;
     }

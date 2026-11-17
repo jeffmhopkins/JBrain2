@@ -2178,7 +2178,8 @@ PATCHES += CLOCK_PATCHES
 # would hold back exactly the exploring a creature left alone is meant to do.
 GB_EXPLORE_TXT = (
     "QUIET — nothing has happened for a while. This time is yours: you may reach for one of"
-    " your wants with your own body."
+    " your wants with your own body, or go and explore: walk somewhere you have not looked"
+    " yet and see what is there."
 )
 QUIET_TEXT_PATCHES: list[tuple[str, str, str, int]] = [
     (
@@ -4208,6 +4209,200 @@ PATCHES += [
         1,
     ),
 ]
+
+# Exploring the house (owner, 2026-11-17, from upstream's EXPLORE and LONG WALK of 11-13 to
+# 11-16, "push growbot to explore physically more ... too timid when alone"), rebuilt on our
+# trained walks and the box's slower local model rather than copied:
+# - On a body a goal sticks: it ends when he finds it, finishes it or swaps it, or his person
+#   stops it, never at upstream's 24-beat give-up (about five minutes of the box's turns,
+#   short of crossing a room at a trained walk's few cm a second). Left alone, its turns thin
+#   out: the next waits (time since his person last spoke, tapped or woke him) / 60 after the
+#   last, so a goal held overnight costs the box a turn a minute or so, not one every few
+#   seconds. Never while his own walk runs: a walk needs its looks.
+# - His own walk keeps looking (growbot-box.js gbOwnWalk): with no goal or activity beat to
+#   do it, a look turn goes out GB_WALK_LOOK_MS after the last answer lands and his words end,
+#   timed from the answer rather than upstream's fixed 8 s, so slow turns never queue. Sending
+#   the same walk again carries it on, and a walk with no look for 30 s stops itself.
+# - Quiet time on a body comes round every 90 s (upstream X5/X6), not four minutes, and
+#   thins by half-life only while he doesn't use it: a quiet turn that moved him or started a
+#   goal resets the clock, for the first 30 minutes after his person was last around.
+GB_GOAL_PACE_K = 60
+GB_WALK_LOOK_MS = 3000
+_GB_EXPLORE_JS = (
+    f"var GB_GOAL_PACE_K={GB_GOAL_PACE_K}, GB_WALK_LOOK_MS={GB_WALK_LOOK_MS},"
+    " GB_QUIET_USED_MS=1800000, _gbGoalBeatT=0, _gbQuietUsedT=0, _gbDoneGen={};\n"
+    "function _gbOnlyDone(a,b){ for(var g=a+1;g<=b;g++) if(!_gbDoneGen[g]) return false;"
+    " return b>a; }\n"
+    'function _gbGoalStick(){ return MODE!=="phone"; }\n'
+    "function _gbPersonT(){ return Math.max(_quietWakeT,_quietWordT,tapReflexT); }\n"
+    'function _gbOwnWalking(){ return MODE==="legs"&&typeof window.gbOwnWalking==="function"'
+    "&&window.gbOwnWalking(); }\n"
+    "function _gbGoalPaced(n){ return _gbGoalStick()&&!_gbOwnWalking()"
+    "&&n-_gbGoalBeatT<(n-_gbPersonT())/GB_GOAL_PACE_K; }\n"
+    "function _gbWalkLookDue(n){ return _gbOwnWalking()&&n-lastReplyT>=GB_WALK_LOOK_MS"
+    "&&n-lastCallT>=GB_WALK_LOOK_MS&&n>speakingUntil; }\n"
+    'function _gbQuietGap(n){ if(MODE==="phone"||window.__gbBoxExplore===false) return 240000;'
+    " return Math.max(WATCH_GAP_MS,(n-Math.max(_gbPersonT(),_gbQuietUsedT))/2); }\n"
+)
+GB_WALK_LOOK_TXT = (
+    "(your body, not your person:) you are mid-walk. Look RIGHT NOW at where you are going and"
+    " what is ahead. Leave walk out to keep going, send walk again to go further, turn, or send"
+    ' walk:{dir:\\"stop\\"}.'
+)
+EXPLORE_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "\nvar lastBeatT=0, beatN=0, lastWatchT=0,",
+        "\n" + _GB_EXPLORE_JS + "var lastBeatT=0, beatN=0, lastWatchT=0,",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  seekTicks++; if(seekTicks>=SEEK_MAX_TICKS){ var g2=seekGoal;",
+        "  seekTicks++; if(seekTicks>=SEEK_MAX_TICKS&&!_gbGoalStick()){ var g2=seekGoal;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_statusEl.textContent = "🎯 "+seekGoal+"  ["+seekTicks+"/"+SEEK_MAX_TICKS+"]";',
+        '_statusEl.textContent = "🎯 "+seekGoal+(_gbGoalStick()?"":"  ["+seekTicks+"/"+SEEK_MAX_TICKS+"]");',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '"You are trying to: "+seekGoal+".  (beat "+seekTicks+" of up to "+SEEK_MAX_TICKS+")"+',
+        '"You are trying to: "+seekGoal+"."+(_gbGoalStick()?" It is yours until you find it, finish'
+        ' it or change it, or your person stops it.":"  (beat "+seekTicks+" of up to "+SEEK_MAX_TICKS+")")+',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    if(actOn && !seekGoal && !actQuiet && (timerDue || !actWaiting) && actFloors){",
+        "    if(actOn && !seekGoal && !actQuiet && (timerDue || !actWaiting) && actFloors"
+        " && (timerDue || !_gbGoalPaced(now))){ _gbGoalBeatT=now;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    if(seekGoal && actFloors){",
+        "    if(seekGoal && actFloors && (timerDue || !_gbGoalPaced(now))){ _gbGoalBeatT=now;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    if(actQuiet && seekGoal) return;",
+        "    if(!seekGoal&&!(actOn&&!actQuiet)&&_gbWalkLookDue(now)){"
+        f' think("{GB_WALK_LOOK_TXT}","tick"); return; }}\n'
+        "    if(actQuiet && seekGoal) return;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){",
+        "    if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>_gbQuietGap(now)){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '    logEv("think",{k:kind,nf:frames.length,',
+        "    try{ if(event===GB_EXPLORE_TXT&&MODE!==\"phone\"&&((moved&&moved!==\"still\")||_gr.started"
+        "||_gr.swapped)&&Date.now()-_gbPersonT()<GB_QUIET_USED_MS) _gbQuietUsedT=Date.now(); }"
+        "catch(_gq){}\n"
+        '    logEv("think",{k:kind,nf:frames.length,',
+        1,
+    ),
+    # He picks the walk's length and keeps looking while it runs (upstream LONG WALK's words,
+    # minus its fixed 8 s look and the maker's floor speed, which is not our trained walk's).
+    (
+        "v3/prompts.js",
+        "When your person requests a duration, honor it; otherwise choose a short useful attempt"
+        " and observe the result.",
+        "When your person requests a duration, honor it; otherwise choose the length the trip"
+        " needs. While you walk you keep seeing and thinking: each time you finish a thought you"
+        ' get a fresh look, so leave walk out to keep going, send walk again to go further, or'
+        ' send walk:{dir:\\"stop\\"}. A walk with no fresh look for 30 s stops itself.',
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        '"walk":{"secs":3},',
+        '"walk":{"secs":"number: the seconds the trip needs"},',
+        1,
+    ),
+    # Upstream 11-13 (X11a/b): the dream gets the plan rules that apply to a dream, not the
+    # awake-only one about the diary's log field (a dream reply has none), and its language
+    # line names dream_say and wake_say only for the dream, where those fields exist.
+    (
+        "v3/prompts.js",
+        '  return (prompt || DREAM_SYS) + "\\n\\n" + PHYSICAL_GROUNDING + "\\n\\n" + PLAN_CORRECTION'
+        " + languageContext(soul, autoLang);",
+        '  return (prompt || DREAM_SYS) + "\\n\\n" + PHYSICAL_GROUNDING + "\\n\\n" +'
+        " PLAN_CORRECTION_SHARED + PLAN_CORRECTION_DREAM + PLAN_CORRECTION_TIMING +"
+        " languageContext(soul, autoLang, true);",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "function languageContext(soul, autoLang) {",
+        "function languageContext(soul, autoLang, forDream) {",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        '    (code ? " Write say, dream_say and wake_say in "+label+" ("+code+")." : " Apply that'
+        ' same language to say, dream_say and wake_say.")+',
+        '    (code ? " Write say"+(forDream ? ", dream_say and wake_say" : "")+" in "+label+" ("+code+")."'
+        ' : " Apply that same language to say"+(forDream ? ", dream_say and wake_say" : "")+".")+',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "clock-tools2-quiet-since-travel-follow5\"",
+        "clock-tools2-quiet-since-travel-follow5-explore\"",
+        1,
+    ),
+    # A walk that ends on its own is no cancel (Dave simulator, 2026-11-17): a reply refuses
+    # its move when the motion generation changed while it was being thought, which is meant
+    # for a stop, pause, hide or newer move; but a walk finishing also moves the generation, so
+    # every reply that landed just after his walk ended said "I could not start that
+    # movement", which with the box's turns was every other step of a long trip. A finish
+    # marks its generation, and only other changes cancel.
+    (
+        "v3/next.html",
+        "  _motionGen++;\n  try{ _bodyBootClose(_motion); }catch(_be){}\n",
+        "  _motionGen++; if(why===\"done\") _gbDoneGen[_motionGen]=1;\n"
+        "  try{ _bodyBootClose(_motion); }catch(_be){}\n",
+        1,
+    ),
+    # ...and the stance it settles into is the same finish: holding it stops the walk again.
+    (
+        "v3/next.html",
+        "    holdPose(last,0,HOLD_IDLE_S,true);\n    // Renew immediately;",
+        "    var _gbG1=_motionGen; holdPose(last,0,HOLD_IDLE_S,true);\n"
+        "    if(why===\"done\") for(var _gbG=_gbG1+1;_gbG<=_motionGen;_gbG++) _gbDoneGen[_gbG]=1;\n"
+        "    // Renew immediately;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var _mCancelled=(_motionGen!==_mgen)||document.hidden;",
+        "var _mCancelled=(_motionGen!==_mgen&&!_gbOnlyDone(_mgen,_motionGen))||document.hidden;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "q.input===_autoRec.input&&q.gen===_motionGen&&",
+        "q.input===_autoRec.input&&(q.gen===_motionGen||_gbOnlyDone(q.gen,_motionGen))&&",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "o.follow===\"me\"&&_mgen===_motionGen",
+        "o.follow===\"me\"&&(_mgen===_motionGen||_gbOnlyDone(_mgen,_motionGen))",
+        1,
+    ),
+]
+PATCHES += EXPLORE_PATCHES
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
