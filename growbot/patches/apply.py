@@ -4275,6 +4275,17 @@ _GB_EXPLORE_JS = (
     # line says so and how to get out. Not "see floor": m4, told so, spun for five minutes
     # hunting floor his upward-tilted camera barely shows.
     "var _gbExpTrail=[], GB_STUCK_MS=90000, GB_STUCK_M=0.4;\n"
+    # Live m3-m5: he set off the way he woke facing, into the far corner, and never once
+    # looked back toward the kitchen door behind him. The headings he has looked at (each
+    # turn's frame, _gbLooks) say where the widest unlooked gap is, from where he faces now.
+    "function _gbUnseenDir(){ try{ var m=window.gbMap&&window.gbMap.map&&window.gbMap.map();"
+    " if(!m||!m.here||!isFinite(+m.here.h)||!_gbLooks.length) return null; var b=[], k;"
+    " for(k=0;k<360;k++) b[k]=0; _gbLooks.forEach(function(a){ for(var d=-30;d<30;d++)"
+    " b[((Math.round(a)+d)%360+360)%360]=1; }); var best=0, at=-1, run=0, st=0;"
+    " for(k=0;k<720;k++){ if(!b[k%360]){ if(!run) st=k; run++; if(run>best&&run<=360){"
+    " best=run; at=st; } } else run=0; } if(best<60) return null; var c=at+best/2,"
+    " r=((c-m.here.h)%360+540)%360-180; return {deg:Math.round(r),wide:best}; }catch(e){"
+    " return null; } }\n"
     # Live e1/e2 (explore_alone): quiet beats on his legs got "I see a tall bookshelf" and
     # "I'll peek left", and no walk or spin, ten minutes through. On legs the beat says what
     # exploring takes: a goal of it, and a move in the same reply.
@@ -4292,7 +4303,7 @@ _GB_EXPLORE_JS = (
     "x:+m.here.x,y:+m.here.y}); _gbExpTrail=_gbExpTrail.filter(function(p){ return now-p.t<="
     "GB_STUCK_MS; }); var near=0; _gbExpTrail.forEach(function(p){ near=Math.max(near,"
     "Math.hypot(p.x-m.here.x,p.y-m.here.y)); }); var stuck=_gbExpTrail.length>2&&now-"
-    "_gbExpTrail[0].t>=GB_STUCK_MS*0.8&&near<GB_STUCK_M; var been={}; (m.rooms||[]).forEach(function(r){"
+    "_gbExpTrail[0].t>=GB_STUCK_MS*0.8&&near<GB_STUCK_M, un=_gbUnseenDir(); var been={}; (m.rooms||[]).forEach(function(r){"
     " been[r.n]=1; }); var open=(m.doors||[]).filter(function(o){ return !(o.a&&been[o.a]"
     "&&o.b&&been[o.b]); }).map(function(o){ return o.a&&been[o.a]?(o.b||\"somewhere unnamed\")"
     ":(o.a||\"somewhere unnamed\"); });"
@@ -4301,7 +4312,11 @@ _GB_EXPLORE_JS = (
     # Jeff, 2026-11-17: to identify a thing, go in close, to about a foot from it (m1 put
     # down a "green cactus" and a "red box" from across the room).
     " When you see something you can't name for sure, walk in until it is about 30 cm (a"
-    " foot) away and look again before you put it on your map.\"+(stuck?\" For the last \"+"
+    " foot) away and look again before you put it on your map.\"+(un?\" You have not looked"
+    " at all toward about \"+Math.abs(un.deg)+\" degrees to your \"+(un.deg>=0?\"left\":\"right\")"
+    "+\" (about \"+un.wide+\" degrees wide) since you took this goal: turn that way first"
+    " (walk:{turn:\"+un.deg+\"}), and"
+    " if the way looks open, walk that way.\":\"\")+(stuck?\" For the last \"+"
     "Math.round((now-_gbExpTrail[0].t)/1000)+\" s your map has you within \"+Math.round(near*10)"
     "/10+\" m of here: you have seen what this spot shows. If a wall or furniture fills your"
     " picture up close, turn until the way ahead looks open, things across the room and far"

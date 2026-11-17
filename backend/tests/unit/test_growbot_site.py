@@ -5830,6 +5830,28 @@ def test_on_legs_the_quiet_beat_says_exploring_takes_a_walk() -> None:
     assert phone == ""
 
 
+def test_an_explore_goal_names_the_way_he_has_not_looked_yet() -> None:
+    """Live m3-m5: he set off the way he woke facing and never looked back toward the door
+    behind him. The widest gap in the headings he has looked at is named from his own."""
+    setup = (
+        "var seekGoal='explore the house', _gbGoalT=now-9000;"
+        " var M={here:{x:0,y:0,h:180}, rooms:[], doors:[]};"
+        " window.gbMap={map:function(){ return M; }};"
+    )
+    got = _explore(
+        "(_gbLooks=[180,150,210], _gbExploreLine()),"
+        "(_gbLooks=[180,150,210], M.here.h=90, _gbExploreLine()),"
+        "(_gbLooks=[0,60,120,180,240,300], _gbExploreLine())",
+        setup,
+    )
+    # Looked over 120..240 facing 180: the gap is centred on 0, straight behind him.
+    assert "not looked at all toward about 180 degrees to your" in got[0]
+    assert "(about 240 degrees wide)" in got[0]
+    # Facing 90 now, the same gap's centre (0) is 90 degrees to his right.
+    assert "about 90 degrees to your right" in got[1] and "walk:{turn:-90}" in got[1]
+    assert "not looked at all" not in got[2]
+
+
 def test_an_explore_goal_that_has_kept_him_on_one_spot_says_how_to_get_out() -> None:
     """Live m2: five minutes turning in the couch corner. Ninety seconds within 0.4 m of one
     spot by his map, and the line tells him to find open floor and walk a metre."""
