@@ -432,11 +432,12 @@ def _diary(had: Any, value: Any) -> list[dict[str, Any]]:
     return out
 
 
-# What a creature keeps through Forget history: who it is, whose it is, its languages. The
+# What a creature keeps through Forget history: who it is, whose it is, its languages and the
+# first song its person sang it (`call`, part of the bond, which a template keeps too). The
 # Dave simulator's fresh runs (growbot/sim/dave_sim/box.py `forget`, which must agree) showed
 # a Dave with this wiped walked when asked where the owner's, whose diary remembered his
 # stock walk slipping, often only said he was walking (2026-11-17).
-KEEP_GOALS = ("owner", "selfName", "inputLanguage", "replyLanguage")
+KEEP_GOALS = ("owner", "selfName", "inputLanguage", "replyLanguage", "call")
 
 
 def forgotten(soul: dict[str, Any], name: str) -> dict[str, Any]:

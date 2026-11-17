@@ -548,9 +548,9 @@ async def forget_history(request: Request, owner: OwnerDep, pid: Pid) -> Written
     ctx = _owner_ctx(owner)
     p = await _get(request, ctx, pid)
     soul = souls.forgotten(p.soul or {}, p.name)
-    return await _written(
-        request, ctx, pid, soul, ("Before forgetting history", "made before a forget")
-    )
+    # Built from the soul as read, so a phone write in between is refused rather than lost.
+    before = ("Before forgetting history", "made before a forget")
+    return await _written(request, ctx, pid, soul, before, expect=p.version)
 
 
 @router.delete("/personas/{pid}", status_code=204)

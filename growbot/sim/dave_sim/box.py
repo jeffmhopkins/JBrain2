@@ -86,7 +86,7 @@ def policy_id(slug: str) -> str:
 # reflexes its person taught it. The rest (its log, facts, wants, the day's scratch and the
 # identity grown from them) is history. The PWA's Forget history is the same wipe
 # (backend jbrain.growbot.souls.forgotten), which the backend suite holds them to.
-KEEP_GOALS = ("owner", "selfName", "inputLanguage", "replyLanguage")
+KEEP_GOALS = ("owner", "selfName", "inputLanguage", "replyLanguage", "call")
 
 
 def forget(soul: dict[str, Any]) -> dict[str, Any]:
@@ -103,9 +103,10 @@ def forget(soul: dict[str, Any]) -> dict[str, Any]:
         out["goals"]["selfName"] = name
     # The page reseeds a short identity with a newborn's stock one (and its stock name), and
     # a box soul's selfName doesn't survive the load, so the name goes in a full sentence.
+    me = out["goals"].get("selfName") or name
     out["identity"] = (
-        f"I am {name}. I walk on two legs, and I want to explore the real world with my person."
-        if name
+        f"I am {me}. I walk on two legs, and I want to explore the real world with my person."
+        if me
         else ""
     )
     return out

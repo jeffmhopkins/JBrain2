@@ -324,6 +324,10 @@ def test_forget_keeps_who_and_whose_and_drops_history() -> None:
     from jbrain.growbot import souls
 
     assert souls.forgotten(soul, "Dave") == got
+    named = {**soul, "goals": {"owner": "Jeff", "selfName": "Davey", "call": ["do", "re"]}}
+    assert souls.forgotten(named, "Dave") == simbox.forget(named)
+    assert simbox.forget(named)["identity"].startswith("I am Davey.")
+    assert simbox.forget(named)["goals"]["call"] == ["do", "re"]
     assert simbox.forget({**soul, "scratch": {}})["scratch"] == {}
 
 
