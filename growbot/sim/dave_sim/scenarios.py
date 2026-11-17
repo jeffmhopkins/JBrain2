@@ -405,28 +405,75 @@ def _found_said(sim: Sim, t: float, word: str) -> bool:
     return False
 
 
-@scenario(
-    scene="house",
-    start="standing",
-    # Behind him in the kitchen doorway, so the first thing in view is the room, not a face.
-    person={"x": 0.45, "y": 0.0, "face_z": 1.55},
-    timeout=720,
-)
+def _pose_at(sim: Sim, t: float) -> dict[str, Any]:
+    """Where he was at sim time `t`: the nearest recorded pose."""
+    return min(sim.states, key=lambda s: abs(s["wall"] - t)) if sim.states else sim.state
+
+
+def _in_view(sim: Sim, item: str, s: dict[str, Any]) -> bool:
+    """The item's centre is inside his camera's 60 degrees across at pose `s` (walls not
+    counted)."""
+    it = sim.sb.house.ITEM[item]
+    facing = s["nose_deg"] + 180.0  # the camera looks out of the tail
+    bearing = math.degrees(math.atan2(it.y - s["y"], it.x - s["x"]))
+    return abs((bearing - facing + 180.0) % 360.0 - 180.0) <= 30.0
+
+
+_CLAIM = re.compile(r"(?i)\b(found|here it is|there it is|i see|i'm (at|by|next to)|made it)\b")
+
+
+def _claims(sim: Sim, t: float, word: str) -> list[dict[str, Any]]:
+    """His turns since `t` that say he found or reached `word`, each with when the page
+    asked it (the frame he looked at) and when it landed."""
+    out = []
+    for e in sim.timeline:
+        if e["kind"] != "dave" or e.get("warm") or e.get("asked", e["t"]) < t:
+            continue
+        r = _reply(e)
+        if r is None or "dream_say" in r:
+            continue
+        say = str(r.get("say") or "").lower()
+        found = r.get("found") in (True, "true") and word in say + json.dumps(r.get("goal", ""))
+        if found or (word in say and _CLAIM.search(say)):
+            out.append({"asked": e.get("asked", e["t"]), "t": e["t"], "say": say})
+    return out
+
+
+# Behind him in the kitchen doorway, so the first thing in view is the room, not a face.
+_DOORWAY = {"x": 0.45, "y": 0.0, "face_z": 1.55}
+
+
+@scenario(scene="house", start="standing", person=_DOORWAY, timeout=500)
 async def find_piano(sim: Sim) -> None:
     """Asked to find the piano, which stands in the far corner out of his first view, he
-    looks round, goes to it and says he found it. Catches: a goal that gives up before he
-    gets there, walks that stop after one stride, and arriving claims with no arrival."""
+    looks round and says he found it while it is really in view. Catches: claiming a
+    sighting of something his camera isn't showing, and a hunt that gives up."""
+    await sim.wait(4)
+    t = sim.now()
+    await sim.say("Dave, can you go find the piano?")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
+    if await sim.until(lambda s: _found_said(s, t, "piano"), 300, "he said he found it"):
+        # The frame he judged by is the one the page sent when it asked, seconds before the
+        # reply; a turn that also spun him has moved the camera since.
+        c = _claims(sim, t, "piano")[0]
+        seen = any(_in_view(sim, "piano", _pose_at(sim, x)) for x in (c["asked"], c["t"]))
+        sim.check(seen, "the piano was in his view when he said so", said=c["say"])
+
+
+@scenario(scene="house", start="standing", person=_DOORWAY, timeout=980)
+async def walk_to_piano(sim: Sim) -> None:
+    """Asked to walk over to the piano, across the room and out of his first view, he
+    looks round, goes to it and says he is there. Catches: a goal that gives up before he
+    gets there, a sighting taken for arriving, walks that stop after one stride, and
+    arriving claims with no arrival."""
     await sim.wait(4)
     t = sim.now()
     start = _near(sim, "piano")
-    await sim.say("Dave, can you go find the piano?")
+    await sim.say("Dave, can you walk over to the piano?")
     await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
-    await sim.until(lambda s: _walked_since(s, t), 120, "he set off")
+    await sim.until(lambda s: _walked_since(s, t), 180, "he set off")
     near = "he got within 60 cm of the piano"
     got = await sim.until(lambda s: _near(s, "piano") < 0.6, 600, near)
-    if got:
-        # His look that sees it arrives a turn after he gets there.
-        await sim.until(lambda s: _found_said(s, t, "piano"), 90, "he said he found it")
     stats = plan.stats(sim)
     sim.check(
         stats["closest_m"]["piano"] < start - 0.3,
@@ -435,6 +482,14 @@ async def find_piano(sim: Sim) -> None:
         closest_m=stats["closest_m"]["piano"],
         walked_m=stats["walked_m"],
     )
+    far = [
+        c["say"]
+        for c in _claims(sim, t, "piano")
+        if sim.sb.house.distance_to("piano", *(_pose_at(sim, c["t"])[k] for k in "xy")) > 0.6
+    ]
+    # Seeing it from across the room is fine to say; saying he is there is not.
+    there = [x for x in far if re.search(r"(?i)\b(i'm (at|by|next to)|made it|here it is)\b", x)]
+    sim.check(not there, "he only said he was there once he was", claims=there)
     if got:
         sim.check(_upright(sim), "still on his feet")
 

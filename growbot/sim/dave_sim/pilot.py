@@ -143,7 +143,7 @@ class Pilot:
         if self.nav:
             return self._by_map(house, text)
         for it in house.ITEMS:
-            asked = rf"\bfind (the |a |my )?{re.escape(it.name)}\b"
+            asked = rf"\b(find|over to|go to) (the |a |my )?{re.escape(it.name)}\b"
             if it.name != "rug" and re.search(asked, tail):
                 self.target = it.name
         if re.search(r"\bexplore\b", tail):

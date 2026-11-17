@@ -2305,8 +2305,14 @@
     // it on (M.extend) instead of a new stance glide, and it stops itself when he stops looking.
     if (own) M.own = move;
     // Until the stride starts, a longer ask is a longer walk; once it runs, extend() below.
-    // Each returns the walk's whole length in seconds when it grew, else 0.
-    M.extend = function (s) { if (s <= walkS) return 0; walkS = s; return walkS; };
+    // Each returns the walk's whole length in seconds when it grew, else 0, and grows it no
+    // further than the legs' duty budget, as start() grants a walk.
+    M.extend = function (s) {
+      s = Math.min(s, dutyLeftMs() / 1000);
+      if (s <= walkS) return 0;
+      walkS = s;
+      return walkS;
+    };
     _motion = M;
     var fol = null;
     _moveReport(attempt, "accepted", "loading_policy");
@@ -2365,8 +2371,17 @@
       // At least `s` more seconds from now; an ask within what is left changes nothing (only a
       // stop ever shortens a walk).
       M.extend = function (s) {
-        if (!endT) { if (s <= walkS) return 0; walkS = s; return walkS; }
-        var want = Date.now() + s * 1000;
+        if (!endT) {
+          // Still finding his stance: this walk is already logged and its self-motion window
+          // set from the old length, so both grow with it.
+          var more = Math.min(s - walkS, dutyLeftMs() / 1000);
+          if (more <= 0) return 0;
+          _walkLog.push({ t: Date.now(), ms: more * 1000 });
+          walkS += more;
+          selfMoveUntil = Math.max(selfMoveUntil, Math.max(prepEnd, Date.now()) + walkS * 1000 + 3500);
+          return walkS;
+        }
+        var want = Math.min(Date.now() + s * 1000, endT + dutyLeftMs());
         if (want <= endT) return 0;
         _walkLog.push({ t: Date.now(), ms: want - endT });
         endT = want;

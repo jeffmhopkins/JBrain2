@@ -5453,6 +5453,20 @@ def test_asking_for_the_same_walk_while_it_runs_carries_it_on() -> None:
     assert [m for m, _, _ in turn["started"]] == ["forward", "back"] and turn["outcomes"] == []
 
 
+def test_carrying_a_walk_on_stays_within_the_legs_duty_budget() -> None:
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    # Before the stride, during the stance, and while it runs: each growth is capped by
+    # dutyLeftMs(), and the stance-time growth is logged and widens the self-motion window.
+    assert "s = Math.min(s, dutyLeftMs() / 1000);" in box
+    assert "var more = Math.min(s - walkS, dutyLeftMs() / 1000);" in box
+    assert "_walkLog.push({ t: Date.now(), ms: more * 1000 });" in box
+    assert (
+        "selfMoveUntil = Math.max(selfMoveUntil,"
+        " Math.max(prepEnd, Date.now()) + walkS * 1000 + 3500);" in box
+    )
+    assert "var want = Math.min(Date.now() + s * 1000, endT + dutyLeftMs());" in box
+
+
 def test_his_own_walk_stops_when_he_stops_looking() -> None:
     node = shutil.which("node")
     if node is None:
@@ -5546,7 +5560,13 @@ def test_quiet_time_on_a_body_comes_round_often_while_he_uses_it() -> None:
 
 def test_a_walk_that_ends_on_its_own_does_not_cancel_the_next_reply() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert '_motionGen++; if(why==="done") _gbDoneGen[_motionGen]=1;' in page
+    assert (
+        '_motionGen++; if(why==="done") _gbDoneGen[_motionGen]=1;'
+        " else delete _gbDoneGen[_motionGen];" in page
+    )
+    # A Stop's bump clears a mark a rest's rollback could have left on its number.
+    assert "_motionGen++; delete _gbDoneGen[_motionGen];" in page
+    assert "arguments[3]!==_motionGen&&!_gbOnlyDone(arguments[3],_motionGen)" in page
     # The stance a finished walk settles into stops it again, and that is the finish too.
     # The get-up brain's own currency check counts a finish the same way.
     assert "q.input===_autoRec.input&&(q.gen===_motionGen||_gbOnlyDone(q.gen,_motionGen))&&" in page
