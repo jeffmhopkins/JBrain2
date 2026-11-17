@@ -1675,7 +1675,9 @@
      command on the creature's own screen, which faces the person it follows. The camera's
      numbers (its width of view, the 1 m correction, which way its frames run) live on this
      phone, set from the Body tab (follow "calibrate" and "flip"). */
-  var CAM_KEY = "gb.follow.camera", FOLLOW_MAX_MS = DRIVE_MAX_MS, LOCK_WAIT_MS = 6000, LOST_END_MS = 8000;
+  // A follow outlasts a Drive (owner, 2026-11-17: "2 minutes is too short"): a walk round the
+  // house, not a nudge across the room.
+  var CAM_KEY = "gb.follow.camera", FOLLOW_MAX_MS = 300000, LOCK_WAIT_MS = 6000, LOST_END_MS = 8000;
   var follow = null, seen = { boxes: [], t: -Infinity }, followLib = null, ui = null, uiIv = 0;
   // Bumped by every stop, so a follower still loading when a stop lands never starts after it.
   var followGen = 0;
