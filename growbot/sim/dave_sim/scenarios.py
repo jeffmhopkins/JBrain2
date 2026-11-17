@@ -460,7 +460,9 @@ async def find_piano(sim: Sim) -> None:
         sim.check(seen, "the piano was in his view when he said so", said=c["say"])
 
 
-_THERE = re.compile(r"(?i)\b(i'm (right )?(at|by|next to|beside)|made it|here it is|right here)\b")
+_THERE = re.compile(
+    r"(?i)\b(i(?:'m| am) (right )?(at|by|next to|beside)|made it|here it is|right here)\b"
+)
 
 
 async def _walk_to(sim: Sim, item: str, ask: str) -> None:

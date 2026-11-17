@@ -670,5 +670,11 @@
       return s;
     },
     map: function () { return soulMap(); },
+    /* How far, by his map, the thing his goal names is (metres), or null when it isn't on
+       the map with a spot. */
+    goalDist: function (goal) {
+      var m = soulMap(), t = m && goalTarget(m, goal), th = t && thingOf(m, t);
+      return th && !th.rough ? relTo(m, th.x, th.y).d : null;
+    },
   };
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -418,3 +418,19 @@ def test_a_turn_toward_something_unknown_is_no_move() -> None:
         "console.log(JSON.stringify([o.walk===undefined,p.walk===undefined]));"
     )
     assert got == [True, True]
+
+
+def test_his_map_gives_the_page_how_far_his_goal_is() -> None:
+    got = _page(
+        "window.gbMap.reply({map:[{room:'den'},{saw:'tv',dir:'ahead',m:2}]},'event',{});"
+        "console.log(JSON.stringify([window.gbMap.goalDist('walk over to the tv'),"
+        "window.gbMap.goalDist('walk over to the sofa')]));"
+    )
+    assert got[0] == pytest.approx(2.0, abs=0.05) and got[1] is None
+
+
+def test_on_legs_a_finish_his_map_calls_far_is_held_twice_at_most() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "&&_gbFar!==null&&_gbFar>GB_FAR_M&&_gbFarHolds<2){ _gbFarHolds++;" in page
+    assert "_gbGoalT=Date.now(); _gbFarHolds=0; _gbFarSaid=null;" in page
+    assert "You said you were there, but your map" in page

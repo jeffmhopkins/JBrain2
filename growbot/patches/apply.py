@@ -4236,7 +4236,9 @@ _GB_EXPLORE_JS = (
     # Spins since the goal began, in order, give the span of headings he has faced (a spin's
     # stored yaw is signed, + to his left); his camera adds its 60 degrees to it. Measured by
     # the phone, not commanded.
-    "var _gbGoalT=0;\n"
+    "var _gbGoalT=0, GB_FAR_M=0.8, _gbFarHolds=0, _gbFarSaid=null;\n"
+    "function _gbMapFar(){ try{ return window.gbMap&&window.gbMap.goalDist?"
+    "window.gbMap.goalDist(seekGoal):null; }catch(e){ return null; } }\n"
     "function _gbLookedLine(){ try{ if(MODE!==\"legs\"||!_gbGoalT) return \"\";"
     " var L=_spinMeasLoad().filter(function(x){ return x.t>=_gbGoalT; }).sort(function(a,b){"
     " return a.t-b.t; }), h=0, lo=0, hi=0, tot=0;"
@@ -4251,7 +4253,9 @@ _GB_EXPLORE_JS = (
     " sight, but seeing it is not"
     " all your goal asks: go on to it and do the rest. You are by it only when it fills your"
     " picture edge to edge, or a walk toward it no longer moves you; until then it is farther"
-    " than it looks.\":\"\");"
+    " than it looks.\":\"\")+(_gbFarSaid!==null?\" You said you were there, but your map"
+    " put it about \"+Math.round(_gbFarSaid*10)/10+\" m away then, so you were not: go on to"
+    " it.\":\"\");"
     " }catch(e){ return \"\"; } }\n"
     # His own restatement of his person's errand ("find the piano" for "walk over to the
     # piano") names the same thing without the doing; on legs that would turn a sighting
@@ -4498,7 +4502,8 @@ SEEK_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         'logEv("seek_set",{what:seekGoal,raw:raw?1:0});',
-        '_gbGoalT=Date.now(); logEv("seek_set",{what:seekGoal,raw:raw?1:0});',
+        '_gbGoalT=Date.now(); _gbFarHolds=0; _gbFarSaid=null;'
+        ' logEv("seek_set",{what:seekGoal,raw:raw?1:0});',
         1,
     ),
     (
@@ -4530,6 +4535,12 @@ SEEK_PATCHES: list[tuple[str, str, str, int]] = [
         'if(seekGoal&&_fin&&MODE==="legs"&&!_seekSeen&&SEEK_ACTION.test(seekGoal)){'
         ' _seekSeen=true; try{ logEv("seek_sight",{what:seekGoal,at:"finish_held"}); }catch(e){}'
         " updateStatus(); return; }"
+        # Live w6: the second finish, "I am right beside it", came 1.8 m out with his own
+        # map saying 1.3. Twice a goal at most, his map outranks the look of it.
+        ' var _gbFar=_gbMapFar(); if(seekGoal&&_fin&&MODE==="legs"&&SEEK_ACTION.test(seekGoal)'
+        "&&_gbFar!==null&&_gbFar>GB_FAR_M&&_gbFarHolds<2){ _gbFarHolds++; _seekSeen=true;"
+        ' _gbFarSaid=_gbFar; try{ logEv("seek_sight",{what:seekGoal,at:"map_far",m:'
+        "Math.round(_gbFar*10)/10}); }catch(e){} updateStatus(); return; }"
         ' if(seekGoal&&_fin){ try{ logEv("seek_sight",{what:seekGoal,at:"finish"}); }catch(e){} }',
         1,
     ),
