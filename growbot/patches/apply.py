@@ -4728,6 +4728,30 @@ QUIET_LEGS_PATCHES.append(
 )
 PATCHES += QUIET_LEGS_PATCHES
 
+# His view all around (owner, 2026-11-17: "project his view onto a cylinder so that he probably
+# understands where things are versus his angle"), growbot-pano.js: the pictures he took from
+# one spot, painted at the headings they faced into one 360-degree strip, which rides his next
+# thought after a turn beside his camera's own picture.
+PANO_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        '<script src="/growbot-talklog.js"></script>',
+        '<script src="/growbot-talklog.js"></script><script src="/growbot-pano.js"></script>',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '  parts.push({type:"text",text:userMsg});',
+        "  try{ var _gbPv=camOn&&window.gbPano&&window.gbPano.take&&window.gbPano.take();"
+        ' if(_gbPv&&_gbPv.j){ parts.push({type:"text",text:_gbPv.text});'
+        ' parts.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+_gbPv.j}});'
+        ' logEv("pano",{kb:Math.round(_gbPv.j.length/1024)}); } }catch(_gbPe){}\n'
+        '  parts.push({type:"text",text:userMsg});',
+        1,
+    ),
+]
+PATCHES += PANO_PATCHES
+
 
 # Dave's sketch map of the house (owner, 2026-11-17), growbot-map.js: kept in the soul, added to
 # and corrected by a `map` reply field, asked by `where` (a tool like recall, answered next
@@ -4945,6 +4969,7 @@ OWN_SCRIPTS = (
     "growbot-eyes.js",
     "growbot-talklog.js",
     "growbot-map.js",
+    "growbot-pano.js",
     "growbot-camtest.js",
 )
 
@@ -4987,6 +5012,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     shutil.copyfile(HERE / "growbot-eyes.js", site / "growbot-eyes.js")
     shutil.copyfile(HERE / "growbot-talklog.js", site / "growbot-talklog.js")
     shutil.copyfile(HERE / "growbot-map.js", site / "growbot-map.js")
+    shutil.copyfile(HERE / "growbot-pano.js", site / "growbot-pano.js")
     # Imported by growbot-box.js's trained walks, as growbot_runner.js is: no script tag.
     shutil.copyfile(HERE / "growbot-drive.js", site / "growbot-drive.js")
     shutil.copyfile(HERE / "growbot-follow.js", site / "growbot-follow.js")

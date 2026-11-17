@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=74d77e458345"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-map.js?v=d82b525684de"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=74d77e458345"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-map.js?v=d82b525684de"></script><script src="/growbot-pano.js?v=de94cae65769"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -11164,6 +11164,7 @@ function think(event,kind,extra){
   frames.forEach(function(f){ var ago=Math.max(0,Math.round((Date.now()-f.t)/1000));
     parts.push({type:"text",text:"[camera ("+_eyeWord+") — "+(ago<=1?"now]":ago+"s ago]")});
     parts.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+f.j}}); });
+  try{ var _gbPv=camOn&&window.gbPano&&window.gbPano.take&&window.gbPano.take(); if(_gbPv&&_gbPv.j){ parts.push({type:"text",text:_gbPv.text}); parts.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+_gbPv.j}}); logEv("pano",{kb:Math.round(_gbPv.j.length/1024)}); } }catch(_gbPe){}
   parts.push({type:"text",text:userMsg});
   msgs.push({role:"user",content:parts.length>1?parts:userMsg});                          // images ride ONLY this call; the trace stores text-only (ring stays clean)
   var _vmTurn=typeof vmTurnContext==="function"&&typeof vmStreamSpeech==="function"&&typeof vmReplyGuard==="function"?vmTurnContext(frames,kind,extra):null; if(typeof vmUiContext==="function")vmUiContext(_vmTurn);
