@@ -76,6 +76,11 @@ class Options:
     # the face (2026-11-17); a body test is to confirm the robot needs it too. None leaves
     # the page's default (unflipped).
     cam_flip: bool | None = True
+    # The owner's phone has long since learned which way is up on its robot (gb_up_vec,
+    # learned on walks and stands). A fresh browser hasn't, and its fallback reads the tall
+    # stance as lying flat on his back (live w7: no hold, "I am lying flat"), so the run
+    # seeds it from his standing reading. False leaves it to be learned.
+    up_vec: bool = True
     # simbody's scene: "room" (bare walls he walks through), "house" (growbot_train/house.py:
     # two furnished rooms whose walls and furniture stop him) or "flat" (five rooms off a
     # hallway).
@@ -164,6 +169,14 @@ class Sim:
             await ctx.add_init_script(
                 "try { if (!localStorage.getItem('gb.follow.camera'))"
                 f" localStorage.setItem('gb.follow.camera', {json.dumps(cam)}); }} catch (e) {{}}"
+            )
+        if self.o.up_vec:
+            a = self.body.motion()["accel"]
+            up = json.dumps([round(a["x"], 1), round(a["y"], 1), round(a["z"], 1)])
+            await ctx.add_init_script(
+                "try { if (!localStorage.getItem('gb_up_vec')) {"
+                f" localStorage.setItem('gb_up_vec', {json.dumps(up)});"
+                " localStorage.setItem('gb_up_vec_s', '1'); } } catch (e) {}"
             )
         await ctx.route(f"{ORIGIN}/**", self._http)
         await ctx.route_web_socket(f"wss://{ORIGIN.split('//')[1]}/d/**", self._ws)

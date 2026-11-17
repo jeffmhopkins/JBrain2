@@ -108,7 +108,7 @@ in the trainer halves its distance.
 origin facing its far wall, and a kitchen behind him through a doorway. The living room has a
 piano in its far corner, out of his first view, a couch, a bookshelf, a plant and a lamp; the
 kitchen a fridge, a counter and a table. Its walls and furniture stop him, where the bare
-room's walls let him walk through. `Options.at` sets where he starts and which way he faces.
+room's walls let him walk through. `Options.at` sets where he starts and which way he faces. `Options.up_vec` (on by default) seeds the page's learned "up" from his standing reading, as an owner's phone has long since learned it; a fresh browser's fallback reads his tall stance as lying on his back.
 
 `Options(scene="flat")` is the bigger house (`house.FLAT`): a hallway across the middle with
 a living room and kitchen south of it and a bedroom and study north, each through its own
