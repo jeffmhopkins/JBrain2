@@ -43,6 +43,14 @@ build under that swap turned every trained turn the wrong way. The robot's legs 
 mirrored (pins crossed, signs flipped): crossed pins alone also negate both swings and send
 the trained forward away from the person. `trained_turns` holds the turns.
 
+The follower's camera flip (`run.Options.cam_flip`) is on, as a phone whose owner set it
+from the PWA's Body tab (Follow dry run, then Flip if the arrow points away). In the sim,
+on the robot's wiring as modelled, every unflipped follow turned away from the face; that
+is a sim finding for a body test to confirm, and `follow_unflipped` pins it. `follow_walks_after`
+walks a standing person (face at 1.55 m; a 0.6 m face drops out of the frame's bottom as
+they back off) away and sideways for a minute: he walked 0.85 m after them and held
+1.3 to 1.7 m (2026-11-17).
+
 ## Running it
 
 From `growbot/sim/`, with GrowBot_Training checked out beside JBrain2 (or

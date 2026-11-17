@@ -71,6 +71,11 @@ class Options:
     out: Path = Path(__file__).resolve().parents[1] / "sim-runs" / "run"
     query: str = ""  # extra ?flags for the page, e.g. "getupnamed=1"
     eyes: bool = True  # open the camera at the start, as the owner does
+    # The follower's camera flip, as a phone whose owner set it from the Body tab's dry run.
+    # In the sim, on the robot's wiring as modelled, every unflipped follow turned away from
+    # the face (2026-11-17); a body test is to confirm the robot needs it too. None leaves
+    # the page's default (unflipped).
+    cam_flip: bool | None = True
 
 
 class Sim:
@@ -142,6 +147,12 @@ class Sim:
             permissions=["camera", "microphone"],
         )
         await ctx.add_init_script(path=str(HERE / "phone.js"))
+        if self.o.cam_flip is not None:
+            cam = json.dumps({"flipX": self.o.cam_flip})
+            await ctx.add_init_script(
+                "try { if (!localStorage.getItem('gb.follow.camera'))"
+                f" localStorage.setItem('gb.follow.camera', {json.dumps(cam)}); }} catch (e) {{}}"
+            )
         await ctx.route(f"{ORIGIN}/**", self._http)
         await ctx.route_web_socket(f"wss://{ORIGIN.split('//')[1]}/d/**", self._ws)
         self.page = page = await ctx.new_page()
