@@ -5654,7 +5654,8 @@ def test_his_goal_reminder_says_how_much_of_the_room_he_has_looked_over() -> Non
     assert '_gbGoalT=Date.now(); logEv("seek_set"' in page
     assert 'two turns in a row."+_gbLookedLine()) : "";' in page
     spins = (
-        "_gbGoalT=now-40000; function _spinMeasLoad(){ return ["
+        "_gbGoalT=now-40000; var _seekSeen=false, seekGoal='find the piano', SEEK_ACTION=/x/;"
+        " function _spinMeasLoad(){ return ["
         "{t:now-50000,g:'spin_left',y:90},{t:now-30000,g:'spin_left',y:90},"
         "{t:now-20000,g:'spin_right',y:-30}]; }"
     )
@@ -5665,3 +5666,18 @@ def test_his_goal_reminder_says_how_much_of_the_room_he_has_looked_over() -> Non
     assert "looked over about 150 of the 360 degrees" in line
     assert _explore("_gbLookedLine()", spins + "MODE='phone';") == [""]
     assert _explore("_gbLookedLine()", spins + "_gbGoalT=0;") == [""]
+
+
+def test_on_legs_seeing_the_thing_he_was_sent_to_is_not_arriving() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "(?:walk|go|come|head|run|get|make your way|make my way) (?:over|across|back) to" in page
+    assert 'logEv("seek_sight",{what:seekGoal,at:"finish_held"})' in page
+    seen = (
+        "var SEEK_ACTION=/\\b(walk to|(?:walk|go) (?:over|across) to)\\b/i, _seekSeen=true,"
+        " seekGoal='walk over to the piano'; _gbGoalT=now-5000;"
+        " function _spinMeasLoad(){ return []; }"
+    )
+    assert "you are there only when it is close" in _explore("_gbLookedLine()", seen)[0]
+    assert "you are there only" not in _explore("_gbLookedLine()", seen + "_seekSeen=false;")[0]
+    found = seen + "seekGoal='find the piano';"
+    assert "you are there only" not in _explore("_gbLookedLine()", found)[0]

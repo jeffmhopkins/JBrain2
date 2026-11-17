@@ -4246,7 +4246,9 @@ _GB_EXPLORE_JS = (
     " return \" Since you took this goal \"+Math.round((Date.now()-_gbGoalT)/1000)+\" s ago your"
     " spins have turned you \"+Math.round(tot)+\" degrees in all, measured; with your camera's"
     " 60 degrees across, you have looked over about \"+seen+\" of the 360 degrees around"
-    " you.\"; }catch(e){ return \"\"; } }\n"
+    " you.\"+(_seekSeen&&SEEK_ACTION.test(seekGoal)?\" You have it in sight, but your goal is to"
+    " get to it: you are there only when it is close and big in your view, so go to it.\":\"\");"
+    " }catch(e){ return \"\"; } }\n"
     'function _gbGoalStick(){ return MODE!=="phone"; }\n'
     "function _gbPersonT(){ return Math.max(_quietWakeT,_quietWordT,tapReflexT); }\n"
     'function _gbOwnWalking(){ return MODE==="legs"&&typeof window.gbOwnWalking==="function"'
@@ -4480,6 +4482,30 @@ SEEK_PATCHES: list[tuple[str, str, str, int]] = [
         " it. Never repeat the same goal line two turns in a row.\") : \"\";",
         " Your person outranks the goal: when they speak, answer them first, then return to"
         " it. Never repeat the same goal line two turns in a row.\"+_gbLookedLine()) : \"\";",
+        1,
+    ),
+    # Fresh Dave, "walk over to the piano" (2026-11-17): he saw it across the room and
+    # answered found:true with phase finished in one breath, so the goal ended where he
+    # stood. Upstream holds a sighting on an action goal as in sight, but "walk over to"
+    # was no action to its pattern, and a finish in the same reply as the first sighting
+    # still ended it. On legs, that first finish is held as the sighting it is (a later one
+    # ends the goal as he says), and his reminder says he has it in sight but is not there.
+    (
+        "v3/next.html",
+        "SEEK_ACTION=/\\b(touch|reach|grab|get|bring|carry|pick ?up|go to|walk to|come to|"
+        "move to|",
+        "SEEK_ACTION=/\\b(touch|reach|grab|get|bring|carry|pick ?up|go to|walk to|come to|"
+        "(?:walk|go|come|head|run|get|make your way|make my way) (?:over|across|back) to|"
+        "approach|head to|move to|",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(seekGoal&&_fin){ try{ logEv("seek_sight",{what:seekGoal,at:"finish"}); }catch(e){} }',
+        'if(seekGoal&&_fin&&MODE==="legs"&&!_seekSeen&&SEEK_ACTION.test(seekGoal)){'
+        ' _seekSeen=true; try{ logEv("seek_sight",{what:seekGoal,at:"finish_held"}); }catch(e){}'
+        " updateStatus(); return; }"
+        ' if(seekGoal&&_fin){ try{ logEv("seek_sight",{what:seekGoal,at:"finish"}); }catch(e){} }',
         1,
     ),
 ]
