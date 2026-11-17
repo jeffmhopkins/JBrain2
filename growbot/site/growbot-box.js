@@ -1404,6 +1404,8 @@
     if (spec) {
       if (typeof window.runGait !== "function") throw new Error("the creature has not loaded its legs yet");
       if (secs > 0 && move !== "stop") spec.secs = secs;
+      // The pad's "Built-in walk" is the stock one, so it stays the A/B against the trained.
+      spec.stock = true;
       window.runGait(spec);
     } else if (move === "wiggle" || move === "bow" || move === "sway" || move === "gesture") {
       if (typeof window.moveLegs !== "function") throw new Error("the creature has not loaded its legs yet");
@@ -2579,10 +2581,11 @@
   // creature's own walk, marked trained.
   window.gbOwnWalk = function (spec, dir, attempt) {
     if (Date.now() - ownT > OWN_MS) { try { readOwnSet(); } catch (e) {} }
-    if (stockOnly || !ownSet || _wheels) return false;
+    if (stockOnly || !ownSet || _wheels || (spec && spec.stock)) return false;
     if (typeof _diyGaitFlag === "function" && _diyGaitFlag()) return false;
     var gait = String((spec && spec.gait) || "");
-    if (gait && !/^(official|screen_forward|screen_backward)$/.test(gait)) return false;
+    // "trained" too: the model reads its walks back as "walk fwd (trained)" and may echo it.
+    if (gait && !/^(official|screen_forward|screen_backward|trained)$/.test(gait)) return false;
     var back = /^(back|backward|backwards|screen-backward)$/.test(dir) || gait === "screen_backward";
     var fwd = !back && /^(fwd|forward|ahead|go|straight|walk|closer)$/.test(dir);
     var move = back ? "back" : fwd ? "forward" : "";
@@ -2590,7 +2593,10 @@
     // A seek waits for a full walk rather than a stub (runGait's defer); let it.
     var left = dutyLeftMs();
     if (typeof seekGoal !== "undefined" && seekGoal && left < Math.min((+spec.secs || 8) * 1000, dutyCapMs())) return false;
-    attempt.mv = { kind: "walk", gait: "trained", dir: dir, direction: back ? "screen-backward" : "screen-forward" };
+    attempt.mv = {
+      kind: "walk", gait: "trained", dir: dir, direction: back ? "screen-backward" : "screen-forward",
+      policy: "set:" + Object.keys(ownSet).join("+"),
+    };
     if (+spec.secs > 0) attempt.mv.ask = +spec.secs;
     attempt.mv.secs = policySeconds(+spec.secs || 0, 8, left);
     start(ownSet, move, +spec.secs || 0, attempt, "", false);

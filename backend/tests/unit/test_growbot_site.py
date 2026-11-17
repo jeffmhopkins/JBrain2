@@ -5382,6 +5382,7 @@ def test_daves_own_forward_and_back_walks_run_the_trained_skills() -> None:
         "gait": "trained",
         "dir": "fwd",
         "direction": "screen-forward",
+        "policy": "set:look+forward+back",
         "secs": 8,
     }
     assert got["bmv"]["ask"] == 5 and got["bmv"]["direction"] == "screen-backward"
@@ -5398,6 +5399,11 @@ def test_daves_own_walks_stay_stock_without_a_skill_set_or_when_asked() -> None:
     assert wheels["out"] == [False]
     named = _own_walk("window.gbOwnWalk({gait:'46181387',dir:'fwd'},'fwd',a)")
     assert named["out"] == [False]
+    # The pad's Built-in walk stays stock; a model echoing "trained" back still gets it.
+    pad = _own_walk("window.gbOwnWalk({dir:'fwd',stock:true},'fwd',a)")
+    assert pad["out"] == [False]
+    echo = _own_walk("window.gbOwnWalk({gait:'trained',dir:'fwd'},'fwd',a)")
+    assert echo["out"] == [True]
     # A seek with too little duty left defers in runGait rather than taking a stub walk.
     seek = _own_walk("(seekGoal='door', duty=3000, window.gbOwnWalk({dir:'fwd'},'fwd',a))")
     assert seek["out"] == [False]
