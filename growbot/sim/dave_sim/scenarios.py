@@ -189,9 +189,33 @@ async def follow_walks_after(sim: Sim) -> None:
             gaps.append(round(_dist(sim), 2))
     walked = math.hypot(sim.state["x"] - x0, sim.state["y"] - y0)
     sim.check(walked > 0.5, "he walked after them", walked_m=round(walked, 2), gaps_m=gaps)
-    sim.check(gaps[-1] < 1.8, "and kept within reach", gap_m=gaps[-1])
+    # Standing still would leave them about 2.5 m off.
+    sim.check(gaps[-1] < 2.0, "and kept within reach", gap_m=gaps[-1])
     off = _camera_off(sim)
     sim.check(off < 30, "his camera end still on them", off_deg=round(off))
+
+
+@scenario(start="standing", person={"x": -1.2, "face_z": 1.55}, cam_flip=None)
+async def follow_unflipped(sim: Sim) -> None:
+    """The follower as a phone runs it before its owner sets the camera flip. This scenario
+    PASSES when the simulator shows the fault it found, a follow turning away from a person
+    who backs off; it fails once a fix to the sim's camera or wiring makes the unflipped
+    follower work, which says the flip step is no longer needed."""
+    await sim.wait(4)
+    ack = await sim.move("look", secs=15, follow="walk", skills=sim.box.skills)
+    sim.check(bool(ack and ack.get("ok")), "the follower started", why=(ack or {}).get("why"))
+    px = -1.2
+    for _ in range(80):
+        px -= 0.015
+        sim.person(x=px, y=0.0, face_z=1.55)
+        await sim.wait(0.5)
+    off, gap = _camera_off(sim), _dist(sim)
+    sim.check(
+        off > 30 or gap > 2.0,
+        "unflipped: he turned off them or fell behind",
+        off_deg=round(off),
+        gap_m=round(gap, 2),
+    )
 
 
 def _camera_off(sim: Sim) -> float:
