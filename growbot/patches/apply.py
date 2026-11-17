@@ -4041,6 +4041,19 @@ PATCHES += [
     ),
 ]
 
+# Dave's own forward and back walks can run the box's trained skills, behind ?ownwalk=1 until
+# a body test (Dave simulator, 2026-11-17; growbot-box.js gbOwnWalk). Spins, named gaits,
+# wheels, ?diygait and a robot with no skill set keep their own lanes.
+PATCHES += [
+    (
+        "v3/next.html",
+        "  var _requestedDir=dir, _backward=",
+        "  if(typeof window.gbOwnWalk===\"function\"&&window.gbOwnWalk(spec,dir,attempt))return;\n"
+        "  var _requestedDir=dir, _backward=",
+        1,
+    ),
+]
+
 # Get-up on (owner, 2026-11-16, choosing "on, and automatic" after the Dave simulator showed
 # him unable to stand when asked): upstream stages its tested screen-up get-up off "pending
 # the supervised behavior decision", and this is that decision. Named lets Dave run it when

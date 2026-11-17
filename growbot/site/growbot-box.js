@@ -2392,6 +2392,9 @@
         upB = { b: ori.b, g: ori.g };
         if (walker) walker.reset();
         lastT = performance.now(); walkT = Date.now(); endT = walkT + walkS * 1000;
+        // Dave's own walk (gbOwnWalk) is timed from here, as runGait's are: "ran X s", and an
+        // early end trims the self-motion window so a fall after it is felt.
+        if (attempt && attempt.mv) attempt.mv.t0 = walkT;
         try { logEv("walk_start", { gait: "trained", policy: label, dir: move, target: cmd.target, fwd: skills ? cmd.speed : cmd.fwd, granted: walkS }); } catch (e) {}
         $("brainTxt").textContent = "walking…";
         step();
@@ -2538,6 +2541,59 @@
     var attempt = _moveRequest((following ? "walk:follow:" : "walk:trained:") + String(move).slice(0, 16));
     try { start(pid, move, +secs || 0, attempt, drive, !!following); }
     finally { if (attempt.state === "requested") _moveReport(attempt, "blocked", "not_admitted"); }
+  };
+
+  // Dave's own forward and back walks can take the box's trained skills (Dave simulator,
+  // 2026-11-17): in the sim, on the robot's wiring as modelled, the trained forward walked
+  // him to the person where the stock one barely moved him. Opt-in (?ownwalk=1) until a body
+  // test confirms that wiring. runGait can't wait on a fetch, so the set is read ahead. The
+  // trained walk takes no stride gain, and ?diygait and a seek's duty defer keep their lanes.
+  var ownSet = null, ownT = 0, OWN_MS = 60000, OWN_ID = /^[A-Za-z0-9-]{1,64}$/;
+  var stockOnly = true;
+  try { stockOnly = new URLSearchParams(location.search).get("ownwalk") !== "1"; } catch (e) {}
+  function readOwnSet() {
+    var id = btRobot();
+    if (!id || stockOnly || document.hidden || typeof fetch !== "function") return;
+    ownT = Date.now();
+    fetch("/api/box/skills?robot=" + encodeURIComponent(id), { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        var v = j && j.skills, out = null;
+        if (v && typeof v === "object" && !Array.isArray(v)) {
+          ["look", "forward", "back"].forEach(function (k) {
+            if (typeof v[k] === "string" && OWN_ID.test(v[k])) { out = out || {}; out[k] = v[k]; }
+          });
+        }
+        ownSet = out;
+      })
+      .catch(function () { ownSet = null; });
+  }
+  // Read at load and on each return to the page, and again behind a walk once a minute old:
+  // no timer, so a page left open polls nothing.
+  try {
+    readOwnSet();
+    document.addEventListener("visibilitychange", readOwnSet);
+  } catch (e) {}
+  // True when it took the walk: `attempt` is runGait's, so the move's history reads as the
+  // creature's own walk, marked trained.
+  window.gbOwnWalk = function (spec, dir, attempt) {
+    if (Date.now() - ownT > OWN_MS) { try { readOwnSet(); } catch (e) {} }
+    if (stockOnly || !ownSet || _wheels) return false;
+    if (typeof _diyGaitFlag === "function" && _diyGaitFlag()) return false;
+    var gait = String((spec && spec.gait) || "");
+    if (gait && !/^(official|screen_forward|screen_backward)$/.test(gait)) return false;
+    var back = /^(back|backward|backwards|screen-backward)$/.test(dir) || gait === "screen_backward";
+    var fwd = !back && /^(fwd|forward|ahead|go|straight|walk|closer)$/.test(dir);
+    var move = back ? "back" : fwd ? "forward" : "";
+    if (!move || !ownSet[move]) return false;
+    // A seek waits for a full walk rather than a stub (runGait's defer); let it.
+    var left = dutyLeftMs();
+    if (typeof seekGoal !== "undefined" && seekGoal && left < Math.min((+spec.secs || 8) * 1000, dutyCapMs())) return false;
+    attempt.mv = { kind: "walk", gait: "trained", dir: dir, direction: back ? "screen-backward" : "screen-forward" };
+    if (+spec.secs > 0) attempt.mv.ask = +spec.secs;
+    attempt.mv.secs = policySeconds(+spec.secs || 0, 8, left);
+    start(ownSet, move, +spec.secs || 0, attempt, "", false);
+    return true;
   };
 })();
 

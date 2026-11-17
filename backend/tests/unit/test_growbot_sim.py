@@ -331,16 +331,18 @@ def test_live_model_says_what_the_box_said_when_its_model_is_down() -> None:
         _run(flat({"max_tokens": 512}))
 
 
-def test_the_sim_body_is_wired_as_the_robot_and_one_scenario_flips_it() -> None:
+def test_the_sim_body_is_mirrored_as_the_robot_and_one_scenario_unmirrors_it() -> None:
     # The page swaps the legs for trained walks because the robot needs it; a stock-wired
-    # sim body under that swap turns every trained turn the wrong way (2026-11-17).
+    # sim body under that swap turns every trained turn the wrong way, and crossed pins with
+    # the stock signs send the trained forward backwards (2026-11-17).
     async def model(_: dict[str, Any]) -> str:
         return "{}"
 
     opts = simrun.Options(model=model)
-    assert opts.wiring == {"swap": True} == simrun.ROBOT_WIRING
+    mirrored = {"swap": True, "l_sign": 1, "r_sign": -1}
+    assert opts.wiring == mirrored == simrun.ROBOT_WIRING
     opts.wiring["swap"] = False
-    assert simrun.ROBOT_WIRING == {"swap": True}
+    assert mirrored == simrun.ROBOT_WIRING
     assert "wiring" not in simscen.SETUP["trained_turns"]
     assert simscen.SETUP["stock_wired"]["wiring"] == {"swap": False}
     assert "swapped_legs" not in simscen.SCENARIOS

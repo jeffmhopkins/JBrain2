@@ -39,7 +39,9 @@ wrong-wiring fault (a trained spin left turning clockwise).
 
 The body is wired as the owner's robot (`run.ROBOT_WIRING`), not as the sim's stock build:
 the robot's trained walks only turn the right way with the page's leg swap, so the stock
-build under that swap turned every trained turn the wrong way. `trained_turns` holds that.
+build under that swap turned every trained turn the wrong way. The robot's legs are
+mirrored (pins crossed, signs flipped): crossed pins alone also negate both swings and send
+the trained forward away from the person. `trained_turns` holds the turns.
 
 ## Running it
 
@@ -73,12 +75,13 @@ names the fault it is there to catch. A new scenario is an `async def name(sim)`
 `@scenario(start=..., person=..., wiring=..., query=...)` using `sim.say`, `sim.push`,
 `sim.person`, `sim.wait`, `sim.until` and `sim.check`.
 
-`walk_compare` needs no model: it walks the creature's stock forward and then the box skill
-set's forward, 8 s each, and reports how much closer each carried him. On the robot's
-wiring the stock walk crawls (about 1.4 cm in 8 s) and the trained one walks straight at
-about 1.9 cm/s (2026-11-17), a third of its trainer speed. Part of that is the page's walk
-loop ticking at 18 to 20 Hz in the sim, late and uneven, not the steady 25 Hz the policy was
-trained at: replaying those late ticks in the trainer halves its distance.
+`walk_compare` needs no model: it walks the creature's own forward (what a reply's walk
+runs; the box's trained skills with `?ownwalk=1`, which it sets) and then the box skill
+set's forward, 8 s each, and fails unless his own walk carries him 10 cm closer. On the
+robot's wiring both walk straight at him, about 20 to 39 cm in 8 s (2026-11-17), up to
+nearly the trainer's 45 cm, where the stock forward manages about 9. Part of that is the page's walk loop ticking at 18 to 20 Hz in the sim,
+late and uneven, not the steady 25 Hz the policy was trained at: replaying those late ticks
+in the trainer halves its distance.
 
 ## Tests
 
