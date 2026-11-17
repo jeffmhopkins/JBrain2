@@ -110,7 +110,8 @@ piano in its far corner, out of his first view, a couch, a bookshelf, a plant an
 kitchen a fridge, a counter and a table. Its walls and furniture stop him, where the bare
 room's walls let him walk through. `Options.at` sets where he starts and which way he faces.
 
-`find_piano` asks him to find the piano and checks he gets within 60 cm and says so;
+`find_piano` asks him to find the piano and checks he says so while it is really in his
+view; `walk_to_piano` asks him to walk over to it and checks he gets within 60 cm;
 `explore_alone` leaves him alone for ten minutes and scores how far he went. They run for
 minutes, so their reports skip the onlooker video, which re-renders every pose. Every run
 instead draws `plan.svg` (`dave_sim/plan.py`): his path from above, coloured by speed, with

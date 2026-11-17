@@ -405,28 +405,46 @@ def _found_said(sim: Sim, t: float, word: str) -> bool:
     return False
 
 
-@scenario(
-    scene="house",
-    start="standing",
-    # Behind him in the kitchen doorway, so the first thing in view is the room, not a face.
-    person={"x": 0.45, "y": 0.0, "face_z": 1.55},
-    timeout=720,
-)
+def _in_view(sim: Sim, item: str) -> bool:
+    """The item's centre is inside his camera's 60 degrees across, now (walls not counted)."""
+    s = sim.state
+    it = sim.sb.house.ITEM[item]
+    facing = s["nose_deg"] + 180.0  # the camera looks out of the tail
+    bearing = math.degrees(math.atan2(it.y - s["y"], it.x - s["x"]))
+    return abs((bearing - facing + 180.0) % 360.0 - 180.0) <= 30.0
+
+
+# Behind him in the kitchen doorway, so the first thing in view is the room, not a face.
+_DOORWAY = {"x": 0.45, "y": 0.0, "face_z": 1.55}
+
+
+@scenario(scene="house", start="standing", person=_DOORWAY, timeout=420)
 async def find_piano(sim: Sim) -> None:
     """Asked to find the piano, which stands in the far corner out of his first view, he
-    looks round, goes to it and says he found it. Catches: a goal that gives up before he
-    gets there, walks that stop after one stride, and arriving claims with no arrival."""
+    looks round and says he found it while it is really in view. Catches: claiming a
+    sighting of something his camera isn't showing, and a hunt that gives up."""
+    await sim.wait(4)
+    t = sim.now()
+    await sim.say("Dave, can you go find the piano?")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
+    if await sim.until(lambda s: _found_said(s, t, "piano"), 300, "he said he found it"):
+        sim.check(_in_view(sim, "piano"), "the piano was in his view when he said so")
+
+
+@scenario(scene="house", start="standing", person=_DOORWAY, timeout=720)
+async def walk_to_piano(sim: Sim) -> None:
+    """Asked to walk over to the piano, across the room and out of his first view, he
+    looks round, goes to it and says he is there. Catches: a goal that gives up before he
+    gets there, a sighting taken for arriving, walks that stop after one stride, and
+    arriving claims with no arrival."""
     await sim.wait(4)
     t = sim.now()
     start = _near(sim, "piano")
-    await sim.say("Dave, can you go find the piano?")
+    await sim.say("Dave, can you walk over to the piano?")
     await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
-    await sim.until(lambda s: _walked_since(s, t), 120, "he set off")
+    await sim.until(lambda s: _walked_since(s, t), 180, "he set off")
     near = "he got within 60 cm of the piano"
     got = await sim.until(lambda s: _near(s, "piano") < 0.6, 600, near)
-    if got:
-        # His look that sees it arrives a turn after he gets there.
-        await sim.until(lambda s: _found_said(s, t, "piano"), 90, "he said he found it")
     stats = plan.stats(sim)
     sim.check(
         stats["closest_m"]["piano"] < start - 0.3,

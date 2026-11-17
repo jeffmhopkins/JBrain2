@@ -429,5 +429,6 @@ def test_the_bare_room_has_a_plan_too() -> None:
     assert "rooms_s" not in simplan.stats(sim)  # type: ignore[arg-type]
     assert "living room" not in simplan.svg(sim)  # type: ignore[arg-type]
     assert simscen.SETUP["find_piano"]["scene"] == "house"
+    assert simscen.SETUP["walk_to_piano"]["timeout"] > simscen.SETUP["find_piano"]["timeout"]
     assert simscen.SETUP["explore_alone"]["person"] is None
     assert simrun.Options(model=None).scene == "room"  # type: ignore[arg-type]

@@ -4370,7 +4370,8 @@ EXPLORE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         "  _motionGen++;\n  try{ _bodyBootClose(_motion); }catch(_be){}\n",
-        "  _motionGen++; if(why===\"done\") _gbDoneGen[_motionGen]=1;\n"
+        "  _motionGen++; if(why===\"done\") _gbDoneGen[_motionGen]=1;"
+        " else delete _gbDoneGen[_motionGen];\n"
         "  try{ _bodyBootClose(_motion); }catch(_be){}\n",
         1,
     ),
@@ -4387,6 +4388,21 @@ EXPLORE_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "var _mCancelled=(_motionGen!==_mgen)||document.hidden;",
         "var _mCancelled=(_motionGen!==_mgen&&!_gbOnlyDone(_mgen,_motionGen))||document.hidden;",
+        1,
+    ),
+    # A Stop (or any other bump) that lands on a number a finish once marked, after a rest
+    # gave the generation back, must still cancel.
+    (
+        "v3/next.html",
+        "var report=_motion&&_motion.report; _motionGen++;",
+        "var report=_motion&&_motion.report; _motionGen++; delete _gbDoneGen[_motionGen];",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "arguments[3]!==undefined&&arguments[3]!==_motionGen?\"motion_changed\"",
+        "arguments[3]!==undefined&&arguments[3]!==_motionGen&&!_gbOnlyDone(arguments[3],_motionGen)"
+        "?\"motion_changed\"",
         1,
     ),
     (
