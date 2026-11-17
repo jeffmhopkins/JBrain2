@@ -255,7 +255,7 @@ async def trained_turns(sim: Sim) -> None:
     left = await _turned(sim, "spin_left")
     sim.check(left > 15, "a trained spin left turns counter-clockwise", turned_deg=round(left, 1))
     right = await _turned(sim, "spin_right")
-    sim.check(right < -15, "a trained spin right turns him clockwise", turned_deg=round(right, 1))
+    sim.check(right < -15, "a trained spin right turns clockwise", turned_deg=round(right, 1))
 
 
 @scenario(start="standing", wiring={"swap": False}, person={"x": -2.5, "face_z": 0.6})
@@ -266,5 +266,5 @@ async def stock_wired(sim: Sim) -> None:
     await sim.wait(4)
     left = await _turned(sim, "spin_left")
     sim.check(
-        left < -15, "stock wiring: a trained spin left goes clockwise", turned_deg=round(left)
+        left < -15, "stock wiring: a trained spin left goes clockwise", turned_deg=round(left, 1)
     )

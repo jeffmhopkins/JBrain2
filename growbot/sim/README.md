@@ -9,7 +9,7 @@ box's real creature lane or a script. A scenario says something to Dave, shoves 
 moves a person around the room, then checks what actually happened to the body.
 
 It exists to catch, before Jeff does, the faults that only show on the whole creature:
-Dave saying he's walking while the legs don't carry him, a walk on crossed leg pins, face
+Dave saying he's walking while the legs don't carry him, legs wired against the page's swap, face
 tracking lost once he moves, a fall he doesn't notice.
 
 ## What is real and what is played
@@ -76,8 +76,9 @@ names the fault it is there to catch. A new scenario is an `async def name(sim)`
 `walk_compare` needs no model: it walks the creature's stock forward and then the box skill
 set's forward, 8 s each, and reports how much closer each carried him. On the robot's
 wiring the stock walk crawls (about 1.4 cm in 8 s) and the trained one walks straight at
-about 1.9 cm/s (2026-11-17), a third of its trainer speed: the page's walk loop ticks at
-18 to 20 Hz in the sim, not the 25 Hz the policy was trained at.
+about 1.9 cm/s (2026-11-17), a third of its trainer speed. Part of that is the page's walk
+loop ticking at 18 to 20 Hz in the sim, late and uneven, not the steady 25 Hz the policy was
+trained at: replaying those late ticks in the trainer halves its distance.
 
 ## Tests
 
