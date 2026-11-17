@@ -346,3 +346,6 @@ def test_the_sim_body_is_mirrored_as_the_robot_and_one_scenario_unmirrors_it() -
     assert "wiring" not in simscen.SETUP["trained_turns"]
     assert simscen.SETUP["stock_wired"]["wiring"] == {"swap": False}
     assert "swapped_legs" not in simscen.SCENARIOS
+    # On that wiring the follower turns away from the face unless the camera flip is set.
+    assert opts.cam_flip is True
+    assert simscen.SETUP["follow_walks_after"]["person"]["face_z"] == 1.55

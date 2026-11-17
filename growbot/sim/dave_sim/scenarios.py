@@ -172,6 +172,28 @@ async def follow_walk(sim: Sim) -> None:
     )
 
 
+@scenario(start="standing", person={"x": -1.2, "face_z": 1.55})
+async def follow_walks_after(sim: Sim) -> None:
+    """The trained-walk follower ("follow me") after a standing person who walks slowly away
+    for 40 s and then sideways for 20. Needs no model. Catches: a follower that only turns,
+    turns away from the face (the camera flip), or loses them once they are out of reach."""
+    await sim.wait(4)
+    ack = await sim.move("look", secs=15, follow="walk", skills=sim.box.skills)
+    sim.check(bool(ack and ack.get("ok")), "the follower started", why=(ack or {}).get("why"))
+    x0, y0, px, py, gaps = sim.state["x"], sim.state["y"], -1.2, 0.0, []
+    for i in range(120):
+        px, py = (px - 0.015, py) if i < 80 else (px, py + 0.015)
+        sim.person(x=px, y=py, face_z=1.55)
+        await sim.wait(0.5)
+        if i % 10 == 9:
+            gaps.append(round(_dist(sim), 2))
+    walked = math.hypot(sim.state["x"] - x0, sim.state["y"] - y0)
+    sim.check(walked > 0.5, "he walked after them", walked_m=round(walked, 2), gaps_m=gaps)
+    sim.check(gaps[-1] < 1.8, "and kept within reach", gap_m=gaps[-1])
+    off = _camera_off(sim)
+    sim.check(off < 30, "his camera end still on them", off_deg=round(off))
+
+
 def _camera_off(sim: Sim) -> float:
     s, p = sim.state, sim.body.person
     bearing = math.degrees(math.atan2(p.y - s["y"], p.x - s["x"]))
