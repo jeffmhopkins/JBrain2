@@ -474,9 +474,30 @@
     return null;
   }
 
+  /* After a step of dead reckoning: a room's walls hold him, as the real ones do, so a walk
+     into a wall (which the phone cannot tell from walking) leaves him at the wall on the map,
+     not metres beyond it. He leaves a room only near a doorway on it, and then he is in the
+     room beyond. */
+  var DOOR_PASS_M = 0.8;
+  function step(m) {
+    var r = m.here.room && roomOf(m, m.here.room);
+    if (!r || inside(r, m.here.x, m.here.y, 0.05)) return;
+    for (var i = 0; i < m.doors.length; i++) {
+      var o = m.doors[i];
+      if ((o.a === r.n || o.b === r.n) && Math.hypot(o.x - m.here.x, o.y - m.here.y) < DOOR_PASS_M) {
+        var n = roomAt(m, m.here.x, m.here.y, o.a === r.n ? o.b : o.a);
+        if (n && n !== r.n) m.here.room = n;
+        return;
+      }
+    }
+    var ix = r.w / 2 - 0.05, iy = r.d / 2 - 0.05;
+    m.here.x = Math.min(r.x + ix, Math.max(r.x - ix, m.here.x));
+    m.here.y = Math.min(r.y + iy, Math.max(r.y - iy, m.here.y));
+  }
+
   var api = {
     fresh: fresh, norm: norm, apply: apply, where: where, live: live, goalTarget: goalTarget, route: route, turnFor: turnFor,
-    bearingOf: bearingOf, distOf: distOf, wrap: wrap, CAM_HFOV: CAM_HFOV,
+    bearingOf: bearingOf, distOf: distOf, step: step, wrap: wrap, CAM_HFOV: CAM_HFOV,
   };
   root.gbMapLib = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
@@ -545,11 +566,10 @@
       if (!w || !dt || !(m = soulMap())) return;
       var v = (w === "back" ? -PACE.back : PACE.forward) * dt, a = m.here.h * D;
       m.here.x += v * Math.cos(a); m.here.y += v * Math.sin(a); m.here.t = now;
-      var r = m.here.room && roomOf(m, m.here.room);
-      // Walking out through a doorway into the room beyond it.
-      if (r && !inside(r, m.here.x, m.here.y, 0.2)) { var n = roomAt(m, m.here.x, m.here.y); if (n) m.here.room = n; }
+      step(m);
     } catch (err) {}
   }, 250);
+
 
   /* A turn by degrees: the spin he asked for, stopped by the gyro once it has turned that far,
      since a spin's own pace changes with the floor. */

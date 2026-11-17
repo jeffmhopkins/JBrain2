@@ -336,3 +336,16 @@ def test_the_newer_map_wins_a_merge_and_a_soul_file_carries_it() -> None:
     )
     out = subprocess.run([node, "-e", prog], capture_output=True, text=True, check=True)
     assert json.loads(out.stdout) == [9, 9, 9]
+
+
+def test_walls_hold_him_on_the_map_and_a_doorway_lets_him_through() -> None:
+    got = _node(
+        "const m=L.fresh(now);L.apply(m,[{room:'den'},{door:'hall',dir:'left',m:1.5}],now);"
+        # Two metres past the north wall, nowhere near the doorway: held at the wall.
+        "m.here.y=4;L.step(m);const held={x:m.here.x,y:m.here.y,room:m.here.room};"
+        # Out through the doorway on the west wall: into the hall beyond.
+        "m.here.x=-1.7;m.here.y=0;L.step(m);"
+        "console.log(JSON.stringify({held,room:m.here.room,x:m.here.x}));"
+    )
+    assert got["held"] == {"x": 0, "y": 1.95, "room": "den"}
+    assert got["room"] == "hall" and got["x"] == -1.7

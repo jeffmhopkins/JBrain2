@@ -72,6 +72,7 @@ class Pilot:
         self.nav = ""
         self.nav_walk = 0.0
         self.turn_until = 0.0
+        self.exploring = False
 
     def bind(self, sim: Sim) -> None:
         self.sim = sim
@@ -145,19 +146,26 @@ class Pilot:
             asked = rf"\bfind (the |a |my )?{re.escape(it.name)}\b"
             if it.name != "rug" and re.search(asked, tail):
                 self.target = it.name
-        if not self.target and EXPLORE_RE.search(text):
-            s = sim.state
-            left = [
-                it
-                for it in house.ITEMS
-                if it.name not in self.seen and it.name not in ("rug", "piano bench")
-            ]
-            if left:
-                near = min(left, key=lambda it: house.distance_to(it.name, s["x"], s["y"]))
-                self.target = near.name
+        if re.search(r"\bexplore\b", tail):
+            self.exploring = True
+        if not self.target and (self.exploring or EXPLORE_RE.search(text)):
+            self._next(house)
         if not self.target:
             return {"say": ""}
         return self._toward(house)
+
+    def _next(self, house: Any) -> None:
+        """The nearest piece of furniture not visited yet, to go and look at."""
+        assert self.sim is not None
+        s = self.sim.state
+        left = [
+            it
+            for it in house.ITEMS
+            if it.name not in self.seen and it.name not in ("rug", "piano bench")
+        ]
+        if left:
+            near = min(left, key=lambda it: house.distance_to(it.name, s["x"], s["y"]))
+            self.target = near.name
 
     def _toward(self, house: Any) -> dict[str, Any]:
         assert self.sim is not None
@@ -167,6 +175,14 @@ class Pilot:
         if house.distance_to(name, s["x"], s["y"]) < ARRIVED_M:
             self.seen.add(name)
             self.target = ""
+            if self.exploring:
+                # On to the next, without finishing the goal: an explorer keeps going.
+                self._next(house)
+                if self.target:
+                    nxt = self._toward(house)
+                    nxt["say"] = f"Found the {name}. Now the {self.target}."
+                    nxt["map"] = {"at": name}
+                    return nxt
             return {
                 "say": f"I found the {name}!",
                 "found": True,
@@ -174,8 +190,19 @@ class Pilot:
                 "map": {"at": name},
             }
         it = house.ITEM[name]
+        tx, ty = it.x, it.y
+        here, there = house.room_at(s["x"], s["y"]), house.room_at(it.x, it.y)
+        if here and there and here != there:
+            # Through the doorway, not into the wall beside it: first to a spot in front of
+            # it on this side, then straight through.
+            side = 1.0 if s["x"] > house.DIVIDE_X else -1.0
+            mid = (house.DOOR[0] + house.DOOR[1]) / 2
+            if abs(s["y"] - mid) > 0.25 or abs(s["x"] - house.DIVIDE_X) > 0.7:
+                tx, ty = house.DIVIDE_X + side * 0.5, mid
+            else:
+                tx, ty = house.DIVIDE_X - side * 0.6, mid
         facing = s["nose_deg"] + 180.0  # the camera looks out of the tail
-        bearing = math.degrees(math.atan2(it.y - s["y"], it.x - s["x"]))
+        bearing = math.degrees(math.atan2(ty - s["y"], tx - s["x"]))
         err = _wrap(bearing - facing)
         if abs(err) > FACING_DEG:
             secs = round(max(1.0, min(4.0, abs(err) / SPIN_DEG_S)), 1)

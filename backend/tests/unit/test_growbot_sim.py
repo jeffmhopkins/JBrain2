@@ -371,6 +371,7 @@ def test_the_sim_body_is_mirrored_as_the_robot_and_one_scenario_unmirrors_it() -
 class _Item:
     def __init__(self, name: str, x: float, y: float) -> None:
         self.name, self.x, self.y, self.hx, self.hy, self.rgb = name, x, y, 0.2, 0.2, (9, 9, 9)
+        self.room = "kitchen" if x > 0 else "living room"
 
 
 class _House:
@@ -432,3 +433,36 @@ def test_the_bare_room_has_a_plan_too() -> None:
     assert simscen.SETUP["find_piano"]["scene"] == "house"
     assert simscen.SETUP["explore_alone"]["person"] is None
     assert simrun.Options(model=None).scene == "room"  # type: ignore[arg-type]
+
+
+def test_his_map_is_scored_against_the_house_in_his_own_frame() -> None:
+    """plan.map_score lays Dave's map (growbot-map.js) on the house by where he started: he
+    starts at (0.5, 0) with his camera facing 180, where his map has him at the origin facing
+    90, so his +y is the house's -x."""
+    sim = _PlanSim()
+    sim.dave_map = {  # type: ignore[attr-defined]
+        "rooms": [
+            {"n": "living room", "x": 0, "y": 2, "w": 4, "d": 3},
+            {"n": "the kitchen", "x": 0, "y": -1, "w": 4, "d": 2},
+            {"n": "hall", "x": 9, "y": 9, "w": 2, "d": 2},
+        ],
+        "doors": [{"x": 0, "y": 0.5, "a": "living room", "b": "the kitchen"}],
+        "things": [
+            {"n": "grand piano", "x": 1, "y": 2.5, "room": "living room"},
+            {"n": "tuba", "x": 0, "y": 0, "room": "hall"},
+        ],
+    }
+    sim.map_track = [  # type: ignore[attr-defined]
+        {"t": 0, "here": {"x": 0, "y": 0, "h": 90}, "x": 0.5, "y": 0.0, "face": 180.0},
+        {"t": 9, "here": {"x": 0, "y": 0.5}, "x": 0.0, "y": 0.0, "face": 180.0},
+        {"t": 20, "here": {"x": 0, "y": 1.5}, "x": -0.5, "y": 0.0, "face": 180.0},
+    ]
+    got = simplan.map_score(sim)  # type: ignore[arg-type]
+    assert got["rooms_found"] == ["kitchen", "living room"]
+    assert got["things"] == {"piano": {"as": "grand piano", "room_ok": True, "off_m": 0.0}}
+    assert got["doors"] == [{"joins_rooms": True, "off_m": 0.0}]
+    assert got["here_off_m"] == 0.5 and got["drift_max_m"] == 0.5
+    svg = simplan.svg(sim)  # type: ignore[arg-type]
+    assert 'stroke="#7c3aed"' in svg and "grand piano" in svg
+    assert simplan.map_score(_PlanSim()) == {}  # type: ignore[arg-type]
+    assert simscen.SETUP["map_house"]["scene"] == "house"
