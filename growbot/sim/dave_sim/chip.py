@@ -5,7 +5,7 @@ The page dials `/d/<code>` for the legs and `/d/<code>-agent` for the box's side
 with each frame: the walk lane writes the servos at once, the gesture lane plays keyframes
 through the firmware's own `ActEngine`, stop goes limp, and the walk dead-man goes limp on
 500 ms of pose silence. The servos are the sim body's (GrowBot_Training simbody.py), through
-its wiring, so a crossed pin moonwalks here as on the bench.
+its wiring, so legs wired against the page's swap misbehave here as on the bench.
 """
 
 from __future__ import annotations

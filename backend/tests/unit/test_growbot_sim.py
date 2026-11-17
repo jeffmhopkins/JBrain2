@@ -22,6 +22,8 @@ sys.path.insert(0, str(_SIM))
 simbox = importlib.import_module("dave_sim.box")
 simchip = importlib.import_module("dave_sim.chip")
 simllm = importlib.import_module("dave_sim.llm")
+simrun = importlib.import_module("dave_sim.run")
+simscen = importlib.import_module("dave_sim.scenarios")
 
 
 class Legs:
@@ -327,3 +329,18 @@ def test_live_model_says_what_the_box_said_when_its_model_is_down() -> None:
     flat = simllm.live_model(FakeApi([{"error": "model_unavailable"}]), busy_wait_s=0)  # type: ignore[arg-type]
     with pytest.raises(RuntimeError, match="model_unavailable"):
         _run(flat({"max_tokens": 512}))
+
+
+def test_the_sim_body_is_wired_as_the_robot_and_one_scenario_flips_it() -> None:
+    # The page swaps the legs for trained walks because the robot needs it; a stock-wired
+    # sim body under that swap turns every trained turn the wrong way (2026-11-17).
+    async def model(_: dict[str, Any]) -> str:
+        return "{}"
+
+    opts = simrun.Options(model=model)
+    assert opts.wiring == {"swap": True} == simrun.ROBOT_WIRING
+    opts.wiring["swap"] = False
+    assert simrun.ROBOT_WIRING == {"swap": True}
+    assert "wiring" not in simscen.SETUP["trained_turns"]
+    assert simscen.SETUP["stock_wired"]["wiring"] == {"swap": False}
+    assert "swapped_legs" not in simscen.SCENARIOS
