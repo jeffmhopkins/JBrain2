@@ -5328,7 +5328,7 @@ def test_an_ask_to_move_is_answered_by_moving() -> None:
 
 
 def _own_walk(
-    calls: str, query: str = "?ownwalk=1", skills: str = "{look:'L',forward:'F',back:'B'}"
+    calls: str, query: str = "", skills: str = "{look:'L',forward:'F',back:'B'}"
 ) -> dict[str, Any]:
     node = shutil.which("node")
     if node is None:
@@ -5359,7 +5359,7 @@ def _own_walk(
 
 def test_daves_own_forward_and_back_walks_run_the_trained_skills() -> None:
     """Dave simulator, 2026-11-17: on the robot's wiring as modelled the box's trained forward
-    walked him 39 cm to the person in 8 s, the stock one 9; behind ?ownwalk=1, his take it."""
+    walked him 39 cm to the person in 8 s, the stock one 9 (come here fell short)."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
         '  if(typeof window.gbOwnWalk==="function"&&window.gbOwnWalk(spec,dir,attempt))return;\n'
@@ -5392,7 +5392,7 @@ def test_daves_own_walks_stay_stock_without_a_skill_set_or_when_asked() -> None:
     assert _own_walk("window.gbOwnWalk({dir:'back'},'back',a)", skills="{forward:'F'}")["out"] == [
         False
     ]
-    off = _own_walk("window.gbOwnWalk({dir:'fwd'},'fwd',a)", query="")
+    off = _own_walk("window.gbOwnWalk({dir:'fwd'},'fwd',a)", query="?ownwalk=0")
     assert off["out"] == [False] and off["started"] == []
     wheels = _own_walk("(_wheels=true, window.gbOwnWalk({dir:'fwd'},'fwd',a))")
     assert wheels["out"] == [False]

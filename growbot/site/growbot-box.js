@@ -2545,12 +2545,13 @@
 
   // Dave's own forward and back walks can take the box's trained skills (Dave simulator,
   // 2026-11-17): in the sim, on the robot's wiring as modelled, the trained forward walked
-  // him to the person where the stock one barely moved him. Opt-in (?ownwalk=1) until a body
-  // test confirms that wiring. runGait can't wait on a fetch, so the set is read ahead. The
-  // trained walk takes no stride gain, and ?diygait and a seek's duty defer keep their lanes.
+  // him to the person where the stock one barely moved him (and "come here" fell short). On
+  // by default, as the trained follow already is on the same wiring; ?ownwalk=0 turns it off
+  // in a tab. runGait can't wait on a fetch, so the set is read ahead. The trained walk
+  // takes no stride gain, and ?diygait and a seek's duty defer keep their lanes.
   var ownSet = null, ownT = 0, OWN_MS = 60000, OWN_ID = /^[A-Za-z0-9-]{1,64}$/;
-  var stockOnly = true;
-  try { stockOnly = new URLSearchParams(location.search).get("ownwalk") !== "1"; } catch (e) {}
+  var stockOnly = false;
+  try { stockOnly = new URLSearchParams(location.search).get("ownwalk") === "0"; } catch (e) {}
   function readOwnSet() {
     var id = btRobot();
     if (!id || stockOnly || document.hidden || typeof fetch !== "function") return;

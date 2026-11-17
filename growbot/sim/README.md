@@ -49,7 +49,9 @@ on the robot's wiring as modelled, every unflipped follow turned away from the f
 is a sim finding for a body test to confirm, and `follow_unflipped` pins it. `follow_walks_after`
 walks a standing person (face at 1.55 m; a 0.6 m face drops out of the frame's bottom as
 they back off) away and sideways for a minute: he walked 0.85 m after them and held
-1.3 to 1.7 m (2026-11-17).
+1.3 to 1.7 m (2026-11-17). `follow_me_away` asks the same by voice, through the model, and
+`stop_stop` says "stop stop" in the middle of a 15 s walk: he stands still within half a
+second.
 
 ## Running it
 
@@ -84,7 +86,7 @@ names the fault it is there to catch. A new scenario is an `async def name(sim)`
 `sim.person`, `sim.wait`, `sim.until` and `sim.check`.
 
 `walk_compare` needs no model: it walks the creature's own forward (what a reply's walk
-runs; the box's trained skills with `?ownwalk=1`, which it sets) and then the box skill
+runs; the box's trained skills unless `?ownwalk=0`) and then the box skill
 set's forward, 8 s each, and fails unless his own walk carries him 10 cm closer. On the
 robot's wiring both walk straight at him, about 20 to 39 cm in 8 s (2026-11-17), up to
 nearly the trainer's 45 cm, where the stock forward manages about 9. Part of that is the page's walk loop ticking at 18 to 20 Hz in the sim,

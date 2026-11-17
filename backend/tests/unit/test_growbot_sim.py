@@ -349,3 +349,5 @@ def test_the_sim_body_is_mirrored_as_the_robot_and_one_scenario_unmirrors_it() -
     # On that wiring the follower turns away from the face unless the camera flip is set.
     assert opts.cam_flip is True
     assert simscen.SETUP["follow_walks_after"]["person"]["face_z"] == 1.55
+    # The body test's asks have a scenario each: come here, follow me by voice, stop stop.
+    assert {"come_here", "follow_me_away", "stop_stop"} <= set(simscen.SCENARIOS)
