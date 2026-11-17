@@ -5811,6 +5811,16 @@ def test_an_explore_goal_hears_how_far_he_has_gone_and_where_he_has_not_been() -
     assert got[3] == ""
 
 
+def test_standing_tall_he_hears_that_ceiling_in_his_picture_is_not_a_fall() -> None:
+    """Live m3: upright at 60 degrees he said he was flat on his back from a picture of
+    ceiling, and waited four minutes for help."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        "your natural resting stance, so your camera looks up a little: ceiling in your picture"
+        " is not a fall; this reading is what says whether you are on your feet" in page
+    )
+
+
 def test_on_legs_the_quiet_beat_says_exploring_takes_a_walk() -> None:
     """Live e2: ten minutes of quiet beats on his legs answered with words and no move."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")

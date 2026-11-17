@@ -4695,6 +4695,20 @@ QUIET_LEGS_PATCHES: list[tuple[str, str, str, int]] = [
         1,
     ),
 ]
+# Live m3: standing tall after a spin he said "My spin tipped me over" and later "I'm flat on
+# my back, sky above", asked for the get-up (refused: upright), and waited four minutes for
+# his person. The tall stance leans the phone back, so his camera looks up and a picture of
+# ceiling reads like lying down; the posture line now says which to believe.
+QUIET_LEGS_PATCHES.append(
+    (
+        "v3/next.html",
+        '(_lgd?" — your natural resting stance":"")+")"',
+        '(_lgd?" — your natural resting stance, so your camera looks up a little: ceiling in'
+        " your picture is not a fall; this reading is what says whether you are on your feet"
+        '":"")+")"',
+        1,
+    )
+)
 PATCHES += QUIET_LEGS_PATCHES
 
 
