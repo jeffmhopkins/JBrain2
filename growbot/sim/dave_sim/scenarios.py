@@ -180,12 +180,13 @@ def _camera_off(sim: Sim) -> float:
 
 @scenario(start="standing", person={"x": -2.5, "face_z": 0.6})
 async def walk_compare(sim: Sim) -> None:
-    """The creature's stock forward walk beside the box's skill set's forward, 8 s each from
-    the same stance, toward a person 2.5 m off. Needs no model. Catches: a walk the creature
-    is offered that barely moves him while a trained one would carry him."""
+    """The creature's own forward walk (what a reply's walk runs) beside the box's skill set's
+    forward, 8 s each from the same stance, toward a person 2.5 m off. Needs no model.
+    Catches: his own walk sliding his feet, or walking away, while a trained one carries him
+    (the stock walk did, 1.4 cm in 8 s, before his own walks took the trained skills)."""
     await sim.wait(4)
     got = {}
-    for label, extra in (("stock", {}), ("skills", {"skills": sim.box.skills})):
+    for label, extra in (("own", {}), ("skills", {"skills": sim.box.skills})):
         d0, x0, y0 = _dist(sim), sim.state["x"], sim.state["y"]
         ack = await sim.move("forward", secs=8, **extra)
         why = (ack or {}).get("why")
@@ -200,8 +201,7 @@ async def walk_compare(sim: Sim) -> None:
             moved_m=round(moved, 3),
         )
         await sim.wait(3)
-    # A measurement, not a gate: both walks crawl in the sim body (README).
-    sim.check(True, "measured both walks (metres closer)", **got)
+    sim.check(got["own"] > 0.1, "his own walk carried him 10 cm closer", **got)
 
 
 @scenario(start="standing", person={"x": -1.0, "face_z": 0.6})

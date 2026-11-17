@@ -47,7 +47,7 @@ def _growbot_train() -> Any:
     return simbody
 
 
-ROBOT_WIRING: dict[str, Any] = {"swap": True}
+ROBOT_WIRING: dict[str, Any] = {"swap": True, "l_sign": 1, "r_sign": -1}
 
 
 @dataclass
@@ -56,9 +56,10 @@ class Options:
     soul: dict[str, Any] | None = None
     prefs: dict[str, str] = field(default_factory=dict)
     start: str = "lying"
-    # simbody.Wiring fields. The default is the owner's robot, not the sim's stock build:
-    # its trained walks only turn the right way with the page's leg swap (body test #40),
-    # and the stock-wired body under that swap inverted every trained turn.
+    # simbody.Wiring fields. The default is the owner's robot, not the sim's stock build: its
+    # trained walks only turn the right way with the page's leg swap (body test #40). Its legs
+    # are mirrored, not crossed: crossing the pins alone (swap with the stock signs) also
+    # negates both swings, which sent the trained forward away from the person.
     wiring: dict[str, Any] = field(default_factory=lambda: dict(ROBOT_WIRING))
     # simbody.Person fields; None: nobody in the room.
     person: dict[str, Any] | None = field(default_factory=lambda: {"x": -1.0, "face_z": 0.6})

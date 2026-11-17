@@ -2539,6 +2539,54 @@
     try { start(pid, move, +secs || 0, attempt, drive, !!following); }
     finally { if (attempt.state === "requested") _moveReport(attempt, "blocked", "not_admitted"); }
   };
+
+  // Dave's own forward and back walks take the box's trained skills (Dave simulator,
+  // 2026-11-17): on the robot's wiring the creature's stock forward slid its feet, 1.4 cm in
+  // 8 s, where the trained forward walked straight. runGait can't wait on a fetch, so the set
+  // is read ahead and kept fresh; with none (or ?stockwalk=1) the stock walks run as before.
+  var ownSet = null, ownT = 0, OWN_MS = 60000, OWN_ID = /^[A-Za-z0-9-]{1,64}$/;
+  var stockOnly = false;
+  try { stockOnly = new URLSearchParams(location.search).get("stockwalk") === "1"; } catch (e) {}
+  function readOwnSet() {
+    var id = btRobot();
+    if (!id || stockOnly || document.hidden || typeof fetch !== "function") return;
+    ownT = Date.now();
+    fetch("/api/box/skills?robot=" + encodeURIComponent(id), { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        var v = j && j.skills, out = null;
+        if (v && typeof v === "object" && !Array.isArray(v)) {
+          ["look", "forward", "back"].forEach(function (k) {
+            if (typeof v[k] === "string" && OWN_ID.test(v[k])) { out = out || {}; out[k] = v[k]; }
+          });
+        }
+        ownSet = out;
+      })
+      .catch(function () {});
+  }
+  // Read at load and on each return to the page, and again behind a walk once a minute old:
+  // no timer, so a page left open polls nothing.
+  try {
+    readOwnSet();
+    document.addEventListener("visibilitychange", readOwnSet);
+  } catch (e) {}
+  // True when it took the walk: `attempt` is runGait's, so the move's history reads as the
+  // creature's own walk, marked trained.
+  window.gbOwnWalk = function (spec, dir, attempt) {
+    if (Date.now() - ownT > OWN_MS) { try { readOwnSet(); } catch (e) {} }
+    if (stockOnly || !ownSet || _wheels) return false;
+    var gait = String((spec && spec.gait) || "");
+    if (gait && !/^(official|screen_forward|screen_backward)$/.test(gait)) return false;
+    var back = /^(back|backward|backwards|screen-backward)$/.test(dir) || gait === "screen_backward";
+    var fwd = !back && /^(fwd|forward|ahead|go|straight|walk|closer)$/.test(dir);
+    var move = back ? "back" : fwd ? "forward" : "";
+    if (!move || !ownSet[move]) return false;
+    attempt.mv = { kind: "walk", gait: "trained", dir: dir, direction: back ? "screen-backward" : "screen-forward" };
+    if (+spec.secs > 0) attempt.mv.ask = +spec.secs;
+    attempt.mv.secs = policySeconds(+spec.secs || 0, 8, dutyLeftMs());
+    start(ownSet, move, +spec.secs || 0, attempt, "", false);
+    return true;
+  };
 })();
 
 /* The emergency stop (owner, 2026-11-15): "stop stop", the word twice in a row, halts whatever

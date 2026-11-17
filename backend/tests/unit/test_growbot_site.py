@@ -5325,3 +5325,71 @@ def test_an_ask_to_move_is_answered_by_moving() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "WHEN YOUR PERSON ASKS YOU TO MOVE (come here" in page
     assert "you have arrived only when their face looks much bigger" in page
+
+
+def _own_walk(
+    calls: str, query: str = "", skills: str = "{look:'L',forward:'F',back:'B'}"
+) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    start = box.index("  // Dave's own forward and back walks take")
+    fn = box[start : box.index("\n})();", start)]
+    script = (
+        "var window={}, started=[], _wheels=false;"
+        f"var location={{search:'{query}'}};"
+        "var document={hidden:false,addEventListener:function(){}};"
+        "function btRobot(){ return 'gb-1'; }"
+        "function policySeconds(s,d){ return s||d; } function dutyLeftMs(){ return 60000; }"
+        "function start(set,move,secs,a){ started.push([move,secs,Object.keys(set).join('+')]); }"
+        "function fetch(){ return Promise.resolve({ok:true,json:function(){"
+        f" return {{skills:{skills}}};}}}}); }}"
+        + fn
+        + "setTimeout(function(){ var a={}, b={}, out=["
+        + calls
+        + "]; console.log(JSON.stringify("
+        "{out:out,started:started,mv:a.mv||null,bmv:b.mv||null})); });"
+    )
+    return json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+
+
+def test_daves_own_forward_and_back_walks_run_the_trained_skills() -> None:
+    """Dave simulator, 2026-11-17: on the robot's wiring his stock forward slid his feet (1.4
+    cm in 8 s) where the box's trained forward walked at him; his own walks take it."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        '  if(typeof window.gbOwnWalk==="function"&&window.gbOwnWalk(spec,dir,attempt))return;\n'
+        "  var _requestedDir=dir, _backward=" in page
+    )
+    got = _own_walk(
+        "window.gbOwnWalk({dir:'fwd'},'fwd',a), window.gbOwnWalk({dir:'back',secs:5},'back',b),"
+        " window.gbOwnWalk({dir:'left'},'left',{}),"
+        " window.gbOwnWalk({gait:'spin_left',dir:'fwd'},'fwd',{}),"
+        " window.gbOwnWalk({gait:'screen_forward',dir:'closer'},'closer',{})"
+    )
+    assert got["out"] == [True, True, False, False, True]
+    assert got["started"] == [
+        ["forward", 0, "look+forward+back"],
+        ["back", 5, "look+forward+back"],
+        ["forward", 0, "look+forward+back"],
+    ]
+    assert got["mv"] == {
+        "kind": "walk",
+        "gait": "trained",
+        "dir": "fwd",
+        "direction": "screen-forward",
+        "secs": 8,
+    }
+    assert got["bmv"]["ask"] == 5 and got["bmv"]["direction"] == "screen-backward"
+
+
+def test_daves_own_walks_stay_stock_without_a_skill_set_or_when_asked() -> None:
+    assert _own_walk("window.gbOwnWalk({dir:'fwd'},'fwd',a)", skills="null")["out"] == [False]
+    assert _own_walk("window.gbOwnWalk({dir:'back'},'back',a)", skills="{forward:'F'}")["out"] == [
+        False
+    ]
+    off = _own_walk("window.gbOwnWalk({dir:'fwd'},'fwd',a)", query="?stockwalk=1")
+    assert off["out"] == [False] and off["started"] == []
