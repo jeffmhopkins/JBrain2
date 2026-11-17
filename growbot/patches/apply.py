@@ -4008,7 +4008,7 @@ PATCHES += [
 # "Follow me" walks after the person (Dave simulator, 2026-11-16): spoken, it only turned on
 # the face tracker's gentle lean, which lost a person walking slowly round the robot within
 # 10 s, while the Body tab's trained-walk follower kept them in view. A `follow` verb starts
-# that follower (growbot-box.js gbFollowMe), which keeps going by itself (up to 2 minutes, or
+# that follower (growbot-box.js gbFollowMe), which keeps going by itself (up to 5 minutes, or
 # until it loses them or a stop); asked again while it runs, it carries on as it is. A reply
 # issued before a stop ("stop stop" while it was thinking) starts none (the walk's own
 # _motionGen check). Only on a person's ask, like the eye verb, so a past follow replayed in
@@ -4019,7 +4019,7 @@ PATCHES += [
         "v3/prompts.js",
         "    '\"eye\":\"OMIT almost always",
         "    '\"follow\":\"OMIT unless your person asks you to follow them — then \\\\\"me\\\\\": your"
-        " trained walk turns and walks after their face by itself, up to 2 minutes, until it"
+        " trained walk turns and walks after their face by itself, up to 5 minutes, until it"
         " loses them or you stop it. Sending it again while you follow changes nothing\",' +\n"
         "    '\"eye\":\"OMIT almost always",
         1,
@@ -4036,7 +4036,7 @@ PATCHES += [
     (
         "v3/next.html",
         "clock-tools2-quiet-since-travel\"",
-        "clock-tools2-quiet-since-travel-follow\"",
+        "clock-tools2-quiet-since-travel-follow5\"",
         1,
     ),
 ]
@@ -4122,7 +4122,7 @@ _GB_FOLLOW_LINE_JS = (
     "function _gbFollowLine(){ try{ var s=window.gbFollow&&window.gbFollow.status&&"
     'window.gbFollow.status(); if(!s) return ""; '
     "var out=\" You are FOLLOWING your person (follow me): \"+s.secs+\" s so far, of up to "
-    '120 s"; if(s.state==="searching") out+=", and you have not found their face yet"; '
+    '300 s"; if(s.state==="searching") out+=", and you have not found their face yet"; '
     'else if(s.state==="lost") out+=", and you have lost sight of them (turning to where they '
     'were last seen)"; else if(s.dist!==null) out+=", they are about "+s.dist.toFixed(1)+'
     '" m away"+(s.heading===null?"":Math.abs(s.heading)>=10?", "+Math.round(Math.abs(s.heading))'

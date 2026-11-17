@@ -854,7 +854,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-'
-        'tools2-quiet-since-travel-follow"' in page
+        'tools2-quiet-since-travel-follow5"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -5215,7 +5215,7 @@ def test_a_follow_tells_the_next_turn_it_is_following_and_for_how_long() -> None
         subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
     )
     assert none == ""
-    assert "You are FOLLOWING your person (follow me): 40 s so far, of up to 120 s" in on
+    assert "You are FOLLOWING your person (follow me): 40 s so far, of up to 300 s" in on
     assert "about 1.8 m away, 25 degrees to your right" in on
     assert "It keeps going by itself: send no walk, body or gesture" in on
     assert "straight ahead" in ahead
@@ -5289,6 +5289,8 @@ def test_follow_me_starts_the_trained_follower_and_a_stop_wins() -> None:
     ]
     box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert 'state: F.track.p ? String(c.state || "") : "searching"' in box
+    # Jeff, 2026-11-17: "2 minutes is too short. Let's go to five."
+    assert "FOLLOW_MAX_MS = 300000," in box
 
 
 def test_history_drops_quiet_turns_and_marks_moves_it_only_claimed() -> None:
