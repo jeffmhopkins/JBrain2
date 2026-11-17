@@ -5667,6 +5667,9 @@ def test_his_goal_reminder_says_how_much_of_the_room_he_has_looked_over() -> Non
     line = _explore("_gbLookedLine()", spins)[0]
     assert "turned you 120 degrees in all" in line
     assert "looked over about 150 of the 360 degrees" in line
+    # What is left is said too, so a sweep that stops short is his call, made knowing it.
+    assert "about 210 degrees around you you have not seen yet" in line
+    assert "not seen yet" not in _explore("_gbLookedLine()", spins + "_seekSeen=true;")[0]
     assert _explore("_gbLookedLine()", spins + "MODE='phone';") == [""]
     assert _explore("_gbLookedLine()", spins + "_gbGoalT=0;") == [""]
 
@@ -5733,12 +5736,16 @@ def test_standing_on_legs_his_legs_stay_held() -> None:
         pytest.skip("node is not installed")
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
-        "if(!fold&&_gbHoldStanding()&&_motion&&_motion.rest===from)"
+        "if(!fold&&_gbHoldStanding(1)&&_motion&&_motion.rest===from)"
         " holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);" in page
     )
     assert "if(n>=_holdEnd&&_holdIdle&&_gbHoldStanding()){ _holdEnd=n+HOLD_IDLE_S*1000;" in page
     assert 'stopMotion(); if(_gbHoldStanding()) _restTall("stop");' in page
-    i = page.index("function _gbHoldStanding(){")
+    # A walk's own first second can't trip the grab abort, whose release splays him mid-stride.
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "tipN = settled && dTilt > 55 ? tipN + 1 : 0;" in box
+    assert "jerkN = settled && lin > 11 ? jerkN + 1 : 0;" in box
+    i = page.index("function _gbHoldStanding(rest){")
     fn = page[i : page.index("\n", i)]
     base = (
         "var MODE='legs', _wheels=false, paused=false, document={hidden:false},"
@@ -5756,5 +5763,11 @@ def test_standing_on_legs_his_legs_stay_held() -> None:
     }
     for setup, want in cases.items():
         script = f"{base}{fn}{setup}console.log(JSON.stringify(_gbHoldStanding()))"
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+        assert json.loads(out.stdout) is want, setup
+    # A rest has ruled out lying already: no tilt reading still holds; a reading of down
+    # does not.
+    for setup, want in (("up=null;", True), ("up=false;", False), ("MODE='phone';", False)):
+        script = f"{base}{fn}{setup}console.log(JSON.stringify(_gbHoldStanding(1)))"
         out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
         assert json.loads(out.stdout) is want, setup

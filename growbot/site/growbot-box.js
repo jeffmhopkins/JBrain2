@@ -2502,10 +2502,14 @@
           $("brainTxt").textContent = "awake";
           return;
         }
-        // Upstream's tip and grab abort (runGait's LEGS-3), on the same numbers.
+        // Upstream's tip and grab abort (runGait's LEGS-3), on the same numbers, and like it
+        // only after the first second: the drop from a held tall stance into the walk's own
+        // jolted past the grab line in the sim (w4), and the abort's release, mid-stride,
+        // splayed him flat.
         var dTilt = ori && upB ? phoneTiltDegrees(ori, upB) : null, lin = typeof linMag === "number" ? linMag : 0;
-        tipN = dTilt > 55 ? tipN + 1 : 0;
-        jerkN = lin > 11 ? jerkN + 1 : 0;
+        var settled = Date.now() - walkT > 1000;
+        tipN = settled && dTilt > 55 ? tipN + 1 : 0;
+        jerkN = settled && lin > 11 ? jerkN + 1 : 0;
         if (tipN >= 5 || jerkN >= 6) {
           var why = tipN >= 5 ? "tipped" : "grabbed";
           _imuWhy = why; stopMotion(); _gaitCoolUntil = Date.now() + 4000;

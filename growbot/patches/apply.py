@@ -4246,7 +4246,9 @@ _GB_EXPLORE_JS = (
     " return \" Since you took this goal \"+Math.round((Date.now()-_gbGoalT)/1000)+\" s ago your"
     " spins have turned you \"+Math.round(tot)+\" degrees in all, measured; with your camera's"
     " 60 degrees across, you have looked over about \"+seen+\" of the 360 degrees around"
-    " you.\"+(_seekSeen&&SEEK_ACTION.test(seekGoal)?\" You have it in sight, but seeing it is not"
+    " you\"+(seen<360&&!_seekSeen?\", so about \"+(360-seen)+\" degrees around you you have"
+    " not seen yet\":\"\")+\".\"+(_seekSeen&&SEEK_ACTION.test(seekGoal)?\" You have it in"
+    " sight, but seeing it is not"
     " all your goal asks: go on to it and do the rest. You are by it only when it fills your"
     " picture edge to edge, or a walk toward it no longer moves you; until then it is farther"
     " than it looks.\":\"\");"
@@ -4570,7 +4572,7 @@ STAND_PATCHES: list[tuple[str, str, str, int]] = [
         "ms:STAND_TALL.ms}]},_rest:from,_fold:fold});",
         "  moveLegs({body:{steps:[fold?{l:130,r:50,ms:700}:{l:STAND_TALL.l,r:STAND_TALL.r,"
         "ms:STAND_TALL.ms}]},_rest:from,_fold:fold});"
-        " if(!fold&&_gbHoldStanding()&&_motion&&_motion.rest===from)"
+        " if(!fold&&_gbHoldStanding(1)&&_motion&&_motion.rest===from)"
         " holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);",
         1,
     ),
@@ -4594,8 +4596,12 @@ STAND_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         "function _restLetGo(gm){",
-        "function _gbHoldStanding(){ try{ return MODE===\"legs\"&&!_wheels&&!paused"
-        "&&!document.hidden&&!!window._body&&_bodyUpright()===true; }catch(e){ return false; } }\n"
+        # Upright, or (rest) not known to be down: the rest has already ruled out lying,
+        # asleep and asked-down, and the phone's tilt right after a move is often no reading
+        # at all (w4: a spin's rest went slack this way and he sagged flat).
+        "function _gbHoldStanding(rest){ try{ var u=_bodyUpright(); return MODE===\"legs\""
+        "&&!_wheels&&!paused&&!document.hidden&&!!window._body&&(u===true||(!!rest&&u!==false));"
+        " }catch(e){ return false; } }\n"
         "function _restLetGo(gm){",
         1,
     ),
