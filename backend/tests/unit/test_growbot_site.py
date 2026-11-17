@@ -5421,28 +5421,40 @@ def test_daves_own_walks_stay_stock_without_a_skill_set_or_when_asked() -> None:
     assert roomy["out"] == [True]
 
 
-def test_a_claimed_move_with_no_move_field_is_asked_about_at_once() -> None:
-    """Dave simulator, 2026-11-17: asked "come here", the owner's Dave said "I am walking toward
-    you now" with no walk in 3 of 8 replies, and nothing asked him again."""
+def _claim_fix(setup: str) -> list[str]:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert (
-        'if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!o.walk&&!o.body&&!o.gesture&&!o.follow'
-        '&&GB_CLAIM_RE.test(String(o.say||""))) _gbClaimFix();' in page
-    )
     i = page.index("var _gbClaimT=0;")
     fn = page[i : page.index("\n", i)]
     script = (
-        "var thought=[], inFlight=true, paused=false, dreaming=false;"
-        "function logEv(){} function think(t,k){ thought.push(k); }"
+        "var window={}, thought=[], inFlight=false, paused=false, dreaming=false,"
+        " document={hidden:false}, _motionGen=1, pendingUser=null, handler='running';"
+        "function logEv(){} function think(t,k){ thought.push(k+':'+handler); inFlight=true; }"
         + fn
-        + "_gbClaimFix(); _gbClaimFix();"
-        "setTimeout(function(){ inFlight=false; }, 300);"
-        "setTimeout(function(){ console.log(JSON.stringify(thought)); }, 900);"
+        + setup
+        + "handler='done';"
+        "setTimeout(function(){ console.log(JSON.stringify(thought)); }, 300);"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
-    # Waits out the reply in flight, then asks once, on an event turn (not a person's ask).
-    assert json.loads(out) == ["event"]
+    return json.loads(out)
+
+
+def test_a_claimed_move_with_no_move_field_is_asked_about_at_once() -> None:
+    """Dave simulator, 2026-11-17: asked "come here", the owner's Dave said "I am walking toward
+    you now" with no walk in 3 of 8 replies, and nothing asked him again."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        'if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait))'
+        '&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||""))) '
+        "_gbClaimFix(_mgen,_gbIssT);" in page
+    )
+    # After the claiming reply's handler has finished (its speech and trace land first), once
+    # per 30 s, on an event turn (not a person's ask, so it can't repair itself).
+    assert _claim_fix("_gbClaimFix(1, 100); _gbClaimFix(1, 100);") == ["event:done"]
+    # Nothing once "stop stop", another motion or the person's own words came since.
+    assert _claim_fix("window._gbFollowStopT=200; _gbClaimFix(1, 100);") == []
+    assert _claim_fix("_motionGen=2; _gbClaimFix(1, 100);") == []
+    assert _claim_fix("pendingUser='back up'; _gbClaimFix(1, 100);") == []
     assert "MOVE (come here" in page and "Feet that slipped or walks that fell short" in page

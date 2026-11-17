@@ -4031,8 +4031,9 @@ PATCHES += [
         ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen'
         '&&!document.hidden&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body;'
         " delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15,_gbIssT); }"
-        ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!o.walk&&!o.body&&!o.gesture&&!o.follow'
-        '&&GB_CLAIM_RE.test(String(o.say||""))) _gbClaimFix();',
+        ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait))'
+        '&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||"")))'
+        " _gbClaimFix(_mgen,_gbIssT);",
         1,
     ),
     (
@@ -4113,15 +4114,21 @@ _GB_FALL_THINK_JS = (
 # note reaches him only on his next turn, which a person may not give him; so the page asks
 # him straight away, once per 30 s, on an event turn (which a person's ask is not, so the
 # repair's own reply never triggers another).
+# Deferred past the claiming reply's own handler (inFlight is already clear there), so its
+# speech, trace and history land first and the repair turn sees the ask it answers again.
+# Dropped once anything happened since the claiming thought was issued: "stop stop", another
+# motion, or the person's own queued words, which get their own turn.
 _GB_CLAIM_FIX_JS = (
-    "var _gbClaimT=0;function _gbClaimFix(){ if(Date.now()-_gbClaimT<30000)return; "
-    "_gbClaimT=Date.now(); try{ logEv(\"claim_fix\",{}); }catch(e){} var n=0; "
-    "(function go(){ if(inFlight){ if(++n<40) setTimeout(go,250); return; } "
-    "if(paused||dreaming)return; "
+    "var _gbClaimT=0;function _gbClaimFix(gen,issT){ if(Date.now()-_gbClaimT<30000)return; "
+    "var n=0; setTimeout(function go(){ "
+    "if(gen!==_motionGen||(window._gbFollowStopT||0)>=issT||pendingUser)return; "
+    "if(inFlight){ if(++n<40) setTimeout(go,250); return; } "
+    "if(paused||dreaming||document.hidden)return; "
     'think("(your body, not your person:) your last reply said you were moving, but it carried '
     "no walk, body or follow field, so you did not move at all. Answer that same ask again "
     "with the move field in this reply (come here is walk:{dir:\\\"fwd\\\",secs:8}); "
-    'if you cannot, say so plainly.","event"); })(); }\n'
+    'if you cannot, say so plainly.","event"); '
+    'if(inFlight){ _gbClaimT=Date.now(); try{ logEv(\"claim_fix\",{}); }catch(e){} } }, 0); }\n'
 )
 # How far the person's face is, beside the latest move (Dave simulator, 2026-11-16): after
 # one 8 s walk that covered 9 of 110 cm, Dave said "right here, Jeff" and set found, because

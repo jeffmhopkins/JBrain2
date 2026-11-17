@@ -93,7 +93,8 @@ On the robot's wiring the trained walk goes straight at him, about 20 to 39 cm i
 Dave's own reply walks take the trained one (`?ownwalk=0` turns that off in a tab), which
 `come_here` holds; the pad's Built-in walk stays stock, for the A/B. The owner's Dave, whose
 log remembers his stock walk slipping, sometimes says he is walking with no walk; the page
-then asks him again at once (`_gbClaimFix`), and he walked in 5 of 8 runs (2026-11-17). In
+then asks him again at once (`_gbClaimFix`), though he often answers with why his feet slip;
+he walked in 10 of 16 runs (2026-11-17), where a fresh Dave walks every time. In
 2 of about 36 trained forward walks across all runs he tipped onto his back 2 s in. Part of the shortfall
 is the page's walk loop ticking at 18 to 20 Hz in the sim, late and uneven, not the steady
 25 Hz the policy was trained at: replaying those late ticks
