@@ -5328,7 +5328,7 @@ def test_an_ask_to_move_is_answered_by_moving() -> None:
 
 
 def _own_walk(
-    calls: str, query: str = "?ownwalk=1", skills: str = "{look:'L',forward:'F',back:'B'}"
+    calls: str, query: str = "", skills: str = "{look:'L',forward:'F',back:'B'}"
 ) -> dict[str, Any]:
     node = shutil.which("node")
     if node is None:
@@ -5359,7 +5359,7 @@ def _own_walk(
 
 def test_daves_own_forward_and_back_walks_run_the_trained_skills() -> None:
     """Dave simulator, 2026-11-17: on the robot's wiring as modelled the box's trained forward
-    walked him 39 cm to the person in 8 s, the stock one 9; behind ?ownwalk=1, his take it."""
+    walked him 39 cm to the person in 8 s, the stock one 9 (come here fell short)."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
         '  if(typeof window.gbOwnWalk==="function"&&window.gbOwnWalk(spec,dir,attempt))return;\n'
@@ -5382,6 +5382,7 @@ def test_daves_own_forward_and_back_walks_run_the_trained_skills() -> None:
         "gait": "trained",
         "dir": "fwd",
         "direction": "screen-forward",
+        "policy": "set:look+forward+back",
         "secs": 8,
     }
     assert got["bmv"]["ask"] == 5 and got["bmv"]["direction"] == "screen-backward"
@@ -5392,14 +5393,70 @@ def test_daves_own_walks_stay_stock_without_a_skill_set_or_when_asked() -> None:
     assert _own_walk("window.gbOwnWalk({dir:'back'},'back',a)", skills="{forward:'F'}")["out"] == [
         False
     ]
-    off = _own_walk("window.gbOwnWalk({dir:'fwd'},'fwd',a)", query="")
+    off = _own_walk("window.gbOwnWalk({dir:'fwd'},'fwd',a)", query="?ownwalk=0")
     assert off["out"] == [False] and off["started"] == []
     wheels = _own_walk("(_wheels=true, window.gbOwnWalk({dir:'fwd'},'fwd',a))")
     assert wheels["out"] == [False]
     named = _own_walk("window.gbOwnWalk({gait:'46181387',dir:'fwd'},'fwd',a)")
     assert named["out"] == [False]
+    # The pad's Built-in walk stays stock; a model echoing "trained" back still gets it.
+    pad = _own_walk("window.gbOwnWalk({dir:'fwd',stock:true},'fwd',a)")
+    assert pad["out"] == [False]
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "      spec.stock = true;\n      window.runGait(spec);" in box
+    echo = _own_walk("window.gbOwnWalk({gait:'trained',dir:'fwd'},'fwd',a)")
+    assert echo["out"] == [True]
+    # Turned down, an echoed "trained" must reach runGait as a plain walk: it has no such gait
+    # and would fall back to the screen-backward official one, walking him away.
+    declined = _own_walk(
+        "(s={gait:'trained',dir:'fwd'}, window.gbOwnWalk(s,'fwd',a)), s", query="?ownwalk=0"
+    )
+    assert declined["out"] == [False, {"dir": "fwd"}]
+    # A failed read (the box restarting after an update) keeps the last good set.
+    assert ".catch(function () {});" in box and "if (j === undefined) return;" in box
     # A seek with too little duty left defers in runGait rather than taking a stub walk.
     seek = _own_walk("(seekGoal='door', duty=3000, window.gbOwnWalk({dir:'fwd'},'fwd',a))")
     assert seek["out"] == [False]
     roomy = _own_walk("(seekGoal='door', window.gbOwnWalk({dir:'fwd'},'fwd',a))")
     assert roomy["out"] == [True]
+
+
+def _claim_fix(setup: str) -> list[str]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    i = page.index("var _gbClaimT=0;")
+    fn = page[i : page.index("\n", i)]
+    script = (
+        "var window={}, thought=[], inFlight=false, paused=false, dreaming=false,"
+        " document={hidden:false}, _motionGen=1, pendingUser=null, handler='running';"
+        "function logEv(){} function think(t,k){ thought.push(k+':'+handler); inFlight=true; }"
+        + fn
+        + setup
+        + "handler='done';"
+        "setTimeout(function(){ console.log(JSON.stringify(thought)); }, 300);"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    return json.loads(out)
+
+
+def test_a_claimed_move_with_no_move_field_is_asked_about_at_once() -> None:
+    """Dave simulator, 2026-11-17: asked "come here", the owner's Dave said "I am walking toward
+    you now" with no walk in 3 of 8 replies, and nothing asked him again."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        'if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait||o.walk.secs))'
+        '&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||""))) '
+        "_gbClaimFix(_mgen,_gbIssT);" in page
+    )
+    # After the claiming reply's handler has finished (its speech and trace land first), once
+    # per 30 s, on an event turn (not a person's ask, so it can't repair itself).
+    assert _claim_fix("_gbClaimFix(1, 100); _gbClaimFix(1, 100);") == ["event:done"]
+    # Nothing once "stop stop", another motion or the person's own words came since.
+    assert _claim_fix("window._gbFollowStopT=200; _gbClaimFix(1, 100);") == []
+    assert _claim_fix("_motionGen=2; _gbClaimFix(1, 100);") == []
+    assert _claim_fix("pendingUser='back up'; _gbClaimFix(1, 100);") == []
+    # The handler's drainUser sent the person's next words first: that turn's reply is theirs.
+    assert _claim_fix("_gbClaimFix(1, 100); inFlight=true;") == []
+    assert "MOVE (come here" in page and "Feet that slipped or walks that fell short" in page

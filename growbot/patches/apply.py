@@ -4030,7 +4030,10 @@ PATCHES += [
         'gbEyeTo(o.eye==="back"?"environment":"user","self");'
         ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen'
         '&&!document.hidden&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body;'
-        " delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15,_gbIssT); }",
+        " delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15,_gbIssT); }"
+        ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait||o.walk.secs))'
+        '&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||"")))'
+        " _gbClaimFix(_mgen,_gbIssT);",
         1,
     ),
     (
@@ -4041,9 +4044,9 @@ PATCHES += [
     ),
 ]
 
-# Dave's own forward and back walks can run the box's trained skills, behind ?ownwalk=1 until
-# a body test (Dave simulator, 2026-11-17; growbot-box.js gbOwnWalk). Spins, named gaits,
-# wheels, ?diygait and a robot with no skill set keep their own lanes.
+# Dave's own forward and back walks run the box's trained skills (Dave simulator, 2026-11-17;
+# growbot-box.js gbOwnWalk; ?ownwalk=0 turns it off). Spins, named gaits, wheels, ?diygait
+# and a robot with no skill set keep their own lanes.
 PATCHES += [
     (
         "v3/next.html",
@@ -4069,7 +4072,9 @@ PATCHES += [
 # wiggled in place while saying he was coming; with this rule, 4 of 4 walked and set a goal
 # to keep walking. Screen-forward is toward whoever the front camera sees. In the sim his
 # first 8 s walk covered 8 of 110 cm and he then declared the goal found, hence the
-# arrival test.
+# arrival test. The owner's Dave, whose log remembers his stock walk's feet slipping, then
+# said "I am moving toward you" with no walk in 2 of 4 replies (2026-11-17), hence the line
+# that past slips are no reason to skip one.
 MOVE_ASK_RULE = (
     "WHEN YOUR PERSON ASKS YOU TO MOVE (come here, come closer, go, walk, back up, "
     "turn, stand up, get up, follow me), that ask IS the request: answer it with the move field in THIS "
@@ -4078,7 +4083,9 @@ MOVE_ASK_RULE = (
     'goal:\\"reach <their name>\\" and keep walking each beat. One walk covers only a little '
     "ground: you have arrived only when their face looks much bigger than when you set off, or "
     "they tell you, so until then do not say you are there or set found. Never say you are coming, walking, standing or getting up unless the same reply "
-    'carries walk, body or follow for it. If you cannot do it, say so plainly. \\"Follow me\\" '
+    "carries walk, body or follow for it. Feet that slipped or walks that fell short before are "
+    "no reason to skip it: send the walk, then judge by their face. "
+    'If you cannot do it, say so plainly. \\"Follow me\\" '
     'is follow:\\"me\\" with your words and no walk, body or gesture beside it.\\n'
 )
 # A fall wakes a turn (Dave simulator, 2026-11-16): rolled screen-down by a shove, Dave said
@@ -4100,6 +4107,28 @@ _GB_FALL_THINK_JS = (
     'If a get-up is offered to you and you are screen-up, you may use it.","event"); '
     'if(inFlight){ _gbFallT=Date.now(); _gbFallDone=true; try{ logEv("fall_think",{}); }'
     "catch(e){} } }\n"
+)
+# A claimed move repaired (Dave simulator, 2026-11-17): asked "come here", the owner's Dave
+# said "I am walking toward you now" with no walk in 3 of 8 replies, even with the move-ask
+# rule, then spent the next turns explaining why his feet slip. The history's "did: nothing"
+# note reaches him only on his next turn, which a person may not give him; so the page asks
+# him straight away, once per 30 s, on an event turn (which a person's ask is not, so the
+# repair's own reply never triggers another).
+# Deferred past the claiming reply's own handler (inFlight is already clear there), so its
+# speech, trace and history land first and the repair turn sees the ask it answers again.
+# Dropped once anything happened since the claiming thought was issued: "stop stop", another
+# motion, or another turn under way (the handler's drainUser sends the person's queued words
+# before this runs; a repair after that turn would read its reply as the claim).
+_GB_CLAIM_FIX_JS = (
+    "var _gbClaimT=0;function _gbClaimFix(gen,issT){ if(Date.now()-_gbClaimT<30000)return; "
+    "setTimeout(function(){ "
+    "if(gen!==_motionGen||(window._gbFollowStopT||0)>=issT||pendingUser||inFlight)return; "
+    "if(paused||dreaming||document.hidden)return; "
+    'think("(your body, not your person:) your last reply said you were moving, but it carried '
+    "no walk, body or follow field, so you did not move at all. Answer that same ask again "
+    "with the move field in this reply (come here is walk:{dir:\\\"fwd\\\",secs:8}); "
+    'if you cannot, say so plainly.","event"); '
+    'if(inFlight){ _gbClaimT=Date.now(); try{ logEv(\"claim_fix\",{}); }catch(e){} } }, 0); }\n'
 )
 # How far the person's face is, beside the latest move (Dave simulator, 2026-11-16): after
 # one 8 s walk that covered 9 of 110 cm, Dave said "right here, Jeff" and set found, because
@@ -4157,7 +4186,12 @@ PATCHES += [
 ]
 
 PATCHES += [
-    ("v3/next.html", "function fireReflex(trig){", _GB_FALL_THINK_JS + "function fireReflex(trig){", 1),
+    (
+        "v3/next.html",
+        "function fireReflex(trig){",
+        _GB_FALL_THINK_JS + _GB_CLAIM_FIX_JS + "function fireReflex(trig){",
+        1,
+    ),
     (
         "v3/next.html",
         "  if(travelMutes(trig))return;\n  if(trig==='loud'",

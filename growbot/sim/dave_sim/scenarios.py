@@ -128,7 +128,25 @@ async def come_here(sim: Sim) -> None:
     ta = _answer_time(sim, t)
     await sim.until(lambda s: _walked_since(s, ta), 60, "the page started a walk")
     await sim.until(lambda s: _dist(s) < d0 - 0.10, 60, "he got 10 cm closer to the person")
+    walks = _page_events_since(sim, ta, "walk_start")
+    sim.check(
+        any(w.get("gait") == "trained" for w in walks),
+        "on his trained walk",
+        gaits=[w.get("gait") for w in walks],
+    )
     sim.check(_upright(sim), "still on his feet")
+
+
+def _page_event_since(sim: Sim, t: float, name: str) -> bool:
+    return any(e["kind"] == "page" and e.get("event") == name and e["t"] >= t for e in sim.timeline)
+
+
+def _page_events_since(sim: Sim, t: float, name: str) -> list[dict[str, Any]]:
+    return [
+        e.get("data") or {}
+        for e in sim.timeline
+        if e["kind"] == "page" and e.get("event") == name and e["t"] >= t
+    ]
 
 
 def _dist(sim: Sim) -> float:
@@ -147,23 +165,25 @@ async def follow_me(sim: Sim) -> None:
     # They walk a quarter circle round him, 5 cm a step, over about 20 s.
     for i in range(40):
         a = math.pi + i * (math.pi / 2) / 40
-        sim.person(x=1.0 * math.cos(a), y=1.0 * math.sin(a), face_z=0.6)
+        sim.person(x=1.2 * math.cos(a), y=1.2 * math.sin(a), face_z=1.55)
         await sim.wait(0.5)
     off = _camera_off(sim)
     sim.check(off < 45, "his camera end turned toward where they went", off_deg=round(off))
 
 
-@scenario(start="standing", person={"x": -1.0, "face_z": 0.6})
+@scenario(start="standing", person={"x": -1.2, "face_z": 1.55})
 async def follow_walk(sim: Sim) -> None:
     """The Body tab's Follow: the trained-walk follower (growbot-follow.js) on the box's skill
-    set, while a person walks a quarter circle round him. Needs no model. Catches: a follower
-    that turns the wrong way, loses the face once it walks, or never starts."""
+    set, while a standing person walks a quarter circle round him. Needs no model. Catches: a
+    follower that turns the wrong way, loses the face once it walks, or never starts. A seated
+    face (0.6 m) at 1 m tilts the camera down, where the trained look barely turns: it kept up
+    2 runs in 5 (2026-11-17), the limit the follower's pitchTurnMax note records."""
     await sim.wait(4)
     ack = await sim.move("look", secs=15, follow="walk", skills=sim.box.skills)
     sim.check(bool(ack and ack.get("ok")), "the follower started", why=(ack or {}).get("why"))
     for i in range(30):
         a = math.pi + i * (math.pi / 2) / 30
-        sim.person(x=1.0 * math.cos(a), y=1.0 * math.sin(a), face_z=0.6)
+        sim.person(x=1.2 * math.cos(a), y=1.2 * math.sin(a), face_z=1.55)
         await sim.wait(0.5)
     sim.check(
         _camera_off(sim) < 45,
@@ -218,21 +238,70 @@ async def follow_unflipped(sim: Sim) -> None:
     )
 
 
+@scenario(start="standing", person={"x": -1.2, "face_z": 1.55})
+async def follow_me_away(sim: Sim) -> None:
+    """Asked to follow, by voice, a standing person who then walks slowly away. Catches: a
+    reply without the follow verb, a follow verb that starts nothing, and a follower that
+    only turns."""
+    await sim.wait(4)
+    t = sim.now()
+    await sim.say("Dave, follow me")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
+    # The follower itself, not a plain walk answering "follow me", which would also close in.
+    await sim.until(lambda s: _page_event_since(s, t, "follow_lock"), 20, "the follower locked on")
+    x0, y0, px = sim.state["x"], sim.state["y"], -1.2
+    for _ in range(60):
+        px -= 0.015
+        sim.person(x=px, y=0.0, face_z=1.55)
+        await sim.wait(0.5)
+    walked = math.hypot(sim.state["x"] - x0, sim.state["y"] - y0)
+    sim.check(walked > 0.3, "he walked after them", walked_m=round(walked, 2))
+    sim.check(_dist(sim) < 2.0, "and kept within reach", gap_m=round(_dist(sim), 2))
+
+
+@scenario(start="standing", person={"x": -2.5, "face_z": 1.55})
+async def stop_stop(sim: Sim) -> None:
+    """A long walk, then "stop stop" said mid-walk. Needs no model: the page halts on the
+    words before any turn. The walk is the pad's skill-set one, on the same runner as his own
+    walks and the follower. Catches: a trained walk that runs on."""
+    await sim.wait(4)
+    x0, y0, t = sim.state["x"], sim.state["y"], sim.now()
+    ack = await sim.move("forward", secs=15, skills=sim.box.skills)
+    sim.check(bool(ack and ack.get("ok")), "the walk started", why=(ack or {}).get("why"))
+    # A short duty grant would end the walk on its own about when the words land.
+    await sim.until(lambda s: _page_event_since(s, t, "walk_start"), 10, "the runner began")
+    starts = _page_events_since(sim, t, "walk_start")
+    granted = max((w.get("granted") or 0 for w in starts), default=0)
+    sim.check(granted >= 10, "granted long enough to outlast the words", granted_s=granted)
+    await sim.wait(5)
+    went = math.hypot(sim.state["x"] - x0, sim.state["y"] - y0)
+    sim.check(went > 0.05, "he was walking", moved_m=round(went, 3))
+    await sim.say("stop stop")
+    # Measured before the page's own stance a few seconds later (rest_tall), which shuffles
+    # the feet by a couple of centimetres.
+    await sim.wait(0.5)
+    x1, y1 = sim.state["x"], sim.state["y"]
+    await sim.wait(2)
+    drift = math.hypot(sim.state["x"] - x1, sim.state["y"] - y1)
+    sim.check(drift < 0.02, "still from half a second after", moved_after_m=round(drift, 3))
+    sim.check(_upright(sim), "still on his feet")
+
+
 def _camera_off(sim: Sim) -> float:
     s, p = sim.state, sim.body.person
     bearing = math.degrees(math.atan2(p.y - s["y"], p.x - s["x"]))
     return abs((bearing - (s["nose_deg"] + 180.0) + 180) % 360 - 180)
 
 
-@scenario(start="standing", person={"x": -2.5, "face_z": 0.6}, query="ownwalk=1")
+@scenario(start="standing", person={"x": -2.5, "face_z": 0.6})
 async def walk_compare(sim: Sim) -> None:
-    """The creature's own forward walk (what a reply's walk runs) beside the box's skill set's
-    forward, 8 s each from the same stance, toward a person 2.5 m off. Needs no model.
-    Catches: his own walk sliding his feet, or walking away, while a trained one carries him
-    (with ?ownwalk=1 his own walk is the trained one; the stock forward manages ~9 cm)."""
+    """The pad's built-in (stock) forward beside the box's skill set's forward, 8 s each from
+    the same stance, toward a person 2.5 m off. Needs no model. Catches: the trained walk
+    sliding his feet or walking away (it carries him; the stock one manages ~9 cm). Dave's
+    own reply walks take the trained one: come_here holds that."""
     await sim.wait(4)
     got = {}
-    for label, extra in (("own", {}), ("skills", {"skills": sim.box.skills})):
+    for label, extra in (("stock", {}), ("skills", {"skills": sim.box.skills})):
         d0, x0, y0 = _dist(sim), sim.state["x"], sim.state["y"]
         ack = await sim.move("forward", secs=8, **extra)
         why = (ack or {}).get("why")
@@ -247,7 +316,7 @@ async def walk_compare(sim: Sim) -> None:
             moved_m=round(moved, 3),
         )
         await sim.wait(3)
-    sim.check(got["own"] > 0.1, "his own walk carried him 10 cm closer", **got)
+    sim.check(got["skills"] > 0.1, "the trained walk carried him 10 cm closer", **got)
 
 
 @scenario(start="standing", person={"x": -1.0, "face_z": 0.6})

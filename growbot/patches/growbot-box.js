@@ -1404,6 +1404,8 @@
     if (spec) {
       if (typeof window.runGait !== "function") throw new Error("the creature has not loaded its legs yet");
       if (secs > 0 && move !== "stop") spec.secs = secs;
+      // The pad's "Built-in walk" is the stock one, so it stays the A/B against the trained.
+      spec.stock = true;
       window.runGait(spec);
     } else if (move === "wiggle" || move === "bow" || move === "sway" || move === "gesture") {
       if (typeof window.moveLegs !== "function") throw new Error("the creature has not loaded its legs yet");
@@ -2545,19 +2547,22 @@
 
   // Dave's own forward and back walks can take the box's trained skills (Dave simulator,
   // 2026-11-17): in the sim, on the robot's wiring as modelled, the trained forward walked
-  // him to the person where the stock one barely moved him. Opt-in (?ownwalk=1) until a body
-  // test confirms that wiring. runGait can't wait on a fetch, so the set is read ahead. The
-  // trained walk takes no stride gain, and ?diygait and a seek's duty defer keep their lanes.
+  // him to the person where the stock one barely moved him (and "come here" fell short). On
+  // by default, as the trained follow already is on the same wiring; ?ownwalk=0 turns it off
+  // in a tab. runGait can't wait on a fetch, so the set is read ahead. The trained walk
+  // takes no stride gain, and ?diygait and a seek's duty defer keep their lanes.
   var ownSet = null, ownT = 0, OWN_MS = 60000, OWN_ID = /^[A-Za-z0-9-]{1,64}$/;
-  var stockOnly = true;
-  try { stockOnly = new URLSearchParams(location.search).get("ownwalk") !== "1"; } catch (e) {}
+  var stockOnly = false;
+  try { stockOnly = new URLSearchParams(location.search).get("ownwalk") === "0"; } catch (e) {}
   function readOwnSet() {
     var id = btRobot();
     if (!id || stockOnly || document.hidden || typeof fetch !== "function") return;
     ownT = Date.now();
     fetch("/api/box/skills?robot=" + encodeURIComponent(id), { cache: "no-store" })
-      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (r) { return r.ok ? r.json() : undefined; })
       .then(function (j) {
+        // A failed read (the box restarting after an update) keeps the last good set.
+        if (j === undefined) return;
         var v = j && j.skills, out = null;
         if (v && typeof v === "object" && !Array.isArray(v)) {
           ["look", "forward", "back"].forEach(function (k) {
@@ -2566,7 +2571,7 @@
         }
         ownSet = out;
       })
-      .catch(function () { ownSet = null; });
+      .catch(function () {});
   }
   // Read at load and on each return to the page, and again behind a walk once a minute old:
   // no timer, so a page left open polls nothing.
@@ -2578,7 +2583,11 @@
   // creature's own walk, marked trained.
   window.gbOwnWalk = function (spec, dir, attempt) {
     if (Date.now() - ownT > OWN_MS) { try { readOwnSet(); } catch (e) {} }
-    if (stockOnly || !ownSet || _wheels) return false;
+    // The model reads its walks back as "walk fwd (trained)" and may echo the gait. runGait has
+    // no "trained" gait and falls back to the screen-backward official one, so a walk this
+    // turns down must reach it as a plain walk, not walk away from the person.
+    if (spec && spec.gait === "trained") delete spec.gait;
+    if (stockOnly || !ownSet || _wheels || (spec && spec.stock)) return false;
     if (typeof _diyGaitFlag === "function" && _diyGaitFlag()) return false;
     var gait = String((spec && spec.gait) || "");
     if (gait && !/^(official|screen_forward|screen_backward)$/.test(gait)) return false;
@@ -2589,7 +2598,10 @@
     // A seek waits for a full walk rather than a stub (runGait's defer); let it.
     var left = dutyLeftMs();
     if (typeof seekGoal !== "undefined" && seekGoal && left < Math.min((+spec.secs || 8) * 1000, dutyCapMs())) return false;
-    attempt.mv = { kind: "walk", gait: "trained", dir: dir, direction: back ? "screen-backward" : "screen-forward" };
+    attempt.mv = {
+      kind: "walk", gait: "trained", dir: dir, direction: back ? "screen-backward" : "screen-forward",
+      policy: "set:" + Object.keys(ownSet).join("+"),
+    };
     if (+spec.secs > 0) attempt.mv.ask = +spec.secs;
     attempt.mv.secs = policySeconds(+spec.secs || 0, 8, left);
     start(ownSet, move, +spec.secs || 0, attempt, "", false);
