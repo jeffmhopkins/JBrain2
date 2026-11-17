@@ -4266,6 +4266,26 @@ _GB_EXPLORE_JS = (
     " put it about \"+Math.round(_gbFarSaid*10)/10+\" m away then, so you were not: go on to"
     " it.\":\"\");"
     " }catch(e){ return \"\"; } }\n"
+    # Live m1 (2026-11-17), "explore the house and map it": eight minutes of turning on the
+    # spot, then "I have scanned the full circle. Map is done." From his own map, an explore
+    # goal's reminder now says how far he has actually gone and which doorways he has not
+    # been through, so turning in place reads as the start of it, not all of it.
+    "var _gbExpFrom=null, GB_EXPLORE_RE=/\\b(explor|map (the|this|my|your|every)|wander|look around"
+    "|roam)/i;\n"
+    "function _gbExploreLine(){ try{ if(MODE!==\"legs\"||!_gbGoalT||!GB_EXPLORE_RE.test(seekGoal))"
+    " return \"\"; var m=window.gbMap&&window.gbMap.map&&window.gbMap.map(); if(!m||!m.here)"
+    " return \"\"; if(!_gbExpFrom||_gbExpFrom.g!==_gbGoalT) _gbExpFrom={g:_gbGoalT,x:+m.here.x,"
+    "y:+m.here.y,far:0}; var d=Math.hypot(m.here.x-_gbExpFrom.x,m.here.y-_gbExpFrom.y);"
+    " _gbExpFrom.far=Math.max(_gbExpFrom.far,d); var been={}; (m.rooms||[]).forEach(function(r){"
+    " been[r.n]=1; }); var open=(m.doors||[]).filter(function(o){ return !(o.a&&been[o.a]"
+    "&&o.b&&been[o.b]); }).map(function(o){ return o.a&&been[o.a]?(o.b||\"somewhere unnamed\")"
+    ":(o.a||\"somewhere unnamed\"); });"
+    " return \" Exploring is going places, not only turning on the spot: by your map you have"
+    " got about \"+Math.round(_gbExpFrom.far*10)/10+\" m from where you took this goal.\"+"
+    "(open.length?\" Your map has a doorway you have not been through, to \"+open.slice(0,3)"
+    ".join(\", to \")+\": go through it.\":\" You have no doorway on your map you have not been"
+    " through: walk across this room, so you see what its far side and corners hide, and look"
+    " for one.\"); }catch(e){ return \"\"; } }\n"
     # His own restatement of his person's errand ("find the piano" for "walk over to the
     # piano") names the same thing without the doing; on legs that would turn a sighting
     # into the end of it, so the errand's wording stands.
@@ -4520,7 +4540,8 @@ SEEK_PATCHES: list[tuple[str, str, str, int]] = [
         " Your person outranks the goal: when they speak, answer them first, then return to"
         " it. Never repeat the same goal line two turns in a row.\") : \"\";",
         " Your person outranks the goal: when they speak, answer them first, then return to"
-        " it. Never repeat the same goal line two turns in a row.\"+_gbLookedLine()) : \"\";",
+        " it. Never repeat the same goal line two turns in a row.\"+_gbLookedLine()"
+        "+_gbExploreLine()) : \"\";",
         1,
     ),
     # Fresh Dave, "walk over to the piano" (2026-11-17): he saw it across the room and

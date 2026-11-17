@@ -5655,7 +5655,7 @@ def test_on_legs_a_seek_sweeps_all_round_and_tells_finding_from_arriving() -> No
 def test_his_goal_reminder_says_how_much_of_the_room_he_has_looked_over() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert '_gbFarSaid=null; _gbLooks=[]; logEv("seek_set"' in page
-    assert 'two turns in a row."+_gbLookedLine()) : "";' in page
+    assert 'two turns in a row."+_gbLookedLine()+_gbExploreLine()) : "";' in page
     spins = (
         "_gbGoalT=now-40000; var _seekSeen=false, seekGoal='find the piano', SEEK_ACTION=/x/;"
         " function _spinMeasLoad(){ return ["
@@ -5777,3 +5777,30 @@ def test_standing_on_legs_his_legs_stay_held() -> None:
         script = f"{base}{fn}{setup}console.log(JSON.stringify(_gbHoldStanding(1)))"
         out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
         assert json.loads(out.stdout) is want, setup
+
+
+def test_an_explore_goal_hears_how_far_he_has_gone_and_where_he_has_not_been() -> None:
+    """Live m1: asked to explore and map the house, he turned on the spot for eight minutes
+    and called the map done. His own map now tells him how far he has got and which
+    doorways he hasn't been through."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '_gbLookedLine()+_gbExploreLine()) : "";' in page
+    setup = (
+        "var seekGoal='explore the house and map it', _gbGoalT=now-9000;"
+        " var M={here:{x:0,y:0}, rooms:[{n:'living room'}], doors:[]};"
+        " window.gbMap={map:function(){ return M; }};"
+    )
+    got = _explore(
+        "_gbExploreLine(),"
+        "(M.here={x:1.2,y:0}, M.doors=[{a:'living room',b:'kitchen'}], _gbExploreLine()),"
+        "(M.rooms.push({n:'kitchen'}), _gbExploreLine()),"
+        "(seekGoal='walk over to the piano', _gbExploreLine())",
+        setup,
+    )
+    assert "got about 0 m from where you took this goal" in got[0]
+    assert "no doorway on your map you have not been through: walk across" in got[0]
+    assert (
+        "got about 1.2 m" in got[1] and "a doorway you have not been through, to kitchen" in got[1]
+    )
+    assert "walk across this room" in got[2]
+    assert got[3] == ""
