@@ -4041,10 +4041,9 @@ PATCHES += [
     ),
 ]
 
-# Dave's own forward and back walks run the box's trained skills (Dave simulator, 2026-11-17):
-# on the robot's wiring the stock forward slid his feet, 1.4 cm in 8 s, where the trained
-# forward walked straight (growbot-box.js gbOwnWalk). Spins, named gaits and wheels keep
-# their own lanes; a robot with no skill set, or ?stockwalk=1, walks stock as before.
+# Dave's own forward and back walks can run the box's trained skills, behind ?ownwalk=1 until
+# a body test (Dave simulator, 2026-11-17; growbot-box.js gbOwnWalk). Spins, named gaits,
+# wheels, ?diygait and a robot with no skill set keep their own lanes.
 PATCHES += [
     (
         "v3/next.html",

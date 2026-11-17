@@ -5328,20 +5328,21 @@ def test_an_ask_to_move_is_answered_by_moving() -> None:
 
 
 def _own_walk(
-    calls: str, query: str = "", skills: str = "{look:'L',forward:'F',back:'B'}"
+    calls: str, query: str = "?ownwalk=1", skills: str = "{look:'L',forward:'F',back:'B'}"
 ) -> dict[str, Any]:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
     box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
-    start = box.index("  // Dave's own forward and back walks take")
+    start = box.index("  // Dave's own forward and back walks can take")
     fn = box[start : box.index("\n})();", start)]
     script = (
-        "var window={}, started=[], _wheels=false;"
+        "var window={}, started=[], _wheels=false, seekGoal='', duty=60000;"
+        "function dutyCapMs(){ return 60000; }"
         f"var location={{search:'{query}'}};"
         "var document={hidden:false,addEventListener:function(){}};"
         "function btRobot(){ return 'gb-1'; }"
-        "function policySeconds(s,d){ return s||d; } function dutyLeftMs(){ return 60000; }"
+        "function policySeconds(s,d){ return s||d; } function dutyLeftMs(){ return duty; }"
         "function start(set,move,secs,a){ started.push([move,secs,Object.keys(set).join('+')]); }"
         "function fetch(){ return Promise.resolve({ok:true,json:function(){"
         f" return {{skills:{skills}}};}}}}); }}"
@@ -5357,8 +5358,8 @@ def _own_walk(
 
 
 def test_daves_own_forward_and_back_walks_run_the_trained_skills() -> None:
-    """Dave simulator, 2026-11-17: on the robot's wiring his stock forward slid his feet (1.4
-    cm in 8 s) where the box's trained forward walked at him; his own walks take it."""
+    """Dave simulator, 2026-11-17: on the robot's wiring as modelled the box's trained forward
+    walked him 39 cm to the person in 8 s, the stock one 9; behind ?ownwalk=1, his take it."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
         '  if(typeof window.gbOwnWalk==="function"&&window.gbOwnWalk(spec,dir,attempt))return;\n'
@@ -5391,5 +5392,14 @@ def test_daves_own_walks_stay_stock_without_a_skill_set_or_when_asked() -> None:
     assert _own_walk("window.gbOwnWalk({dir:'back'},'back',a)", skills="{forward:'F'}")["out"] == [
         False
     ]
-    off = _own_walk("window.gbOwnWalk({dir:'fwd'},'fwd',a)", query="?stockwalk=1")
+    off = _own_walk("window.gbOwnWalk({dir:'fwd'},'fwd',a)", query="")
     assert off["out"] == [False] and off["started"] == []
+    wheels = _own_walk("(_wheels=true, window.gbOwnWalk({dir:'fwd'},'fwd',a))")
+    assert wheels["out"] == [False]
+    named = _own_walk("window.gbOwnWalk({gait:'46181387',dir:'fwd'},'fwd',a)")
+    assert named["out"] == [False]
+    # A seek with too little duty left defers in runGait rather than taking a stub walk.
+    seek = _own_walk("(seekGoal='door', duty=3000, window.gbOwnWalk({dir:'fwd'},'fwd',a))")
+    assert seek["out"] == [False]
+    roomy = _own_walk("(seekGoal='door', window.gbOwnWalk({dir:'fwd'},'fwd',a))")
+    assert roomy["out"] == [True]

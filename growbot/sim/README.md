@@ -76,10 +76,10 @@ names the fault it is there to catch. A new scenario is an `async def name(sim)`
 `sim.person`, `sim.wait`, `sim.until` and `sim.check`.
 
 `walk_compare` needs no model: it walks the creature's own forward (what a reply's walk
-runs, the box's trained skills since 2026-11-17) and then the box skill set's forward, 8 s
-each, and fails unless his own walk carries him 10 cm closer. On the robot's wiring both
-walk straight at him, about 20 to 35 cm in 8 s (2026-11-17), half to three quarters of the
-trainer's 45 cm. Part of that is the page's walk loop ticking at 18 to 20 Hz in the sim,
+runs; the box's trained skills with `?ownwalk=1`, which it sets) and then the box skill
+set's forward, 8 s each, and fails unless his own walk carries him 10 cm closer. On the
+robot's wiring both walk straight at him, about 20 to 39 cm in 8 s (2026-11-17), up to
+nearly the trainer's 45 cm, where the stock forward manages about 9. Part of that is the page's walk loop ticking at 18 to 20 Hz in the sim,
 late and uneven, not the steady 25 Hz the policy was trained at: replaying those late ticks
 in the trainer halves its distance.
 

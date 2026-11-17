@@ -178,12 +178,12 @@ def _camera_off(sim: Sim) -> float:
     return abs((bearing - (s["nose_deg"] + 180.0) + 180) % 360 - 180)
 
 
-@scenario(start="standing", person={"x": -2.5, "face_z": 0.6})
+@scenario(start="standing", person={"x": -2.5, "face_z": 0.6}, query="ownwalk=1")
 async def walk_compare(sim: Sim) -> None:
     """The creature's own forward walk (what a reply's walk runs) beside the box's skill set's
     forward, 8 s each from the same stance, toward a person 2.5 m off. Needs no model.
     Catches: his own walk sliding his feet, or walking away, while a trained one carries him
-    (the stock walk did, 1.4 cm in 8 s, before his own walks took the trained skills)."""
+    (with ?ownwalk=1 his own walk is the trained one; the stock forward manages ~9 cm)."""
     await sim.wait(4)
     got = {}
     for label, extra in (("own", {}), ("skills", {"skills": sim.box.skills})):
