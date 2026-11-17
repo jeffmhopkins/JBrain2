@@ -3931,7 +3931,7 @@ function _bodyStand(who,person){ var why=_bodyStandWhyNot(person), g=_motionGen;
   if(!(_motion&&_motion.rest===who)) return {ok:false,why:"send"};                                      // moveLegs wrote rest_tall {ok:0, why:send}
   if(typeof _getupAutoMoved==='function')_getupAutoMoved({action:'stand',mv:{kind:'gesture'}},person);
   if(person){ _bodyStay=null; if(_downAskOpen()){ try{ logEv("down_ask_end",{from:who,ms:Date.now()-_downAskT}); }catch(e){} _downAskT=0; } }   // the person asked it up: their lie-down is over, as with "stand up"
-  if(who!=="on"){ holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true); _bodyHoldP=_holdPose; _bodyStandBound(who); }
+  if(who!=="on"||_gbHoldStanding(1)){ holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true); _bodyHoldP=_holdPose; _bodyStandBound(who); }
   return {ok:true}; }
 function _bodyStandBound(who){ var hp=_holdPose;   // the fall get-up's bound (_getUpBound), for an asked stand
   setTimeout(function(){ if(!hp||_holdPose!==hp||_holdWasUp||_bodyUpright()!==false) return;       // that hold already ended, or it stood (or no reading to judge by)

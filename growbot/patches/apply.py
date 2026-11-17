@@ -4650,6 +4650,15 @@ STAND_PATCHES: list[tuple[str, str, str, int]] = [
         "function _restLetGo(gm){",
         1,
     ),
+    # The stand when the body comes on let go at tall too (e1: stood at 6 s, sagged from 58 to
+    # 35 degrees over five minutes, and went over on his back at 377 s with nobody near).
+    (
+        "v3/next.html",
+        '  if(who!=="on"){ holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);',
+        '  if(who!=="on"||_gbHoldStanding(1)){'
+        " holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);",
+        1,
+    ),
 ]
 PATCHES += STAND_PATCHES
 

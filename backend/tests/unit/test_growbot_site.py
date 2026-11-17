@@ -5747,6 +5747,8 @@ def test_standing_on_legs_his_legs_stay_held() -> None:
     )
     assert "if(n>=_holdEnd&&_holdIdle&&_gbHoldStanding()){ _holdEnd=n+HOLD_IDLE_S*1000;" in page
     assert 'stopMotion(); if(_gbHoldStanding()) _restTall("stop");' in page
+    # The stand when the body comes on holds too, not only an asked one.
+    assert 'if(who!=="on"||_gbHoldStanding(1)){ holdPose(' in page
     # A walk's own first second can't trip the grab abort, whose release splays him mid-stride.
     box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "tipN = settled && dTilt > 55 ? tipN + 1 : 0;" in box

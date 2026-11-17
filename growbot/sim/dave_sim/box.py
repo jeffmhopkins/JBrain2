@@ -242,7 +242,9 @@ class FakeBox:
                 "version": self.version,
                 "wearing": ROBOT,
                 "brain": False,
-                "explore": False,
+                # A persona's own default (personas.py): his quiet moments invite him to go
+                # exploring. False here gave e1 the old sit-still words and four-minute gaps.
+                "explore": True,
             }
             if not state:
                 out["soul"] = self.soul
