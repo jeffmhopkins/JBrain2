@@ -46,6 +46,17 @@ REMARK_S = 40.0
 PACE_M_S = 0.04
 
 
+def _through(d: Any, x: float, y: float) -> tuple[float, float]:
+    """Where to head for door `d` from (x, y): in front of it on this side, or once lined up
+    in front of it, through to the far side."""
+    n = 0 if d.along == "y" else 1  # the wall's normal axis: x for a wall running along y
+    pos, mid = (x, y), (d.x, d.y)
+    side = 1.0 if pos[n] > mid[n] else -1.0
+    lined = abs(pos[1 - n] - mid[1 - n]) <= 0.25 and abs(pos[n] - mid[n]) <= 0.7
+    off = -0.6 * side if lined else 0.5 * side
+    return (d.x + off, d.y) if n == 0 else (d.x, d.y + off)
+
+
 def _wrap(a: float) -> float:
     return (a + 180.0) % 360.0 - 180.0
 
@@ -73,6 +84,12 @@ class Pilot:
         self.nav_walk = 0.0
         self.turn_until = 0.0
         self.exploring = False
+        # An errand ("find the cat and come back and tell me"): where he was asked, what he
+        # has to report once back there, and the asks already done (the ask stays in the
+        # prompt's tail for a while and must not start him off again).
+        self.home: tuple[float, float] | None = None
+        self.report = ""
+        self.done: set[str] = set()
 
     def bind(self, sim: Sim) -> None:
         self.sim = sim
@@ -87,7 +104,7 @@ class Pilot:
 
     def answer(self, text: str) -> dict[str, Any]:
         sim = self.sim
-        house = sim.sb.house if sim is not None and sim.o.scene == "house" else None
+        house = getattr(sim.body, "layout", None) if sim is not None else None
         if house is None:
             return {"say": ""}
         ops = self._map_ops(house)
@@ -142,10 +159,15 @@ class Pilot:
             }
         if self.nav:
             return self._by_map(house, text)
+        if self.report:
+            return self._home(house)
         for it in house.ITEMS:
             asked = rf"\b(find|over to|go to) (the |a |my )?{re.escape(it.name)}\b"
-            if it.name != "rug" and re.search(asked, tail):
+            if it.name != "rug" and it.name not in self.done and re.search(asked, tail):
                 self.target = it.name
+                if re.search(r"\bcome back\b", tail) and self.home is None:
+                    s = self.sim.state if self.sim is not None else {"x": 0.0, "y": 0.0}
+                    self.home = (s["x"], s["y"])
         if re.search(r"\bexplore\b", tail):
             self.exploring = True
         if not self.target and (self.exploring or EXPLORE_RE.search(text)):
@@ -183,6 +205,15 @@ class Pilot:
                     nxt["say"] = f"Found the {name}. Now the {self.target}."
                     nxt["map"] = {"at": name}
                     return nxt
+            if self.home is not None:
+                # Found it on an errand: now back to whoever sent him, to tell them.
+                self.done.add(name)
+                room = house.room_at(house.ITEM[name].x, house.ITEM[name].y)
+                self.report = f"The {name} is in the {room}."
+                out = self._home(house)
+                out["say"] = f"There's the {name}. Going back to tell you."
+                out["map"] = {"at": name}
+                return out
             return {
                 "say": f"I found the {name}!",
                 "found": True,
@@ -191,16 +222,31 @@ class Pilot:
             }
         it = house.ITEM[name]
         tx, ty = it.x, it.y
-        here, there = house.room_at(s["x"], s["y"]), house.room_at(it.x, it.y)
-        if here and there and here != there:
-            # Through the doorway, not into the wall beside it: first to a spot in front of
-            # it on this side, then straight through.
-            side = 1.0 if s["x"] > house.DIVIDE_X else -1.0
-            mid = (house.DOOR[0] + house.DOOR[1]) / 2
-            if abs(s["y"] - mid) > 0.25 or abs(s["x"] - house.DIVIDE_X) > 0.7:
-                tx, ty = house.DIVIDE_X + side * 0.5, mid
-            else:
-                tx, ty = house.DIVIDE_X - side * 0.6, mid
+        return self._steer(house, tx, ty, name, goal)
+
+    def _home(self, house: Any) -> dict[str, Any]:
+        """Back to where he was sent from; there, say what he found."""
+        assert self.sim is not None and self.home is not None
+        s = self.sim.state
+        hx, hy = self.home
+        if math.hypot(hx - s["x"], hy - s["y"]) < 0.5:
+            say, self.report, self.home = self.report, "", None
+            return {"say": say, "found": True, "phase": "finished"}
+        goal = {"goal": "go back and tell them", "phase": "acting"}
+        return self._steer(house, hx, hy, "you", goal)
+
+    def _steer(
+        self, house: Any, tx: float, ty: float, name: str, goal: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Turn toward (tx, ty), or walk once facing it; through doorways on the way."""
+        assert self.sim is not None
+        the = "" if name == "you" else "the "
+        s = self.sim.state
+        here, there = house.room_at(s["x"], s["y"]), house.room_at(tx, ty)
+        if here and there and here != there and house.route(here, there):
+            # Through the next doorway on the way, not into the wall beside it: first to a
+            # spot in front of it on this side, then straight through.
+            tx, ty = _through(house.route(here, there)[0], s["x"], s["y"])
         facing = s["nose_deg"] + 180.0  # the camera looks out of the tail
         bearing = math.degrees(math.atan2(ty - s["y"], tx - s["x"]))
         err = _wrap(bearing - facing)
@@ -208,7 +254,7 @@ class Pilot:
             secs = round(max(1.0, min(4.0, abs(err) / SPIN_DEG_S)), 1)
             left = err > 0  # counter-clockwise from above
             return {
-                "say": f"Turning toward the {name}.",
+                "say": f"Turning toward {the}{name}.",
                 "walk": {
                     "gait": "spin_left" if left else "spin_right",
                     "dir": "left" if left else "right",
@@ -216,7 +262,7 @@ class Pilot:
                 },
                 **goal,
             }
-        return {"say": f"Walking to the {name}.", "walk": {"dir": "fwd", "secs": 8}, **goal}
+        return {"say": f"Walking to {the}{name}.", "walk": {"dir": "fwd", "secs": 8}, **goal}
 
     def _by_map(self, house: Any, text: str) -> dict[str, Any]:
         """Steering by the map's answers alone: turn the way it says, walk the distance it

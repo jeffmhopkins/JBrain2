@@ -110,9 +110,19 @@ piano in its far corner, out of his first view, a couch, a bookshelf, a plant an
 kitchen a fridge, a counter and a table. Its walls and furniture stop him, where the bare
 room's walls let him walk through. `Options.at` sets where he starts and which way he faces.
 
+`Options(scene="flat")` is the bigger house (`house.FLAT`): a hallway across the middle with
+a living room and kitchen south of it and a bedroom and study north, each through its own
+doorway and none of them in line, with the couch between his start and the living room's
+door. The scenarios read the house from `SimBody.layout` (rooms, walls, doors, furniture and
+`route` between rooms), so the floor plan, the camera projection and the pilot work in either.
+
 `find_piano` asks him to find the piano and checks he says so while it is really in his
-view; `walk_to_piano` asks him to walk over to it and checks he gets within 60 cm;
-`explore_alone` leaves him alone for ten minutes and scores how far he went. They run for
+view; `walk_to_piano` asks him to walk over to it and checks he gets within 60 cm and says he
+is there only once he is; `piano_from_kitchen` asks the same from the kitchen, through the
+doorway; `cat_errand` sends him from beside his person in the living room to find the cat in
+the kitchen and come back to say where it is, and checks he saw it in that room, didn't claim
+it sooner, came back within 1.5 m of them and named the cat and the room; `flat_piano` and
+`flat_cat` are the same two asks across the flat. `explore_alone` leaves him alone for ten minutes and scores how far he went. They run for
 minutes, so their reports skip the onlooker video, which re-renders every pose. Every run
 instead draws `plan.svg` (`dave_sim/plan.py`): his path from above, coloured by speed, with
 arrows for where his camera faced and a numbered dot wherever he said something, and the
@@ -121,7 +131,8 @@ piece of furniture.
 
 `--pilot` swaps the box for a stand-in brain (`dave_sim/pilot.py`) that answers from the
 sim's ground truth: told to find something it turns toward it, sends long forward walks and
-says it found it once there; left alone it heads for the nearest furniture it hasn't been
+says it found it once there (through the doorways `route` gives, and back to where it was
+asked when the ask says to come back and tell); left alone it heads for the nearest furniture it hasn't been
 near. It answers 4 s after each ask, near the box's pace. That tests the page's plumbing
 (goals that stick, walks that carry on, looks while walking, the no-look stop) with no box,
 so a live run only has to prove the thinking.

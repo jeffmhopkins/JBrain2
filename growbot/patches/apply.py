@@ -4246,9 +4246,18 @@ _GB_EXPLORE_JS = (
     " return \" Since you took this goal \"+Math.round((Date.now()-_gbGoalT)/1000)+\" s ago your"
     " spins have turned you \"+Math.round(tot)+\" degrees in all, measured; with your camera's"
     " 60 degrees across, you have looked over about \"+seen+\" of the 360 degrees around"
-    " you.\"+(_seekSeen&&SEEK_ACTION.test(seekGoal)?\" You have it in sight, but your goal is to"
-    " get to it: you are there only when it is close and big in your view, so go to it.\":\"\");"
+    " you.\"+(_seekSeen&&SEEK_ACTION.test(seekGoal)?\" You have it in sight, but seeing it is not"
+    " all your goal asks: go on to it and do the rest. You are by it only when it fills your"
+    " picture edge to edge, or a walk toward it no longer moves you; until then it is farther"
+    " than it looks.\":\"\");"
     " }catch(e){ return \"\"; } }\n"
+    # His own restatement of his person's errand ("find the piano" for "walk over to the
+    # piano") names the same thing without the doing; on legs that would turn a sighting
+    # into the end of it, so the errand's wording stands.
+    "function _gbKeepAction(old,neu){ try{ if(MODE!==\"legs\"||!SEEK_ACTION.test(old)"
+    "||SEEK_ACTION.test(neu)) return false; var w=String(neu).toLowerCase().match(/[a-z]+/g)"
+    "||[], n=w[w.length-1]||\"\"; return n.length>2&&new RegExp(\"\\\\b\"+n+\"\\\\b\","
+    "\"i\").test(old); }catch(e){ return false; } }\n"
     'function _gbGoalStick(){ return MODE!=="phone"; }\n'
     "function _gbPersonT(){ return Math.max(_quietWakeT,_quietWordT,tapReflexT); }\n"
     'function _gbOwnWalking(){ return MODE==="legs"&&typeof window.gbOwnWalking==="function"'
@@ -4391,6 +4400,16 @@ EXPLORE_PATCHES: list[tuple[str, str, str, int]] = [
         "  try{ _bodyBootClose(_motion); }catch(_be){}\n",
         1,
     ),
+    # A spin's finish rests him tall, whose stance stops the spin: upstream gives the number
+    # back for every rest but a spin's, so a spin ending on its own still cancelled the reply
+    # that landed after it ("I could not start that movement", live run 2026-11-17).
+    (
+        "v3/next.html",
+        '  if(from!=="spin") _motionGen=g;   /* filler never cancels',
+        '  if(from!=="spin") _motionGen=g; else for(var _gbQ=g+1;_gbQ<=_motionGen;_gbQ++)'
+        ' _gbDoneGen[_gbQ]=1;   /* filler never cancels',
+        1,
+    ),
     # ...and the stance it settles into is the same finish: holding it stops the walk again.
     (
         "v3/next.html",
@@ -4457,9 +4476,13 @@ NEW_SEEK_LEGS = (
     '(walk:{\\"gait\\":\\"official\\",\\"dir\\":\\"fwd\\",\\"secs\\":8-15}), and send that '
     'walk again on each look while it stays ahead, so you keep going. Asked only to '
     'FIND it: plainly seeing it is finding it, so celebrate and add \\"found\\":true. '
-    'Asked to GO TO it (or bring, touch, sit by it): you are there only when it is '
-    'close and big in your view; then celebrate and add \\"found\\":true. Never claim '
-    'to see something that is not in your picture, or forget the goal.\\n")+'
+    'Asked to GO TO it (or bring, touch, sit by it): your camera sits low and tilts '
+    'up, so even a thing across the room looks big; judge how near it is by how it '
+    'changes as you walk (a 10 s walk is only about 30 cm, and barely changes '
+    'something 2 m away). You are there when it fills your picture edge to edge, or '
+    'walking toward it no longer moves you because you are against it; then '
+    'celebrate and add \\"found\\":true. Never claim to see something that is not in '
+    'your picture, or forget the goal.\\n")+'
 )
 SEEK_PATCHES: list[tuple[str, str, str, int]] = [
     # A fresh Dave, asked to walk over to the piano in the sim house (2026-11-17), did three
@@ -4496,7 +4519,7 @@ SEEK_PATCHES: list[tuple[str, str, str, int]] = [
         "move to|",
         "SEEK_ACTION=/\\b(touch|reach|grab|get|bring|carry|pick ?up|go to|walk to|come to|"
         "(?:walk|go|come|head|run|get|make your way|make my way) (?:over|across|back) to|"
-        "approach|head to|move to|",
+        "approach|head to|come back|move to|",
         1,
     ),
     (
@@ -4508,8 +4531,76 @@ SEEK_PATCHES: list[tuple[str, str, str, int]] = [
         ' if(seekGoal&&_fin){ try{ logEv("seek_sight",{what:seekGoal,at:"finish"}); }catch(e){} }',
         1,
     ),
+    # Fresh Dave, "walk over to the piano" (w3, 2026-11-17): the page's ear took no goal
+    # from it (its verbs are find, go to, get to...), so Dave made his own, "find the
+    # piano", and seeing it across the room won it: he stopped 1.2 m short and said he was
+    # there. On legs the ear now keeps the doing ("walk over to the piano"), and his own
+    # restatement without it does not replace the errand.
+    (
+        "v3/next.html",
+        "if(gm&&gm.index<=24&&!/^(?:sleep|bed|nap)\\b/i.test(gm[1])) goal=gm[1];",
+        "var _ga=typeof MODE!==\"undefined\"&&MODE===\"legs\"&&/\\b((?:walk|go|come|head|run"
+        "|make your way)(?: over| across| back)? to|approach)\\s+(.{2,60})/i.exec(t);"
+        " if(_ga&&_ga.index<=24&&!/^(?:sleep|bed|nap)\\b/i.test(_ga[2])) goal=_ga[1]+\" \"+_ga[2];"
+        " else if(gm&&gm.index<=24&&!/^(?:sleep|bed|nap)\\b/i.test(gm[1])) goal=gm[1];",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  if(!goalSame(_gg,seekGoal)){ var _og=seekGoal; setSeek(_gg,true);",
+        "  if(!goalSame(_gg,seekGoal)&&!_gbKeepAction(seekGoal,_gg)){ var _og=seekGoal;"
+        " setSeek(_gg,true);",
+        1,
+    ),
 ]
 PATCHES += SEEK_PATCHES
+
+# Standing on legs, his legs stay held (Jeff, 2026-11-17: "if he's standing we should
+# definitely be having the policy hold the gear in place ... if gears go slack he'd fall
+# over"). Upstream lets them go after every move: a move rests tall and the chip goes limp
+# 300 ms later, an idle hold runs out after a minute without activity, and a reply's
+# walk:{dir:"stop"} releases at once. In the sim, slack legs splayed under his weight and he
+# went flat a minute after saying he had reached the piano (w3). On legs, while he is upright,
+# each of those now ends in a held stand instead; lying, asleep, a fold, a tip, a pause or a
+# hidden page still let go as before.
+STAND_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "  moveLegs({body:{steps:[fold?{l:130,r:50,ms:700}:{l:STAND_TALL.l,r:STAND_TALL.r,"
+        "ms:STAND_TALL.ms}]},_rest:from,_fold:fold});",
+        "  moveLegs({body:{steps:[fold?{l:130,r:50,ms:700}:{l:STAND_TALL.l,r:STAND_TALL.r,"
+        "ms:STAND_TALL.ms}]},_rest:from,_fold:fold});"
+        " if(!fold&&_gbHoldStanding()&&_motion&&_motion.rest===from)"
+        " holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    if(n>=_holdEnd){ if(typeof _getupAutoRest",
+        "    if(n>=_holdEnd&&_holdIdle&&_gbHoldStanding()){ _holdEnd=n+HOLD_IDLE_S*1000;"
+        " try{ logEv(\"hold_renew\",{why:\"standing\"}); }catch(e){} }\n"
+        "    if(n>=_holdEnd){ if(typeof _getupAutoRest",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(/^(stop|rest|halt|wait|still|freeze|pause|hold)$/.test(dir)){ attempt.mv={kind:"stop"};'
+        ' stopMotion(); $("brainTxt").textContent="awake"; return; }',
+        'if(/^(stop|rest|halt|wait|still|freeze|pause|hold)$/.test(dir)){ attempt.mv={kind:"stop"};'
+        ' stopMotion(); if(_gbHoldStanding()) _restTall("stop");'
+        ' $("brainTxt").textContent="awake"; return; }',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function _restLetGo(gm){",
+        "function _gbHoldStanding(){ try{ return MODE===\"legs\"&&!_wheels&&!paused"
+        "&&!document.hidden&&!!window._body&&_bodyUpright()===true; }catch(e){ return false; } }\n"
+        "function _restLetGo(gm){",
+        1,
+    ),
+]
+PATCHES += STAND_PATCHES
 
 
 # Dave's sketch map of the house (owner, 2026-11-17), growbot-map.js: kept in the soul, added to

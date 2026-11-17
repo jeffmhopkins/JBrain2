@@ -5579,6 +5579,7 @@ def test_a_walk_that_ends_on_its_own_does_not_cancel_the_next_reply() -> None:
     # Unchanged is no cancel either way; a finish (gen 4) alone is not one; a stop or newer
     # move (gen 5, unmarked) still is, even after a finish.
     done = "_gbDoneGen[4]=1;"
+    assert "else for(var _gbQ=g+1;_gbQ<=_motionGen;_gbQ++) _gbDoneGen[_gbQ]=1;" in page
     assert _explore("_gbOnlyDone(3,3), _gbOnlyDone(3,4), _gbOnlyDone(3,5)", done) == [
         False,
         True,
@@ -5644,7 +5645,9 @@ def test_on_legs_a_seek_sweeps_all_round_and_tells_finding_from_arriving() -> No
     assert "only once you have looked all the way round" not in page  # no rule: a fact
     assert "Your goal reminder says how much of the room around you you have looked over" in page
     assert "a thing at the edge of your picture is about 30 degrees off" in page
-    assert "Asked to GO TO it (or bring, touch, sit by it): you are there only when" in page
+    # From a camera a few cm off the floor everything looks big: nearness is how it changes.
+    assert "judge how near it is by how it changes as you walk" in page
+    assert "You are there when it fills your picture edge to edge" in page
     # The phone's seek, which a person carries, is upstream's.
     assert "spoken aloud so they turn or carry you" in page
 
@@ -5677,7 +5680,81 @@ def test_on_legs_seeing_the_thing_he_was_sent_to_is_not_arriving() -> None:
         " seekGoal='walk over to the piano'; _gbGoalT=now-5000;"
         " function _spinMeasLoad(){ return []; }"
     )
-    assert "you are there only when it is close" in _explore("_gbLookedLine()", seen)[0]
-    assert "you are there only" not in _explore("_gbLookedLine()", seen + "_seekSeen=false;")[0]
+    assert "farther than it looks" in _explore("_gbLookedLine()", seen)[0]
+    assert "farther than" not in _explore("_gbLookedLine()", seen + "_seekSeen=false;")[0]
     found = seen + "seekGoal='find the piano';"
-    assert "you are there only" not in _explore("_gbLookedLine()", found)[0]
+    assert "farther than" not in _explore("_gbLookedLine()", found)[0]
+
+
+def test_on_legs_his_own_find_goal_does_not_replace_an_errand() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "if(!goalSame(_gg,seekGoal)&&!_gbKeepAction(seekGoal,_gg)){" in page
+    acts = "var SEEK_ACTION=/\\b(walk to|(?:walk|go) (?:over|across) to|come back)\\b/i;"
+    keep = [
+        "_gbKeepAction('walk over to the piano','find the piano')",
+        "_gbKeepAction('find the cat and come back and tell me','find the cat')",
+        "_gbKeepAction('walk over to the piano','find the cat')",
+        "_gbKeepAction('find the piano','walk over to the piano')",
+    ]
+    assert _explore(",".join(keep), acts) == [True, True, False, False]
+    assert _explore(keep[0], acts + "MODE='phone';") == [False]
+
+
+def test_on_legs_the_ear_keeps_the_doing_in_an_errand() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    i = page.index("function _seekWords(t)")
+    fn = page[i : page.index("\nfunction _localCmd", i)]
+    asks = [
+        "Dave, can you walk over to the piano?",
+        "Dave, can you go find the cat and come back and tell me where it is?",
+        "okay, go to sleep",
+    ]
+    calls = ",".join(f"_seekWords({json.dumps(a)}).goal" for a in asks)
+    # setSeek cuts the sentence; the ear hands it the rest of the ask.
+    cat = "the cat and come back and tell me where it is?"
+    for mode, want in (
+        ("legs", ["walk over to the piano?", cat, None]),
+        ("phone", [None, cat, None]),
+    ):
+        script = f"var MODE='{mode}';{fn};console.log(JSON.stringify([{calls}]))"
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+        assert json.loads(out.stdout) == want, mode
+
+
+def test_standing_on_legs_his_legs_stay_held() -> None:
+    """Slack legs splayed and he fell flat a minute after a stop (sim, 2026-11-17); Jeff:
+    standing, the gears are held. A rest, a reply's stop and a lapsed idle hold all end held
+    while he is upright on legs."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        "if(!fold&&_gbHoldStanding()&&_motion&&_motion.rest===from)"
+        " holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);" in page
+    )
+    assert "if(n>=_holdEnd&&_holdIdle&&_gbHoldStanding()){ _holdEnd=n+HOLD_IDLE_S*1000;" in page
+    assert 'stopMotion(); if(_gbHoldStanding()) _restTall("stop");' in page
+    i = page.index("function _gbHoldStanding(){")
+    fn = page[i : page.index("\n", i)]
+    base = (
+        "var MODE='legs', _wheels=false, paused=false, document={hidden:false},"
+        " window={_body:{}}, up=true; function _bodyUpright(){ return up; };"
+    )
+    cases = {
+        "": True,
+        "up=null;": False,
+        "up=false;": False,
+        "MODE='phone';": False,
+        "_wheels=true;": False,
+        "paused=true;": False,
+        "document.hidden=true;": False,
+        "window._body=null;": False,
+    }
+    for setup, want in cases.items():
+        script = f"{base}{fn}{setup}console.log(JSON.stringify(_gbHoldStanding()))"
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+        assert json.loads(out.stdout) is want, setup

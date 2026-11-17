@@ -374,13 +374,22 @@ class _Item:
         self.room = "kitchen" if x > 0 else "living room"
 
 
+class _Door:
+    name, x, y, along, half = "doorway", 0.0, 0.0, "y", 0.4
+    rooms = ("living room", "kitchen")
+
+
 class _House:
-    """GrowBot_Training's house.py as plan.py reads it (MuJoCo isn't in the backend's env)."""
+    """GrowBot_Training's house.Layout as plan.py reads it (MuJoCo isn't in the backend's
+    env)."""
 
     OUTER = (-3.0, -2.0, 2.0, 2.0)
-    DIVIDE_X = 0.0
-    DOOR = (-0.4, 0.4)
     ROOMS = {"living room": (-3.0, -2.0, 0.0, 2.0), "kitchen": (0.0, -2.0, 2.0, 2.0)}
+    WALLS = (
+        ("divide_s", 0.0, -2.0, 0.0, -0.4, "m"),
+        ("divide_n", 0.0, 0.4, 0.0, 2.0, "m"),
+    )
+    DOORS = (_Door(),)
     ITEMS = (_Item("piano", -2.0, 1.0), _Item("rug", -1.0, 0.0))
 
     @staticmethod
@@ -396,7 +405,7 @@ class _House:
 class _PlanSim:
     def __init__(self, scene: str = "house") -> None:
         self.o = type("O", (), {"scene": scene})()
-        self.sb = type("SB", (), {"house": _House})()
+        self.body = type("Body", (), {"layout": _House if scene == "house" else None})()
         # Two seconds still, then 4 cm/s along -x for 25 s, as states every 0.08 s.
         self.states = [
             {"wall": t * 0.08, "x": 0.5 - max(0.0, t * 0.08 - 2) * 0.04, "y": 0.0, "nose_deg": 0.0}
@@ -461,7 +470,7 @@ def test_his_map_is_scored_against_the_house_in_his_own_frame() -> None:
     got = simplan.map_score(sim)  # type: ignore[arg-type]
     assert got["rooms_found"] == ["kitchen", "living room"]
     assert got["things"] == {"piano": {"as": "grand piano", "room_ok": True, "off_m": 0.0}}
-    assert got["doors"] == [{"joins_rooms": True, "off_m": 0.0}]
+    assert got["doors"] == [{"door": "doorway", "joins_rooms": True, "off_m": 0.0}]
     assert got["here_off_m"] == 0.5 and got["drift_max_m"] == 0.5
     svg = simplan.svg(sim)  # type: ignore[arg-type]
     assert 'stroke="#7c3aed"' in svg and "grand piano" in svg

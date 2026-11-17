@@ -76,8 +76,9 @@ class Options:
     # the face (2026-11-17); a body test is to confirm the robot needs it too. None leaves
     # the page's default (unflipped).
     cam_flip: bool | None = True
-    # simbody's scene: "room" (bare walls he walks through) or "house" (growbot_train/house.py:
-    # two furnished rooms whose walls and furniture stop him).
+    # simbody's scene: "room" (bare walls he walks through), "house" (growbot_train/house.py:
+    # two furnished rooms whose walls and furniture stop him) or "flat" (five rooms off a
+    # hallway).
     scene: str = "room"
     # Where he is set down: x, y (metres) and which way his nose points (degrees; 0 = +x,
     # so his camera looks toward -x).

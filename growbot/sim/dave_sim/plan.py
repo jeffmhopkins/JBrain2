@@ -24,10 +24,16 @@ TOP_CM_S = 8.0
 ARROW_EVERY_S = 6.0
 WALKED_STEP_S = 2.0
 ROOM = (-3.0, -3.0, 3.0, 3.0)  # the bare room's walls
+ROOM_FILLS = ("#efe6d2", "#dde9ee", "#ecebe6", "#e6e1ef", "#e1ecdf")
 
 
-def _house(sim: Sim) -> Any:
-    return sim.sb.house if sim.o.scene == "house" else None
+def layout(sim: Sim) -> Any:
+    """The scene's house (growbot_train.house.Layout: rooms, walls, doors, furniture), None
+    in the bare room."""
+    return getattr(sim.body, "layout", None)
+
+
+_house = layout
 
 
 def track(sim: Sim) -> list[dict[str, float]]:
@@ -136,12 +142,13 @@ def map_score(sim: Sim) -> dict[str, Any]:
     for o in m.get("doors") or []:
         pair = {rooms.get(o.get("a", ""), ""), rooms.get(o.get("b", ""), "")}
         wx, wy = W(o["x"], o["y"])
+        # Scored against the real doorway nearest where he put it.
+        d = min(h.DOORS, key=lambda d: math.hypot(wx - d.x, wy - d.y))
         doors.append(
             {
-                "joins_rooms": pair == set(h.ROOMS),
-                "off_m": round(
-                    math.hypot(wx - h.DIVIDE_X, wy - (h.DOOR[0] + h.DOOR[1]) / 2), 2
-                ),
+                "door": d.name,
+                "joins_rooms": pair == set(d.rooms),
+                "off_m": round(math.hypot(wx - d.x, wy - d.y), 2),
             }
         )
     last = sim.map_track[-1]
@@ -183,22 +190,22 @@ def svg(sim: Sim) -> str:
         'fill="#f6f3ec" stroke="#555" stroke-width="3"/>'
     )
     if h is not None:
-        for name, (rx0, ry0, rx1, ry1) in h.ROOMS.items():
-            fill = "#efe6d2" if name == "living room" else "#dde9ee"
+        for k, (name, (rx0, ry0, rx1, ry1)) in enumerate(h.ROOMS.items()):
+            fill = ROOM_FILLS[k % len(ROOM_FILLS)]
             px, py = P(rx0, ry1)
             el.append(
                 f'<rect x="{px}" y="{py}" width="{(rx1 - rx0) * PX}" height="{(ry1 - ry0) * PX}" '
-                f'fill="{fill}" stroke="#555" stroke-width="2"/>'
+                f'fill="{fill}"/>'
             )
             el.append(
                 f'<text x="{px + 6}" y="{py + 16}" font-size="12" fill="#666">{name}</text>'
             )
-        # The doorway, as a gap in the dividing wall.
-        dx, dy0 = P(h.DIVIDE_X, h.DOOR[1])
-        el.append(
-            f'<line x1="{dx}" y1="{dy0}" x2="{dx}" y2="{dy0 + (h.DOOR[1] - h.DOOR[0]) * PX}" '
-            'stroke="#fff" stroke-width="5"/>'
-        )
+        # The walls as built, so each doorway is the gap it really is.
+        for _, ax, ay, bx, by, _ in h.WALLS:
+            (pa, qa), (pb, qb) = P(ax, ay), P(bx, by)
+            el.append(
+                f'<line x1="{pa}" y1="{qa}" x2="{pb}" y2="{qb}" stroke="#555" stroke-width="3"/>'
+            )
         for it in h.ITEMS:
             cx, cy = P(it.x, it.y)
             r, g, b = it.rgb

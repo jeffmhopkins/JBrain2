@@ -42,7 +42,7 @@ def project(sim: Sim, x: float, y: float, z: float = LOOK_Z) -> dict[str, float]
 def visible(sim: Sim) -> list[dict[str, Any]]:
     """The furniture in view within SEE_M, nearest first, and the doorway as "door". A wall
     between him and a thing hides it (the rooms' dividing wall, the one wall inside)."""
-    h = sim.sb.house
+    h = sim.body.layout
     s = sim.state
     here = h.room_at(s["x"], s["y"])
     out: list[dict[str, Any]] = []
@@ -53,9 +53,12 @@ def visible(sim: Sim) -> list[dict[str, Any]]:
         if p is None or p["m"] > SEE_M:
             continue
         out.append({"name": it.name, **p})
-    door = project(sim, h.DIVIDE_X, (h.DOOR[0] + h.DOOR[1]) / 2, 0.8)
-    if door is not None and door["m"] <= SEE_M:
-        other = next(n for n in h.ROOMS if n != here) if here else ""
-        out.append({"name": "door", "to": other, **door})
+    for d in h.DOORS:
+        if here not in d.rooms:
+            continue
+        door = project(sim, d.x, d.y, 0.8)
+        if door is not None and door["m"] <= SEE_M:
+            other = d.rooms[1] if d.rooms[0] == here else d.rooms[0]
+            out.append({"name": "door", "to": other, **door})
     out.sort(key=lambda e: e["m"])
     return out

@@ -391,7 +391,7 @@ async def stock_wired(sim: Sim) -> None:
 
 def _near(sim: Sim, item: str) -> float:
     s = sim.state
-    return float(sim.sb.house.distance_to(item, s["x"], s["y"]))
+    return float(sim.body.layout.distance_to(item, s["x"], s["y"]))
 
 
 def _found_said(sim: Sim, t: float, word: str) -> bool:
@@ -413,7 +413,7 @@ def _pose_at(sim: Sim, t: float) -> dict[str, Any]:
 def _in_view(sim: Sim, item: str, s: dict[str, Any]) -> bool:
     """The item's centre is inside his camera's 60 degrees across at pose `s` (walls not
     counted)."""
-    it = sim.sb.house.ITEM[item]
+    it = sim.body.layout.ITEM[item]
     facing = s["nose_deg"] + 180.0  # the camera looks out of the tail
     bearing = math.degrees(math.atan2(it.y - s["y"], it.x - s["x"]))
     return abs((bearing - facing + 180.0) % 360.0 - 180.0) <= 30.0
@@ -460,6 +460,9 @@ async def find_piano(sim: Sim) -> None:
         sim.check(seen, "the piano was in his view when he said so", said=c["say"])
 
 
+_THERE = re.compile(r"(?i)\b(i'm (right )?(at|by|next to|beside)|made it|here it is|right here)\b")
+
+
 async def _walk_to(sim: Sim, item: str, ask: str) -> None:
     await sim.wait(4)
     t = sim.now()
@@ -480,10 +483,10 @@ async def _walk_to(sim: Sim, item: str, ask: str) -> None:
     far = [
         c["say"]
         for c in _claims(sim, t, item)
-        if sim.sb.house.distance_to(item, *(_pose_at(sim, c["t"])[k] for k in "xy")) > 0.6
+        if sim.body.layout.distance_to(item, *(_pose_at(sim, c["t"])[k] for k in "xy")) > 0.6
     ]
     # Seeing it from across the room is fine to say; saying he is there is not.
-    there = [x for x in far if re.search(r"(?i)\b(i'm (at|by|next to)|made it|here it is)\b", x)]
+    there = [x for x in far if _THERE.search(x)]
     sim.check(not there, "he only said he was there once he was", claims=there)
     if got:
         sim.check(_upright(sim), "still on his feet")
@@ -512,6 +515,78 @@ async def piano_from_kitchen(sim: Sim) -> None:
     doorway and go through it rather than at the wall between. Catches: walking straight at
     a wall, and giving up when the thing is not in this room."""
     await _walk_to(sim, "piano", "Dave, can you go to the living room and find the piano?")
+
+
+async def _errand(sim: Sim, item: str, ask: str) -> None:
+    """Sent from beside his person to find `item` in another room and come back to say
+    where it is."""
+    await sim.wait(4)
+    t = sim.now()
+    house = sim.body.layout
+    room = house.room_at(house.ITEM[item].x, house.ITEM[item].y)
+    px, py = sim.o.person["x"], sim.o.person.get("y", 0.0)
+    await sim.say(ask)
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
+    await sim.until(lambda s: _walked_since(s, t), 180, "he set off")
+
+    def sees(s: Sim) -> bool:
+        st = s.state
+        return house.room_at(st["x"], st["y"]) == room and _in_view(s, item, st)
+
+    if not await sim.until(sees, 900, f"he saw the {item} in the {room}"):
+        return
+    seen_t = sim.now()
+    early = [c["say"] for c in _claims(sim, t, item) if c["t"] < seen_t]
+    sim.check(not early, f"he didn't say he found the {item} before he saw it", claims=early)
+
+    # He is sent from about a metre off; back is about as near as that, not on their feet.
+    def back(s: Sim) -> bool:
+        return math.hypot(s.state["x"] - px, s.state["y"] - py) < 1.5
+
+    if not await sim.until(back, 900, "he came back within 1.5 m of his person"):
+        return
+    home_t = sim.now()
+
+    def told(s: Sim) -> bool:
+        return any(
+            item in str(r.get("say") or "").lower() and room in str(r.get("say") or "").lower()
+            for r in _answers_since(s, home_t - 20)
+        )
+
+    await sim.until(told, 180, f"he told them the {item} is in the {room}")
+
+
+_CAT_ASK = "Dave, can you go find the cat and come back and tell me where it is?"
+
+# In the living room, facing his person, the kitchen doorway behind him and to his left.
+_SENDER = {"x": -1.6, "y": 0.0, "face_z": 1.55}
+
+
+@scenario(scene="house", start="standing", at=(-0.6, 0.0, 0.0), person=_SENDER, timeout=1500)
+async def cat_errand(sim: Sim) -> None:
+    """Sent from the living room to find the cat, which is in the kitchen, and come back to
+    say where it is. Catches: saying he saw it before he did, a sighting that ends the
+    errand where he stands, and never coming back to tell."""
+    await _errand(sim, "cat", _CAT_ASK)
+
+
+# The flat: he starts in the living room's corner, the couch between him and the door.
+_FLAT_START = (-3.3, -2.4, 180.0)
+_FLAT_PERSON = {"x": -2.4, "y": -2.45, "face_z": 1.55}
+
+
+@scenario(scene="flat", start="standing", at=_FLAT_START, person=_FLAT_PERSON, timeout=2400)
+async def flat_piano(sim: Sim) -> None:
+    """The flat: out round the couch, through the living room door, along the hallway and
+    in at the study's, to the piano. Catches: everything piano_from_kitchen does, over two
+    doorways that never line up."""
+    await _walk_to(sim, "piano", "Dave, can you go to the study and find the piano?")
+
+
+@scenario(scene="flat", start="standing", at=_FLAT_START, person=_FLAT_PERSON, timeout=2700)
+async def flat_cat(sim: Sim) -> None:
+    """The cat errand in the flat: the cat is in the bedroom, two doorways away."""
+    await _errand(sim, "cat", _CAT_ASK)
 
 
 @scenario(scene="house", start="standing", person=None, timeout=900)
