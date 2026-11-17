@@ -82,15 +82,19 @@ def policy_id(slug: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"growbot-sim/{slug}"))
 
 
-# What a creature keeps of itself through a wipe: who it is, whose it is, its body. The rest
-# (its log, facts, wants, the day's scratch and the identity grown from them) is history.
-KEEP_GOALS = ("owner", "selfName", "inputLanguage", "replyLanguage")
+# What a creature keeps of itself through a wipe: who it is, whose it is, its body and the
+# reflexes its person taught it. The rest (its log, facts, wants, the day's scratch and the
+# identity grown from them) is history. The PWA's Forget history is the same wipe
+# (backend jbrain.growbot.souls.forgotten), which the backend suite holds them to.
+KEEP_GOALS = ("owner", "selfName", "inputLanguage", "replyLanguage", "call")
 
 
 def forget(soul: dict[str, Any]) -> dict[str, Any]:
     """A soul with its memories wiped: what a "fresh" Dave run starts from."""
     goals = soul.get("goals") or {}
-    out = {**soul, "log": [], "facts": [], "scratch": {}, "identity": ""}
+    scratch = soul.get("scratch") or {}
+    keep = {"reflexes": scratch["reflexes"]} if isinstance(scratch.get("reflexes"), list) else {}
+    out = {**soul, "log": [], "facts": [], "scratch": keep, "identity": ""}
     out["goals"] = {k: goals[k] for k in KEEP_GOALS if k in goals}
     # A creature named in conversation keeps that name only in its history, so the wipe
     # would take it: the persona's own name stands in, as if the owner had confirmed it.
@@ -99,9 +103,10 @@ def forget(soul: dict[str, Any]) -> dict[str, Any]:
         out["goals"]["selfName"] = name
     # The page reseeds a short identity with a newborn's stock one (and its stock name), and
     # a box soul's selfName doesn't survive the load, so the name goes in a full sentence.
+    me = out["goals"].get("selfName") or name
     out["identity"] = (
-        f"I am {name}. I walk on two legs, and I want to explore the real world with my person."
-        if name
+        f"I am {me}. I walk on two legs, and I want to explore the real world with my person."
+        if me
         else ""
     )
     return out

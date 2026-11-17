@@ -432,6 +432,41 @@ def _diary(had: Any, value: Any) -> list[dict[str, Any]]:
     return out
 
 
+# What a creature keeps through Forget history: who it is, whose it is, its languages and the
+# first song its person sang it (`call`, part of the bond, which a template keeps too). The
+# Dave simulator's fresh runs (growbot/sim/dave_sim/box.py `forget`, which must agree) showed
+# a Dave with this wiped walked when asked where the owner's, whose diary remembered his
+# stock walk slipping, often only said he was walking (2026-11-17).
+KEEP_GOALS = ("owner", "selfName", "inputLanguage", "replyLanguage", "call")
+
+
+def forgotten(soul: dict[str, Any], name: str) -> dict[str, Any]:
+    """The soul with its history gone (diary, fact book, wants, the day's scratch and the
+    identity grown from them) and its config, bond line and reflexes kept. Reflexes are what
+    its person taught it to do, not what it believes about itself."""
+    out = copy.deepcopy(soul)
+    goals = obj(out.get("goals"))
+    scratch = obj(out.get("scratch"))
+    out["log"], out["facts"] = [], []
+    out["scratch"] = (
+        {"reflexes": scratch["reflexes"]} if isinstance(scratch.get("reflexes"), list) else {}
+    )
+    out["goals"] = {k: goals[k] for k in KEEP_GOALS if k in goals}
+    # A name given in conversation lives only in the history, so the persona's own stands in.
+    own = clean(obj(out.get("meta")).get("name") or name, SELF_NAME_CAP)
+    if not out["goals"].get("selfName") and own:
+        out["goals"]["selfName"] = own
+    me = out["goals"].get("selfName") or own
+    # The phone reseeds an identity under IDENTITY_MIN with a newborn's stock one and stock
+    # name, so the name goes in a full sentence.
+    out["identity"] = (
+        f"I am {me}. I walk on two legs, and I want to explore the real world with my person."
+        if me
+        else ""
+    )
+    return out
+
+
 def renamed(soul: dict[str, Any], name: str) -> dict[str, Any]:
     """The list's name is also the soul file's `meta.name`; the creature's own name
     (`goals.selfName`) is the person's to change, inside the creature."""

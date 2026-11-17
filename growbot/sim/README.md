@@ -71,7 +71,8 @@ JBRAIN_DEBUG_TOKEN_FILE=path/to/token .venv/bin/python -m dave_sim come_here --l
 
 `--fresh` runs a Dave with no past: the box soul's log, facts, scratch and learned identity
 are dropped before the page loads (`box.forget`), keeping his name, his person and his body.
-It shows what the prompts alone make of a turn, apart from what his history has taught him.
+It shows what the prompts alone make of a turn, apart from what his history has taught him. The PWA's
+*Forget history* on a persona does the same wipe on the box (reflexes kept in both).
 
 Each scenario writes a folder under `sim-runs/` (ignored by git): `report.html` reads top
 to bottom (the checks, then what was said, what the legs got, and where the robot

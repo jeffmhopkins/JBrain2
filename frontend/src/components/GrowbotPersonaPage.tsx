@@ -348,6 +348,24 @@ export function GrowbotPersonaPage({
     }
   }
 
+  // Its history goes (diary, facts, wants, the day's notes) and who it is stays: the Dave
+  // simulator's fresh Dave, which walked when asked where one whose diary remembered slipping
+  // only said it was walking (owner, 2026-11-17).
+  async function forgetHistory() {
+    if (!arm("forget")) return;
+    try {
+      const out = await api.forgetGrowbotHistory(p.id);
+      took(out);
+      const cp = out.checkpoint;
+      say(
+        `${p.name} has forgotten its history and kept its name, its person, its personality and the faces it knows.${cp ? ` “${cp.name}” keeps everything it was.` : ""}${live}`,
+        cp ? { undo: undoTo(cp) } : undefined,
+      );
+    } catch (e) {
+      say(`${p.name} didn't forget its history — ${message(e)}`);
+    }
+  }
+
   async function reset() {
     if (!arm("reset")) return;
     try {
@@ -873,6 +891,15 @@ export function GrowbotPersonaPage({
           </button>
         </div>
         <div className="gb-acts col">
+          <button
+            type="button"
+            className={`gb-btn block${isArmed("forget") ? " armed" : ""}`}
+            onClick={() => void forgetHistory()}
+          >
+            {isArmed("forget")
+              ? "Tap again — its diary and facts go; a checkpoint is saved first"
+              : "Forget history"}
+          </button>
           <button
             type="button"
             className={`gb-btn block${isArmed("reset") ? " armed" : ""}`}

@@ -8678,6 +8678,14 @@ export const api = {
     return (await response.json()) as GrowbotWritten;
   },
 
+  async forgetGrowbotHistory(id: string): Promise<GrowbotWritten> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}/forget-history`,
+      { method: "POST" },
+    );
+    return (await response.json()) as GrowbotWritten;
+  },
+
   async deleteGrowbotPersona(id: string): Promise<void> {
     await request(`/api/growbot/personas/${encodeURIComponent(id)}`, { method: "DELETE" });
   },

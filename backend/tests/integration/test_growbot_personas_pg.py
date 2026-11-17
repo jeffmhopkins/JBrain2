@@ -580,6 +580,14 @@ async def test_routes_seed_duplicate_rename_reset_and_delete(maker: async_sessio
     assert missing.status_code == 404
     assert c.post("/api/growbot/personas", json={"name": "  "}).status_code == 422
 
+    # Forget history keeps the personality and checkpoints what it had first.
+    forgot = c.post(f"/api/growbot/personas/{pid}/forget-history").json()
+    assert forgot["persona"]["soul"]["persona"] == {"constitution": "You are Bolt."}
+    assert forgot["persona"]["soul"]["log"] == []
+    assert forgot["checkpoint"]["name"] == "Before forgetting history"
+    gone_f = "/api/growbot/personas/00000000-0000-4000-8000-000000000000/forget-history"
+    assert c.post(gone_f).status_code == 404
+
     dup = c.post(f"/api/growbot/personas/{pid}/duplicate").json()
     assert dup["name"] == "Sprout copy" and dup["checkpoint_list"] == []
     assert dup["soul"]["persona"] == {"constitution": "You are Bolt."}
