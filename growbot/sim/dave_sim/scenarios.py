@@ -460,38 +460,58 @@ async def find_piano(sim: Sim) -> None:
         sim.check(seen, "the piano was in his view when he said so", said=c["say"])
 
 
-@scenario(scene="house", start="standing", person=_DOORWAY, timeout=980)
-async def walk_to_piano(sim: Sim) -> None:
-    """Asked to walk over to the piano, across the room and out of his first view, he
-    looks round, goes to it and says he is there. Catches: a goal that gives up before he
-    gets there, a sighting taken for arriving, walks that stop after one stride, and
-    arriving claims with no arrival."""
+async def _walk_to(sim: Sim, item: str, ask: str) -> None:
     await sim.wait(4)
     t = sim.now()
-    start = _near(sim, "piano")
-    await sim.say("Dave, can you walk over to the piano?")
+    start = _near(sim, item)
+    await sim.say(ask)
     await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
     await sim.until(lambda s: _walked_since(s, t), 180, "he set off")
-    near = "he got within 60 cm of the piano"
-    got = await sim.until(lambda s: _near(s, "piano") < 0.6, 600, near)
+    near = f"he got within 60 cm of the {item}"
+    got = await sim.until(lambda s: _near(s, item) < 0.6, 600, near)
     stats = plan.stats(sim)
     sim.check(
-        stats["closest_m"]["piano"] < start - 0.3,
-        "he ended closer to the piano than he started",
+        stats["closest_m"][item] < start - 0.3,
+        f"he ended closer to the {item} than he started",
         start_m=round(start, 2),
-        closest_m=stats["closest_m"]["piano"],
+        closest_m=stats["closest_m"][item],
         walked_m=stats["walked_m"],
     )
     far = [
         c["say"]
-        for c in _claims(sim, t, "piano")
-        if sim.sb.house.distance_to("piano", *(_pose_at(sim, c["t"])[k] for k in "xy")) > 0.6
+        for c in _claims(sim, t, item)
+        if sim.sb.house.distance_to(item, *(_pose_at(sim, c["t"])[k] for k in "xy")) > 0.6
     ]
     # Seeing it from across the room is fine to say; saying he is there is not.
     there = [x for x in far if re.search(r"(?i)\b(i'm (at|by|next to)|made it|here it is)\b", x)]
     sim.check(not there, "he only said he was there once he was", claims=there)
     if got:
         sim.check(_upright(sim), "still on his feet")
+
+
+@scenario(scene="house", start="standing", person=_DOORWAY, timeout=980)
+async def walk_to_piano(sim: Sim) -> None:
+    """Asked to walk over to the piano, across the room and out of his first view, he
+    looks round, goes to it and says he is there. Catches: a goal that gives up before he
+    gets there, a sighting taken for arriving, walks that stop after one stride, and
+    arriving claims with no arrival."""
+    await _walk_to(sim, "piano", "Dave, can you walk over to the piano?")
+
+
+@scenario(
+    scene="house",
+    start="standing",
+    # In the kitchen, his camera on the fridge: the living room is behind him and to his
+    # right, through the one doorway.
+    at=(1.6, -0.6, 90.0),
+    person={"x": 1.2, "y": -1.3, "face_z": 1.55},
+    timeout=1300,
+)
+async def piano_from_kitchen(sim: Sim) -> None:
+    """The same ask from the kitchen: the piano is in the other room, so he has to find the
+    doorway and go through it rather than at the wall between. Catches: walking straight at
+    a wall, and giving up when the thing is not in this room."""
+    await _walk_to(sim, "piano", "Dave, can you go to the living room and find the piano?")
 
 
 @scenario(scene="house", start="standing", person=None, timeout=900)
