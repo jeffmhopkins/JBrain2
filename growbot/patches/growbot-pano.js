@@ -34,7 +34,7 @@
   // the left after each blocked one, for up to WALL_MS (mf9 ran out of ten minutes at the
   // living room's door, at his 4 cm a second).
   // His walk drifts right on its own (f5-f7), so the probe right is small.
-  var BACK_S = 6, WALL_WALK_S = 12, WALL_MS = 1200000, PROBE_DEG = 15, WALL_BLOCKS = 16, SWING_DEG = 25;
+  var BACK_S = 6, WALL_WALK_S = 12, WALL_MS = 1200000, PROBE_DEG = 15, WALL_BLOCKS = 16, SWING_DEG = 15;
   // His picture standing still while he walks forward (mean grey change per pixel, 2 s apart,
   // three in a row): in the flat (f3) 9 of 9 such runs were pushing against a wall or
   // furniture and none was walking, though it catches about a third of the pushing.
@@ -127,7 +127,9 @@
       tr.walked = false;
       // With the wall on his right, running into it swings him to the right as he walks: over
       // 61 walks in f5-f7, 11 of the 14 that swung 25 degrees or more right went under 0.3 m,
-      // and a clear walk swings either way, left as much as 50 degrees.
+      // and a clear walk swings either way, left as much as 50 degrees. 15 is enough: in
+      // f15-f16 and maze 1, 18 of 28 walks that went under 15 cm swung 15 or more toward the
+      // wall, and 3 of 58 that went over 35 cm did (the walk stop caught 6 of 45).
       // side: 1 keeps the wall on his right, -1 on his left (mirror image).
       var side = tr.side === -1 ? -1 : 1, sw = typeof tr.h0 === "number" ? Math.round(wrap(h.h - tr.h0)) : 0;
       var swung = sw * side <= -SWING_DEG;

@@ -276,11 +276,11 @@ def test_a_clear_walls_probe_is_taken_from_where_the_walk_set_out() -> None:
         "const tr={wall:true,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0};"
         "const h=(x,y,hd)=>({x,y,h:hd,room:'r'});"
         "P.wallStep(tr,h(0,0,90),1000,false);"
-        "console.log(JSON.stringify([P.wallStep(tr,h(0,0.5,70),20000,false),"
-        "P.wallStep(tr,h(0,0.5,70),21000,false)]))"
+        "console.log(JSON.stringify([P.wallStep(tr,h(0,0.5,78),20000,false),"
+        "P.wallStep(tr,h(0,0.5,78),21000,false)]))"
     )
-    # Set out at 90, drifted to 70: the probe aims at 75, five degrees off, so it walks on;
-    # that walk set out at 70, so the next probe is 15 right of 70.
+    # Set out at 90, drifted to 78: the probe aims at 75, three degrees off, so it walks on;
+    # that walk set out at 78, so the next probe is 15 right of 78.
     assert got[0]["walk"]["dir"] == "fwd" and got[1]["walk"] == {"turn": -15}
 
 
@@ -431,6 +431,21 @@ def test_a_walk_that_swings_him_round_counts_as_a_wall() -> None:
     assert right["walk"] == {"turn": 90} and b1 == 1
     # 40 to the left is a clear walk's wobble: probe 15 right of where it set out (150).
     assert left["walk"] == {"turn": -55} and b2 == 1
+
+
+def test_a_walk_that_swings_fifteen_degrees_into_the_wall_was_against_it() -> None:
+    """f15: most walks that went nowhere swung 15-25 degrees in, under the old 25 mark."""
+    got = _node(
+        "const out=[];for(const sw of [-18,-10]){"
+        "const tr={wall:true,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0};"
+        "P.wallStep(tr,{x:0,y:0,h:0},1,false);"
+        "const t=P.wallStep(tr,{x:0,y:0,h:sw},2,false);"
+        "out.push([t.walk.turn??t.walk.dir,tr.blocks]);}"
+        "console.log(JSON.stringify(out))"
+    )
+    # 18 in toward the wall on his right: blocked, so 90 away from where he faces.
+    # 10 is a walk's wobble: the probe, 15 right of where he set out, is near enough ahead.
+    assert got == [[90, 1], ["fwd", 0]]
 
 
 def test_each_round_of_the_walls_takes_the_other_side_unless_he_names_one() -> None:

@@ -740,7 +740,7 @@ degrees toward the wall from where the last walk set out (a walk drifts up to 20
 way, and probing on from its end added that up) and walks 12 s. Clear walk after clear walk
 means the wall has fallen away, as at a doorway he would otherwise walk straight past, so the
 probe grows to 30 and then 45 degrees until something stops him; a step that is blocked, or whose
-drift has swung him 25 degrees in toward the wall (pushing along it turns him into it), turns
+drift has swung him 15 degrees in toward the wall (pushing along it turns him into it), turns
 him 90 degrees away from it. Each round takes the other side (`"left"`/`"right"` picks one),
 since one side alone circled the flat's couch for good. It ends when his map says he is in
 another room, after twenty minutes, or when something blocks him 16 times (once his map has him
