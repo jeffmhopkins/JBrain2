@@ -32,9 +32,8 @@
   var GO_M = 0.9, GO_MS = 120000, FACE_DEG = 20, WALK_S = 25;
   // Following the walls: short walks, a probe to the right after each clear one and a turn to
   // the left after each blocked one, for up to WALL_MS.
-  // From f5-f6 in the flat: a clear walk swings him at most about 13 degrees, a scraping one 16
-  // to 30; his walk drifts right on its own, so the probe right is small.
-  var WALL_WALK_S = 12, WALL_MS = 600000, PROBE_DEG = 15, WALL_BLOCKS = 16, SWING_DEG = 15;
+  // His walk drifts right on its own (f5-f7), so the probe right is small.
+  var WALL_WALK_S = 12, WALL_MS = 600000, PROBE_DEG = 15, WALL_BLOCKS = 16, SWING_DEG = 25;
   // His picture standing still while he walks forward (mean grey change per pixel, 2 s apart,
   // three in a row): in the flat (f3) 9 of 9 such runs were pushing against a wall or
   // furniture and none was walking, though it catches about a third of the pushing.
@@ -112,9 +111,12 @@
     if (tr.blocks >= WALL_BLOCKS) return { done: "something kept being in the way", gone: gone };
     if (tr.walked) {
       tr.walked = false;
-      // Scraping along a wall or into a corner swings him round as he walks (f5: 50 degrees on
-      // a walk that went nowhere, a few on a clear one); that is a wall too.
-      if (typeof tr.h0 === "number" && Math.abs(wrap(h.h - tr.h0)) >= SWING_DEG) blocked = true;
+      // With the wall on his right, running into it swings him to the right as he walks: over
+      // 61 walks in f5-f7, 11 of the 14 that swung 25 degrees or more right went under 0.3 m,
+      // and a clear walk swings either way, left as much as 50 degrees.
+      var sw = typeof tr.h0 === "number" ? Math.round(wrap(h.h - tr.h0)) : 0;
+      tr.why = blocked ? "stopped" : sw <= -SWING_DEG ? "swung " + sw : "clear " + sw;
+      if (sw <= -SWING_DEG) blocked = true;
       if (blocked) tr.blocks++;
       tr.want = wrap(h.h + (blocked ? 90 : -PROBE_DEG));
     }
@@ -350,7 +352,8 @@
         } else { survey--; spec = { turn: 180 }; }
         if (spec && spec.turn !== undefined) spec = window.gbMap && window.gbMap.turn ? window.gbMap.turn(spec.turn) : null;
         if (!spec) return;
-        try { logEv("explore_step", { trip: trip ? trip.n : 0, gait: spec.gait, secs: spec.secs }); } catch (e) {}
+        try { logEv("explore_step", { trip: trip ? trip.n : 0, gait: spec.gait, secs: spec.secs, h: Math.round(+h.h), why: trip && trip.why || "" }); } catch (e) {}
+        if (trip) trip.why = "";
         // The trip's moves are his choice carried out, not news that overtakes a thought in
         // flight: their generations are marked done, or that thought's move is refused.
         var g0 = _motionGen;

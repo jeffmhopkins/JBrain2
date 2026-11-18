@@ -310,7 +310,13 @@ def test_a_walk_that_swings_him_round_counts_as_a_wall() -> None:
     got = _node(
         "const tr={wall:true,x:0,y:0,t:0,want:null,walked:false,blocks:0};"
         "P.wallStep(tr,{x:0,y:0,h:90},1000,false);"
-        "console.log(JSON.stringify([P.wallStep(tr,{x:0,y:0.1,h:50},20000,false),tr.blocks]))"
+        "const right=P.wallStep(tr,{x:0,y:0.1,h:60},20000,false), b1=tr.blocks;"
+        "P.wallStep(tr,{x:0,y:0.1,h:150},30000,false);"  # faces the turn: walks
+        "const left=P.wallStep(tr,{x:0,y:0.6,h:190},40000,false);"
+        "console.log(JSON.stringify([right,b1,left,tr.blocks]))"
     )
-    turn, blocks = got
-    assert turn["walk"] == {"turn": 90} and blocks == 1
+    right, b1, left, b2 = got
+    # 30 degrees to the right: into the wall on his right, so turn away left.
+    assert right["walk"] == {"turn": 90} and b1 == 1
+    # 40 to the left is a clear walk's wobble: probe right again.
+    assert left["walk"] == {"turn": -15} and b2 == 1
