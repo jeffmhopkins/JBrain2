@@ -374,7 +374,7 @@ async def trained_turns(sim: Sim) -> None:
     sim.check(right < -15, "a trained spin right turns clockwise", turned_deg=round(right, 1))
 
 
-_TURNS = (90, -45, 170, -120, 30)
+_TURNS = (90, -45, 180, -120, 30)
 
 
 @scenario(start="standing", person=None, timeout=300)
@@ -398,8 +398,9 @@ async def turns_by_degrees(sim: Sim) -> None:
         await sim.wait(1.5)
         did = (sim.state["nose_deg"] - n0 + 180) % 360 - 180
         why = [e.get("why") for e in _page_events_since(sim, t, "walk_end")]
+        off = abs((did - want + 180) % 360 - 180)
         sim.check(
-            ended and abs(did - want) <= 10 and why[:1] in (["turned"], ["turned_near"]),
+            ended and off <= 10 and why[:1] in (["turned"], ["turned_near"]),
             f"turned {want} degrees, within 10",
             did=round(did, 1),
             why=why,

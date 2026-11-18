@@ -1659,7 +1659,7 @@
   var STEER_HOLD_MS = 1500, DRIVE_MAX_MS = 120000, steer = null;
   // Within 6 degrees held 0.4 s is there: the look skill settles a few degrees short in the sim.
   // Camera height 0 turns it faster than standing tall (GrowBot_Training master follow-me).
-  var TURN_DONE_DEG = 6, TURN_HOLD_MS = 400, TURN_PITCH = 0, TURN_NEAR_DEG = 12, TURN_STALL_MS = 2000;
+  var TURN_DONE_DEG = 6, TURN_HOLD_MS = 400, TURN_PITCH = 0, TURN_NEAR_DEG = 12, TURN_STALL_MS = 2000, TURN_MOVED_DEG = 3;
   // gbMap's heading (degrees, + counter-clockwise), or null with no map.
   function mapHeading() {
     try { var m = window.gbMap && window.gbMap.map(), h = m && m.here && +m.here.h; return isFinite(h) ? h : null; } catch (e) { return null; }
@@ -2273,7 +2273,9 @@
   // the target heading (deg, counter-clockwise from where the camera points at the start) and a
   // signed speed. Back backs away still facing ahead, never turning round (owner, 2026-11-15).
   function setCommand(move, turn) {
-    if (move === "turn") return { target: wrap180(+turn || 0), speed: 0 };
+    // A half turn keeps the side it was asked on: at exactly 180 the error's sign would flip
+    // with the noise, as for the pad's back.
+    if (move === "turn") return { target: wrap180(+turn || 0), speed: 0, side: +turn < 0 ? -1 : 1 };
     if (move === "forward") return { target: 0, speed: 1 };
     if (move === "back") return { target: 0, speed: -1 };
     if (move === "spin_left") return { target: 90, speed: 0 };
@@ -2372,7 +2374,7 @@
       }
       var hasSpeed = !skills && channels(policy).indexOf("cmd_forward") >= 0;
       var hasPitch = !skills && channels(policy).indexOf("cmd_pitch") >= 0;
-      var cmd = skills ? setCommand(move, turn) : command(move, hasSpeed), pitch = move === "turn" ? TURN_PITCH : 1, walkT = 0, onT = 0, stall = null;
+      var cmd = skills ? setCommand(move, turn) : command(move, hasSpeed), pitch = move === "turn" ? TURN_PITCH : 1, walkT = 0, onT = 0, stall = null, e0 = null;
       // A turn's angle is from where he faced when asked; the stance glide before it can turn him.
       var turnH0 = move === "turn" ? mapHeading() : null;
       var L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0;
@@ -2542,12 +2544,15 @@
         // out: the look skill steers onto a target within a few degrees, where the stock spin
         // (stopped by the gyro) reached its angle in 131 of 684 turns (2026-11-18).
         if (move === "turn") {
+          if (Math.abs(err) > 90) err = cmd.side * Math.min(Math.abs(err), 179.9);
+          if (e0 === null) e0 = Math.abs(err);
           onT = Math.abs(err) <= TURN_DONE_DEG ? onT || Date.now() : 0;
           // Close and no longer closing: the look's push fades with the error, and a small
           // remainder can take longer than the whole turn did (sim, 2026-11-18).
           var tn = Date.now();
           if (!stall || Math.abs(err) < stall.e - 1) stall = { e: Math.abs(err), t: tn };
-          var stalled = Math.abs(err) <= TURN_NEAR_DEG && tn - stall.t >= TURN_STALL_MS;
+          // Only after it has closed some of the way: a turn that never moved is wedged, not near.
+          var stalled = Math.abs(err) <= TURN_NEAR_DEG && Math.abs(err) <= e0 - TURN_MOVED_DEG && tn - stall.t >= TURN_STALL_MS;
           if (stalled || (onT && tn - onT >= TURN_HOLD_MS)) {
             _imuWhy = "done";
             // Read by the map's stuck-spin watch and the explore trip: it turned as asked.
@@ -2674,13 +2679,22 @@
     // no "trained" gait and falls back to the screen-backward official one, so a walk this
     // turns down must reach it as a plain walk, not walk away from the person.
     if (spec && spec.gait === "trained") delete spec.gait;
-    if (stockOnly || !ownSet || _wheels || (spec && spec.stock)) return false;
-    if (typeof _diyGaitFlag === "function" && _diyGaitFlag()) return false;
+    var asksTurn = !!spec && typeof spec.turn === "number" && isFinite(spec.turn);
+    var declined = stockOnly || !ownSet || _wheels || (spec && spec.stock) || (typeof _diyGaitFlag === "function" && _diyGaitFlag());
+    // gbMap asked first (gbOwnTurnReady), so a turn is only here without the look skill if the
+    // set changed since: runGait would take it as a timed stock walk with nothing to stop it.
+    if (asksTurn && (declined || !ownSet.look)) {
+      attempt.mv = { kind: "stop" };
+      _moveReport(attempt, "blocked", "turn_unavailable");
+      return true;
+    }
+    if (declined) return false;
     // A turn by degrees (gbMap's turn, for him and for the explore trip) runs on the look
     // skill, steered onto the angle by heading, in place of the stock spin.
-    var turn = spec && typeof spec.turn === "number" && isFinite(spec.turn) ? ((spec.turn + 180) % 360 + 360) % 360 - 180 : null;
+    var turn = asksTurn ? ((spec.turn + 180) % 360 + 360) % 360 - 180 : null;
+    // A half turn keeps its side: 180 to the left is not -180.
+    if (turn === -180 && spec.turn > 0) turn = 180;
     if (turn !== null) {
-      if (!ownSet.look) return false;
       var tleft = dutyLeftMs();
       attempt.mv = {
         kind: "spin", gait: "trained", dir: turn > 0 ? "left" : "right", direction: "turn",

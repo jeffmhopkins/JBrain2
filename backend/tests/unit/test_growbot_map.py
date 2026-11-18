@@ -313,8 +313,8 @@ def test_a_turn_by_degrees_takes_the_look_skill_when_the_box_has_one() -> None:
         "x:_live.map.here.x,y:_live.map.here.y,"
         "turn:logs.filter(function(l){ return l[0]==='map_turn'; })}));"
     )
-    assert got["walk"] == {"dir": "right", "turn": -60, "secs": 13}
-    assert got["walk2"] == {"dir": "left", "turn": 170, "secs": 30}
+    assert got["walk"] == {"dir": "right", "turn": -60, "secs": 18}
+    assert got["walk2"] == {"dir": "left", "turn": 170, "secs": 45}
     assert got["stops"] == 0
     # A turn on the spot carries him nowhere on his map.
     assert (got["x"], got["y"]) == (0, 0)

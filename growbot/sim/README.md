@@ -51,7 +51,7 @@ walks a standing person (face at 1.55 m; a 0.6 m face drops out of the frame's b
 they back off) away and sideways for a minute: he walked 0.85 m after them and held
 1.3 to 1.7 m (2026-11-17). `follow_me_away` asks the same by voice, through the model, and
 `stop_stop` says "stop stop" in the middle of a 15 s trained walk: he is still from half a
-second after. `turns_by_degrees` turns him 90, -45, 170, -120 and 30 degrees the way he and the explore
+second after. `turns_by_degrees` turns him 90, -45, 180, -120 and 30 degrees the way he and the explore
 trip ask (`gbMap.turn`), on the box skill set's look skill, and checks each ends within 10
 degrees of its angle by the sim's own yaw. `follow_walk` circles a standing person round him; with a seated face at 1 m the camera
 tilts down, where the trained look barely turns, and he kept up only 2 runs in 5.

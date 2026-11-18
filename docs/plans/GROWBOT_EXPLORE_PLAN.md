@@ -65,10 +65,10 @@ Each wave is tested in the sim first on true pose and depth, so a failure points
   his own `walk:{turn}` and the explore trip) runs on the box skill set's look skill, steered
   onto the angle at camera height 0 and ended once it holds it within 6°, or sits within 12°
   and stops closing (`growbot-box.js` `gbOwnWalk` move `"turn"`), with the stock spin kept for
-  a robot with no skill set. Sim `turns_by_degrees` (2026-11-18, two runs of five turns): 7 of
-  10 ended within 10° of the angle by the sim's true yaw and all 10 within 13°, at about 5°/s;
-  the misses are the page's gyro heading and the body's settle after the turn disagreeing with
-  the truth by up to 10°, which E4's scan matching is for.
+  a robot with no skill set. Sim `turns_by_degrees` (2026-11-18, two runs of 90, -45, 180, -120 and 30
+  degrees): 9 of 10 ended within 10° of the angle by the sim's true yaw, at about 5°/s. The
+  miss, a half turn 29° past, is the page's gyro heading disagreeing with the truth, which
+  E4's scan matching is for.
   Next in this wave: `goHeading(deg)` / `follow(path)` driving forward walks continuously by
   heading, ending the 12-25 s chunks. *Pass:* 95% of turns within 10°; a scripted 1 m square on
   true pose closes within 25 cm; no falls in 20 runs.
