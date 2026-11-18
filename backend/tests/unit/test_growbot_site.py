@@ -5830,6 +5830,41 @@ def test_on_legs_the_quiet_beat_says_exploring_takes_a_walk() -> None:
     assert phone == ""
 
 
+def test_an_explore_goal_sends_him_up_to_the_next_thing_and_says_where_his_room_stands() -> None:
+    """Live m7 (Jeff: "he kind of just looks around in the same spot ... go up to things and
+    go around the perimeter of walls", and "find out if any room has any doors and whether
+    or not he's left it"): 25 spins and 7 short walks."""
+    setup = (
+        "var seekGoal='explore the house', _gbGoalT=now-9000;"
+        " var M={here:{x:0,y:0,h:90,room:'living room'}, rooms:[{n:'living room'}], doors:[],"
+        " things:[{n:'lamp',x:1,y:1,room:'living room'},{n:'piano',x:0,y:3,room:'living room'},"
+        "{n:'fridge',x:5,y:0,room:'kitchen'}]}; window.gbMap={map:function(){ return M; }};"
+        " window.gbPano={seenHere:function(){ return 320; }};"
+    )
+    got = _explore(
+        "_gbExploreLine(),"
+        "(M.here.x=0.9, M.here.y=0.9, _gbExploreLine()),"
+        "(M.rooms.push({n:'kitchen'}), M.doors.push({a:'living room',b:'kitchen'}),"
+        " M.here={x:0,y:2.8,h:90,room:'living room'}, _gbExploreLine())",
+        setup,
+    )
+    assert "a metre takes about 25 s: send walks of 20 to 40 s" in got[0]
+    assert "the living room, the only room on your map, so you have not left it yet" in got[0]
+    assert "not found a doorway out of this room yet: going round its walls" in got[0]
+    assert "already seen all the way round (your view strip)" in got[0]
+    # The lamp is nearest: 1.4 m off, 45 degrees to his right as he faces +y.
+    assert (
+        "Next, go up to the lamp: about 1.4 m, 45 degrees to your right (walk:{turn:-45}" in got[0]
+    )
+    assert 'say map:{at:"lamp"}' in got[0]
+    # Within half a metre of the lamp, it is visited: the piano is next, the kitchen's fridge
+    # is not this room's.
+    assert "Next, go up to the piano" in got[1] and "fridge" not in got[1]
+    assert "rooms on your map: living room, kitchen" in got[2]
+    assert "Doorways you have found from this room: to kitchen." in got[2]
+    assert "You have been up to everything on your map here" in got[2]
+
+
 def test_an_explore_goal_names_the_way_he_has_not_looked_yet() -> None:
     """Live m3-m5: he set off the way he woke facing and never looked back toward the door
     behind him. The widest gap in the headings he has looked at is named from his own."""

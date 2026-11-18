@@ -82,6 +82,9 @@
       } catch (e) {}
     }, 250);
 
+    // How much of the way round he has seen from this spot, for the explore line.
+    api.seenHere = function () { try { return seenDeg(shots); } catch (e) { return 0; } };
+
     /* The strip for this thought, when he has turned enough since the last one to show it:
        most of a half turn seen here, and some of it new. */
     api.take = function () {
