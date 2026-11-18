@@ -284,3 +284,23 @@ def test_walls_is_an_explore_choice_and_runs_by_itself() -> None:
     assert "walk" not in got["o"] and got["o"]["_gbExplored"] == 1
     assert got["ran"] == [{"gait": "screen_forward", "dir": "fwd", "secs": 15}]
     assert got["st"]["trip"]["wall"] is True and "explore_walls" in got["log"]
+
+
+def test_asking_for_the_walls_again_carries_the_same_round_on() -> None:
+    got = _page_node(
+        "P.reply({explore:{walls:true}},0,now); const t0=now; now+=5000;"
+        "P.reply({explore:{walls:true}},0,now);"
+        "console.log(JSON.stringify({log}))"
+    )
+    assert got["log"].count("explore_walls") == 1
+
+
+def test_his_own_turns_do_not_cut_a_round_of_the_walls_short_but_a_stop_does() -> None:
+    got = _page_node(
+        "P.reply({explore:{walls:true}},0,now); now+=5000;"
+        "const spin={walk:{gait:'spin_left',dir:'left',secs:5}}; P.reply(spin,0,now);"
+        "const kept=!!P.state().trip; P.reply({walk:{dir:'stop'}},0,now);"
+        "console.log(JSON.stringify({spin,kept,st:P.state(),log}))"
+    )
+    assert "walk" not in got["spin"] and got["kept"] and "explore_kept" in got["log"]
+    assert got["st"]["trip"] is None

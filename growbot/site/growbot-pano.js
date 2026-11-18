@@ -279,15 +279,27 @@
             trip = { n: n, abs: (shown || ways(+h.h))[n - 1].abs, x: h.x, y: h.y, t: now };
             survey = 0; lastTrip = null; own = false; delete o.walk; chose = true;
             try { logEv("explore_go", { n: n, abs: Math.round(trip.abs) }); } catch (e) {}
+          } else if (ex.walls && trip && trip.wall) {
+            // Asked again while it runs: it carries on, not starts over.
+            own = false; delete o.walk; chose = true;
           } else if (ex.walls) {
             trip = { n: 0, wall: true, x: h.x, y: h.y, t: now, room: h.room || "", want: null, walked: false, blocks: 0 };
             survey = 0; lastTrip = null; own = false; delete o.walk; chose = true;
             try { logEv("explore_walls", { room: h.room || "" }); } catch (e) {}
           } else if (ex.survey) { survey = 2; trip = null; own = false; delete o.walk; chose = true; try { logEv("explore_survey", {}); } catch (e) {} }
           // A gesture beside the choice would only be cut short by the trip's first step.
-          if (chose) { startT = now; tripRep = null; blockedStep = false; delete o.gesture; delete o.body; delete o.parts; }
+          if (chose && !(trip && trip.wall && trip.t < now)) { startT = now; tripRep = null; blockedStep = false; }
+          if (chose) { delete o.gesture; delete o.body; delete o.parts; }
           // The move this reply chose is the trip's: no "you said you were moving" nudge.
           if (chose) o._gbExplored = 1;
+        }
+        /* Following the walls is a round of a few minutes that his own turns kept cutting
+           short (f4: six rounds, none longer than two minutes, each ended by a spin to "find
+           the way"). While it runs, a move of his own is left out; a stop, or
+           explore:{stop:true}, still ends it. */
+        if (own && trip && trip.wall && !/^(stop|halt)$/i.test(String(o.walk.dir || ""))) {
+          delete o.walk; own = false;
+          try { logEv("explore_kept", {}); } catch (e) {}
         }
         // A move of his own outranks the trip and the survey: he chose it.
         if (own) { if (trip) lastTrip = { n: trip.n, wall: !!trip.wall, why: "you moved yourself" }; trip = null; survey = 0; }
