@@ -92,13 +92,20 @@ def main(argv: list[str] | None = None) -> int:
         "(growbot-vision.js) fed from the sim's true depth and labels, as rendered or with a "
         "phone model's noise; off as on today's phone"
     )
+    ap.add_argument(
+        "--pose", choices=("reckoned", "truth"), default="reckoned", help="where his map says "
+        "he is: reckoned by the page's gyro and walking pace, as on today's phone, or fed the "
+        "sim's true pose (growbot-map.js gbPose)"
+    )
     args = ap.parse_args(argv)
     names = list(SCENARIOS) if args.scenarios == ["all"] else args.scenarios
     unknown = [n for n in names if n not in SCENARIOS]
     if unknown:
         ap.error(f"unknown scenario {unknown}")
     policies, skills = library(json.loads(args.skills))
-    base: dict[str, Any] = {"policies": policies, "skills": skills, "vision": args.vision}
+    base: dict[str, Any] = {
+        "policies": policies, "skills": skills, "vision": args.vision, "pose": args.pose
+    }
     if args.live:
         api = BoxApi(*debug_token(args.token_file or None))
         base["model"] = live_model(api)
