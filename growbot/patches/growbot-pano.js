@@ -115,8 +115,14 @@
     if (tr.into !== undefined && (tr.steps || 0) - tr.into >= 2) return { done: "you went through into the " + h.room, gone: gone };
     if (now - tr.t > WALL_MS) return { done: "it ran its twenty minutes", gone: gone };
     if (tr.blocks >= WALL_BLOCKS) return { done: "something kept being in the way", gone: gone };
-    // The last turn went nowhere (gbMap's spin_stuck): back out first, then the same turn.
-    if (wedged && !tr.walked) { tr.blocks++; tr.why = "wedged"; return { walk: { gait: "screen_backward", dir: "back", secs: BACK_S }, gone: gone }; }
+    // The last turn went nowhere (gbMap's spin_stuck): back out first, then the same turn,
+    // or, if a grown probe was what wedged him, the first small one again.
+    if (wedged && !tr.walked) {
+      tr.blocks++; tr.why = "wedged";
+      if ((tr.clear || 0) > 2 && typeof tr.h0 === "number") tr.want = wrap(tr.h0 - (tr.side === -1 ? -1 : 1) * PROBE_DEG);
+      tr.clear = 0;
+      return { walk: { gait: "screen_backward", dir: "back", secs: BACK_S }, gone: gone };
+    }
     if (tr.walked) {
       tr.walked = false;
       // With the wall on his right, running into it swings him to the right as he walks: over

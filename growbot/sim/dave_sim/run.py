@@ -86,8 +86,15 @@ class Options:
     # hallway).
     scene: str = "room"
     # Where he is set down: x, y (metres) and which way his nose points (degrees; 0 = +x,
-    # so his camera looks toward -x).
-    at: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # so his camera looks toward -x). None is the scene's own start, or the origin in a scene
+    # without one: a maze house's origin can fall inside a wall.
+    at: tuple[float, float, float] | None = None
+
+
+def set_down(at: tuple[float, float, float] | None, layout: Any) -> tuple[float, float, float]:
+    if at is not None:
+        return at
+    return tuple(layout.start) if layout is not None else (0.0, 0.0, 0.0)
 
 
 class Sim:
@@ -96,7 +103,7 @@ class Sim:
         sb = _growbot_train()
         self.sb = sb
         self.body = sb.SimBody(wiring=sb.Wiring(**opts.wiring), scene=opts.scene)
-        x, y, yaw = opts.at
+        x, y, yaw = set_down(opts.at, self.body.layout)
         self.body.reset(opts.start, yaw_deg=yaw, x=x, y=y)
         self.body.place_person(
             sb.Person(**opts.person) if opts.person else sb.Person(present=False)
