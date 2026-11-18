@@ -74,4 +74,18 @@ describe("GrowbotHouseMap", () => {
     expect(m?.here).toEqual({ x: 0, y: 0, h: 90, room: "" });
     expect(readMap({ map: { v: 2 } })).toBeNull();
   });
+
+  it("keeps no more than the page's own caps from a hand-edited soul", () => {
+    const many = (n: number, f: (i: number) => object) => Array.from({ length: n }, (_, i) => f(i));
+    const big = {
+      ...MAP,
+      rooms: many(500, (i) => ({ n: `r${i}`, x: i, y: 0, w: 2, d: 2 })),
+      doors: many(500, (i) => ({ x: i, y: 0, a: "", b: "" })),
+      things: many(5000, (i) => ({ n: `t${i}`, x: i, y: 0, room: "", t: 1 })),
+    };
+    const got = readMap({ map: big } as never);
+    expect(got?.rooms).toHaveLength(24);
+    expect(got?.doors).toHaveLength(48);
+    expect(got?.things).toHaveLength(120);
+  });
 });

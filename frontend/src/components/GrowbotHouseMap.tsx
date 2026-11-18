@@ -53,8 +53,11 @@ function obj(v: unknown): Record<string, unknown> {
 export function readMap(soul: GrowbotSoul): HouseMap | null {
   const m = obj(soul.map);
   if (m.v !== 1) return null;
-  const list = (k: string) => (Array.isArray(m[k]) ? (m[k] as unknown[]).map(obj) : []);
-  const rooms = list("rooms")
+  // The page's own caps (growbot-map.js): a soul file imported by hand is not held to them,
+  // and the render filters things per room.
+  const list = (k: string, max: number) =>
+    Array.isArray(m[k]) ? (m[k] as unknown[]).slice(0, max).map(obj) : [];
+  const rooms = list("rooms", 24)
     .filter(
       (r) =>
         text(r.n) && finite(r.x) && finite(r.y) && finite(r.w) && finite(r.d) && r.w > 0 && r.d > 0,
@@ -66,10 +69,10 @@ export function readMap(soul: GrowbotSoul): HouseMap | null {
       w: r.w as number,
       d: r.d as number,
     }));
-  const doors = list("doors")
+  const doors = list("doors", 48)
     .filter((o) => finite(o.x) && finite(o.y))
     .map((o) => ({ x: o.x as number, y: o.y as number, a: text(o.a), b: text(o.b) }));
-  const things = list("things")
+  const things = list("things", 120)
     .filter((t) => text(t.n) && finite(t.x) && finite(t.y))
     .map((t) => ({
       n: text(t.n),
