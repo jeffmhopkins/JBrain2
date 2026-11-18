@@ -98,7 +98,13 @@ maps at 48x64 about three times a second, and `--vision` picks the source.
 
 Against rays cast in the sim house from eight poses, the per-direction distances came within a
 few centimetres of the truth. The labels came out right too: sofa, shelf, counter, plant, person
-and the cat. The A/B results on wall-following are in the PR that landed V1.
+and the cat.
+
+V1 also brought in a more upright rest (owner, 2026-11-18: "maybe default standing stance should
+be more upright", then "Do it"). The glide every move ends with, the hold after it and an asked
+stand now go to 40/140 instead of STAND_TALL's 50/130. STAND_TALL itself is unchanged, since it
+is the fall get-up's push-up. A trained walk still ends holding its own neutral 90/90, where the
+camera points 47 degrees up and sees no floor at all. Changing that is a bench question for V2. The A/B results on wall-following are in the PR that landed V1.
 
 ### V2 — measure the models on the Pixel 10
 
@@ -118,15 +124,13 @@ To pass, depth and labels each need one frame a second or better on wasm, and di
 be within 15% from 0.2 to 2 m. If a model fails, the fallback is sending a small frame to the box
 and running the model on its GPU, at the cost of a LAN round trip.
 
-A body check comes with it: the lens's real height off the floor at STAND_TALL, and whether a
-"look" stance at 40/140 stands steady (owner, 2026-11-18: "maybe default standing stance should
-be more upright"). STAND_TALL itself stays, because it is also the fall get-up's push-up and the
-end of every move.
+A body check comes with it: the lens's real height off the floor, and whether the rest at
+40/140 that V1 brought in stands steady on the real legs. If it does not, `?reststand=tall` (or
+the synced pref `gb_rest_stand=tall`) puts the rest back on STAND_TALL.
 
 ### V3 — the phone's source
 
-He takes the look stance for a moment before the depth sense takes a frame while he stands,
-and before a survey or a step. A worker runs the models V2 picks on the creature's open camera, on legs only, and only while he
+A worker runs the models V2 picks on the creature's open camera, on legs only, and only while he
 walks or explores, to save battery. It feeds `gbVision` maps with the pitch from the phone's
 gravity reading and the lens height from his stance. ADE20K's classes map onto `VOCAB`, and the
 classes that are not things go to "unknown". A per-phone switch turns it on, and the PWA's Body
