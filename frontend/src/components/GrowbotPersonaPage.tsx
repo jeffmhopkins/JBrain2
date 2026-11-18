@@ -20,6 +20,7 @@ import {
   EYES,
   type Eye,
   FACES,
+  type GrowbotStand,
   type GrowbotTalk,
   MEMORY,
   type MemoryId,
@@ -28,6 +29,7 @@ import {
   REGIONS,
   type RegionInfo,
   SAFETY_NOTE,
+  STANDS,
   TALKS,
   ago,
   clip,
@@ -39,6 +41,7 @@ import {
   regionText,
   robotName,
   selfName,
+  standOf,
   talkOf,
   when,
   where,
@@ -141,6 +144,15 @@ export function GrowbotPersonaPage({
   const boxTalk = persona.prefs ? talkOf(persona.prefs) : null;
   if (talkSaved && talkSaved.over !== boxTalk) setTalkSaved(null);
   const savedTalk = talkSaved && talkSaved.over === boxTalk ? talkSaved.talk : null;
+  // And where its legs rest.
+  const [standing, setStanding] = useState<GrowbotStand | null>(null);
+  const [standSaved, setStandSaved] = useState<{
+    stand: GrowbotStand;
+    over: GrowbotStand | null;
+  } | null>(null);
+  const boxStand = persona.prefs ? standOf(persona.prefs) : null;
+  if (standSaved && standSaved.over !== boxStand) setStandSaved(null);
+  const savedStand = standSaved && standSaved.over === boxStand ? standSaved.stand : null;
   const [restoring, setRestoring] = useState<GrowbotCheckpoint | null>(null);
   const [mems, setMems] = useState<GrowbotMemory[] | null>(null);
   const [memError, setMemError] = useState("");
@@ -768,9 +780,32 @@ export function GrowbotPersonaPage({
     }
   }
 
+  /** As the talk style. The page reads it as it opens, so it takes effect on the next open;
+   *  Upright drops the key, leaving the page's default. */
+  async function pickStand(stand: GrowbotStand) {
+    if (stand === (savedStand ?? boxStand) || standing !== null) return;
+    setStanding(stand);
+    try {
+      await api.setGrowbotPersonaPrefs(
+        p.id,
+        stand === "tall" ? { gb_rest_stand: "tall" } : {},
+        stand === "tall" ? [] : ["gb_rest_stand"],
+      );
+      setStandSaved({ stand, over: boxStand });
+      onChanged();
+      const how = stand === "tall" ? "tall, at 50/130" : "upright, at 40/140";
+      say(`${p.name} rests ${how} from the next time it opens.`);
+    } catch (e) {
+      say(`The standing pose didn't change — ${message(e)}`);
+    } finally {
+      setStanding(null);
+    }
+  }
+
   function manageTab() {
     const current = facing ?? detail?.face ?? p.face;
     const talkNow = talking ?? savedTalk ?? boxTalk ?? "kid";
+    const standNow = standing ?? savedStand ?? boxStand ?? "upright";
     const eye = eyeing ?? savedEye ?? boxEye ?? "front";
     return (
       <section className="gb-card">
@@ -821,6 +856,24 @@ export function GrowbotPersonaPage({
                 checked={talkNow === t.id}
                 disabled={talking !== null}
                 onChange={() => void pickTalk(t.id)}
+              />
+              <span className="gb-tx">
+                {t.name}
+                <em>{t.what}</em>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        <fieldset className="gb-choices">
+          <legend>Standing pose</legend>
+          {STANDS.map((t) => (
+            <label key={t.id} className={`gb-choice${standNow === t.id ? " sel" : ""}`}>
+              <input
+                type="radio"
+                name={`gb-stand-${p.id}`}
+                checked={standNow === t.id}
+                disabled={standing !== null}
+                onChange={() => void pickStand(t.id)}
               />
               <span className="gb-tx">
                 {t.name}

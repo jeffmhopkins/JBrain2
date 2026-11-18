@@ -5002,6 +5002,21 @@ REST_STAND_PATCHES: list[tuple[str, str, str, int]] = [
         "holdPose({l:STAND_REST.l,r:STAND_REST.r},STAND_REST.ms,HOLD_IDLE_S,true,true)",
         2,
     ),
+    # His prompt says where the rest goes, so legs read at 40/140 are not a STAND TALL to fix.
+    (
+        "v3/next.html",
+        "your legs glide to your tall stance (your STAND TALL shape) and then",
+        "your legs glide to your resting stance (\"+(STAND_REST===STAND_TALL?\"your STAND TALL"
+        " shape\":\"a little more upright than STAND TALL, about {l:40, r:140}\")+\") and then",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var STAND_TALL={l:50,r:130,ms:600}; var STAND_REST=",
+        "var STAND_TALL={l:50,r:130,ms:600};"
+        " /* the rest stance, a little more upright (REST_STAND_PATCHES) */ var STAND_REST=",
+        1,
+    ),
 ]
 PATCHES += REST_STAND_PATCHES
 

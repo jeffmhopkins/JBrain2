@@ -12,9 +12,9 @@
    from the maps on, reduce() and what the page does with a scene, is this one file in both, so
    a sim run tests the real logic and the sim's blank walls stop mattering.
 
-   His camera sits about 10 cm off the floor and looks 31 degrees up in his tall stance (47 on
-   neutral legs), so the floor shows only from about 0.9 m out: "where the floor ends" cannot
-   see the half metre that matters. What can is each
+   His camera sits about 10 cm off the floor and looks 28 degrees up at rest (47 on neutral
+   legs, as a trained walk ends), so the floor shows only from about 0.6 m out: "where the floor
+   ends" cannot see the half metre that matters. What can is each
    pixel's place in the room (from its depth, the pitch and the lens height): how far away it is
    across the floor, which way, and how high. Anything below HMAX is something he would walk
    into; the nearest of those in each direction is how far he can go that way.

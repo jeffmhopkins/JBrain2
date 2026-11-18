@@ -125,8 +125,8 @@ be within 15% from 0.2 to 2 m. If a model fails, the fallback is sending a small
 and running the model on its GPU, at the cost of a LAN round trip.
 
 A body check comes with it: the lens's real height off the floor, and whether the rest at
-40/140 that V1 brought in stands steady on the real legs. If it does not, `?reststand=tall` (or
-the synced pref `gb_rest_stand=tall`) puts the rest back on STAND_TALL.
+40/140 that V1 brought in stands steady on the real legs. If it does not, Standing pose: Tall on the
+persona's Manage tab puts the rest back on STAND_TALL.
 
 ### V3 — the phone's source
 
