@@ -315,6 +315,37 @@ def test_a_corner_taken_on_the_wrong_hand_changes_hands() -> None:
     assert b["walk"] == {"turn": 165} and side == 1 and "changed hands" in why
 
 
+def test_a_wall_that_falls_away_pulls_him_in_harder() -> None:
+    """f14 walked straight across a doorway: clear walk after clear walk, the probe grows."""
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0};"
+        "const h=(hd)=>({x:0,y:0,h:hd,room:'r'});const out=[];let hd=0;"
+        "P.wallStep(tr,h(hd),1,false);"
+        "for(let i=0;i<5;i++){const t=P.wallStep(tr,h(hd),2,false);out.push(t.walk.turn);"
+        "hd+=t.walk.turn;P.wallStep(tr,h(hd),3,false);}"
+        "const b=P.wallStep(tr,h(hd),4,true);P.wallStep(tr,h(hd+90),5,false);"
+        "out.push(P.wallStep(tr,h(hd+90),6,false).walk.turn);"
+        "console.log(JSON.stringify([out,b.walk.turn]))"
+    )
+    probes, away = got
+    assert probes == [-15, -15, -30, -30, -45, -15] and away == 90
+
+
+def test_a_grown_probe_that_wedges_him_backs_out_to_the_small_one() -> None:
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0};"
+        "const h=(hd)=>({x:0,y:0,h:hd,room:'r'});let hd=0;"
+        "P.wallStep(tr,h(hd),1,false);"
+        "for(let i=0;i<5;i++){const t=P.wallStep(tr,h(hd),2,false);"
+        "hd+=t.walk.turn;P.wallStep(tr,h(hd),3,false);}"
+        "const g=P.wallStep(tr,h(hd),4,false);const w=P.wallStep(tr,h(hd),5,false,true);"
+        "const n=P.wallStep(tr,h(hd),6,false);"
+        "console.log(JSON.stringify([g.walk.turn,w.walk.dir,tr.clear,n.walk.turn]))"
+    )
+    # Six clear walks grew the probe to 45; that turn wedged him, so back out and try 15.
+    assert got == [-45, "back", 0, -15]
+
+
 def test_a_way_whose_walk_is_blocked_ends_there() -> None:
     got = _node(
         "console.log(JSON.stringify(P.step({abs:90,x:0,y:0,t:0},{x:0,y:0.3,h:90},1000,false,true)))"

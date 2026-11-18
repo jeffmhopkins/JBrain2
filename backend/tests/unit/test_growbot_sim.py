@@ -493,3 +493,21 @@ def test_a_room_he_calls_by_a_short_form_is_the_house_room() -> None:
     assert simplan._room_match(h, "hall") == "hallway"
     assert simplan._room_match(h, "the living room") == "living room"
     assert simplan._room_match(h, "start") == ""
+
+
+def test_each_maze_house_has_its_own_explore_run_alone_from_its_start() -> None:
+    for k in (1, 2, 3):
+        name = f"explore_maze{k}"
+        setup = simscen.SETUP[name]
+        assert simscen.SCENARIOS[name].__name__ == name
+        # No set-down of its own: the house puts him at its start, in the living room.
+        assert setup["scene"] == f"maze{k}" and "at" not in setup and setup["person"] is None
+
+
+def test_a_run_without_a_set_down_starts_at_its_houses_start() -> None:
+    """The maze runs once stood him at the origin, which in maze2 is inside a wall."""
+    house = type("L", (), {"start": (-2.9, 0.75, 45.0)})()
+    assert simrun.Options(model="m").at is None
+    assert simrun.set_down(None, house) == (-2.9, 0.75, 45.0)
+    assert simrun.set_down(None, None) == (0.0, 0.0, 0.0)
+    assert simrun.set_down((1.0, 2.0, 90.0), house) == (1.0, 2.0, 90.0)

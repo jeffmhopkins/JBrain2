@@ -115,8 +115,14 @@
     if (tr.into !== undefined && (tr.steps || 0) - tr.into >= 2) return { done: "you went through into the " + h.room, gone: gone };
     if (now - tr.t > WALL_MS) return { done: "it ran its twenty minutes", gone: gone };
     if (tr.blocks >= WALL_BLOCKS) return { done: "something kept being in the way", gone: gone };
-    // The last turn went nowhere (gbMap's spin_stuck): back out first, then the same turn.
-    if (wedged && !tr.walked) { tr.blocks++; tr.why = "wedged"; return { walk: { gait: "screen_backward", dir: "back", secs: BACK_S }, gone: gone }; }
+    // The last turn went nowhere (gbMap's spin_stuck): back out first, then the same turn,
+    // or, if a grown probe was what wedged him, the first small one again.
+    if (wedged && !tr.walked) {
+      tr.blocks++; tr.why = "wedged";
+      if ((tr.clear || 0) > 2 && typeof tr.h0 === "number") tr.want = wrap(tr.h0 - (tr.side === -1 ? -1 : 1) * PROBE_DEG);
+      tr.clear = 0;
+      return { walk: { gait: "screen_backward", dir: "back", secs: BACK_S }, gone: gone };
+    }
     if (tr.walked) {
       tr.walked = false;
       // With the wall on his right, running into it swings him to the right as he walks: over
@@ -131,7 +137,12 @@
       // A clear walk's probe is taken from where that walk set out, not where it ended: a walk
       // drifts up to 20 degrees either way (f8-f9, mf4-mf6), and turning on from the end let the
       // drift add up, so he ground into the wall or wandered off it.
-      tr.want = blocked ? wrap(h.h + side * 90) : wrap((typeof tr.h0 === "number" ? tr.h0 : h.h) - side * PROBE_DEG);
+      // Clear walk after clear walk means the wall has fallen away (f14 walked straight across
+      // the living room's doorway, 15 degrees at a time): the probe grows, 15, 30, then 45, so
+      // an opening pulls him in. Anything that stops him starts it at 15 again.
+      tr.clear = blocked ? 0 : (tr.clear || 0) + 1;
+      var probe = PROBE_DEG * Math.min(3, Math.ceil(tr.clear / 2));
+      tr.want = blocked ? wrap(h.h + side * 90) : wrap((typeof tr.h0 === "number" ? tr.h0 : h.h) - side * probe);
       // A second wall within a couple of walks that would turn him back the way he came is a
       // corner taken on the wrong hand (f11: heading north into the corner by the door with the
       // wall on his right but following it on his left, he turned east into the side wall,

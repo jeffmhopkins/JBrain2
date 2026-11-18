@@ -669,9 +669,10 @@ _FLAT_AWAY = ("kitchen", "bedroom", "study")
 @scenario(scene="flat", start="standing", at=_FLAT_START, person=None, timeout=1800)
 async def explore_flat(sim: Sim) -> None:
     """Alone for twenty-five minutes in the flat, started in the living room's corner behind
-    the couch. (At his trained walk's 4 cm/s the way round the couch to the door is about four
-    minutes of walking alone; in fifteen, f8 was on its way through the gap when time ran out.) The two-room house is small enough to see most of from where he starts; here the
-    rest of the flat is out of sight behind a door, so only walking finds it. Catches: an
+    the couch. (At his trained walk's 4 cm/s the way round the couch to the door is about
+    four minutes of walking alone; in fifteen, f8 was on its way through the gap when time
+    ran out.) The two-room house is small enough to see most of from where he starts; here
+    the rest of the flat is out of sight behind a door, so only walking finds it. Catches: an
     explorer that turns on the spot, one that never finds the way out of its first room, and
     one that reaches the hallway and stops there."""
     t = sim.now()
@@ -730,3 +731,35 @@ async def map_flat(sim: Sim) -> None:
 
 def _said_since(sim: Sim, t: float, words: str) -> bool:
     return any(words in str(r.get("say", "")).lower() for r in _answers_since(sim, t))
+
+
+async def _explore_maze(sim: Sim) -> None:
+    """Alone for twenty-five minutes in a small maze house (growbot_train's house.maze: six
+    rooms of 2.6 m joined at random, furniture against the walls), so exploring is not tuned
+    to the flat's one floor plan (owner, 2026-11-18: "randomized small maze like houses as a
+    test case too"). He starts in the living room, facing a way the seed picks."""
+    t = sim.now()
+    await sim.wait(1500)
+    stats = plan.stats(sim)
+    rooms = stats.get("rooms_s") or {}
+    away = sorted(r for r, secs in rooms.items() if secs > 0 and r != "living room")
+    own = _page_events_since(sim, t, "walk_start")
+    sim.check(bool(own), "he walked on his own", walks=len(own))
+    sim.check(bool(away), "he found a way out of the living room", rooms_s=rooms)
+    sim.check(len(away) >= 2, "he went on into a second room beyond it", rooms=away)
+    sim.check(_upright(sim), "on his feet at the end")
+
+
+# One scenario per maze house the training repo builds, each its own name so a run can pick
+# one (explore_maze1 ...).
+def _maze_scenario(k: int) -> Scenario:
+    async def run(sim: Sim) -> None:
+        await _explore_maze(sim)
+
+    run.__name__ = run.__qualname__ = f"explore_maze{k}"
+    run.__doc__ = _explore_maze.__doc__
+    return scenario(scene=f"maze{k}", start="standing", person=None, timeout=1800)(run)
+
+
+for _k in (1, 2, 3):
+    _maze_scenario(_k)
