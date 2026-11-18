@@ -113,6 +113,9 @@ def _last_user(req: dict[str, Any]) -> str:
     return ""
 
 
+VIDEO_MAX_S = 600.0
+
+
 def _video(sim: Sim, path: Path) -> bool:
     """The onlooker's view, replayed from the recorded poses, beside the camera's pictures."""
     try:
@@ -176,9 +179,10 @@ def write(sim: Sim) -> Path:
     ]
     (out / "model_calls.json").write_text(json.dumps(calls, indent=1))
     (out / "requests.json").write_text(json.dumps([c["request"] for c in sim.box.calls]))
-    # The house's scenarios run for minutes: the floor plan shows where he went, and the
-    # onlooker video, which re-renders every pose, is left to the short ones in the room.
-    video = sim.o.scene != "house" and _video(sim, out / "run.mp4")
+    # A run of minutes (the house, the battery's mazes) gets the floor plan only: the onlooker
+    # video re-renders every pose, which took a 25-minute battery run past its child's timeout.
+    long_run = bool(sim.states) and sim.states[-1]["t"] - sim.states[0]["t"] > VIDEO_MAX_S
+    video = sim.o.scene != "house" and not long_run and _video(sim, out / "run.mp4")
     walk = plan.stats(sim)
     (out / "plan.svg").write_text(plan.svg(sim))
     said = plan.replies(sim)

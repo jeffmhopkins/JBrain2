@@ -712,7 +712,7 @@
   var lastGo = null;
   function goRoute(pts) {
     var i = 0, turning = false, best = Infinity, bestT = Date.now(), bestE = Infinity, go = { pts: pts, i: 0, why: "" };
-    var t0 = Date.now(), m0 = soulMap(), len = 0, p0 = m0 ? m0.here : pts[0];
+    var lastT = Date.now(), reckonedMs = 0, m0 = soulMap(), len = 0, p0 = m0 ? m0.here : pts[0];
     for (var k0 = 0; k0 < pts.length; k0++) {
       var a0 = k0 ? pts[k0 - 1] : p0;
       len += Math.hypot(pts[k0].x - a0.x, pts[k0].y - a0.y);
@@ -742,7 +742,10 @@
       if (!turning) bestE = Infinity;
       else if (e < bestE - GO_TURN_PROGRESS_DEG) { bestE = e; bestT = now; }
       if (now - bestT > GO_PROGRESS_MS) return end("stuck");
-      if (!poseNow() && now - t0 > budgetMs) return end("too_long");
+      // Only time on a reckoned pose counts: a fed route's feed pausing a second is no reason.
+      if (!poseNow()) reckonedMs += now - lastT;
+      lastT = now;
+      if (reckonedMs > budgetMs) return end("too_long");
       return { heading: err, speed: turning ? 0 : 1 };
     };
     go.fn = fn;
