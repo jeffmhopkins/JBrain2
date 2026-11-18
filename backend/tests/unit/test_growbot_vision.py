@@ -326,3 +326,34 @@ def test_the_creature_page_loads_it_and_its_line_rides_his_next_thought() -> Non
     i = page.index("window.gbVision.take()")
     assert page.index("window.gbPano.take()") < i
     assert page.index('parts.push({type:"text",text:userMsg});', i) > i
+
+
+def test_he_rests_a_little_more_upright_than_stand_tall_unless_told_not_to() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    i = page.index("var STAND_REST=")
+    decl = page[i : page.index(";", page.index("})()", i)) + 1]
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    prog = (
+        "const STAND_TALL={l:50,r:130,ms:600}; const out=[];"
+        "for (const [q, saved] of [['', null], ['?reststand=tall', null], ['', 'tall']]) {"
+        " globalThis.location={search:q};"
+        " globalThis.localStorage={getItem:(k)=>k==='gb_rest_stand'?saved:null};"
+        f" {decl} out.push(STAND_REST); }}"
+        "console.log(JSON.stringify(out))"
+    )
+    got = json.loads(
+        subprocess.run([node, "-e", prog], capture_output=True, text=True, check=True).stdout
+    )
+    assert got == [
+        {"l": 40, "r": 140, "ms": 600},
+        {"l": 50, "r": 130, "ms": 600},
+        {"l": 50, "r": 130, "ms": 600},
+    ]
+    # The rest glide, the hold after it and an asked stand use it; the get-up's push-up keeps
+    # STAND_TALL.
+    assert page.count("STAND_REST.l") == 4
+    assert "{l:STAND_TALL.l,r:STAND_TALL.r,ms:STAND_TALL.ms}" not in page
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "gb_rest_stand: 1" in box

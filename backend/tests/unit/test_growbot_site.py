@@ -5745,7 +5745,7 @@ def test_standing_on_legs_his_legs_stay_held() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
         "if(!fold&&_gbHoldStanding(1)&&_motion&&_motion.rest===from)"
-        " holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);" in page
+        " holdPose({l:STAND_REST.l,r:STAND_REST.r},STAND_REST.ms,HOLD_IDLE_S,true,true);" in page
     )
     assert "if(n>=_holdEnd&&_holdIdle&&_gbHoldStanding()){ _holdEnd=n+HOLD_IDLE_S*1000;" in page
     assert 'stopMotion(); if(_gbHoldStanding()) _restTall("stop");' in page

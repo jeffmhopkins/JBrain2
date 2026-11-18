@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=74d77e458345"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-vision.js?v=58db865c162e"></script><script src="/growbot-pano.js?v=139904412435"></script><script src="/growbot-map.js?v=817786497a5e"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=81c5cd45fc30"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-vision.js?v=58db865c162e"></script><script src="/growbot-pano.js?v=139904412435"></script><script src="/growbot-map.js?v=817786497a5e"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -3717,7 +3717,7 @@ function moveLegs(o){
    flat", and its 60 s holds at 130/50 from 18:10:30 must stay down; 0928 round 5: a gesture or spin held down that way
    and ending mid-pose folds down first instead of letting go, see _restTall). The fall and tip paths never come here:
    hold_abort, gait_abort and reflex_getup not_upright let go with holdStop(false) / stopMotion, as before. */
-var STAND_TALL={l:50,r:130,ms:600};   // THE tall pose: the guide's STAND TALL / PUSH UP line and the fall get-up's push-up (resttalltest pins that the guide says these numbers)
+var STAND_TALL={l:50,r:130,ms:600}; var STAND_REST=(function(){ var v=null; try{ v=new URLSearchParams(location.search).get("reststand"); }catch(e){} if(v==null){ try{ v=localStorage.getItem("gb_rest_stand"); }catch(e){} } return v==="tall"?STAND_TALL:{l:40,r:140,ms:600}; })();   // THE tall pose: the guide's STAND TALL / PUSH UP line and the fall get-up's push-up (resttalltest pins that the guide says these numbers)
 var REST_TALL=(function(){ var v=null; try{ v=new URLSearchParams(location.search).get("rest"); }catch(e){} if(v==null){ try{ v=localStorage.getItem("gb_rest"); }catch(e){} } return v!=="0"; })();   // kill switch: ?rest=0 or localStorage gb_rest=0
 var REST_DOWN_RE=/\b(?:lie|lay|lying|laying)\b[^.!?]{0,20}?\b(?:down|flat)\b|\b(?:sleep|asleep|nap|bedtime)\b|\bgo to bed\b|\bsit down\b/i;
 var DOWN_WORD_RE=/\b(?:lie|lies|lay|lays|lying|laying|down|flat|floor|ground|still|stay|stays|staying|remain|remains|remaining|without)\b|\bon(?:to)?\s+(?:your|my|its)\s+back\b/i;   // 0928 (round 5): POSTURE WORDS, a closed set of words, not phrases (rounds 2-4 grew a phrase list and every review found a paraphrase it missed). Read only from the person's clear words, only while a lie-down window is open, and only after GETUP_ASK_RE has run (so "no more staying down, stand up" releases): they restart the window, drop a pending lift, and a request holding one names no lift (see _downAskNote, _downLiftFor). Never read from the agent's own words. A false hit ("slow down", "hold still") can only keep it down (a fold), never stand it up
@@ -3855,7 +3855,7 @@ function _restTall(from,pose,o,rfx){ var why=_restWhyNot(from,pose,o), g=_motion
       if(from==="hold") holdStop(false); // Clear the hold before its caller's fold fallback; this refusal only releases.
       return false; }
   }
-  moveLegs({body:{steps:[fold?{l:130,r:50,ms:700}:{l:STAND_TALL.l,r:STAND_TALL.r,ms:STAND_TALL.ms}]},_rest:from,_fold:fold}); if(!fold&&_gbHoldStanding(1)&&_motion&&_motion.rest===from) holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);
+  moveLegs({body:{steps:[fold?{l:130,r:50,ms:700}:{l:STAND_REST.l,r:STAND_REST.r,ms:STAND_REST.ms}]},_rest:from,_fold:fold}); if(!fold&&_gbHoldStanding(1)&&_motion&&_motion.rest===from) holdPose({l:STAND_REST.l,r:STAND_REST.r},STAND_REST.ms,HOLD_IDLE_S,true,true);
   if(from!=="spin") _motionGen=g; else for(var _gbQ=g+1;_gbQ<=_motionGen;_gbQ++) _gbDoneGen[_gbQ]=1;   /* filler never cancels: moveLegs' stopMotion bumps the generation, which refuses the body of a thought already in flight (motion_refused). A gesture window or a hold running out never bumped it before, so it is given back; a finished spin always did (its stopMotion), and still does */
   var up=!!(_motion&&_motion.rest===from);
   if(up&&lift){ try{ logEv("down_ask_end",{from:from,ms:Date.now()-_downAskT}); }catch(_de){} _downAskT=0; }   // 0928: it glided tall for the person's newer ask, so the lie-down is over (a failed send leaves the window open, the lift already spent)
@@ -3926,12 +3926,12 @@ function _bodyStandWhyNot(person){ try{ var why=_restWhyNot("stand",person?null:
   return ""; }catch(e){ return "err"; } }
 function _bodyStand(who,person){ var why=_bodyStandWhyNot(person), g=_motionGen;
   if(why){ if(!/^(off|wheels)$/.test(why)){ try{ logEv("rest_tall",person?{from:who,ok:0,why:why,person:1}:{from:who,ok:0,why:why}); }catch(e){} } return {ok:false,why:why}; }
-  moveLegs({body:{steps:[{l:STAND_TALL.l,r:STAND_TALL.r,ms:STAND_TALL.ms}]},_rest:who});
+  moveLegs({body:{steps:[{l:STAND_REST.l,r:STAND_REST.r,ms:STAND_REST.ms}]},_rest:who});
   _motionGen=g;                                                                                         // filler never cancels a thought in flight (the rest's own rule)
   if(!(_motion&&_motion.rest===who)) return {ok:false,why:"send"};                                      // moveLegs wrote rest_tall {ok:0, why:send}
   if(typeof _getupAutoMoved==='function')_getupAutoMoved({action:'stand',mv:{kind:'gesture'}},person);
   if(person){ _bodyStay=null; if(_downAskOpen()){ try{ logEv("down_ask_end",{from:who,ms:Date.now()-_downAskT}); }catch(e){} _downAskT=0; } }   // the person asked it up: their lie-down is over, as with "stand up"
-  if(who!=="on"||_gbHoldStanding(1)){ holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true); _bodyHoldP=_holdPose; _bodyStandBound(who); }
+  if(who!=="on"||_gbHoldStanding(1)){ holdPose({l:STAND_REST.l,r:STAND_REST.r},STAND_REST.ms,HOLD_IDLE_S,true,true); _bodyHoldP=_holdPose; _bodyStandBound(who); }
   return {ok:true}; }
 function _bodyStandBound(who){ var hp=_holdPose;   // the fall get-up's bound (_getUpBound), for an asked stand
   setTimeout(function(){ if(!hp||_holdPose!==hp||_holdWasUp||_bodyUpright()!==false) return;       // that hold already ended, or it stood (or no reading to judge by)

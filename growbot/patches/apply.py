@@ -4968,6 +4968,43 @@ VISION_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += VISION_PATCHES
 
+# His rest a little more upright (owner, 2026-11-18: "maybe default standing stance should be
+# more upright", "Do it"): the glide every move ends with and the hold after it go to 40/140
+# (0.87 rad) instead of STAND_TALL's 50/130 (0.7 rad). In the sim that tips his camera from 31 to
+# 28 degrees up, and the floor shows from about 0.6 m out instead of 0.9, for the depth sense.
+# STAND_TALL itself, the fall get-up's push-up, is unchanged. ?reststand=tall or localStorage
+# gb_rest_stand=tall puts the rest back on STAND_TALL, should the body not stand steady on it.
+REST_STAND_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "var STAND_TALL={l:50,r:130,ms:600};",
+        "var STAND_TALL={l:50,r:130,ms:600};"
+        " var STAND_REST=(function(){ var v=null; try{ v=new URLSearchParams(location.search)"
+        '.get("reststand"); }catch(e){} if(v==null){ try{ v=localStorage.getItem("gb_rest_stand");'
+        ' }catch(e){} } return v==="tall"?STAND_TALL:{l:40,r:140,ms:600}; })();',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "{l:STAND_TALL.l,r:STAND_TALL.r,ms:STAND_TALL.ms}]},_rest:from,_fold:fold});",
+        "{l:STAND_REST.l,r:STAND_REST.r,ms:STAND_REST.ms}]},_rest:from,_fold:fold});",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "moveLegs({body:{steps:[{l:STAND_TALL.l,r:STAND_TALL.r,ms:STAND_TALL.ms}]},_rest:who});",
+        "moveLegs({body:{steps:[{l:STAND_REST.l,r:STAND_REST.r,ms:STAND_REST.ms}]},_rest:who});",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true)",
+        "holdPose({l:STAND_REST.l,r:STAND_REST.r},STAND_REST.ms,HOLD_IDLE_S,true,true)",
+        2,
+    ),
+]
+PATCHES += REST_STAND_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
