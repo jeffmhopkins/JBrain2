@@ -31,9 +31,10 @@
   var MOVED_M = 0.3, KEEP_MS = 180000, NEW_DEG = 40, MIN_DEG = 120, GAP_MS = 8000;
   var GO_M = 0.9, GO_MS = 120000, FACE_DEG = 20, WALK_S = 25;
   // Following the walls: short walks, a probe to the right after each clear one and a turn to
-  // the left after each blocked one, for up to WALL_MS.
+  // the left after each blocked one, for up to WALL_MS (mf9 ran out of ten minutes at the
+  // living room's door, at his 4 cm a second).
   // His walk drifts right on its own (f5-f7), so the probe right is small.
-  var BACK_S = 6, WALL_WALK_S = 12, WALL_MS = 600000, PROBE_DEG = 15, WALL_BLOCKS = 16, SWING_DEG = 25;
+  var BACK_S = 6, WALL_WALK_S = 12, WALL_MS = 1200000, PROBE_DEG = 15, WALL_BLOCKS = 16, SWING_DEG = 25;
   // His picture standing still while he walks forward (mean grey change per pixel, 2 s apart,
   // three in a row): in the flat (f3) 9 of 9 such runs were pushing against a wall or
   // furniture and none was walking, though it catches about a third of the pushing.
@@ -107,7 +108,7 @@
   function wallStep(tr, h, now, blocked, wedged) {
     var gone = Math.hypot(h.x - tr.x, h.y - tr.y);
     if (tr.room && h.room && h.room !== tr.room) return { done: "you went through into the " + h.room, gone: gone };
-    if (now - tr.t > WALL_MS) return { done: "it ran its ten minutes", gone: gone };
+    if (now - tr.t > WALL_MS) return { done: "it ran its twenty minutes", gone: gone };
     if (tr.blocks >= WALL_BLOCKS) return { done: "something kept being in the way", gone: gone };
     // The last turn went nowhere (gbMap's spin_stuck): back out first, then the same turn.
     if (wedged && !tr.walked) { tr.blocks++; tr.why = "wedged"; return { walk: { gait: "screen_backward", dir: "back", secs: BACK_S }, gone: gone }; }

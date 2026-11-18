@@ -741,7 +741,7 @@ way, and probing on from its end added that up) and walks 12 s; a step that is b
 drift has swung him 25 degrees in toward the wall (pushing along it turns him into it), turns him
 90 degrees away from it. Each round takes the other
 side (`"left"`/`"right"` picks one), since one side alone circled the flat's couch for good. It
-ends when his map says he is in another room, after ten minutes, or when something blocks him
+ends when his map says he is in another room, after twenty minutes, or when something blocks him
 16 times. A second wall within two walks that would turn him back the way he came means
 he took the corner on the wrong hand, so he changes hands and turns the other way from the
 first wall. While it runs his own walks are ignored, so a thought cannot cut it short; his

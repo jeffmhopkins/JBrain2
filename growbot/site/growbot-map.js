@@ -181,7 +181,8 @@
       // "room", "room1", "room a" or a bare letter tells his map nothing it can be asked for
       // later ("where is the kitchen?"), and "room N" squats the name the map gives an unnamed
       // room itself.
-      if (/^(the )?((room|area|space|place)( ?([a-z]|\d+))?|[a-z]|\d+)$/.test(n)) {
+      // mf9 called them "start" and "outside_start": a name for where he began, not the room.
+      if (/^(the )?((room|area|space|place)( ?([a-z]|\d+))?|[a-z]|\d+)$/.test(n) || /\b(start|outside|unknown|unnamed)/.test(n)) {
         return "\"" + n + "\" is not a name: call a room what it is by what is in it (a piano or couch makes a living room, a fridge or stove a kitchen, a bed a bedroom, a long narrow way with doorways off it a hallway)";
       }
       var w = num(size[0], ROOM_MIN, ROOM_MAX), d = num(size[1], ROOM_MIN, ROOM_MAX), r = roomOf(m, n), cur = here(m);

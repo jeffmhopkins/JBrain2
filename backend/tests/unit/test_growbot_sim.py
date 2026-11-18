@@ -485,3 +485,11 @@ def test_the_flat_has_its_own_explore_and_map_runs_from_the_living_room_corner()
     assert simscen.SETUP["explore_flat"]["person"] is None
     # The rooms that only walking out through the hallway reaches.
     assert set(simscen._FLAT_AWAY) == {"kitchen", "bedroom", "study"}
+
+
+def test_a_room_he_calls_by_a_short_form_is_the_house_room() -> None:
+    """mf9 drew the hallway as "hall"; "start" is no room of the flat's."""
+    h = type("H", (), {"ROOMS": ["living room", "hallway", "kitchen"]})
+    assert simplan._room_match(h, "hall") == "hallway"
+    assert simplan._room_match(h, "the living room") == "living room"
+    assert simplan._room_match(h, "start") == ""

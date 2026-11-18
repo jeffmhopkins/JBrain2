@@ -12,6 +12,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -113,8 +114,14 @@ def _match(h: Any, name: str) -> Any:
 
 
 def _room_match(h: Any, name: str) -> str:
+    """The house's room a map name means: its first word ("living"), or a short form of it
+    four letters or more ("hall" for the hallway)."""
     n = name.lower()
-    return next((r for r in h.ROOMS if r.split()[0] in n), "")
+    words = [w for w in re.split(r"[^a-z]+", n) if len(w) >= 4]
+    return next(
+        (r for r in h.ROOMS if r.split()[0] in n or any(r.split()[0].startswith(w) for w in words)),
+        "",
+    )
 
 
 def map_score(sim: Sim) -> dict[str, Any]:
