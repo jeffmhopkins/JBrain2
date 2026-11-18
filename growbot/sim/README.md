@@ -54,6 +54,18 @@ they back off) away and sideways for a minute: he walked 0.85 m after them and h
 second after. `follow_walk` circles a standing person round him; with a seated face at 1 m the camera
 tilts down, where the trained look barely turns, and he kept up only 2 runs in 5.
 
+## His depth sense
+
+`--vision truth` or `--vision noisy` (`Options.vision`, `dave_sim/vision.py`) feeds the page's
+depth sense (`growbot-vision.js`, `docs/plans/GROWBOT_VISION_PLAN.md`) about three times a second
+from the sim itself. MuJoCo renders the front camera's true depth and which geom each pixel
+shows, at 48x64, and the geom's name gives its label in the page's vocabulary. `noisy` adds a
+phone model's errors: a whole-frame scale that wanders by about 8%, 3% jitter per pixel, 2%
+holes and 5% of labels lost. The page reduces the maps with the same code a phone source would
+use, so a run tests that code and what Dave does with it, and the sim's blank walls stop
+mattering. Off by default, as on today's phone. Against rays cast in the house, its distances
+per direction came within a few centimetres of the truth.
+
 ## Running it
 
 From `growbot/sim/`, with GrowBot_Training checked out beside JBrain2 (or

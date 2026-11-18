@@ -31,6 +31,8 @@ from dave_sim.chip import Chip
 
 HERE = Path(__file__).resolve().parent
 CONTROL_DT = 0.04
+# How often his depth sense gets a frame: a phone model's pace (docs/plans/GROWBOT_VISION_PLAN.md).
+VISION_S = 0.33
 UA = (
     "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/153.0.0.0 Mobile Safari/537.36"
@@ -89,6 +91,10 @@ class Options:
     # so his camera looks toward -x). None is the scene's own start, or the origin in a scene
     # without one: a maze house's origin can fall inside a wall.
     at: tuple[float, float, float] | None = None
+    # His depth sense (growbot-vision.js) fed from the sim's true depth and labels: "off" as on
+    # today's phone, which has no source yet; "truth" as rendered; "noisy" as a phone model's
+    # would be (vision.Noise).
+    vision: str = "off"
 
 
 def set_down(at: tuple[float, float, float] | None, layout: Any) -> tuple[float, float, float]:
@@ -307,6 +313,8 @@ class Sim:
         from a copy of the scene, so the physics never waits on a picture."""
         import mujoco
 
+        from dave_sim import vision
+
         m = self.body.model
         snap = mujoco.MjData(m)
         renderer = None
@@ -325,6 +333,18 @@ class Sim:
             renderer.update_scene(snap, camera="front")
             return iio.imwrite("<bytes>", renderer.render(), extension=".jpg")
 
+        maps = None
+
+        def sense(qpos: Any, mocap_pos: Any, mocap_quat: Any) -> dict[str, Any]:
+            nonlocal maps
+            if maps is None:
+                noise = vision.Noise() if self.o.vision == "noisy" else None
+                maps = vision.Maps(m, noise)
+            snap.qpos[:], snap.mocap_pos[:], snap.mocap_quat[:] = qpos, mocap_pos, mocap_quat
+            mujoco.mj_kinematics(m, snap)
+            return maps.render(snap)
+
+        sensed = -1e9
         while True:
             t = time.monotonic()
             d = self.body.data
@@ -332,6 +352,14 @@ class Sim:
                 jpeg = await asyncio.to_thread(
                     draw, d.qpos.copy(), d.mocap_pos.copy(), d.mocap_quat.copy()
                 )
+                # A phone model's pace: a few frames a second, not every picture.
+                if self.o.vision != "off" and t - sensed >= VISION_S:
+                    sensed = t
+                    mp = await asyncio.to_thread(
+                        sense, d.qpos.copy(), d.mocap_pos.copy(), d.mocap_quat.copy()
+                    )
+                    mp["t"] = int(time.time() * 1000)
+                    await page.evaluate("v => window.gbVision && window.gbVision.feed(v)", mp)
                 if n % 8 == 0:
                     self.frames.append((self.now(), jpeg))
                 await page.evaluate("b => window.__simFrame(b)", base64.b64encode(jpeg).decode())

@@ -4946,6 +4946,28 @@ PATCHES += MAP_PATCHES
 # beside its map field.
 PATCHES += PANO_PATCHES
 
+# His depth sense (owner, 2026-11-18), growbot-vision.js: a source's depth and label maps of his
+# camera reduced to how far things are each way, which open ways there are and what is in view.
+# Its line rides his next thought on legs when a source is feeding it; with none (today's
+# phone) it says nothing. After the pano's, whose strip goes in front of it.
+VISION_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        '<script src="/growbot-talklog.js"></script>',
+        '<script src="/growbot-talklog.js"></script><script src="/growbot-vision.js"></script>',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '  parts.push({type:"text",text:userMsg});',
+        "  try{ var _gbVs=camOn&&window.gbVision&&window.gbVision.take&&window.gbVision.take();"
+        " if(_gbVs) parts.push({type:\"text\",text:_gbVs}); }catch(_gbVe){}\n"
+        '  parts.push({type:"text",text:userMsg});',
+        1,
+    ),
+]
+PATCHES += VISION_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
@@ -5070,6 +5092,7 @@ OWN_SCRIPTS = (
     "growbot-talklog.js",
     "growbot-map.js",
     "growbot-pano.js",
+    "growbot-vision.js",
     "growbot-camtest.js",
 )
 
@@ -5113,6 +5136,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     shutil.copyfile(HERE / "growbot-talklog.js", site / "growbot-talklog.js")
     shutil.copyfile(HERE / "growbot-map.js", site / "growbot-map.js")
     shutil.copyfile(HERE / "growbot-pano.js", site / "growbot-pano.js")
+    shutil.copyfile(HERE / "growbot-vision.js", site / "growbot-vision.js")
     # Imported by growbot-box.js's trained walks, as growbot_runner.js is: no script tag.
     shutil.copyfile(HERE / "growbot-drive.js", site / "growbot-drive.js")
     shutil.copyfile(HERE / "growbot-follow.js", site / "growbot-follow.js")

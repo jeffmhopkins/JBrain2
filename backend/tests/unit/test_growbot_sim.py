@@ -511,3 +511,84 @@ def test_a_run_without_a_set_down_starts_at_its_houses_start() -> None:
     assert simrun.set_down(None, house) == (-2.9, 0.75, 45.0)
     assert simrun.set_down(None, None) == (0.0, 0.0, 0.0)
     assert simrun.set_down((1.0, 2.0, 90.0), house) == (1.0, 2.0, 90.0)
+
+
+simvision = importlib.import_module("dave_sim.vision")
+
+
+def test_the_sims_depth_sense_labels_in_the_pages_own_words() -> None:
+    page = (_SIM.parent / "patches" / "growbot-vision.js").read_text(encoding="utf-8")
+    start = page.index("var VOCAB = [")
+    words = json.loads(page[start + len("var VOCAB = ") : page.index("];", start) + 1])
+    # A label is an index into the page's list: the two must not drift apart.
+    assert list(simvision.VOCAB) == words
+    got = {
+        n: simvision.label_of(n)
+        for n in (
+            "floor",
+            "rug",
+            "house_ceiling",
+            "house_wall_w",
+            "house_lintel_0",
+            "house_divide_s",
+            "piano_case",
+            "couch_arm_1",
+            "bookshelf",
+            "lamp_shade",
+            "cat_body",
+            "table_leg_1_1",
+            "counter_top",
+            "kettle",
+            "face",
+            "torso",
+            "torso_core",
+            "lower_leg_1",
+            "phone",
+            "mystery",
+        )
+    }
+    assert got == {
+        "floor": "floor",
+        "rug": "floor",
+        "house_ceiling": "ceiling",
+        "house_wall_w": "wall",
+        "house_lintel_0": "wall",
+        "house_divide_s": "wall",
+        "piano_case": "piano",
+        "couch_arm_1": "sofa",
+        "bookshelf": "shelf",
+        "lamp_shade": "lamp",
+        "cat_body": "animal",
+        "table_leg_1_1": "table",
+        "counter_top": "counter",
+        "kettle": "counter",
+        "face": "person",
+        "torso": "person",
+        "torso_core": "self",
+        "lower_leg_1": "self",
+        "phone": "self",
+        "mystery": "unknown",
+    }
+
+
+def test_the_sims_phone_like_noise_wanders_in_scale_and_loses_some_pixels() -> None:
+    np = pytest.importorskip("numpy")
+    noise = simvision.Noise(rng=np.random.default_rng(1))
+    depth = np.full((64, 48), 2.0)
+    labels = np.full((64, 48), simvision.VOCAB.index("wall"), dtype=np.uint8)
+    scales = []
+    for _ in range(40):
+        d, lab = noise.apply(depth, labels)
+        live = d > 0
+        scales.append(float(np.median(d[live])) / 2.0)
+        assert 0.005 < 1 - live.mean() < 0.05
+        assert 0.02 < (lab == 0).mean() < 0.09
+    # Off by up to a few tenths, not the same every frame, and about right on the whole.
+    assert 0.03 < float(np.std(scales)) < 0.15
+    assert abs(float(np.mean(scales)) - 1) < 0.08
+    # The input is left as it was.
+    assert (depth == 2.0).all() and (labels == simvision.VOCAB.index("wall")).all()
+
+
+def test_a_run_leaves_his_depth_sense_off_unless_asked() -> None:
+    assert simrun.Options(model=None).vision == "off"

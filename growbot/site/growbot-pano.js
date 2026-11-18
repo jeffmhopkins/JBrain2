@@ -39,6 +39,10 @@
   // three in a row): in the flat (f3) 9 of 9 such runs were pushing against a wall or
   // furniture and none was walking, though it catches about a third of the pushing.
   var BLOCK_FLOW = 2.5, BLOCK_N = 3;
+  // His depth sense (growbot-vision.js), when a source feeds it: a trip or a round of the walls
+  // does not walk into what it sees this close ahead, and each way on the strip says how far
+  // it is clear, from the directions he looked along from this spot (within WAY_DEG of it).
+  var SEE_STOP_M = 0.3, WAY_DEG = 12;
 
   function wrap(a) { a = ((a + 180) % 360 + 360) % 360 - 180; return a === -180 ? 180 : a; }
 
@@ -85,7 +89,7 @@
   }
   /* One step of a trip along a chosen way: turn to face it, walk while it is not walked yet,
      and end once he has gone GO_M from where it began, or after GO_MS. */
-  function step(tr, h, now, walking, blocked) {
+  function step(tr, h, now, walking, blocked, ahead) {
     var gone = Math.hypot(h.x - tr.x, h.y - tr.y);
     if (blocked) return { done: "something was in the way", gone: gone };
     if (gone >= GO_M) return { done: "arrived", gone: gone };
@@ -95,6 +99,7 @@
     if (walking) return { gone: gone };
     // A whole walk that got him nowhere: a wall or furniture is on that way.
     if (tr.from && Math.hypot(h.x - tr.from.x, h.y - tr.from.y) < BLOCK_M) return { done: "something was in the way", gone: gone };
+    if (typeof ahead === "number" && ahead < SEE_STOP_M) return { done: "you saw something " + ahead + " m ahead on that way", gone: gone };
     tr.from = { x: h.x, y: h.y };
     return { walk: { gait: "screen_forward", dir: "fwd", secs: WALK_S }, gone: gone };
   }
@@ -105,7 +110,7 @@
      right, back toward the wall, before the next. With no wall noticed every probe turns him
      further right, so he circles (f5, in a corner): noticing the walls is what makes it work. It ends when his map has him in another room,
      after WALL_MS, or when it keeps hitting things. blocked says the last walk was stopped. */
-  function wallStep(tr, h, now, blocked, wedged) {
+  function wallStep(tr, h, now, blocked, wedged, ahead) {
     var gone = Math.hypot(h.x - tr.x, h.y - tr.y);
     // Into another room by his map: two more walks carry him clear of the doorway (mf10 ended
     // its round in the doorway by his map's reckoning and spent ten minutes there).
@@ -162,6 +167,12 @@
       tr.want = null;
     }
     tr.walked = true; tr.h0 = +h.h; tr.steps = (tr.steps || 0) + 1;
+    // Seen right ahead: the wall he would have walked into, found without the bump.
+    if (typeof ahead === "number" && ahead < SEE_STOP_M) {
+      var st = wallStep(tr, h, now, true, false);
+      tr.why += ", seen " + ahead + " m";
+      return st;
+    }
     return { walk: { gait: "screen_forward", dir: "fwd", secs: WALL_WALK_S }, gone: gone };
   }
   // Whether the last BLOCK_N picture changes (newest last) say he is pushing, not walking.
@@ -171,10 +182,32 @@
     return true;
   }
 
-  var api = { column: column, marks: marks, seenDeg: seenDeg, wrap: wrap, ways: ways, step: step, wallStep: wallStep, blockedRun: blockedRun, CAM_HFOV: CAM_HFOV, FW: FW, PX_DEG: PX_DEG };
+  /* How far each way is clear by his depth sense, from what he saw along it from this spot:
+     the nearest thing within WAY_DEG of the way's middle, or how far it was clear; null where
+     he did not look. seen holds {h (absolute degrees), m (null when clear), open}. */
+  function wayClear(seen, ws) {
+    return ws.map(function (w) {
+      var near = null, open = null;
+      seen.forEach(function (s) {
+        if (Math.abs(wrap(s.h - w.abs)) > WAY_DEG) return;
+        if (s.m !== null) near = near === null ? s.m : Math.min(near, s.m);
+        else open = open === null ? s.open : Math.min(open, s.open);
+      });
+      return near !== null ? { n: w.n, m: near } : open !== null ? { n: w.n, m: null, open: open } : null;
+    });
+  }
+  function clearText(cl) {
+    var known = cl.filter(function (c) { return c; });
+    if (!known.length) return "";
+    return " By your depth sense, along each way from here: " + cl.map(function (c, i) {
+      return (i + 1) + " " + (!c ? "not looked along" : c.m === null ? "clear " + c.open + " m or more" : "blocked at " + c.m + " m");
+    }).join("; ") + ".";
+  }
+
+  var api = { column: column, wayClear: wayClear, clearText: clearText, marks: marks, seenDeg: seenDeg, wrap: wrap, ways: ways, step: step, wallStep: wallStep, blockedRun: blockedRun, CAM_HFOV: CAM_HFOV, FW: FW, PX_DEG: PX_DEG };
 
   if (typeof window !== "undefined" && typeof document !== "undefined") {
-    var shots = [], at = null, lastSent = { t: 0, seen: 0 }, shown = null, trip = null, survey = 0, lastTrip = null;
+    var shots = [], depths = [], lastScene = null, at = null, lastSent = { t: 0, seen: 0 }, shown = null, trip = null, survey = 0, lastTrip = null;
     var here = function () {
       try { var m = window.gbMap && window.gbMap.map && window.gbMap.map(); return m && m.here; } catch (e) { return null; }
     };
@@ -187,7 +220,14 @@
         var v = video(), h = here(), now = Date.now();
         if (!v || !h || !isFinite(+h.h)) return;
         // A strip is of one spot: walking on starts a new one.
-        if (!at || Math.hypot(h.x - at.x, h.y - at.y) > MOVED_M) { shots = []; at = { x: h.x, y: h.y }; lastSent = { t: 0, seen: 0 }; }
+        if (!at || Math.hypot(h.x - at.x, h.y - at.y) > MOVED_M) { shots = []; depths = []; at = { x: h.x, y: h.y }; lastSent = { t: 0, seen: 0 }; }
+        var sc = window.gbVision && window.gbVision.fresh && window.gbVision.fresh();
+        if (sc && sc !== lastScene && sc.h !== null) {
+          lastScene = sc;
+          depths = depths.filter(function (s) { return now - s.t < KEEP_MS; });
+          sc.cols.forEach(function (c) { depths.push({ h: wrap(sc.h + c.deg), m: c.m, open: c.open, t: now }); });
+          depths = depths.slice(-400);
+        }
         shots = shots.filter(function (s) { return now - s.t < KEEP_MS && Math.abs(wrap(s.h - h.h)) >= BIN; });
         var c = document.createElement("canvas");
         c.width = FW; c.height = FH;
@@ -223,6 +263,10 @@
         if (typeof MODE !== "undefined" && MODE !== "legs") return;
         var v = video(), h = here(), now = Date.now();
         if (!v || !h || !fwdWalking()) { thumbs = []; hist = []; flows = []; return; }
+        if (window.gbVision && window.gbVision.isPushing && window.gbVision.isPushing()) {
+          try { logEv("vision_push", { ahead: window.gbVision.fresh().ahead }); } catch (e) {}
+          window.gbVision.clearHist(); onBlocked(); return;
+        }
         var p = thumb(v);
         thumbs.push({ t: now, p: p, h: +h.h });
         hist.push(p); hist = hist.slice(-5);
@@ -304,7 +348,7 @@
             + " to put it on your map, map:{saw:\"name\",deg:N}. Look along it for a doorway or an opening into"
             + " another room (a different wall colour, a room beyond): that is where exploring goes next."
             + " The numbers 1 to 8 are the ways you can choose: explore:{go:N} turns you to way N and walks you about"
-            + " a metre along it by itself.]"
+            + " a metre along it by itself." + clearText(wayClear(depths, shown)) + "]"
         };
       } catch (e) { return null; }
     };
@@ -406,7 +450,8 @@
           try { var mm = window.gbMap.map(); if (trip.wall && trip.room && !(mm.rooms || []).some(function (r) { return r.n === trip.room; })) trip.room = h.room || ""; } catch (e) {}
           var sst = window.gbMap && window.gbMap.stuckSpinT ? window.gbMap.stuckSpinT() : 0, wedged = sst > (trip.stuckT || trip.t);
           if (wedged) trip.stuckT = sst;
-          var st = trip.wall ? wallStep(trip, h, now, bl, wedged) : step(trip, h, now, false, bl);
+          var ah = window.gbVision && window.gbVision.aheadNow ? window.gbVision.aheadNow() : null;
+          var st = trip.wall ? wallStep(trip, h, now, bl, wedged, ah) : step(trip, h, now, false, bl, ah);
           if (st.done) { lastTrip = { n: trip.n, wall: !!trip.wall, why: st.done, gone: st.gone }; try { logEv("explore_end", { n: trip.n, why: st.done, m: Math.round(st.gone * 100) / 100 }); } catch (e) {} trip = null; wake(); return; }
           spec = st.walk || null;
         } else { survey--; spec = { turn: 180 }; }
