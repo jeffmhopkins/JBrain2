@@ -89,7 +89,8 @@ def score(sim: Sim, fed: bool = True) -> dict[str, Any]:
         if s["wall"] - a["wall"] < STUCK_S - 1:
             continue
         span = states[j : i + 1]
-        moved = math.hypot(s["x"] - a["x"], s["y"] - a["y"])
+        # The farthest he got, so backing off a wall and returning is not stuck.
+        moved = max(math.hypot(p["x"] - a["x"], p["y"] - a["y"]) for p in span)
         turned = max(abs((p["nose_deg"] - a["nose_deg"] + 180.0) % 360.0 - 180.0) for p in span)
         if moved < STUCK_M and turned < STUCK_DEG:
             for k in range(j, i + 1):
