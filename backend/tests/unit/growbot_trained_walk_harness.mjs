@@ -8,7 +8,7 @@
 // is [{at, x, w}], a square face box centred at x (0..1 of the frame) and w wide, seen `at` ms
 // in; GB_WAIT is how long to watch. GB_TURN is a "turn" move's degrees and GB_SECS its time.
 // GB_GO runs a route (gbOwnGo) on the skill set instead: [{n, heading, speed} | {done}], each
-// answered for n ticks in turn.
+// answered for n ticks in turn, with a forward ask of his own 1.5 s in.
 import { register } from "node:module";
 const RUNNER = process.argv[2], BOX = process.argv[3], MOVE = process.argv[4];
 const PHONE = JSON.parse(process.argv[5]);
@@ -48,6 +48,7 @@ g._walkLog = [];
 g.dutyLeftMs = () => Math.max(0, Number(process.argv[6] || 60000) - g._walkLog.reduce((t, w) => t + w.ms, 0));
 g.policySeconds = (v, fallback, ms) => Math.min(Number(v) > 0 ? Math.max(1, Number(v)) : fallback, ms / 1000);
 let seq = 0;
+g._moveLast = null;
 g._moveRequest = (name) => ({ id: ++seq, action: name, state: "requested" });
 g._moveReport = (a, state, why) => { a.state = state; reports.push([state, why]); };
 g.stopMotion = () => { g._motionGen++; if (g._motion && g._motion.loopIv) clearTimeout(g._motion.loopIv); g._motion = null; };
@@ -93,7 +94,7 @@ FACES.forEach((f) => setTimeout(() => {
   const h = f.w * 0.75;
   if (eyes) eyes(f.w ? [{ x: f.x - f.w / 2, y: 0.4 - h / 2, width: f.w, height: h }] : []);
 }, f.at));
-let go = null, goCalls = 0;
+let go = null, goCalls = 0, goAsk = null;
 if (GO) {
   await new Promise((r) => setTimeout(r, 0));
   let k = 0, used = 0;
@@ -103,6 +104,8 @@ if (GO) {
     used++;
     return GO[k];
   }, Number(process.env.GB_SECS || 1));
+  // The model's own forward ask in the middle of it (the walk look's "send walk again").
+  setTimeout(() => { const a = g._moveRequest("walk"); goAsk = [g.gbOwnWalk({}, "fwd", a), a.state, a.reason]; }, 1500);
 } else if (FOLLOW === "dry") g.gbFollow.dry(SKILLS);
 else g.gbTrainedWalk(SKILLS || "0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, Number(process.env.GB_SECS || 1), STEER ? "d1ce0001" : "", FOLLOW === "walk", Number(process.env.GB_TURN || 0));
 let estopped = null, estopAt = -1;
@@ -118,5 +121,5 @@ const teleIv = setInterval(() => { if (g._motion && g._motion.tele) tele = g._mo
 await new Promise((r) => setTimeout(r, Number(process.env.GB_WAIT || 0) || (STEER ? 3600 : 2400)));
 clearInterval(teleIv);
 const screen = shown.length ? shown[shown.length - 1].innerHTML : "";
-console.log(JSON.stringify({ go: go && { state: go.state, mv: go.mv, why: go._gbGo }, goCalls, tele, screen, logs: logs.map((l) => l[0]), ends: logs.filter((l) => l[0] === "walk_end").map((l) => l[1]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
+console.log(JSON.stringify({ go: go && { state: go.state, mv: go.mv, why: go._gbGo }, goCalls, goAsk, tele, screen, logs: logs.map((l) => l[0]), ends: logs.filter((l) => l[0] === "walk_end").map((l) => l[1]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
 if (FOLLOW) process.exit(0);

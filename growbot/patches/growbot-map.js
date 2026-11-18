@@ -702,15 +702,25 @@
      reached, stops to turn on the spot when it is more than GO_TURN_DEG off and walks again
      once within GO_WALK_DEG (the gap keeps him from flicking between the two), and ends when
      he reaches the last, or when he stops getting closer: no range sensor says he has met a
-     wall (owner), so a walk that goes nowhere ends itself. */
+     wall (owner), so a walk that goes nowhere ends itself. That headway is only measured on a
+     fed pose: a reckoned one moves him at his pace whether the legs get anywhere or not, so on
+     it a route also ends once it has taken GO_RECKONED_X times what its length and turns
+     should. */
   var GO_REACH_M = 0.15, GO_TURN_DEG = 30, GO_WALK_DEG = 10, GO_PROGRESS_M = 0.05,
-    GO_PROGRESS_MS = 12000, GO_TURN_PROGRESS_DEG = 3, GO_MAX_POINTS = 64, GO_SECS = 30;
+    GO_PROGRESS_MS = 12000, GO_TURN_PROGRESS_DEG = 3, GO_MAX_POINTS = 64, GO_SECS = 30,
+    GO_RECKONED_X = 1.5, GO_TURN_S = 20;
   var lastGo = null;
   function goRoute(pts) {
     var i = 0, turning = false, best = Infinity, bestT = Date.now(), bestE = Infinity, go = { pts: pts, i: 0, why: "" };
+    var t0 = Date.now(), m0 = soulMap(), len = 0, p0 = m0 ? m0.here : pts[0];
+    for (var k0 = 0; k0 < pts.length; k0++) {
+      var a0 = k0 ? pts[k0 - 1] : p0;
+      len += Math.hypot(pts[k0].x - a0.x, pts[k0].y - a0.y);
+    }
+    var budgetMs = GO_RECKONED_X * (len / PACE.forward + GO_TURN_S * pts.length) * 1000;
     lastGo = go;
     function end(why) { go.why = why; return { done: why }; }
-    return function (now) {
+    var fn = function (now) {
       var m = soulMap();
       if (!m) return end("no_map");
       var h = m.here;
@@ -727,12 +737,16 @@
       var left = d;
       for (var k = i; k < pts.length - 1; k++) left += Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].y - pts[k].y);
       var e = Math.abs(err);
-      if (left < best - GO_PROGRESS_M || (turning && e < bestE - GO_TURN_PROGRESS_DEG)) { bestT = now; }
-      best = Math.min(best, left);
-      bestE = turning ? Math.min(bestE, e) : Infinity;
+      // Each mark moves only on headway, so a slow creep adds up to it.
+      if (left < best - GO_PROGRESS_M) { best = left; bestT = now; }
+      if (!turning) bestE = Infinity;
+      else if (e < bestE - GO_TURN_PROGRESS_DEG) { bestE = e; bestT = now; }
       if (now - bestT > GO_PROGRESS_MS) return end("stuck");
+      if (!poseNow() && now - t0 > budgetMs) return end("too_long");
       return { heading: err, speed: turning ? 0 : 1 };
     };
+    go.fn = fn;
+    return fn;
   }
 
   // The line he says while he looks (the page's gbToolLine), as the other tools have.
@@ -801,7 +815,13 @@
       return !!a && a.state !== "blocked";
     },
     // The last route: its points, the one he is heading for, and why it ended ("" while it runs).
-    goState: function () { return lastGo && { n: lastGo.pts.length, i: lastGo.i, why: lastGo.why }; },
+    // A route whose walk ended some other way (a stop, a fall, the legs' budget, another move)
+    // reads "ended".
+    goState: function () {
+      if (!lastGo) return null;
+      var M = typeof _motion !== "undefined" ? _motion : null, on = !!M && M.route === lastGo.fn;
+      return { n: lastGo.pts.length, i: lastGo.i, why: lastGo.why || (on ? "" : "ended") };
+    },
     // When the last spin that went nowhere ended (ms since epoch), or 0.
     stuckSpinT: function () { return stuckSpinT; },
     /* How far, by his map, the thing his goal names is (metres), or null when it isn't on

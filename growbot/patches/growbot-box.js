@@ -2759,6 +2759,15 @@
     // it on, no new stance. The ask itself is reported merged; the running walk stays his
     // latest move, its granted length and continuation count updated.
     var M = _motion;
+    // A route already walks him forward, steered: a forward ask (the walk look's "send walk
+    // again to go further") is that walk going on, not a new one that would drop the route.
+    if (M && M.own === "go" && move === "forward") {
+      attempt.mv = { kind: "walk", gait: "trained", dir: dir, policy: (M.report && M.report.mv && M.report.mv.policy) || "" };
+      _moveReport(attempt, "merged", "on_route");
+      attempt.ended = 1;
+      _moveLast = M.report;
+      return true;
+    }
     if (M && M.own === move && typeof M.extend === "function" && M.report && M.report.mv) {
       var s = policySeconds(+spec.secs || 0, 8, Infinity), mv = M.report.mv;
       var grew = M.extend(s);

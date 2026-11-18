@@ -79,7 +79,8 @@ Each wave is tested in the sim first on true pose and depth, so a failure points
   steered by heading each tick toward the next point not yet reached (within 15 cm), in place of
   timed chunks with a stance glide around each: more than 30° off he stops and turns on the look
   skill, and walks again within 10°. It ends "arrived" at the last point, or "stuck" after 12 s
-  with no headway (no range sensor says a wall stopped him), and is kept going past its first
+  with no headway on a fed pose (no range sensor says a wall stopped him; a reckoned pose
+  can't show headway, so there it ends after 1.5 times its expected time), and is kept going past its first
   seconds while it runs, paying the legs' duty budget as it goes. Sim `square_by_path`: a 1 m
   square as one route on true pose. *Pass:* 95% of turns within 10°; a scripted 1 m square on
   true pose closes within 25 cm; no falls in 20 runs.

@@ -344,6 +344,27 @@ def test_a_route_that_stops_getting_closer_ends_itself_and_none_runs_without_ski
     assert got["out"] == ["", "stuck", "stuck", "stuck"]
 
 
+def test_a_route_on_a_reckoned_pose_ends_when_it_takes_too_long_and_says_how_it_ended() -> None:
+    """On a reckoned pose his place moves at his pace whether he gets anywhere or not, so
+    headway can't say he is pinned: a route there ends once it has taken 1.5 times what its
+    length and turns should. A route whose walk something else ended reads "ended"."""
+    got = _page(
+        "_live.map={v:1,t:0,rooms:[],doors:[],things:[],here:{x:0,y:0,h:0,room:'',t:0}};"
+        "var R=null;window.gbOwnGoReady=function(){ return true; };"
+        "window.gbOwnGo=function(r){ R=r; _motion={route:r}; return {state:'accepted'}; };"
+        # 0.4 m: 1.5 x (10 s at his pace + 20 s for its one point) = 45 s.
+        "window.gbMap.go([{x:0.4,y:0}]);var h=_live.map.here,out=[];"
+        "for(var i=0;i<10;i++){ h.x+=0.02; tick(5000); out.push(R(clock).done||''); }"
+        "var running=window.gbMap.goState().why;"
+        "window.gbMap.go([{x:5,y:0}]);var s1=window.gbMap.goState().why;_motion=null;"
+        "console.log(JSON.stringify({out,running,s1,s2:window.gbMap.goState().why}));"
+    )
+    # Creeping 2 cm each 5 s is headway, so only the time ends it, past 45 s.
+    assert got["out"][:9] == [""] * 9 and got["out"][9] == "too_long"
+    assert got["running"] == "too_long"
+    assert got["s1"] == "" and got["s2"] == "ended"
+
+
 def test_a_route_walk_carries_him_on_his_map_only_while_it_walks() -> None:
     got = _page(
         "_live.map={v:1,t:0,rooms:[],doors:[],things:[],here:{x:0,y:0,h:0,room:'',t:0}};"

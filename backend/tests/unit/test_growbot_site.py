@@ -4504,6 +4504,8 @@ def test_a_route_turns_on_the_look_walks_on_the_forward_and_ends_where_it_says()
     # Asked for 1 s, it ran about 3: the route kept it going, paying the duty as it went.
     assert sum(w["ms"] for w in got["walkLog"]) > 2000
     assert got["ends"][-1]["why"] == "arrived" and got["goCalls"] == 71
+    # His own "walk fwd" meanwhile is the route going on, not a new walk that drops it.
+    assert got["goAsk"] == [True, "merged", None]
     assert got["errs"] == [] and got["last"] == ["rest"]
 
 
