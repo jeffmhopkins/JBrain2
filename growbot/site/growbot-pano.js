@@ -175,8 +175,9 @@
         if (ex && typeof ex === "object") {
           if (ex.stop) { if (trip) lastTrip = { n: trip.n, why: "you stopped it" }; trip = null; survey = 0; }
           var n = Math.round(+ex.go);
-          if (n >= 1 && n <= 8 && shown) {
-            trip = { n: n, abs: shown[n - 1].abs, x: h.x, y: h.y, t: now };
+          // Before any strip went out the ways are still where they would be drawn now.
+          if (n >= 1 && n <= 8) {
+            trip = { n: n, abs: (shown || ways(+h.h))[n - 1].abs, x: h.x, y: h.y, t: now };
             survey = 0; lastTrip = null; own = false; delete o.walk;
             try { logEv("explore_go", { n: n, abs: Math.round(trip.abs) }); } catch (e) {}
           } else if (ex.survey) { survey = 2; trip = null; own = false; delete o.walk; try { logEv("explore_survey", {}); } catch (e) {} }
