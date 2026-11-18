@@ -35,6 +35,9 @@ _BY_PREFIX = (
     ("rug", "floor"),
     ("house_ceiling", "ceiling"),
     ("house_", "wall"),
+    # The bare room's own.
+    ("ceiling", "ceiling"),
+    ("wall_", "wall"),
     ("piano", "piano"),
     ("bench", "bench"),
     ("couch", "sofa"),
@@ -110,7 +113,9 @@ class Noise:
         d = depth * math.exp(self._log_scale) * (1 + r.normal(0, self.pixel_sd, depth.shape))
         d[r.random(depth.shape) < self.holes] = 0.0
         lab = labels.copy()
-        lab[r.random(labels.shape) < self.unknown] = _IDX["unknown"]
+        # His own body stays his: a model that lost its label would still see it a few cm off,
+        # which the page leaves out by distance anyway.
+        lab[(r.random(labels.shape) < self.unknown) & (labels != _IDX["self"])] = _IDX["unknown"]
         return d, lab
 
 
@@ -127,9 +132,11 @@ class Maps:
         self.vfov = float(model.cam_fovy[model.camera("front").id])
 
     def render(self, data: Any) -> dict[str, Any]:
+        """The maps for data's pose, whose kinematics the caller has run."""
         import mujoco
         import numpy as np
 
+        mujoco.mj_camlight(self.model, data)
         r = self.r
         r.enable_depth_rendering()
         r.update_scene(data, camera="front")

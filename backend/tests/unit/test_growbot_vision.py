@@ -156,6 +156,30 @@ def test_how_far_a_named_thing_is_comes_from_the_direction_he_named() -> None:
     assert right is None and behind is None and none is None
 
 
+def test_a_named_thing_behind_another_takes_its_own_distance() -> None:
+    # A chair 0.5 m off in front of the couch's middle, the couch 1.2 m off either side of it.
+    got = _node(
+        "const s=V.reduce(draw((deg)=>Math.abs(deg)<6?['chair',0.5]:['sofa',1.2]));"
+        "console.log(JSON.stringify([V.distAt(s,0,'the couch'),V.distAt(s,0,'chair'),"
+        "V.distAt(s,0,'piano')]))"
+    )
+    couch, chair, piano = got
+    assert couch == pytest.approx(1.2, abs=0.1)
+    assert chair == pytest.approx(0.5, abs=0.05)
+    # A name it has no word for: the nearest thing that way, as before.
+    assert piano == pytest.approx(0.5, abs=0.05)
+
+
+def test_his_nose_at_the_pictures_edge_is_not_a_wall_whatever_it_is_called() -> None:
+    sc = _node(
+        "const m=draw(()=>['wall',10]);"
+        "m.depth=m.depth.map((z,i)=>i%48>=32?0.03:z);"  # the right third: 3 cm from the lens
+        "const s=V.reduce(m);"
+        "console.log(JSON.stringify(s))"
+    )
+    assert sc["blocked"] is False and all(c["m"] is None for c in sc["cols"])
+
+
 _PAGE = """
 let now=100000; Date.now=()=>now;
 globalThis.window=globalThis; globalThis.document={};
@@ -209,9 +233,10 @@ def test_walking_into_a_wall_it_sees_is_pushing() -> None:
         "G.clearHist(); mp.t=now; G.feed(Object.assign({},mp)); out.push(G.isPushing());"
         "console.log(JSON.stringify(out))"
     )
-    # Not until he has walked on for six seconds, then until the history is cleared.
+    # Not until he has walked on for six seconds (the 13th frame), then until the history is
+    # cleared.
     assert got[:12] == [False] * 12
-    assert got[13] is True
+    assert got[12] is True and got[13] is True
     assert got[-1] is False
 
 
@@ -242,6 +267,24 @@ def test_each_way_on_the_strip_says_how_far_it_is_clear_by_his_depth_sense() -> 
     assert none == ""
 
 
+def test_what_he_saw_each_way_from_one_spot_is_kept_while_he_faces_another() -> None:
+    got = _pano(
+        "const sc=(h,m)=>({h,cols:[-1,0,1].map(k=>({deg:k*6.6,m,open:2.4}))});"
+        "let d=P.addDepths([],sc(112.5,0.4),0);"  # a wall where he first faced
+        "for(let i=1;i<=300;i++) d=P.addDepths(d,sc(270,null),i*300);"  # then a long look away
+        "const ws=P.ways(270);"
+        "console.log(JSON.stringify([d.length,P.wayClear(d,ws),P.addDepths(d,sc(270,0.9),"
+        "400000).length]))"
+    )
+    n, cl, late = got
+    # The newest reading of each direction, not a growing list.
+    assert n == 6
+    # Way 8 (behind on his right, facing 112.5) still has the wall he saw first.
+    assert cl[7] == {"n": 8, "m": 0.4}
+    # Three minutes on, the old readings are gone.
+    assert late == 3
+
+
 def test_a_trip_or_a_round_of_the_walls_does_not_walk_into_what_it_sees_close_ahead() -> None:
     got = _pano(
         "const tr={abs:90,x:0,y:0,t:0};"
@@ -249,15 +292,18 @@ def test_a_trip_or_a_round_of_the_walls_does_not_walk_into_what_it_sees_close_ah
         "const near=P.step(tr,{x:0,y:0,h:90},1000,false,false,0.2);"
         "const w={wall:true,side:1,x:0,y:0,t:0,room:'',want:null,walked:false,blocks:0};"
         "const wall=P.wallStep(w,{x:0,y:0,h:90,room:''},1000,false,false,0.2);"
+        "const steps=w.steps||0;"
         "const open=P.wallStep({wall:true,x:0,y:0,t:0,room:'',want:null,walked:false,blocks:0},"
         "{x:0,y:0,h:90,room:''},1000,false,false,null);"
-        "console.log(JSON.stringify([far,near,wall,w.blocks,w.why,open]))"
+        "console.log(JSON.stringify([far,near,wall,w.blocks,w.why,open,steps]))"
     )
-    far, near, wall, blocks, why, open_ = got
+    far, near, wall, blocks, why, open_, steps = got
     assert far["walk"]["dir"] == "fwd"
     assert near["done"] == "you saw something 0.2 m ahead on that way"
     # As if he had walked into it: turned 90 away, keeping it on his side, without the bump.
     assert wall["walk"] == {"turn": 90} and blocks == 1 and "seen 0.2 m" in why
+    # No walk was taken, so it is no step toward leaving the room or changing hands.
+    assert steps == 0
     assert open_["walk"]["dir"] == "fwd"
 
 

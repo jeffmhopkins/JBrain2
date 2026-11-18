@@ -544,6 +544,8 @@ def test_the_sims_depth_sense_labels_in_the_pages_own_words() -> None:
             "torso_core",
             "lower_leg_1",
             "phone",
+            "wall_n",
+            "ceiling",
             "mystery",
         )
     }
@@ -567,6 +569,8 @@ def test_the_sims_depth_sense_labels_in_the_pages_own_words() -> None:
         "torso_core": "self",
         "lower_leg_1": "self",
         "phone": "self",
+        "wall_n": "wall",
+        "ceiling": "ceiling",
         "mystery": "unknown",
     }
 

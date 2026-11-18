@@ -33,6 +33,9 @@
   // Taller than his body (about 25 cm standing) plus a margin: what he would walk into. A table
   // top or a lamp shade above this does not stop him; its legs and base do.
   var HMAX = 0.5, HMIN = 0.03;
+  // Nearer than this to the lens is his own nose or leg at the picture's edge, whatever a
+  // model calls it.
+  var SELF_M = 0.05;
   var BINS = 9, NEAR_PCT = 0.1, OPEN_GAIN_M = 0.8, THING_SHARE = 0.015, THINGS_MAX = 5;
   // A scene this old says nothing about now.
   var FRESH_MS = 1500;
@@ -66,7 +69,7 @@
       var vy = (h / 2 - (r + 0.5)) / fy;
       for (var c = 0; c < w; c++) {
         var i = r * w + c, z = +dep[i];
-        if (!(z > 0) || !isFinite(z)) continue;
+        if (!(z > SELF_M) || !isFinite(z)) continue;
         var name = names[lab ? lab[i] : 0] || "unknown";
         if (name === "self" || name === "ceiling") continue;
         n++;
@@ -105,13 +108,12 @@
     }).filter(function (t) { return t.share >= THING_SHARE; })
       .sort(function (a, b) { return a.m - b.m; }).slice(0, THINGS_MAX)
       .map(function (t) { return { what: t.what, deg: t.deg, m: t.m }; });
-    var ahead = null;
-    cols.forEach(function (c) {
-      if (Math.abs(c.deg) > 10) return;
-      var v = c.m === null ? c.open : c.m;
-      if (ahead === null || v < ahead) ahead = v;
-    });
-    return { cols: cols, ahead: ahead, blocked: cols.some(function (c) { return Math.abs(c.deg) <= 10 && c.m !== null; }),
+    // Ahead: the nearest thing in the middle directions, or, with none, how far they are clear.
+    var mid = cols.filter(function (c) { return Math.abs(c.deg) <= 10; });
+    var hit = mid.filter(function (c) { return c.m !== null; });
+    var ahead = (hit.length ? hit.map(function (c) { return c.m; }) : mid.map(function (c) { return c.open; }))
+      .reduce(function (a, v) { return a === null || v < a ? v : a; }, null);
+    return { cols: cols, ahead: ahead, blocked: hit.length > 0,
       openings: openings(cols), things: list, reach: r2(reach), hfov: r2(hfov) };
   }
 
@@ -179,8 +181,19 @@
 
   /* The nearest thing at his height in one direction of a scene, or null where the scene is
      clear or does not reach. */
-  function distAt(sc, deg) {
+  // His words for the vocabulary's things, for matching a name he gives to what the scene saw.
+  var SAYS = { sofa: /couch|sofa|settee/, shelf: /shelf|bookcase/, animal: /cat|dog|animal|pet/,
+    fridge: /fridge|refrigerator/, screen: /tv|television|screen|monitor/, counter: /counter|worktop/,
+    table: /table/, person: /person|man|woman|dad|mum|mom|kid|child/ };
+  function says(what, name) {
+    if (!name) return false;
+    return SAYS[what] ? SAYS[what].test(name) : name.indexOf(what) >= 0;
+  }
+  function distAt(sc, deg, name) {
     if (!sc) return null;
+    // The thing he named, when the scene saw one like it that way: not what stands in front.
+    var named = sc.things.filter(function (x) { return Math.abs(x.deg - deg) <= 8 && says(x.what, String(name || "").toLowerCase()); })[0];
+    if (named) return named.m;
     var best = null;
     sc.cols.forEach(function (c) {
       if (Math.abs(c.deg - deg) <= sc.hfov / sc.cols.length / 2 + 0.01 && c.m !== null) best = best === null ? c.m : Math.min(best, c.m);
@@ -208,7 +221,8 @@
         if (!mp || !(mp.w > 0) || !(mp.h > 0)) return null;
         if (!mp.depth && mp.depth_mm) mp.depth = mp.depth_mm.map(function (v) { return v / 1000; });
         var sc = reduce(mp), now = Date.now();
-        sc.t = mp.t || now; sc.h = heading(); sc.src = mp.src || "";
+        // The page's own clock: a source's may run ahead of it, and a scene would never go stale.
+        sc.t = now; sc.h = heading(); sc.src = mp.src || "";
         latest = sc; fed++;
         hist.push({ t: now, ahead: sc.blocked ? sc.ahead : null, walking: walkingFwd() });
         hist = hist.filter(function (x) { return now - x.t < api.PUSH_MS + 4000; });
@@ -234,11 +248,11 @@
     };
     /* For his map: how far the thing he named at deg (from where he faces now) was, from the
        newest scene taken facing near there in the last 10 s. */
-    api.distNow = function (deg) {
+    api.distNow = function (deg, name) {
       try {
         if (!latest || Date.now() - latest.t > 10000) return null;
         var h = heading(), rel = latest.h === null || h === null ? deg : deg + ((h - latest.h + 540) % 360 - 180);
-        return distAt(latest, rel);
+        return distAt(latest, rel, name);
       } catch (e) { return null; }
     };
   }

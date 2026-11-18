@@ -166,13 +166,15 @@
       if (Math.abs(d) > 8) return { walk: { turn: Math.round(d) }, gone: gone };
       tr.want = null;
     }
-    tr.walked = true; tr.h0 = +h.h; tr.steps = (tr.steps || 0) + 1;
-    // Seen right ahead: the wall he would have walked into, found without the bump.
+    tr.walked = true; tr.h0 = +h.h;
+    // Seen right ahead: the wall he would have walked into, found without the bump. Not a
+    // step: no walk was taken, so it counts toward neither leaving a room nor changing hands.
     if (typeof ahead === "number" && ahead < SEE_STOP_M) {
       var st = wallStep(tr, h, now, true, false);
       tr.why += ", seen " + ahead + " m";
       return st;
     }
+    tr.steps = (tr.steps || 0) + 1;
     return { walk: { gait: "screen_forward", dir: "fwd", secs: WALL_WALK_S }, gone: gone };
   }
   // Whether the last BLOCK_N picture changes (newest last) say he is pushing, not walking.
@@ -196,6 +198,16 @@
       return near !== null ? { n: w.n, m: near } : open !== null ? { n: w.n, m: null, open: open } : null;
     });
   }
+  /* A scene's directions added to what he has seen from this spot: the newest reading of each
+     direction replaces an older one there, as a new picture does on the strip, so standing
+     still facing one way does not push out what he saw the other ways. */
+  function addDepths(depths, sc, now) {
+    var half = sc.cols.length > 1 ? Math.abs(sc.cols[0].deg - sc.cols[1].deg) / 2 : 3;
+    var fresh = sc.cols.map(function (c) { return { h: wrap(sc.h + c.deg), m: c.m, open: c.open, t: now }; });
+    return depths.filter(function (s) {
+      return now - s.t < KEEP_MS && !fresh.some(function (f) { return Math.abs(wrap(f.h - s.h)) < half; });
+    }).concat(fresh);
+  }
   function clearText(cl) {
     var known = cl.filter(function (c) { return c; });
     if (!known.length) return "";
@@ -204,7 +216,7 @@
     }).join("; ") + ".";
   }
 
-  var api = { column: column, wayClear: wayClear, clearText: clearText, marks: marks, seenDeg: seenDeg, wrap: wrap, ways: ways, step: step, wallStep: wallStep, blockedRun: blockedRun, CAM_HFOV: CAM_HFOV, FW: FW, PX_DEG: PX_DEG };
+  var api = { column: column, wayClear: wayClear, clearText: clearText, addDepths: addDepths, marks: marks, seenDeg: seenDeg, wrap: wrap, ways: ways, step: step, wallStep: wallStep, blockedRun: blockedRun, CAM_HFOV: CAM_HFOV, FW: FW, PX_DEG: PX_DEG };
 
   if (typeof window !== "undefined" && typeof document !== "undefined") {
     var shots = [], depths = [], lastScene = null, at = null, lastSent = { t: 0, seen: 0 }, shown = null, trip = null, survey = 0, lastTrip = null;
@@ -224,9 +236,7 @@
         var sc = window.gbVision && window.gbVision.fresh && window.gbVision.fresh();
         if (sc && sc !== lastScene && sc.h !== null) {
           lastScene = sc;
-          depths = depths.filter(function (s) { return now - s.t < KEEP_MS; });
-          sc.cols.forEach(function (c) { depths.push({ h: wrap(sc.h + c.deg), m: c.m, open: c.open, t: now }); });
-          depths = depths.slice(-400);
+          depths = addDepths(depths, sc, now);
         }
         shots = shots.filter(function (s) { return now - s.t < KEEP_MS && Math.abs(wrap(s.h - h.h)) >= BIN; });
         var c = document.createElement("canvas");

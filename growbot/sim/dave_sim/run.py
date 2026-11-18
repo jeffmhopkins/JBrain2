@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import json
 import os
 import sys
@@ -345,29 +346,38 @@ class Sim:
             return maps.render(snap)
 
         sensed = -1e9
-        while True:
-            t = time.monotonic()
-            d = self.body.data
-            try:
-                jpeg = await asyncio.to_thread(
-                    draw, d.qpos.copy(), d.mocap_pos.copy(), d.mocap_quat.copy()
-                )
-                # A phone model's pace: a few frames a second, not every picture.
-                if self.o.vision != "off" and t - sensed >= VISION_S:
-                    sensed = t
-                    mp = await asyncio.to_thread(
-                        sense, d.qpos.copy(), d.mocap_pos.copy(), d.mocap_quat.copy()
+        # One thread for both renderers: a GL context made current on one thread cannot be
+        # made current on another while it still is there (EGL_BAD_ACCESS).
+        gl = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                t = time.monotonic()
+                d = self.body.data
+                try:
+                    jpeg = await loop.run_in_executor(
+                        gl, draw, d.qpos.copy(), d.mocap_pos.copy(), d.mocap_quat.copy()
                     )
-                    mp["t"] = int(time.time() * 1000)
-                    await page.evaluate("v => window.gbVision && window.gbVision.feed(v)", mp)
-                if n % 8 == 0:
-                    self.frames.append((self.now(), jpeg))
-                await page.evaluate("b => window.__simFrame(b)", base64.b64encode(jpeg).decode())
-            except Exception as e:
-                self.note("camera", error=str(e)[:200])
-                await asyncio.sleep(0.5)
-            n += 1
-            await asyncio.sleep(max(0.0, 1.0 / self.o.fps - (time.monotonic() - t)))
+                    # A phone model's pace: a few frames a second, not every picture.
+                    if self.o.vision != "off" and t - sensed >= VISION_S:
+                        sensed = t
+                        mp = await loop.run_in_executor(
+                            gl, sense, d.qpos.copy(), d.mocap_pos.copy(), d.mocap_quat.copy()
+                        )
+                        mp["t"] = int(time.time() * 1000)
+                        await page.evaluate("v => window.gbVision && window.gbVision.feed(v)", mp)
+                    if n % 8 == 0:
+                        self.frames.append((self.now(), jpeg))
+                    await page.evaluate(
+                        "b => window.__simFrame(b)", base64.b64encode(jpeg).decode()
+                    )
+                except Exception as e:
+                    self.note("camera", error=str(e)[:200])
+                    await asyncio.sleep(0.5)
+                n += 1
+                await asyncio.sleep(max(0.0, 1.0 / self.o.fps - (time.monotonic() - t)))
+        finally:
+            gl.shutdown(wait=False)
 
     # ------------------------------------------------------------------ what a scenario does
 
