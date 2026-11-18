@@ -555,9 +555,9 @@
       if (prevR) {
         var dy = yawStep(prevR, c);
         // More than 45 degrees in one reading is the sensor re-referencing, not a turn.
+        if (Math.abs(dy) <= 45 && spinW) { spinW.turned += dy; spinW.n++; }
         if (Math.abs(dy) <= 45 && (m = soulMap())) {
           m.here.h = wrap(m.here.h + dy);
-          if (spinW) spinW.turned += dy;
           if (turnWatch) watchTurn(dy);
         }
       }
@@ -590,10 +590,12 @@
      minutes). A spin can do nothing there; walking back out can. */
   var spinW = null, stuckSpinT = 0, SPIN_STUCK_MS = 2500, SPIN_STUCK_DEG = 8;
   function watchSpin(now) {
-    var M = typeof _motion !== "undefined" ? _motion : null, sp = spinning(M);
-    if (sp && (!spinW || spinW.rep !== M.report)) spinW = { rep: M.report, t0: now, turned: 0 };
+    // Timed from when the spin's policy has loaded and its legs move, and only with gyro
+    // readings to go by; a spin the gyro stopped as asked turned, however little.
+    var M = typeof _motion !== "undefined" ? _motion : null, sp = spinning(M) && !M.loading;
+    if (sp && (!spinW || spinW.rep !== M.report)) spinW = { rep: M.report, t0: now, turned: 0, n: 0 };
     else if (!sp && spinW) {
-      if (now - spinW.t0 >= SPIN_STUCK_MS && Math.abs(spinW.turned) < SPIN_STUCK_DEG) {
+      if (now - spinW.t0 >= SPIN_STUCK_MS && spinW.n > 0 && !(spinW.rep && spinW.rep._gbTurned) && Math.abs(spinW.turned) < SPIN_STUCK_DEG) {
         stuckSpinT = now;
         try { logEv("spin_stuck", { ms: now - spinW.t0, deg: Math.round(spinW.turned) }); } catch (e) {}
       }

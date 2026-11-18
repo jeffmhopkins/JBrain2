@@ -110,6 +110,8 @@
     // Into another room by his map: two more walks carry him clear of the doorway (mf10 ended
     // its round in the doorway by his map's reckoning and spent ten minutes there).
     if (tr.room && h.room && h.room !== tr.room && tr.into === undefined) tr.into = tr.steps || 0;
+    // Back in the room it began in (his map's drift by a doorway): not through after all.
+    if (tr.into !== undefined && h.room === tr.room) tr.into = undefined;
     if (tr.into !== undefined && (tr.steps || 0) - tr.into >= 2) return { done: "you went through into the " + h.room, gone: gone };
     if (now - tr.t > WALL_MS) return { done: "it ran its twenty minutes", gone: gone };
     if (tr.blocks >= WALL_BLOCKS) return { done: "something kept being in the way", gone: gone };
@@ -203,13 +205,13 @@
       return Math.round(n / 3.2);
     }
     function fwdWalking() {
-      try { var M = typeof _motion !== "undefined" ? _motion : null, v = M && M.report && M.report.mv; return !!M && !M.loading && M.kind === "walk" && !(v && (v.kind === "spin" || v.direction === "turn")); } catch (e) { return false; }
+      try { var M = typeof _motion !== "undefined" ? _motion : null, v = M && M.report && M.report.mv; return !!M && !M.loading && M.kind === "walk" && M.own !== "back" && !(v && (v.kind === "spin" || v.direction === "turn" || v.direction === "screen-backward")); } catch (e) { return false; }
     }
     setInterval(function () {
       try {
         if (typeof MODE !== "undefined" && MODE !== "legs") return;
         var v = video(), h = here(), now = Date.now();
-        if (!v || !h || !fwdWalking()) { thumbs = []; hist = []; return; }
+        if (!v || !h || !fwdWalking()) { thumbs = []; hist = []; flows = []; return; }
         var p = thumb(v);
         thumbs.push({ t: now, p: p, h: +h.h });
         hist.push(p); hist = hist.slice(-5);
@@ -231,11 +233,12 @@
        map would carry him on through it. On a trip the step is marked blocked; on a walk of his
        own while exploring, his next thought is told. */
     function onBlocked() {
-      flows = []; blockedT = Date.now();
+      flows = [];
       var mine = !!(trip || survey > 0), exploring = false;
       try { exploring = typeof GB_EXPLORE_RE !== "undefined" && GB_EXPLORE_RE.test(typeof seekGoal !== "undefined" && seekGoal || ""); } catch (e) {}
       try { logEv("blocked", { trip: trip ? trip.n : 0, own: !mine }); } catch (e) {}
       if (!mine && !exploring) return;
+      blockedT = Date.now();
       if (mine) blockedStep = true;
       try {
         var M = _motion; if (M && M.report) M.report._gbTurned = 1;
@@ -388,6 +391,8 @@
         var spec = null;
         if (trip) {
           var bl = blockedStep; blockedStep = false;
+          // A room renamed while the round runs ("room 1" named the living room) is the same room.
+          try { var mm = window.gbMap.map(); if (trip.wall && trip.room && !(mm.rooms || []).some(function (r) { return r.n === trip.room; })) trip.room = h.room || ""; } catch (e) {}
           var sst = window.gbMap && window.gbMap.stuckSpinT ? window.gbMap.stuckSpinT() : 0, wedged = sst > (trip.stuckT || trip.t);
           if (wedged) trip.stuckT = sst;
           var st = trip.wall ? wallStep(trip, h, now, bl, wedged) : step(trip, h, now, false, bl);
@@ -415,7 +420,7 @@
        (mf11), he heard nothing for four minutes after it ended. One turn, through the page's
        own timer wake. */
     function wake() {
-      try { if (typeof actPhase !== "undefined" && actPhase === "waiting" && actWake !== "timer") { actWake = "timer"; actNotBefore = Date.now(); logEv("explore_wake", {}); } } catch (e) {}
+      try { if (typeof actPhase !== "undefined" && actPhase === "waiting" && (actWake !== "timer" || actNotBefore > Date.now())) { actWake = "timer"; actNotBefore = Date.now(); logEv("explore_wake", {}); } } catch (e) {}
     }
     /* For the explore line: what the trip or survey is doing now. */
     api.state = function () {

@@ -262,14 +262,25 @@ def test_a_spin_the_gyro_says_went_nowhere_is_marked_wedged() -> None:
     """mf8: 127 spins wedged between the lamp and the wall, each "done", none turning him."""
     got = _page(
         "turnTo(10);tick(0);"
-        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};for(var i=0;i<16;i++) tick(250);"
+        # The gyro reads on while he spins and does not turn.
+        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};"
+        "for(var i=0;i<16;i++){turnTo(10);tick(250);}"
         "_motion=null;tick(250);var stuck=window.gbMap.stuckSpinT();"
         "_motion={kind:'walk',report:{mv:{kind:'spin'}}};tick(250);"
         "for(i=1;i<=12;i++){turnTo(10+i*5);tick(250);}_motion=null;tick(250);"
+        # A small turn the gyro stopped as asked, and a spin with no gyro readings at all.
+        "_motion={kind:'walk',report:{mv:{kind:'spin'},_gbTurned:1}};"
+        "for(i=0;i<16;i++){turnTo(70);tick(250);}_motion=null;tick(250);"
+        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};for(i=0;i<16;i++) tick(250);"
+        "_motion=null;tick(250);"
+        # Still loading its policy: not yet spinning.
+        "_motion={kind:'walk',loading:true,report:{mv:{kind:'spin'}}};"
+        "for(i=0;i<16;i++){turnTo(70);tick(250);}_motion=null;tick(250);"
         "console.log(JSON.stringify({stuck:stuck>0,same:window.gbMap.stuckSpinT()===stuck,"
         "n:logs.filter(function(l){ return l[0]==='spin_stuck'; }).length}));"
     )
-    # Four seconds of spin and no turn: wedged. A spin that turned 60 degrees is not.
+    # Four seconds of spin and no turn: wedged. A spin that turned 60 degrees is not, nor
+    # one the gyro stopped as asked, one with no gyro to go by, or one still loading.
     assert got == {"stuck": True, "same": True, "n": 1}
 
 

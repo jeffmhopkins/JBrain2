@@ -249,7 +249,7 @@ def test_following_the_walls_turns_right_after_a_clear_walk_and_left_after_a_blo
         "const h=(x,y,hd,room)=>({x,y,h:hd,room:room||'living room'});"
         "console.log(JSON.stringify(["
         "P.wallStep(tr,h(0,0,90),1000,false),"  # first: walk
-        "P.wallStep(tr,h(0,0.5,90),20000,false),"  # clear: probe 45 right
+        "P.wallStep(tr,h(0,0.5,90),20000,false),"  # clear: probe 15 right
         "P.wallStep(tr,h(0,0.5,78),25000,false),"  # facing it: walk
         "P.wallStep(tr,h(0.3,0.8,78),40000,true),"  # blocked: 90 left
         "P.wallStep(tr,h(0.3,0.8,166),45000,false),"  # facing it: walk
@@ -342,6 +342,28 @@ def test_a_round_that_ends_by_itself_wakes_him_once() -> None:
         "console.log(JSON.stringify({w:actWake,t:actNotBefore>0,log}))"
     )
     assert got["w"] == "timer" and got["t"] and "explore_wake" in got["log"]
+
+
+def test_a_round_that_ends_during_a_long_timer_wait_wakes_him_now() -> None:
+    got = _page_node(
+        "globalThis.actPhase='waiting'; globalThis.actWake='timer';"
+        "globalThis.actNotBefore=now+9000000;"
+        "P.reply({explore:{walls:true}},0,now); tick(); now+=2000; tick();"
+        "_motion=null; now+=1300000; tick(); now+=2000; tick();"
+        "console.log(JSON.stringify({soon:actNotBefore<=now,log}))"
+    )
+    assert got["soon"] and "explore_wake" in got["log"]
+
+
+def test_coming_back_into_the_room_it_began_in_carries_the_round_on() -> None:
+    """Review: his map's drift by a doorway put him in the hallway for one step."""
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0,steps:3};"
+        "const h=(room)=>({x:0,y:0,h:90,room});"
+        "P.wallStep(tr,h('hallway'),1,false);P.wallStep(tr,h('r'),2,false);tr.steps+=2;"
+        "console.log(JSON.stringify(P.wallStep(tr,h('r'),3,false)))"
+    )
+    assert "done" not in got
 
 
 def test_asking_for_the_walls_again_carries_the_same_round_on() -> None:
