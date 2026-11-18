@@ -752,3 +752,55 @@ def test_client_vitals_accepts_unknown_keys(client: TestClient, repo: FakeAuthRe
 
 def test_client_vitals_requires_owner(client: TestClient) -> None:
     assert client.post("/api/ops/client-vitals", json={}).status_code == 401
+
+
+# --- GET /ops/vitals/calls — every model call, from every caller --------------------
+
+
+def test_vitals_calls_require_owner(client: TestClient) -> None:
+    assert client.get("/api/ops/vitals/calls").status_code == 401
+
+
+def test_vitals_calls_serve_the_window_grouped_and_clamped(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    windows: list[float] = []
+    think = {
+        "id": "c1",
+        "started_ms": 1_760_000_000_000,
+        "ended_ms": None,
+        "caller": "creature",
+        "who": "Dave",
+        "label": "think",
+        "model": "qwen3-vl",
+        "local": True,
+        "status": "running",
+        "error": "",
+        "source": "api",
+    }
+
+    async def fake_window(maker: object, ctx: object, *, seconds: float) -> dict[str, object]:
+        windows.append(seconds)
+        group = {
+            "caller": "creature",
+            "who": "Dave",
+            "label": "think",
+            "model": "qwen3-vl",
+            "local": True,
+            "calls": 214,
+            "running": 1,
+            "failed": 0,
+            "busy_ms": 580_000,
+            "last_ms": 1_760_000_000_000,
+        }
+        return {"groups": [group], "running": [think], "calls": [think]}
+
+    monkeypatch.setattr(ops.model_calls, "window", fake_window)
+    login(client, repo)
+
+    body = client.get("/api/ops/vitals/calls?seconds=99999").json()
+
+    assert windows == [900]
+    assert body["groups"][0]["calls"] == 214
+    assert body["running"][0]["who"] == "Dave"
+    assert body["calls"][0]["id"] == "c1"

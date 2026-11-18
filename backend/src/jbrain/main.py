@@ -481,6 +481,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         box_events.configure(maker, source="api")
         # Every model call this process makes, for the same surface (jbrain.model_calls).
         model_calls.configure(maker, source="api")
+        await model_calls.settle_orphans()
         # When this process came up — the debug /version route pairs it with the
         # image's baked build_time so an operator can tell a freshly-published build
         # from one still running behind an un-recreated container.

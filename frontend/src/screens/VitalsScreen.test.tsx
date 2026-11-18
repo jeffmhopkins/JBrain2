@@ -40,7 +40,9 @@ vi.mock("../hostVitals", async (importOriginal) => ({
 const opsTurnDetail = vi.hoisted(() => vi.fn());
 const opsVitalsHistory = vi.hoisted(() => vi.fn());
 const opsVitalsEvents = vi.hoisted(() => vi.fn());
-const noCalls = vi.hoisted(() => async (): Promise<ModelCalls> => ({ groups: [], calls: [] }));
+const noCalls = vi.hoisted(
+  () => async (): Promise<ModelCalls> => ({ groups: [], running: [], calls: [] }),
+);
 const opsVitalsCalls = vi.hoisted(() => vi.fn(noCalls));
 const seedSpy = vi.hoisted(() => vi.fn());
 const opsReportClientVitals = vi.hoisted(() => vi.fn(async () => {}));
@@ -974,8 +976,12 @@ function group(over: Partial<ModelCallGroup> = {}): ModelCallGroup {
   };
 }
 
+let callSeq = 0;
+
 function call(over: Partial<ModelCall> = {}): ModelCall {
+  callSeq += 1;
   return {
+    id: `call-${callSeq}`,
     started_ms: Date.now() - 2000,
     ended_ms: null,
     caller: "creature",
@@ -1016,6 +1022,7 @@ describe("every model call", () => {
           calls: 3,
         }),
       ],
+      running: [call()],
       calls: [call(), call({ status: "ok", ended_ms: Date.now() - 1000, who: "Tamsin's Dave" })],
     });
     render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
@@ -1032,6 +1039,7 @@ describe("every model call", () => {
   it("lists each call on request", async () => {
     opsVitalsCalls.mockResolvedValue({
       groups: [group({ caller: "code", who: "", label: "coding", calls: 1 })],
+      running: [],
       calls: [
         call({
           caller: "code",
@@ -1049,6 +1057,19 @@ describe("every model call", () => {
 
     expect(screen.getByText(/failed: gateway HTTP 500/)).toBeInTheDocument();
     expect(screen.getAllByText("code mode: coding")).toHaveLength(2);
+  });
+
+  it("keeps a long call in the running list when newer calls crowd the window", async () => {
+    // The server's newest rows are all creature thinks; the video job started long before.
+    opsVitalsCalls.mockResolvedValue({
+      groups: [group(), group({ caller: "background", who: "", label: "summarizing a video" })],
+      running: [call({ caller: "background", who: "", label: "summarizing a video" })],
+      calls: [call({ status: "ok", ended_ms: Date.now() })],
+    });
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("Model calls running now")).toBeInTheDocument();
+    expect(screen.getAllByText("summarizing a video")).toHaveLength(2);
   });
 
   it("asks for the window the graph is showing", async () => {

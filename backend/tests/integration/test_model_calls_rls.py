@@ -72,6 +72,7 @@ async def test_a_call_is_listed_while_it_runs_and_grouped_after(
             ("Dave", "think", "running")
         ]
         assert during["groups"][0]["running"] == 1
+        assert [c["who"] for c in during["running"]] == ["Dave"]
     await _settled()
     async with model_calls.track(model_calls.CREATURE, "think", model="qwen3-vl", robot="gb-a"):
         pass
@@ -91,7 +92,40 @@ async def test_a_call_is_listed_while_it_runs_and_grouped_after(
     assert all(g["running"] == 0 for g in found["groups"])
 
 
-async def test_a_row_a_dead_process_left_open_reads_stale(wired: async_sessionmaker) -> None:
+async def test_a_long_call_stays_listed_while_newer_ones_pile_up(
+    wired: async_sessionmaker,
+) -> None:
+    """A twenty-minute video job is still pinning the GPU while a creature thinks a hundred
+    times: it must stay in the running list and its group, not fall out of the newest rows."""
+    long_ago = datetime.now(tz=UTC) - timedelta(minutes=20)
+    async with scoped_session(wired, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.model_calls (started_at, caller, label, model) "
+                "VALUES (:at, 'background', 'summarizing a video', 'm')"
+            ),
+            {"at": long_ago},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.model_calls (started_at, ended_at, caller, label, model, status) "
+                "SELECT now() - make_interval(secs => g), now() - make_interval(secs => g) "
+                "+ interval '1 second', 'creature', 'think', 'm', 'ok' "
+                "FROM generate_series(1, 100) g"
+            )
+        )
+    found = await model_calls.window(wired, OWNER, seconds=900)
+    assert [c["label"] for c in found["running"]] == ["summarizing a video"]
+    assert len(found["calls"]) == model_calls.RECENT_LIMIT
+    video = next(g for g in found["groups"] if g["label"] == "summarizing a video")
+    assert video["running"] == 1
+    # It held the model for the whole fifteen minutes on screen, not the twenty it has run.
+    assert 899_000 <= video["busy_ms"] <= 901_000
+
+
+async def test_a_row_a_dead_process_left_open_stops_being_listed(
+    wired: async_sessionmaker,
+) -> None:
     abandoned = datetime.now(tz=UTC) - model_calls.STALE_AFTER - timedelta(minutes=1)
     async with scoped_session(wired, OWNER) as session:
         await session.execute(
@@ -101,10 +135,23 @@ async def test_a_row_a_dead_process_left_open_reads_stale(wired: async_sessionma
             ),
             {"at": abandoned},
         )
-    wide = await model_calls.window(wired, OWNER, seconds=3600)
-    assert [c["status"] for c in wide["calls"]] == ["stale"]
-    assert wide["groups"][0]["running"] == 0
-    assert (await model_calls.window(wired, OWNER, seconds=60))["calls"] == []
+    found = await model_calls.window(wired, OWNER, seconds=900)
+    assert (found["running"], found["calls"], found["groups"]) == ([], [], [])
+
+
+async def test_a_restart_settles_its_own_leftovers_only(wired: async_sessionmaker) -> None:
+    async with scoped_session(wired, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.model_calls (caller, model, source) "
+                "VALUES ('assistant', 'mine', 'api'), ('background', 'theirs', 'worker')"
+            )
+        )
+    await model_calls.settle_orphans()
+    found = await model_calls.window(wired, OWNER, seconds=900)
+    assert [c["model"] for c in found["running"]] == ["theirs"]
+    mine = next(c for c in found["calls"] if c["model"] == "mine")
+    assert mine["status"] == "stopped"
 
 
 async def test_prune_drops_rows_past_retention(wired: async_sessionmaker) -> None:

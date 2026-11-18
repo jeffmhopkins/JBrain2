@@ -63,7 +63,9 @@ async def test_a_call_is_opened_when_it_starts_and_settled_when_it_ends(writes: 
     await _drain()
     sql, settled = writes[-1]
     assert "UPDATE" in sql
-    assert settled == {"id": opened["id"], "status": "ok", "error": ""}
+    assert (settled["id"], settled["status"], settled["error"]) == (opened["id"], "ok", "")
+    # Stamped when the call ran, not when the background write got a connection.
+    assert settled["ended_at"] >= opened["started_at"]
 
 
 async def test_the_call_never_waits_on_its_own_row(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -95,11 +97,36 @@ async def test_an_in_band_failure_settles_failed(writes: Writes) -> None:
     async with model_calls.track(model_calls.CODE, "coding", model="m") as call:
         call.failed("gateway HTTP 500")
     await _drain()
-    assert writes[-1][1] == {
-        "id": writes[0][1]["id"],
-        "status": "failed",
-        "error": "gateway HTTP 500",
-    }
+    settled = writes[-1][1]
+    assert (settled["id"], settled["status"], settled["error"]) == (
+        writes[0][1]["id"],
+        "failed",
+        "gateway HTTP 500",
+    )
+
+
+async def test_a_stream_the_owner_stops_settles_stopped(writes: Writes) -> None:
+    """The router's Stop path: the consumer closes the generator mid-stream (`aclose`), which
+    throws GeneratorExit at the yield inside the tracked block."""
+
+    async def stream() -> AsyncIterator[int]:
+        async with model_calls.track(model_calls.ASSISTANT, "assistant turn", model="m"):
+            for n in range(10):
+                yield n
+
+    gen = stream()
+    async with contextlib.aclosing(gen):
+        async for _ in gen:
+            break
+    await _drain()
+    assert writes[-1][1]["status"] == "stopped"
+
+
+async def test_a_restart_settles_what_the_last_life_left_open(writes: Writes) -> None:
+    await model_calls.settle_orphans()
+    sql, params = writes[0]
+    assert "ended_at IS NULL" in sql and "'stopped'" in sql
+    assert params == {"source": "worker"}
 
 
 async def test_an_abandoned_call_settles_stopped(writes: Writes) -> None:
@@ -211,4 +238,4 @@ def test_a_creature_turn_the_gateway_refused_is_tracked_failed(
 
     monkeypatch.setattr(model_calls, "Call", spy)
     _creature_turn(tmp_path, 500)
-    assert outcomes[0] == {"status": "failed", "error": "gateway HTTP 500"}
+    assert (outcomes[0]["status"], outcomes[0]["error"]) == ("failed", "gateway HTTP 500")

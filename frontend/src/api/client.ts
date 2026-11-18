@@ -238,6 +238,7 @@ export interface ModelCallGroup {
 
 /** One model call, newest first. `ended_ms` is null while it runs. */
 export interface ModelCall {
+  id: string;
   started_ms: number;
   ended_ms: number | null;
   caller: string;
@@ -245,7 +246,7 @@ export interface ModelCall {
   label: string;
   model: string;
   local: boolean;
-  /** running | ok | failed | stopped | stale. */
+  /** running | ok | failed | stopped (cancelled, timed out, or cut off by a restart). */
   status: string;
   error: string;
   source: string;
@@ -253,6 +254,8 @@ export interface ModelCall {
 
 export interface ModelCalls {
   groups: ModelCallGroup[];
+  /** Every call still open, however long ago it started. */
+  running: ModelCall[];
   /** The newest calls one by one; the groups cover the whole window. */
   calls: ModelCall[];
 }

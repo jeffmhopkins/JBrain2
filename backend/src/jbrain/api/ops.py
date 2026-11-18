@@ -1078,6 +1078,7 @@ class ModelCallGroupOut(BaseModel):
 
 
 class ModelCallOut(BaseModel):
+    id: str
     started_ms: int
     ended_ms: int | None
     caller: str
@@ -1085,7 +1086,7 @@ class ModelCallOut(BaseModel):
     label: str
     model: str
     local: bool
-    # running | ok | failed | stopped | stale.
+    # running | ok | failed | stopped (cancelled, timed out, or cut off by a restart).
     status: str
     error: str
     source: str
@@ -1093,6 +1094,9 @@ class ModelCallOut(BaseModel):
 
 class ModelCallsOut(BaseModel):
     groups: list[ModelCallGroupOut]
+    # Every call still open, however old: a long one must not be pushed out of view by a busy
+    # creature's newer calls while it is still holding the GPU.
+    running: list[ModelCallOut]
     # The newest calls one by one, newest first; the groups cover the rest of the window.
     calls: list[ModelCallOut]
 
@@ -1112,6 +1116,7 @@ async def vitals_calls(
     found = await model_calls.window(maker, ctx, seconds=window)
     return ModelCallsOut(
         groups=[ModelCallGroupOut(**g) for g in found["groups"]],
+        running=[ModelCallOut(**c) for c in found["running"]],
         calls=[ModelCallOut(**c) for c in found["calls"]],
     )
 

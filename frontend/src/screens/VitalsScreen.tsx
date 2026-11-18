@@ -303,7 +303,9 @@ function ModelCallsSection({ calls, range }: { calls: ModelCalls | null; range: 
   const [open, setOpen] = useState(false);
   const [each, setEach] = useState(false);
   if (calls === null || calls.groups.length === 0) return null;
-  const running = calls.calls.filter((c) => c.status === "running");
+  // Its own list from the server, not a filter of the newest rows: a long call must not be
+  // pushed out of view by a busy creature's newer ones while it is still holding the GPU.
+  const running = calls.running;
   const total = calls.groups.reduce((n, g) => n + g.calls, 0);
   // Busiest first: the group holding the GPU longest is the answer to "what is it doing".
   const groups = [...calls.groups].sort((a, b) => b.running - a.running || b.busy_ms - a.busy_ms);
@@ -318,10 +320,7 @@ function ModelCallsSection({ calls, range }: { calls: ModelCalls | null; range: 
           </div>
           <section className="card vitals-events">
             {running.map((call) => (
-              <CallRow
-                key={`${call.started_ms}-${call.caller}-${call.who}-${call.label}`}
-                call={call}
-              />
+              <CallRow key={call.id} call={call} />
             ))}
           </section>
         </>
@@ -355,13 +354,7 @@ function ModelCallsSection({ calls, range }: { calls: ModelCalls | null; range: 
             {calls.calls.length < total ? `newest ${calls.calls.length}` : `${total}`}
           </span>
         </button>
-        {each &&
-          calls.calls.map((call) => (
-            <CallRow
-              key={`${call.started_ms}-${call.caller}-${call.who}-${call.label}-${call.status}`}
-              call={call}
-            />
-          ))}
+        {each && calls.calls.map((call) => <CallRow key={call.id} call={call} />)}
       </section>
       <p className="vitals-note">
         Every call to a model, whoever made it. Cloud calls are listed but do not use the GPU.
@@ -413,7 +406,7 @@ function CallRow({ call }: { call: ModelCall }) {
   const running = call.status === "running";
   const took = (call.ended_ms ?? Date.now()) - call.started_ms;
   const dot = running ? "run" : call.status === "ok" ? "done" : "err";
-  const ended = call.status === "failed" || call.status === "stale" || call.status === "stopped";
+  const ended = call.status === "failed" || call.status === "stopped";
   return (
     <div className="vitals-row">
       <span className="vr-name">

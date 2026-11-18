@@ -461,7 +461,10 @@ plus expandable detail — with **two levels**:
   or loading a model", because creature thinks, code mode and the worker's jobs reach the
   model without an agent turn around them. Recorded where every caller passes (the router
   and the proxies to the gateway, `app.model_calls`), cross-process like the events. Cloud
-  calls are listed with a *cloud* chip because they do not use the GPU. The empty roster
+  calls are listed with a *cloud* chip because they do not use the GPU. The running list
+  is every open call however old, not a filter of the newest rows, so a long video job is
+  never crowded off by a creature's thinks; a call cut off by a restart settles as
+  *stopped* when the process comes back rather than reading as running. The empty roster
   now points at whichever list explains the trace, and when none does it says the box
   recorded nothing rather than inventing a cause.
 - **A load says so in the chat too, on the line above the composer** [decided]. The same

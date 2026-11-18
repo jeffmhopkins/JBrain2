@@ -388,9 +388,11 @@ async def chat_completions(request: Request) -> Response:
                         "planning" if task == JCODE_PLANNER_TASK else "coding",
                         model=str(payload["model"]),
                         task=task,
-                    ),
+                    ) as call,
                     client.stream("POST", "/chat/completions", json=payload) as upstream,
                 ):
+                    if getattr(upstream, "status_code", 200) >= 400:
+                        call.failed(f"gateway HTTP {upstream.status_code}")
                     async for chunk in upstream.aiter_raw():
                         yield chunk
         except SlotCapError as exc:

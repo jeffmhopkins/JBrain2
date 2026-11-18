@@ -52,10 +52,13 @@ BACKGROUND = "background"
 # API something to read back after the fact.
 RETENTION = timedelta(days=1)
 
-# A row still open after this belongs to a process that died under it. Also the bound on how
-# far before the window a still-relevant row can have started, which is what lets the window
-# read use the start-time index instead of scanning for open rows.
-STALE_AFTER = timedelta(minutes=15)
+# A row still open after this belongs to a process that died under it, and is no longer listed.
+# Far past any real call (a long generation runs minutes), so a call that is still running is
+# never dropped while it pins the GPU. Also the bound on how far before the window a relevant
+# row can have started, which lets the window read use the start-time index. A process that
+# restarts settles its own leftovers at once (`settle_orphans`), so this only matters for one
+# that died and never came back.
+STALE_AFTER = timedelta(hours=2)
 
 # The newest rows the page gets one by one. Everything else in the window is in the groups.
 RECENT_LIMIT = 60
@@ -122,15 +125,25 @@ def _clip(value: str) -> str:
     return value if len(value) <= _TEXT_MAX else value[: _TEXT_MAX - 1] + "…"
 
 
+# Both timestamps are taken in Python when the call starts and ends, never `now()` at write
+# time: the writes run on a background task that may wait for a pooled connection, and a row
+# stamped by its write would start late and end with a near-zero duration.
 _INSERT = """
     INSERT INTO app.model_calls
         (id, started_at, caller, label, task, model, local, persona_id, robot, source)
-    VALUES (:id, now(), :caller, :label, :task, :model, :local, :persona_id, :robot, :source)
+    VALUES (:id, :started_at, :caller, :label, :task, :model, :local, :persona_id, :robot,
+            :source)
 """
 
 _SETTLE = """
-    UPDATE app.model_calls SET ended_at = now(), status = :status, error = :error
+    UPDATE app.model_calls SET ended_at = :ended_at, status = :status, error = :error
     WHERE id = :id
+"""
+
+_ORPHANS = """
+    UPDATE app.model_calls SET ended_at = now(), status = 'stopped',
+        error = 'the process restarted during the call'
+    WHERE source = :source AND ended_at IS NULL
 """
 
 
@@ -145,18 +158,27 @@ async def _write(sql: str, params: dict[str, Any]) -> None:
         log.warning("model_calls.write_failed", exc_info=True)
 
 
-async def _narrate(row: dict[str, Any], done: asyncio.Event, outcome: dict[str, str]) -> None:
+async def _narrate(row: dict[str, Any], done: asyncio.Event, outcome: dict[str, Any]) -> None:
     # One task per call, so the settle can never land before the insert it updates.
     await _write(_INSERT, row)
     await done.wait()
     await _write(_SETTLE, {"id": row["id"], **outcome})
 
 
+async def settle_orphans() -> None:
+    """Settle the rows this process's previous life left open, as `stopped`.
+
+    Called once at startup, after `configure`. A call cut off by a restart (Ops → Update)
+    never settles, and without this it would read as running until it aged out. Only one
+    process carries each source name, so every open row under it is from a life that ended."""
+    await _write(_ORPHANS, {"source": _source})
+
+
 class Call:
     """The open call, for a caller whose failure arrives in-band (a proxy writes the gateway's
     refusal into a 200 body) rather than as an exception through the block."""
 
-    def __init__(self, outcome: dict[str, str]) -> None:
+    def __init__(self, outcome: dict[str, Any]) -> None:
         self._outcome = outcome
 
     def failed(self, reason: str) -> None:
@@ -179,15 +201,17 @@ async def track(
 
     Never awaits a write: the row is opened and settled by a background task, so the call
     pays for creating a task and nothing else. A call the caller abandons (an owner's Stop,
-    a phone hanging up) settles as `stopped` rather than being left open to age out, because
-    setting the event below is synchronous and still works inside a cancelled scope."""
-    outcome = {"status": "ok", "error": ""}
+    a phone hanging up, a caller's timeout) settles as `stopped` rather than being left open
+    to age out, because setting the event below is synchronous and still works inside a
+    cancelled scope."""
+    outcome: dict[str, Any] = {"status": "ok", "error": "", "ended_at": None}
     if _maker is None:
         yield Call(outcome)
         return
     done = asyncio.Event()
     row = {
         "id": uuid.uuid4(),
+        "started_at": datetime.now(tz=UTC),
         "caller": caller,
         "label": _clip(label),
         "task": task,
@@ -210,6 +234,7 @@ async def track(
         outcome["error"] = _clip(f"{type(exc).__name__}: {exc}")
         raise
     finally:
+        outcome["ended_at"] = datetime.now(tz=UTC)
         done.set()
 
 
@@ -229,18 +254,42 @@ async def prune(
     return cast("Any", result).rowcount or 0
 
 
-# Rows overlapping the window. Bounded below by STALE_AFTER so the start-time index answers it:
-# no live call started earlier than that, and an open row that did is reported as stale.
+# Rows overlapping the window: settled inside it, or still open and not abandoned. Bounded below
+# on the start time so the start-time index answers it (no live call is older than STALE_AFTER).
 _WINDOW = """
     FROM app.model_calls m
     LEFT JOIN app.growbot_personas p ON p.id = m.persona_id
     WHERE m.started_at >= :floor
-      AND (m.ended_at >= :cut
-           OR (m.ended_at IS NULL AND m.started_at >= LEAST(:stale, :cut)))
+      AND (m.ended_at >= :cut OR (m.ended_at IS NULL AND m.started_at >= :stale))
 """
 
 # Who the row is for: a creature by its persona's name, else its robot, else the label alone.
 _WHO = "COALESCE(p.name, NULLIF(m.robot, ''), '')"
+
+_ROW = f"""
+    SELECT m.id, m.started_at, m.ended_at, m.caller, {_WHO} AS who, m.label, m.model, m.local,
+           m.status, m.error, m.source
+"""
+
+
+def _ms(at: datetime | None) -> int | None:
+    return int(at.timestamp() * 1000) if at is not None else None
+
+
+def _call(r: Any) -> dict[str, Any]:
+    return {
+        "id": str(r.id),
+        "started_ms": _ms(r.started_at),
+        "ended_ms": _ms(r.ended_at),
+        "caller": r.caller,
+        "who": r.who,
+        "label": r.label,
+        "model": r.model,
+        "local": bool(r.local),
+        "status": r.status,
+        "error": r.error,
+        "source": r.source,
+    }
 
 
 async def window(
@@ -250,13 +299,15 @@ async def window(
     seconds: float,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """The model calls overlapping the trailing window: every one still running, a group per
-    (caller, who, label, model) with how many ran and how long they held a model inside the
-    window, and the newest RECENT_LIMIT rows one by one. Times are epoch milliseconds, like
-    the vitals history the page plots them against."""
+    """The model calls overlapping the trailing window: every one still running (on its own,
+    so a long call is never pushed out by a busy creature's newer ones), a group per (caller,
+    who, label, model) with how many ran and how long they held a model inside the window, and
+    the newest RECENT_LIMIT rows one by one. Times are epoch milliseconds, like the vitals
+    history the page plots them against."""
     moment = now or datetime.now(tz=UTC)
     cut = moment - timedelta(seconds=seconds)
-    params = {"cut": cut, "floor": cut - STALE_AFTER, "stale": moment - STALE_AFTER, "now": moment}
+    stale = moment - STALE_AFTER
+    params = {"cut": cut, "floor": min(cut, stale), "stale": stale, "now": moment}
     async with scoped_session(maker, ctx) as session:
         groups = (
             await session.execute(
@@ -264,9 +315,7 @@ async def window(
                     f"""
                     SELECT m.caller, {_WHO} AS who, m.label, m.model, bool_or(m.local) AS local,
                            count(*) AS calls,
-                           count(*) FILTER (
-                               WHERE m.ended_at IS NULL AND m.started_at >= :stale
-                           ) AS running,
+                           count(*) FILTER (WHERE m.ended_at IS NULL) AS running,
                            count(*) FILTER (WHERE m.status = 'failed') AS failed,
                            sum(extract(epoch FROM
                                LEAST(COALESCE(m.ended_at, :now), :now)
@@ -280,12 +329,25 @@ async def window(
                 params,
             )
         ).all()
+        running = (
+            await session.execute(
+                text(
+                    f"""
+                    {_ROW}
+                    FROM app.model_calls m
+                    LEFT JOIN app.growbot_personas p ON p.id = m.persona_id
+                    WHERE m.ended_at IS NULL AND m.started_at >= :stale
+                    ORDER BY m.started_at
+                    """  # noqa: S608 - fixed SQL fragments, every value is bound
+                ),
+                {"stale": stale},
+            )
+        ).all()
         rows = (
             await session.execute(
                 text(
                     f"""
-                    SELECT m.started_at, m.ended_at, m.caller, {_WHO} AS who, m.label,
-                           m.model, m.local, m.status, m.error, m.source
+                    {_ROW}
                     {_WINDOW}
                     ORDER BY m.started_at DESC
                     LIMIT :limit
@@ -294,9 +356,6 @@ async def window(
                 {**params, "limit": RECENT_LIMIT},
             )
         ).all()
-
-    def ms(at: datetime | None) -> int | None:
-        return int(at.timestamp() * 1000) if at is not None else None
 
     out_groups = [
         {
@@ -309,27 +368,12 @@ async def window(
             "running": int(g.running),
             "failed": int(g.failed),
             "busy_ms": max(0, round(float(g.busy_s or 0) * 1000)),
-            "last_ms": ms(g.last_at),
+            "last_ms": _ms(g.last_at),
         }
         for g in groups
     ]
-    out_rows = []
-    for r in rows:
-        status = r.status
-        if r.ended_at is None and moment - r.started_at > STALE_AFTER:
-            status = "stale"
-        out_rows.append(
-            {
-                "started_ms": ms(r.started_at),
-                "ended_ms": ms(r.ended_at),
-                "caller": r.caller,
-                "who": r.who,
-                "label": r.label,
-                "model": r.model,
-                "local": bool(r.local),
-                "status": status,
-                "error": r.error,
-                "source": r.source,
-            }
-        )
-    return {"groups": out_groups, "calls": out_rows}
+    return {
+        "groups": out_groups,
+        "running": [_call(r) for r in running],
+        "calls": [_call(r) for r in rows],
+    }

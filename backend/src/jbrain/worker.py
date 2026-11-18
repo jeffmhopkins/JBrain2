@@ -600,6 +600,7 @@ async def run() -> None:
     # own name so the vitals surface can say which half of the box did it.
     box_events.configure(maker, source="worker")
     model_calls.configure(maker, source="worker")
+    await model_calls.settle_orphans()
     blobs = FsBlobStore(settings.blob_dir)
     # Audio transcription is gated on the whisper backend being configured: an
     # empty whisper_url leaves audio attachments un-enqueued (no chunks) rather
