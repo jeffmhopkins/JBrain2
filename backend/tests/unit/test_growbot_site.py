@@ -4312,9 +4312,11 @@ def _trained_walk(
     cam: str = "user",
     turn: float = 0,
     secs: float = 1,
+    go: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     env = {
         **os.environ,
+        "GB_GO": json.dumps(go) if go else "",
         "GB_TURN": str(turn),
         "GB_SECS": str(secs),
         "GB_DRIVE": (_SITE / "growbot-drive.js").as_uri(),
@@ -4483,6 +4485,34 @@ def test_a_skill_set_turn_that_never_moves_is_not_called_turned() -> None:
     assert all(c["fwd"] == 0 and c["yaw"] == -30 / 180 for c in got["cmds"])
     near = _trained_walk("turn", _STILL, skills=_SET, turn=10, secs=10, wait_ms=4000)
     assert near["ends"] == []
+
+
+def test_a_route_turns_on_the_look_walks_on_the_forward_and_ends_where_it_says() -> None:
+    """Explore rebuild wave E1: a route (gbMap.go) is one walk steered by heading each tick,
+    kept going past its first seconds while the route runs, until the route says it is done."""
+    route = [
+        {"n": 30, "heading": 60, "speed": 0},
+        {"n": 40, "heading": -5, "speed": 1},
+        {"done": "arrived"},
+    ]
+    got = _trained_walk("forward", _STILL, skills=_SET, go=route, secs=1, wait_ms=5000)
+    assert got["go"]["mv"]["direction"] == "go" and got["go"]["why"] == "arrived"
+    # Turning on the spot first, on the look, then walking on the tall walk.
+    assert got["files"][0] == _LOOK_F and _TALL_F in got["files"]
+    assert got["cmds"][0]["fwd"] == 0 and got["cmds"][0]["yaw"] == pytest.approx(60 / 180)
+    assert got["cmds"][-1]["fwd"] == 1 and got["cmds"][-1]["yaw"] == pytest.approx(-5 / 180)
+    # Asked for 1 s, it ran about 3: the route kept it going, paying the duty as it went.
+    assert sum(w["ms"] for w in got["walkLog"]) > 2000
+    assert got["ends"][-1]["why"] == "arrived" and got["goCalls"] == 71
+    assert got["errs"] == [] and got["last"] == ["rest"]
+
+
+def test_a_route_needs_the_look_and_the_forward() -> None:
+    got = _trained_walk(
+        "forward", _STILL, skills={"look": _SET["look"]}, go=[{"done": "arrived"}], wait_ms=500
+    )
+    assert got["go"]["state"] == "blocked" and got["goCalls"] == 0
+    assert ["blocked", "go_unavailable"] in got["reports"]
 
 
 def test_a_skill_set_half_turn_keeps_its_side() -> None:

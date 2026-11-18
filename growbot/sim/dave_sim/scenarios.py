@@ -408,6 +408,46 @@ async def turns_by_degrees(sim: Sim) -> None:
     sim.check(_upright(sim), "on his feet at the end")
 
 
+_SQUARE_M = 1.0
+
+
+@scenario(start="standing", person=None, pose="truth", timeout=600)
+async def square_by_path(sim: Sim) -> None:
+    """A 1 m square walked as one route (gbMap.go) on his true pose: ahead, left, back and
+    home, steered by heading in one continuous walk. Needs no model. It must end "arrived"
+    within 25 cm of where it began by the sim's own position, on his feet. Catches: a route
+    steered the wrong way round (the map's heading against the walk's), a stop-to-turn that
+    never walks again, and a walk that never ends."""
+    await sim.wait(4)
+    here = await sim.page.evaluate("() => window.gbMap.map().here")
+    x0, y0, h = float(here["x"]), float(here["y"]), math.radians(float(here["h"]))
+    fx, fy, lx, ly = math.cos(h), math.sin(h), -math.sin(h), math.cos(h)
+    side = _SQUARE_M
+    pts = [
+        {"x": x0 + side * fx, "y": y0 + side * fy},
+        {"x": x0 + side * (fx + lx), "y": y0 + side * (fy + ly)},
+        {"x": x0 + side * lx, "y": y0 + side * ly},
+        {"x": x0, "y": y0},
+    ]
+    t, s0 = sim.now(), dict(sim.state)
+    went = await sim.page.evaluate("p => window.gbMap.go(p)", pts)
+    sim.check(bool(went), "the route started on the box's skills")
+    ended = await sim.until(
+        lambda s: bool(_page_events_since(s, t, "walk_end")), 480, "the route ended"
+    )
+    got = await sim.page.evaluate("() => window.gbMap.goState()")
+    s1 = sim.state
+    off = math.hypot(s1["x"] - s0["x"], s1["y"] - s0["y"])
+    sim.check(
+        ended and bool(got) and got.get("why") == "arrived" and off <= 0.25,
+        "walked the 1 m square and closed it within 25 cm",
+        off_m=round(off, 2),
+        state=got,
+        secs=round(sim.now() - t),
+    )
+    sim.check(_upright(sim), "on his feet at the end")
+
+
 @scenario(start="standing", wiring={"swap": False}, person={"x": -2.5, "face_z": 0.6})
 async def stock_wired(sim: Sim) -> None:
     """The sim's stock build, its legs the other way round from the robot's. This scenario

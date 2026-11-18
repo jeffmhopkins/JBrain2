@@ -594,6 +594,7 @@
     var M = typeof _motion !== "undefined" ? _motion : null;
     if (!M || M.loading || M.kind !== "walk") return "";
     // His own turn by degrees (gbOwnWalk) turns on the spot: no distance.
+    if (M.own === "go") return M.tele && M.tele.sp > 0 ? "forward" : "";
     if (M.own) return M.own === "turn" ? "" : M.own;
     // What physically ran, as the page's own move line reads it: the official gait walks
     // screen-backward (away from where his camera looks) even when asked "fwd", and a turn
@@ -695,6 +696,45 @@
     return { gait: left ? "spin_left" : "spin_right", dir: left ? "left" : "right", secs: Math.round(secs * 10) / 10, gain: 0.99 };
   }
 
+  /* A route (docs/plans/GROWBOT_EXPLORE_PLAN.md, wave E1): one continuous walk through
+     points on his map, steered by heading each tick (growbot-box.js gbOwnGo) in place of
+     timed chunks with a stance glide around each. He heads for the first point not yet
+     reached, stops to turn on the spot when it is more than GO_TURN_DEG off and walks again
+     once within GO_WALK_DEG (the gap keeps him from flicking between the two), and ends when
+     he reaches the last, or when he stops getting closer: no range sensor says he has met a
+     wall (owner), so a walk that goes nowhere ends itself. */
+  var GO_REACH_M = 0.15, GO_TURN_DEG = 30, GO_WALK_DEG = 10, GO_PROGRESS_M = 0.05,
+    GO_PROGRESS_MS = 12000, GO_TURN_PROGRESS_DEG = 3, GO_MAX_POINTS = 64, GO_SECS = 30;
+  var lastGo = null;
+  function goRoute(pts) {
+    var i = 0, turning = false, best = Infinity, bestT = Date.now(), bestE = Infinity, go = { pts: pts, i: 0, why: "" };
+    lastGo = go;
+    function end(why) { go.why = why; return { done: why }; }
+    return function (now) {
+      var m = soulMap();
+      if (!m) return end("no_map");
+      var h = m.here;
+      while (i < pts.length - 1 && Math.hypot(pts[i].x - h.x, pts[i].y - h.y) < GO_REACH_M) i++;
+      go.i = i;
+      var p = pts[i], d = Math.hypot(p.x - h.x, p.y - h.y);
+      if (i === pts.length - 1 && d < GO_REACH_M) return end("arrived");
+      var err = wrap(Math.atan2(p.y - h.y, p.x - h.x) / D - h.h);
+      var was = turning;
+      turning = turning ? Math.abs(err) > GO_WALK_DEG : Math.abs(err) > GO_TURN_DEG;
+      // Each switch between walking and turning starts the watch afresh.
+      if (turning !== was) bestT = now;
+      // Progress: the path still to walk shrinking while he walks, or the angle while he turns.
+      var left = d;
+      for (var k = i; k < pts.length - 1; k++) left += Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].y - pts[k].y);
+      var e = Math.abs(err);
+      if (left < best - GO_PROGRESS_M || (turning && e < bestE - GO_TURN_PROGRESS_DEG)) { bestT = now; }
+      best = Math.min(best, left);
+      bestE = turning ? Math.min(bestE, e) : Infinity;
+      if (now - bestT > GO_PROGRESS_MS) return end("stuck");
+      return { heading: err, speed: turning ? 0 : 1 };
+    };
+  }
+
   // The line he says while he looks (the page's gbToolLine), as the other tools have.
   function toolLines() {
     try {
@@ -745,6 +785,23 @@
     map: function () { return soulMap(); },
     // The spin that stops at the angle, for a turn the explore trip makes between his thoughts.
     turn: function (deg) { return turnSpec({ turn: deg }); },
+    /* Walk the route through `points` ([{x, y}] on his map, metres), on the box's skills.
+       True when it started; the walk's end row and goState() say how it ended. */
+    go: function (points, secs) {
+      if (!Array.isArray(points) || !points.length || points.length > GO_MAX_POINTS) return false;
+      var pts = [];
+      for (var j = 0; j < points.length; j++) {
+        var q = points[j];
+        if (!q || !isFinite(+q.x) || !isFinite(+q.y)) return false;
+        pts.push({ x: +q.x, y: +q.y });
+      }
+      if (!soulMap() || typeof window.gbOwnGo !== "function" || !(window.gbOwnGoReady && window.gbOwnGoReady())) return false;
+      var a = window.gbOwnGo(goRoute(pts), +secs || GO_SECS);
+      try { logEv("map_go", { n: pts.length, to: pts[pts.length - 1], state: a && a.state }); } catch (e) {}
+      return !!a && a.state !== "blocked";
+    },
+    // The last route: its points, the one he is heading for, and why it ended ("" while it runs).
+    goState: function () { return lastGo && { n: lastGo.pts.length, i: lastGo.i, why: lastGo.why }; },
     // When the last spin that went nowhere ended (ms since epoch), or 0.
     stuckSpinT: function () { return stuckSpinT; },
     /* How far, by his map, the thing his goal names is (metres), or null when it isn't on

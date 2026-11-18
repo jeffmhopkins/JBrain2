@@ -75,8 +75,13 @@ Each wave is tested in the sim first on true pose and depth, so a failure points
   degrees): 9 of 10 ended within 10° of the angle by the sim's true yaw, at about 5°/s. The
   miss, a half turn 29° past, is the page's gyro heading disagreeing with the truth, which
   E4's scan matching is for.
-  Next in this wave: `goHeading(deg)` / `follow(path)` driving forward walks continuously by
-  heading, ending the 12-25 s chunks. *Pass:* 95% of turns within 10°; a scripted 1 m square on
+  A route (`gbMap.go(points)`, `growbot-box.js` `gbOwnGo`) is one forward walk on the skill set
+  steered by heading each tick toward the next point not yet reached (within 15 cm), in place of
+  timed chunks with a stance glide around each: more than 30° off he stops and turns on the look
+  skill, and walks again within 10°. It ends "arrived" at the last point, or "stuck" after 12 s
+  with no headway (no range sensor says a wall stopped him), and is kept going past its first
+  seconds while it runs, paying the legs' duty budget as it goes. Sim `square_by_path`: a 1 m
+  square as one route on true pose. *Pass:* 95% of turns within 10°; a scripted 1 m square on
   true pose closes within 25 cm; no falls in 20 runs.
 - **E2 — grid, frontiers and inspection on true pose and depth.** This is the wave that proves
   the paradigm. *Pass:* 12/12 runs reach every room and identify ≥90% of the sim's major items
