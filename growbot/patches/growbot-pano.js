@@ -126,6 +126,17 @@
       // drifts up to 20 degrees either way (f8-f9, mf4-mf6), and turning on from the end let the
       // drift add up, so he ground into the wall or wandered off it.
       tr.want = blocked ? wrap(h.h + side * 90) : wrap((typeof tr.h0 === "number" ? tr.h0 : h.h) - side * PROBE_DEG);
+      // A second wall within a couple of walks that would turn him back the way he came is a
+      // corner taken on the wrong hand (f11: heading north into the corner by the door with the
+      // wall on his right but following it on his left, he turned east into the side wall,
+      // then south, home again): change hands and turn the other way from the first wall.
+      if (blocked) {
+        var lb = tr.lastBlock;
+        if (lb && (tr.steps || 0) - lb.step <= 2 && Math.abs(wrap(tr.want - lb.h)) > 135) {
+          tr.side = -side; tr.want = wrap(lb.h + tr.side * 90); tr.why += ", changed hands";
+          tr.lastBlock = null;
+        } else tr.lastBlock = { h: +h.h, step: tr.steps || 0 };
+      }
     }
     if (tr.want !== null && tr.want !== undefined) {
       var d = wrap(tr.want - h.h);
@@ -133,7 +144,7 @@
       if (Math.abs(d) > 8) return { walk: { turn: Math.round(d) }, gone: gone };
       tr.want = null;
     }
-    tr.walked = true; tr.h0 = +h.h;
+    tr.walked = true; tr.h0 = +h.h; tr.steps = (tr.steps || 0) + 1;
     return { walk: { gait: "screen_forward", dir: "fwd", secs: WALL_WALK_S }, gone: gone };
   }
   // Whether the last BLOCK_N picture changes (newest last) say he is pushing, not walking.

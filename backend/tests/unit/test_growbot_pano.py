@@ -294,6 +294,25 @@ def test_a_turn_that_went_nowhere_backs_out_and_turns_again() -> None:
     assert again["walk"] == {"turn": 90}
 
 
+def test_a_corner_taken_on_the_wrong_hand_changes_hands() -> None:
+    """f11: wall on his left, blocked going north, then east, would send him back south."""
+    got = _node(
+        "const tr={wall:true,side:-1,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0};"
+        "const h=(x,y,hd)=>({x,y,h:hd,room:'r'});"
+        "P.wallStep(tr,h(0,0,90),1000,false);"  # walk north
+        "const a=P.wallStep(tr,h(0,1,90),20000,true);"  # blocked: right, to east
+        "P.wallStep(tr,h(0,1,0),25000,false);"  # walk east
+        "P.wallStep(tr,h(0.1,1,0),40000,false);"  # clear: probe left
+        "P.wallStep(tr,h(0.1,1,15),45000,false);"  # walk
+        "const b=P.wallStep(tr,h(0.1,1,15),60000,true);"  # blocked again: would go south
+        "console.log(JSON.stringify([a,b,tr.side,tr.why]))"
+    )
+    a, b, side, why = got
+    assert a["walk"] == {"turn": -90}
+    # West, away from the first wall on the other hand, not south.
+    assert b["walk"] == {"turn": 165} and side == 1 and "changed hands" in why
+
+
 def test_a_way_whose_walk_is_blocked_ends_there() -> None:
     got = _node(
         "console.log(JSON.stringify(P.step({abs:90,x:0,y:0,t:0},{x:0,y:0.3,h:90},1000,false,true)))"
