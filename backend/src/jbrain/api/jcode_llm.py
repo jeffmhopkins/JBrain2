@@ -38,7 +38,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from jbrain import queue
+from jbrain import model_calls, queue
 from jbrain.auth.keys import secrets_equal
 from jbrain.ingest.imageprep import pdf_page_images
 from jbrain.llm import engine as engines
@@ -383,8 +383,16 @@ async def chat_completions(request: Request) -> Response:
                     pinned_request(
                         pool_guard, str(payload["model"]), payload, prompt_tokens, JCODE_ROLE
                     ),
+                    model_calls.track(
+                        model_calls.CODE,
+                        "planning" if task == JCODE_PLANNER_TASK else "coding",
+                        model=str(payload["model"]),
+                        task=task,
+                    ) as call,
                     client.stream("POST", "/chat/completions", json=payload) as upstream,
                 ):
+                    if getattr(upstream, "status_code", 200) >= 400:
+                        call.failed(f"gateway HTTP {upstream.status_code}")
                     async for chunk in upstream.aiter_raw():
                         yield chunk
         except SlotCapError as exc:

@@ -28,7 +28,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from jbrain import public_base
+from jbrain import model_calls, public_base
 from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
 from jbrain.auth import service
 from jbrain.config import Settings
@@ -262,8 +262,11 @@ async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool)
         try:
             async with (
                 pinned_request(pool_guard, served, payload, prompt_tokens, JCODE_ROLE),
+                model_calls.track(model_calls.EXTERNAL, "external coder", model=served) as call,
                 client.stream("POST", upstream_path, json=payload) as upstream,
             ):
+                if getattr(upstream, "status_code", 200) >= 400:
+                    call.failed(f"gateway HTTP {upstream.status_code}")
                 async for chunk in upstream.aiter_raw():
                     if meter:
                         captured.append(chunk)

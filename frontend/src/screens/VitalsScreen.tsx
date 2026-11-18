@@ -18,6 +18,9 @@ import {
   type CapturedPrompt,
   type LiveTurn,
   type LiveTurns,
+  type ModelCall,
+  type ModelCallGroup,
+  type ModelCalls,
   type TurnDetail as TurnDetailPayload,
   api,
 } from "../api/client";
@@ -108,6 +111,7 @@ export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps
   // minutes of GPU history above a list that emptied the moment a turn finished.
   const roster = useLiveTurns(seconds);
   const events = useBoxEvents(seconds);
+  const calls = useModelCalls(seconds);
   const selected = roster?.turns.find((t) => t.id === selectedTurnId) ?? null;
 
   return (
@@ -119,11 +123,13 @@ export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps
           gpuNow={roster?.gpu_busy_percent ?? null}
           turnCount={roster?.turns.length ?? 0}
         />
+        <ModelCallsSection calls={calls} range={range} />
         <BoxEvents events={events} range={range} />
         <Roster
           roster={roster}
           range={range}
-          explained={events.length > 0}
+          callsExplain={(calls?.groups ?? []).some((g) => g.local)}
+          eventsExplain={events.length > 0}
           onSelect={onSelectTurn}
         />
         <StreamHealth />
@@ -279,6 +285,145 @@ function StreamHealth() {
         </>
       )}
     </section>
+  );
+}
+
+// ---- level 1: every model call -------------------------------------------
+
+/** Every model call in the window, from every caller.
+ *
+ *  The agent roster below lists only agent turns, and most of what keeps this box's GPU
+ *  busy is not one: a GrowBot creature thinking, code mode, the worker's ingest and vision
+ *  jobs. They are recorded where every one of them passes, the router and the proxies to
+ *  the gateway (jbrain.model_calls), so this list names them all. Running calls come first,
+ *  because they are what the GPU is doing this second; then one row per caller and purpose
+ *  for the whole window, so a creature thinking two hundred times reads as one line; then,
+ *  on request, the newest calls one by one. Hidden when the window has none. */
+function ModelCallsSection({ calls, range }: { calls: ModelCalls | null; range: RangeKey }) {
+  const [open, setOpen] = useState(false);
+  const [each, setEach] = useState(false);
+  if (calls === null || calls.groups.length === 0) return null;
+  // Its own list from the server, not a filter of the newest rows: a long call must not be
+  // pushed out of view by a busy creature's newer ones while it is still holding the GPU.
+  const running = calls.running;
+  const total = calls.groups.reduce((n, g) => n + g.calls, 0);
+  // Busiest first: the group holding the GPU longest is the answer to "what is it doing".
+  const groups = [...calls.groups].sort((a, b) => b.running - a.running || b.busy_ms - a.busy_ms);
+  const shown = open ? groups : groups.slice(0, ROW_CAP);
+
+  return (
+    <>
+      {running.length > 0 && (
+        <>
+          <div className="vitals-sec-head">
+            Model calls running now <span className="count live">{running.length}</span>
+          </div>
+          <section className="card vitals-events">
+            {running.map((call) => (
+              <CallRow key={call.id} call={call} />
+            ))}
+          </section>
+        </>
+      )}
+      <div className="vitals-sec-head">
+        Model calls, last {range} <span className="count">{total}</span>
+      </div>
+      <section className="card vitals-events">
+        {shown.map((group) => (
+          <CallGroupRow
+            key={JSON.stringify([group.caller, group.who, group.label, group.model])}
+            group={group}
+          />
+        ))}
+        {groups.length > ROW_CAP && (
+          <MoreRow
+            total={groups.length}
+            hidden={groups.length - shown.length}
+            open={open}
+            onToggle={() => setOpen((v) => !v)}
+          />
+        )}
+        <button
+          type="button"
+          className="vitals-more"
+          aria-expanded={each}
+          onClick={() => setEach((v) => !v)}
+        >
+          <span>{each ? "Hide each call" : "Show each call"}</span>
+          <span className="hint">
+            {calls.calls.length < total ? `newest ${calls.calls.length}` : `${total}`}
+          </span>
+        </button>
+        {each && calls.calls.map((call) => <CallRow key={call.id} call={call} />)}
+      </section>
+      <p className="vitals-note">
+        Every call to a model, whoever made it. Cloud calls are listed but do not use the GPU.
+      </p>
+    </>
+  );
+}
+
+/** A call in the owner's words: "Dave thinking", "code mode: coding", "assistant turn". */
+function callName(c: { caller: string; who: string; label: string }): string {
+  if (c.caller === "creature") {
+    const who = c.who === "" ? "creature" : c.who;
+    const doing: Record<string, string> = {
+      think: "thinking",
+      "warm-up": "warming up",
+      replay: "replaying a turn",
+    };
+    return `${who} ${doing[c.label] ?? c.label}`;
+  }
+  if (c.caller === "code") return `code mode: ${c.label}`;
+  return c.label;
+}
+
+function CallGroupRow({ group }: { group: ModelCallGroup }) {
+  const plural = group.calls === 1 ? "call" : "calls";
+  const failed = group.failed > 0 ? `, ${group.failed} failed` : "";
+  return (
+    <div className="vitals-row">
+      <span className="vr-name">
+        <i
+          className={`vitals-dot ${group.running > 0 ? "run" : group.failed > 0 ? "err" : "done"}`}
+        />
+        <span className="n">{callName(group)}</span>
+        {!group.local && <span className="kind">cloud</span>}
+      </span>
+      <span className="vr-meta">
+        {group.calls} {plural}
+        {failed} · {group.model}
+      </span>
+      <span className="vr-right">
+        <Elapsed sinceMs={group.busy_ms} ticking={false} />
+        {group.last_ms !== null && <span className="vr-tok">{ago(group.last_ms)}</span>}
+      </span>
+    </div>
+  );
+}
+
+function CallRow({ call }: { call: ModelCall }) {
+  const running = call.status === "running";
+  const took = (call.ended_ms ?? Date.now()) - call.started_ms;
+  const dot = running ? "run" : call.status === "ok" ? "done" : "err";
+  const ended = call.status === "failed" || call.status === "stopped";
+  return (
+    <div className="vitals-row">
+      <span className="vr-name">
+        <i className={`vitals-dot ${dot}`} />
+        <span className="n">{callName(call)}</span>
+        {!call.local && <span className="kind">cloud</span>}
+        {call.source === "worker" && <span className="kind">background</span>}
+      </span>
+      <span className="vr-meta">
+        {call.model}
+        {ended && ` · ${call.status}${call.error === "" ? "" : `: ${call.error}`}`}
+      </span>
+      <span className="vr-right">
+        <Elapsed sinceMs={took} ticking={running} />
+        <span className="vr-tok">{ago(call.started_ms)}</span>
+      </span>
+    </div>
   );
 }
 
@@ -465,14 +610,17 @@ function ago(atMs: number, now: number = Date.now()): string {
 function Roster({
   roster,
   range,
-  explained,
+  callsExplain,
+  eventsExplain,
   onSelect,
 }: {
   roster: LiveTurns | null;
   range: RangeKey;
-  /** Whether the box-events list above is carrying anything. When it is, the empty state
-   *  stops guessing at what else the GPU might be doing and points at the answer. */
-  explained: boolean;
+  /** Whether the model-call list above carries a call on the box's own GPU (a cloud call
+   *  explains nothing on the trace), and whether the box-event list carries anything. When
+   *  they do, the empty state points at them instead of describing work it cannot see. */
+  callsExplain: boolean;
+  eventsExplain: boolean;
   onSelect: (id: string) => void;
 }) {
   if (roster === null) {
@@ -492,18 +640,7 @@ function Roster({
     return (
       <section className="card vitals-empty">
         <p className="hl">No agent turns in the last {range}.</p>
-        <p>
-          {gpu !== null && gpu >= 20
-            ? explained
-              ? `The GPU is at ${Math.round(gpu)}% because of the work listed above — a model
-                 load or an image render. That is real work, but it is not an agent turn, so
-                 it has no row here.`
-              : `The GPU is at ${Math.round(gpu)}% because the box is doing something else —
-                 generating an image, or loading a model. That is real work, but it is not an
-                 agent turn, so it has no row here.`
-            : "The box has been idle."}{" "}
-          GPU busy counts everything the box does; this list counts turns.
-        </p>
+        <p>{emptyRosterReason(gpu, callsExplain, eventsExplain)}</p>
       </section>
     );
   }
@@ -523,6 +660,30 @@ function Roster({
       )}
     </>
   );
+}
+
+/** Why the GPU reads what it does when no agent turn ran. It used to GUESS ("generating an
+ *  image, or loading a model") while two creatures were thinking, because their calls were
+ *  recorded nowhere. Now it points at the lists that name the work, and only when neither
+ *  carries anything does it say the box recorded nothing, rather than inventing a cause. */
+function emptyRosterReason(
+  gpu: number | null,
+  callsExplain: boolean,
+  eventsExplain: boolean,
+): string {
+  if (gpu === null || gpu < 20) {
+    return callsExplain
+      ? "The model calls above ran without an agent turn around them."
+      : "The box has been idle.";
+  }
+  const pct = Math.round(gpu);
+  if (callsExplain) {
+    return `The GPU is at ${pct}% because of the model calls listed above. Creature thoughts, code mode and background jobs are model calls, not agent turns, so they have no row here.`;
+  }
+  if (eventsExplain) {
+    return `The GPU is at ${pct}% because of the work listed above. It is not an agent turn, so it has no row here.`;
+  }
+  return `The GPU is at ${pct}%, but the box recorded no model call, load or render in the last stretch to account for it.`;
 }
 
 /** One heading plus its parent rows, each with its children nested underneath. Children
@@ -1073,16 +1234,25 @@ function useLiveTurns(seconds: number): LiveTurns | null {
  *  An empty list on failure, not a null: this surface is an explanation, and a failed poll
  *  must degrade to "nothing to add" rather than to a broken card. */
 function useBoxEvents(seconds: number): BoxEvent[] {
+  return useWindowPoll(seconds, api.opsVitalsEvents, []);
+}
+
+function useModelCalls(seconds: number): ModelCalls | null {
+  return useWindowPoll<ModelCalls | null>(seconds, api.opsVitalsCalls, null);
+}
+
+/** A window read polled at the screen's 1 Hz while it is open and in front of the owner. */
+function useWindowPoll<T>(seconds: number, read: (seconds: number) => Promise<T>, initial: T): T {
   const foreground = useForeground();
-  const [events, setEvents] = useState<BoxEvent[]>([]);
+  const [value, setValue] = useState<T>(initial);
 
   useEffect(() => {
     if (!foreground) return;
     let cancelled = false;
     const load = async (): Promise<void> => {
       try {
-        const next = await api.opsVitalsEvents(seconds);
-        if (!cancelled) setEvents(next);
+        const next = await read(seconds);
+        if (!cancelled) setValue(next);
       } catch {
         // A failed poll leaves what is on screen; the next tick retries.
       }
@@ -1099,9 +1269,9 @@ function useBoxEvents(seconds: number): BoxEvent[] {
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [foreground, seconds]);
+  }, [foreground, seconds, read]);
 
-  return events;
+  return value;
 }
 
 /** The shared history, re-read once a second so the plot advances while open. */

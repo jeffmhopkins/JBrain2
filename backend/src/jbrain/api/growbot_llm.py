@@ -42,6 +42,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from jbrain import model_calls
 from jbrain.api.internal_auth import require_growbot
 from jbrain.db.session import SessionContext
 from jbrain.growbot import prefix
@@ -484,11 +485,19 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                 _apply_level(payload, level, model)
                 async with (
                     pinned_request(pool_guard, model, payload, prompt_tokens, GROWBOT_ROLE),
+                    model_calls.track(
+                        model_calls.CREATURE,
+                        "replay" if replay else "warm-up" if warmup else "think",
+                        model=model,
+                        persona_id=rec.persona_id,
+                        robot=rec.robot,
+                    ) as call,
                     client.stream("POST", "/chat/completions", json=payload) as upstream,
                 ):
                     status = getattr(upstream, "status_code", 200)
                     mark("first_byte_ms")
                     if status >= 400:
+                        call.failed(f"gateway HTTP {status}")
                         # The 200 is already out; say it in the body, which the sidecar and
                         # the app read as a failed turn rather than as the creature's words.
                         log.warning("growbot-llm gateway answered %s model=%s", status, model)

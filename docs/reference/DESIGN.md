@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-11-16 — the Trained walks sheet folds the walks a master learned from under it. Prior: the GrowBot Body tab is redesigned as a remote plus rows (one walk row and sheet, Tap a move | Steer live in place of the second Drive, tricks on one sideways line, Follow me, Body test and Legs as sheets, the robot's key and Who wears in its sheet, developer tools folded away). Prior: the Jobs Runs list keeps spawn order (newest on top) instead of jumping on every update. Prior: the Ops vitals gain a CPU busy % tile, and the load average reads as threads, not a percent. Prior: leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
+> **Status:** Living · **Last verified:** 2026-11-18 — the vitals detail lists every model call (creature thinks, code mode, background jobs, the assistant) above the box events, and the empty roster stops guessing at an image or a load. Prior: the Trained walks sheet folds the walks a master learned from under it. Prior: the GrowBot Body tab is redesigned as a remote plus rows (one walk row and sheet, Tap a move | Steer live in place of the second Drive, tricks on one sideways line, Follow me, Body test and Legs as sheets, the robot's key and Who wears in its sheet, developer tools folded away). Prior: the Jobs Runs list keeps spawn order (newest on top) instead of jumping on every update. Prior: the Ops vitals gain a CPU busy % tile, and the load average reads as threads, not a percent. Prior: leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -452,6 +452,21 @@ plus expandable detail — with **two levels**:
   figure before the first sample lands, or on a box with no device probe (never a `0%`,
   which reads as stuck), and none on a settled row — "loaded gpt-oss-120b 100%" would put a
   progress figure on a row whose point is that it is over.
+- **Every model call is listed, not only agent turns** [decided, owner 2026-11-18]. Above
+  *On the box* sit *Model calls running now* and *Model calls, last N*: one row per caller,
+  purpose and model for the window ("Dave thinking · 214 calls · qwen3-vl", with the time
+  it held the model and when it last ran), busiest first and capped like every list here,
+  and on request the newest calls one by one. The reading that forced it: 98% busy, two
+  GrowBot creatures thinking, and a page that said *No agent turns* and guessed "an image,
+  or loading a model", because creature thinks, code mode and the worker's jobs reach the
+  model without an agent turn around them. Recorded where every caller passes (the router
+  and the proxies to the gateway, `app.model_calls`), cross-process like the events. Cloud
+  calls are listed with a *cloud* chip because they do not use the GPU. The running list
+  is every open call however old, not a filter of the newest rows, so a long video job is
+  never crowded off by a creature's thinks; a call cut off by a restart settles as
+  *stopped* when the process comes back rather than reading as running. The empty roster
+  now points at whichever list explains the trace, and when none does it says the box
+  recorded nothing rather than inventing a cause.
 - **A load says so in the chat too, on the line above the composer** [decided]. The same
   reading, deliberately duplicated onto the conversation surface's status line
   (`AgentStatusLine`): *Loading **gpt-oss-120b**… 43% · 12s*. A cold 120B takes the better

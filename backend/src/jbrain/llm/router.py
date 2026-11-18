@@ -21,7 +21,7 @@ from typing import Any, Protocol
 import httpx
 import structlog
 
-from jbrain import box_events
+from jbrain import box_events, model_calls
 from jbrain.config import Settings
 from jbrain.llm import engine as engines
 from jbrain.llm import kv_pool_guard as kv_pool_guard_mod
@@ -1060,6 +1060,22 @@ class LlmRouter:
         except Exception as exc:  # noqa: BLE001 - accounting must never fail or slow a call
             log.warning("llm.usage_record_failed", task=task, error=repr(exc))
 
+    @staticmethod
+    def _tracked(
+        task: str, provider: str, model: str
+    ) -> contextlib.AbstractAsyncContextManager[model_calls.Call]:
+        """Open this call's row on the vitals page (jbrain.model_calls) for as long as it
+        holds its slot. Entered inside the slot pin, so a call queued behind another is not
+        listed as running before it is."""
+        caller, label = model_calls.router_caller(task)
+        return model_calls.track(
+            caller,
+            label,
+            model=model,
+            task=task,
+            local=provider == local_catalog.LOCAL_PROVIDER,
+        )
+
     @contextlib.asynccontextmanager
     async def _slot_pin(
         self,
@@ -1185,16 +1201,19 @@ class LlmRouter:
         client = self._clients[provider]
         chars = len(system) + len(user_text)
         start = time.perf_counter()
-        async with self._slot_pin(
-            task,
-            slot_role,
-            provider,
-            model,
-            chars=chars,
-            n_images=len(images),
-            max_tokens=max_tokens,
-            video_tokens=sum(slot_roles.video_tokens_charge(v.seconds) for v in videos),
-        ) as (id_slot, max_tokens):
+        async with (
+            self._slot_pin(
+                task,
+                slot_role,
+                provider,
+                model,
+                chars=chars,
+                n_images=len(images),
+                max_tokens=max_tokens,
+                video_tokens=sum(slot_roles.video_tokens_charge(v.seconds) for v in videos),
+            ) as (id_slot, max_tokens),
+            self._tracked(task, provider, model),
+        ):
             # Only when pinned: test fakes and older clients do not take the keyword.
             slot_kw: dict[str, Any] = {} if id_slot is None else {"id_slot": id_slot}
             # Only when sent, for the same reason: no existing fake takes `videos`.
@@ -1356,16 +1375,19 @@ class LlmRouter:
             video_tokens=video_tokens,
         )
         start = time.perf_counter()
-        async with self._slot_pin(
-            task,
-            slot_role,
-            provider,
-            model,
-            chars=chars,
-            n_images=n_images,
-            max_tokens=max_tokens,
-            video_tokens=video_tokens,
-        ) as (id_slot, max_tokens):
+        async with (
+            self._slot_pin(
+                task,
+                slot_role,
+                provider,
+                model,
+                chars=chars,
+                n_images=n_images,
+                max_tokens=max_tokens,
+                video_tokens=video_tokens,
+            ) as (id_slot, max_tokens),
+            self._tracked(task, provider, model),
+        ):
             turn = await client.converse(
                 model=model,
                 system=system,
@@ -1540,6 +1562,7 @@ class LlmRouter:
                 max_tokens=max_tokens,
                 video_tokens=video_tokens,
             ) as (id_slot, max_tokens),
+            self._tracked(task, provider, model),
             box_events.lazy_span(box_events.PREFILL, model, detail=_reading(messages)) as (
                 publish,
                 prefill_done,
