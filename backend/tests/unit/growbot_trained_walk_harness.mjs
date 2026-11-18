@@ -6,7 +6,7 @@
 // of three stand-in files instead, and GB_ESTOP_AT says "stop, stop!" that many ms in.
 // GB_FOLLOW ("walk" or "dry") follows faces instead (growbot-follow.js at GB_FOLLOW_JS): GB_FACES
 // is [{at, x, w}], a square face box centred at x (0..1 of the frame) and w wide, seen `at` ms
-// in; GB_WAIT is how long to watch.
+// in; GB_WAIT is how long to watch. GB_TURN is a "turn" move's degrees and GB_SECS its time.
 import { register } from "node:module";
 const RUNNER = process.argv[2], BOX = process.argv[3], MOVE = process.argv[4];
 const PHONE = JSON.parse(process.argv[5]);
@@ -88,7 +88,7 @@ FACES.forEach((f) => setTimeout(() => {
   if (eyes) eyes(f.w ? [{ x: f.x - f.w / 2, y: 0.4 - h / 2, width: f.w, height: h }] : []);
 }, f.at));
 if (FOLLOW === "dry") g.gbFollow.dry(SKILLS);
-else g.gbTrainedWalk(SKILLS || "0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, 1, STEER ? "d1ce0001" : "", FOLLOW === "walk");
+else g.gbTrainedWalk(SKILLS || "0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, Number(process.env.GB_SECS || 1), STEER ? "d1ce0001" : "", FOLLOW === "walk", Number(process.env.GB_TURN || 0));
 let estopped = null, estopAt = -1;
 if (process.env.GB_ESTOP_AT) {
   setTimeout(() => { estopped = [g.gbEStop("stop"), g.gbEStop("stop, stop!")]; estopAt = fed.length; }, Number(process.env.GB_ESTOP_AT));
@@ -102,5 +102,5 @@ const teleIv = setInterval(() => { if (g._motion && g._motion.tele) tele = g._mo
 await new Promise((r) => setTimeout(r, Number(process.env.GB_WAIT || 0) || (STEER ? 3600 : 2400)));
 clearInterval(teleIv);
 const screen = shown.length ? shown[shown.length - 1].innerHTML : "";
-console.log(JSON.stringify({ tele, screen, logs: logs.map((l) => l[0]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
+console.log(JSON.stringify({ tele, screen, logs: logs.map((l) => l[0]), ends: logs.filter((l) => l[0] === "walk_end").map((l) => l[1]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
 if (FOLLOW) process.exit(0);

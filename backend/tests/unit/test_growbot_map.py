@@ -299,6 +299,28 @@ def test_a_turn_by_degrees_spins_and_the_gyro_stops_it_at_the_angle() -> None:
     assert got["small"] is True  # too small to spin for: dropped
 
 
+def test_a_turn_by_degrees_takes_the_look_skill_when_the_box_has_one() -> None:
+    """Explore rebuild (2026-11-18): with a skill set on the box a turn is steered onto its
+    angle by the trained look and ends itself there; nothing here watches or stops it."""
+    got = _page(
+        "window.gbOwnTurnReady=function(){ return true; };"
+        "turnTo(0);var o={walk:{turn:-60}};window.gbMap.reply(o,'event',{});"
+        "var o2={walk:{turn:170}};window.gbMap.reply(o2,'event',{});"
+        "_motion={kind:'walk',own:'turn',report:{mv:{kind:'spin'}}};"
+        "for(var a=0;a>-70;a-=5) turnTo((a+360)%360);"
+        "for(var i=0;i<8;i++) tick(250);"
+        "console.log(JSON.stringify({walk:o.walk,walk2:o2.walk,stops,"
+        "x:_live.map.here.x,y:_live.map.here.y,"
+        "turn:logs.filter(function(l){ return l[0]==='map_turn'; })}));"
+    )
+    assert got["walk"] == {"dir": "right", "turn": -60, "secs": 13}
+    assert got["walk2"] == {"dir": "left", "turn": 170, "secs": 30}
+    assert got["stops"] == 0
+    # A turn on the spot carries him nowhere on his map.
+    assert (got["x"], got["y"]) == (0, 0)
+    assert got["turn"][0] == ["map_turn", {"want": -60, "trained": 1}]
+
+
 def test_a_turn_whose_spin_was_replaced_stops_nothing() -> None:
     got = _page(
         "turnTo(0);window.gbMap.reply({walk:{turn:90}},'event',{});"

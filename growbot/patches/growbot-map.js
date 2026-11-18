@@ -578,7 +578,8 @@
   function walking() {
     var M = typeof _motion !== "undefined" ? _motion : null;
     if (!M || M.loading || M.kind !== "walk") return "";
-    if (M.own) return M.own;
+    // His own turn by degrees (gbOwnWalk) turns on the spot: no distance.
+    if (M.own) return M.own === "turn" ? "" : M.own;
     // What physically ran, as the page's own move line reads it: the official gait walks
     // screen-backward (away from where his camera looks) even when asked "fwd", and a turn
     // carries him nowhere.
@@ -624,6 +625,9 @@
      gyro, not the clock, ends it: over 684 turns on 2026-11-18 only 131 reached their angle
      at 25 degrees a second, and the rest turned at a median of 6. */
   var SPIN_DEG_S = 8, STOP_EARLY = 6;
+  // The master's look turned about 5 degrees a second in the Dave sim (2026-11-18): a turn's
+  // time allows a slower pace than that, and only a stuck turn runs it out.
+  var TRAINED_DEG_S = 4, TRAINED_TURN_MAX_S = 45;
   function watchTurn(dy) {
     var w = turnWatch, M = typeof _motion !== "undefined" ? _motion : null;
     // Only the spin this turn started is ever stopped: once it ends or another move takes the
@@ -658,7 +662,14 @@
     }
     deg = wrap(deg);
     if (Math.abs(deg) < 8) { try { logEv("map_turn", { want: Math.round(deg), did: 0 }); } catch (e) {} return null; }
-    var left = deg > 0, secs = Math.min(15, Math.max(1.5, Math.abs(deg) / SPIN_DEG_S * 1.3));
+    var left = deg > 0;
+    // The look skill, steered onto the angle by heading, when the box's skill set has one: it
+    // ends itself once it holds the angle, so no watch stops it here.
+    if (window.gbOwnTurnReady && window.gbOwnTurnReady()) {
+      try { logEv("map_turn", { want: Math.round(deg), trained: 1 }); } catch (e) {}
+      return { dir: left ? "left" : "right", turn: Math.round(deg), secs: Math.round(Math.min(TRAINED_TURN_MAX_S, 3 + Math.abs(deg) / TRAINED_DEG_S) * 10) / 10 };
+    }
+    var secs = Math.min(15, Math.max(1.5, Math.abs(deg) / SPIN_DEG_S * 1.3));
     turnWatch = { want: Math.abs(deg), sign: left ? 1 : -1, done: 0, t0: Date.now(), M: undefined, until: Date.now() + secs * 1000 + 4000 };
     return { gait: left ? "spin_left" : "spin_right", dir: left ? "left" : "right", secs: Math.round(secs * 10) / 10, gain: 0.99 };
   }
