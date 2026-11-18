@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-17
+> **Status:** Living · **Last verified:** 2026-11-18
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -714,6 +714,24 @@ it faces (the gyro) but not where it is, so his position is dead reckoning from 
 - **Turning by an angle** (`walk:{turn:degrees}`, `walk:{toward:x}` for a spot in his picture, or
   `walk:{toward:"piano"}`): the page sends the spin and stops it by the gyro once he has turned
   that far, so he no longer guesses spin seconds for an angle.
+
+### His view all around, and choosing where to go
+
+`growbot-pano.js` (`apply.py` `PANO_PATCHES`; owner, 2026-11-17: "project his view onto a
+cylinder") keeps the pictures he takes from one spot and paints them, at the headings they faced,
+into one 360-degree strip. It rides his next thought beside his camera's picture once he has seen
+most of a half turn from there: ahead in the middle, behind at both ends, marks every 45 degrees,
+grey where he has not looked, and eight numbered ways. Walking on starts a new strip.
+
+Exploring follows "code moves, Dave picks" (the owner's choice from the research of 2026-11-17):
+`explore:{survey:true}` turns him all the way round in two half turns so the strip fills;
+`explore:{go:N}` faces way N and walks him about a metre along it; `explore:{stop:true}` ends
+it. The survey and the trip move him between his thoughts, not one step per thought, and a move
+of his own ends them. A walk that gets him nowhere ends the trip as blocked. While he explores,
+each turn's explore line says which step he is on, the room he is in and whether he has left it,
+the doorways found from it, and the next thing in the room to go up to (to about 30 cm, to name
+it). Alone, a wait for his person becomes a minute's rest instead, and a room called just "room"
+goes back to him for a real name.
 
 The PWA draws it on the persona's **Map** tab (`GrowbotHouseMap.tsx`): rooms, doorways, things,
 and an arrow for where he thinks he is. It is read-only there; he changes it when told.
