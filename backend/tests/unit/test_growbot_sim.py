@@ -476,3 +476,12 @@ def test_his_map_is_scored_against_the_house_in_his_own_frame() -> None:
     assert 'stroke="#7c3aed"' in svg and "grand piano" in svg
     assert simplan.map_score(_PlanSim()) == {}  # type: ignore[arg-type]
     assert simscen.SETUP["map_house"]["scene"] == "house"
+
+
+def test_the_flat_has_its_own_explore_and_map_runs_from_the_living_room_corner() -> None:
+    for name in ("explore_flat", "map_flat"):
+        setup = simscen.SETUP[name]
+        assert setup["scene"] == "flat" and setup["at"] == simscen.SETUP["flat_piano"]["at"]
+    assert simscen.SETUP["explore_flat"]["person"] is None
+    # The rooms that only walking out through the hallway reaches.
+    assert set(simscen._FLAT_AWAY) == {"kitchen", "bedroom", "study"}

@@ -662,5 +662,70 @@ async def map_house(sim: Sim) -> None:
         sim.check(_upright(sim), "still on his feet")
 
 
+# The flat's rooms off the hallway, which exploring it means reaching.
+_FLAT_AWAY = ("kitchen", "bedroom", "study")
+
+
+@scenario(scene="flat", start="standing", at=_FLAT_START, person=None, timeout=1200)
+async def explore_flat(sim: Sim) -> None:
+    """Alone for fifteen minutes in the flat, started in the living room's corner behind the
+    couch. The two-room house is small enough to see most of from where he starts; here the
+    rest of the flat is out of sight behind a door, so only walking finds it. Catches: an
+    explorer that turns on the spot, one that never finds the way out of its first room, and
+    one that reaches the hallway and stops there."""
+    t = sim.now()
+    await sim.wait(900)
+    stats = plan.stats(sim)
+    rooms = stats.get("rooms_s") or {}
+    own = _page_events_since(sim, t, "walk_start")
+    sim.check(bool(own), "he walked on his own", walks=len(own))
+    sim.check(stats["walked_m"] > 2.0, "he covered two metres or more", **stats)
+    sim.check(rooms.get("hallway", 0) > 0, "he found the way out into the hallway", rooms_s=rooms)
+    sim.check(
+        any(rooms.get(r, 0) > 0 for r in _FLAT_AWAY),
+        "he went on through another doorway off the hallway",
+        rooms_s=rooms,
+    )
+    sim.check(_upright(sim), "on his feet at the end")
+
+
+@scenario(scene="flat", start="standing", at=_FLAT_START, person=_FLAT_PERSON, timeout=1500)
+async def map_flat(sim: Sim) -> None:
+    """Asked to explore the flat and map it, then left alone for twenty minutes, and scored
+    as map_house is: rooms drawn, a doorway joining the rooms it really joins, things in the
+    rooms they are in, and where he thinks he is."""
+    await sim.wait(4)
+    await sim.say("Dave, please explore the flat and put every room you find on your map.")
+    await sim.wait(1200)
+    score = plan.map_score(sim)
+    sim.note("map_score", **score)
+    found = set(score.get("rooms_found") or [])
+    sim.check(
+        {"living room", "hallway"} <= found and len(found) >= 3,
+        "the living room, the hallway and another room are on his map",
+        rooms=score.get("rooms"),
+    )
+    sim.check(
+        any(d["joins_rooms"] for d in score.get("doors") or []),
+        "a doorway he put down joins the rooms it really does",
+        doors=score.get("doors"),
+    )
+    things = score.get("things") or {}
+    right = [k for k, v in things.items() if v["room_ok"]]
+    sim.check(
+        len(things) >= 4 and len(right) >= 0.75 * len(things),
+        "most things are on his map, in the right room",
+        n=len(things),
+        right=len(right),
+    )
+    sim.check(
+        score.get("here_off_m", 99) < 1.0,
+        "where his map says he is ends within a metre of where he is",
+        here_off_m=score.get("here_off_m"),
+        drift_max_m=score.get("drift_max_m"),
+    )
+    sim.check(_upright(sim), "on his feet at the end")
+
+
 def _said_since(sim: Sim, t: float, words: str) -> bool:
     return any(words in str(r.get("say", "")).lower() for r in _answers_since(sim, t))

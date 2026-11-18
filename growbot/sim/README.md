@@ -1,6 +1,6 @@
 # The Dave simulator
 
-> **Status:** Living · **Last verified:** 2026-11-17
+> **Status:** Living · **Last verified:** 2026-11-18
 
 Runs Dave's whole loop with no robot and no phone: the real creature page
 (`growbot/site/v3/next.html`) in headless Chromium, its legs and phone sensors played by
@@ -122,7 +122,7 @@ is there only once he is; `piano_from_kitchen` asks the same from the kitchen, t
 doorway; `cat_errand` sends him from beside his person in the living room to find the cat in
 the kitchen and come back to say where it is, and checks he saw it in that room, didn't claim
 it sooner, came back within 1.5 m of them and named the cat and the room; `flat_piano` and
-`flat_cat` are the same two asks across the flat. `explore_alone` leaves him alone for ten minutes and scores how far he went. They run for
+`flat_cat` are the same two asks across the flat. `explore_alone` leaves him alone for ten minutes and scores how far he went. `explore_flat` leaves him alone for fifteen minutes in the flat's living-room corner, where the rest of the flat is out of sight, and checks he walks out into the hallway and on through another doorway. They run for
 minutes, so their reports skip the onlooker video, which re-renders every pose. Every run
 instead draws `plan.svg` (`dave_sim/plan.py`): his path from above, coloured by speed, with
 arrows for where his camera faced and a numbered dot wherever he said something, and the
@@ -148,6 +148,10 @@ down is in the room it is really in and how far off it lies, whether a doorway j
 rooms, and how far his idea of where he is drifted. `plan.svg` draws his map over the true plan
 in purple: his rooms dashed, doorways as dots, things as crosses, and a dotted line for where he
 thought he was.
+
+`map_flat` is the same ask in the flat, left twenty minutes: the living room, the hallway and
+another room on his map, a doorway that joins the rooms it really does, things in the right
+rooms, and where he thinks he is.
 
 Under `--pilot`, the stand-in brain keeps the map the way a careful Dave would: it names each
 room it walks into, puts what is in view on the map (`view.py` projects the furniture and the
