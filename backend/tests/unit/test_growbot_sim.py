@@ -11,6 +11,7 @@ import importlib
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -641,8 +642,7 @@ def _state(t: float, x: float, up: bool = True) -> dict[str, Any]:
 
 def test_a_battery_run_is_scored_against_the_house() -> None:
     """Rooms he was really in, how long he sat still, and a fall counted once per time down."""
-    sim = type("S", (), {})()
-    sim.body = _Body()
+    sim = SimpleNamespace(body=_Body())
     # 60 s still in the living room, then over into the kitchen, then down for 5 s and up.
     states = [_state(t * 0.08, 1.0) for t in range(750)]
     states += [_state(60 + t * 0.08, 1.0 + t * 0.002) for t in range(1, 750)]
