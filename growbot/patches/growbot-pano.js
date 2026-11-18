@@ -149,6 +149,18 @@
       // corner taken on the wrong hand (f11: heading north into the corner by the door with the
       // wall on his right but following it on his left, he turned east into the side wall,
       // then south, home again): change hands and turn the other way from the first wall.
+      // Three blocks within five walks is a pocket (f15, f17: twelve minutes each between the
+      // living room's lamp and its corner, every turn away meeting the lamp or a wall): back
+      // well out, turn round, and follow the walls the other way round the room.
+      if (blocked) {
+        tr.hits = (tr.hits || []).filter(function (n) { return (tr.steps || 0) - n < 5; });
+        tr.hits.push(tr.steps || 0);
+        if (tr.hits.length >= 3) {
+          tr.hits = []; tr.side = -side; tr.want = wrap(h.h + 180); tr.lastBlock = null; tr.clear = 0;
+          tr.why += ", boxed in: turning round, other hand";
+          return { walk: { gait: "screen_backward", dir: "back", secs: 2 * BACK_S }, gone: gone };
+        }
+      }
       if (blocked) {
         var lb = tr.lastBlock;
         if (lb && (tr.steps || 0) - lb.step <= 2 && Math.abs(wrap(tr.want - lb.h)) > 135) {
