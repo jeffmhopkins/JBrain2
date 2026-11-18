@@ -37,23 +37,23 @@ def test_each_column_comes_from_the_picture_that_faced_that_way() -> None:
         # quarter turn to his left.
         "const s=[{h:90,id:'a'},{h:180,id:'b'}];"
         "const c=(r)=>{const x=P.column(s,90,r); return x&&{id:x.shot.id,sx:x.sx};};"
-        "console.log(JSON.stringify([c(0),c(20),c(-20),c(90),c(135),c(-90),P.CAM_HFOV]));"
+        "console.log(JSON.stringify([c(0),c(20),c(-20),c(90),c(135),c(-90),P.CAM_HFOV,P.FW/2]));"
     )
-    ahead, left20, right20, left90, left135, right90, hfov = got
+    ahead, left20, right20, left90, left135, right90, hfov, mid = got
     assert hfov == pytest.approx(59.0, abs=1)
     # Straight ahead is the middle of the picture that faced ahead.
-    assert ahead == {"id": "a", "sx": 48}
+    assert ahead == {"id": "a", "sx": mid}
     # To his left is toward the left edge of his picture, to his right toward the right.
-    assert left20["id"] == "a" and left20["sx"] < 48 < right20["sx"]
+    assert left20["id"] == "a" and left20["sx"] < mid < right20["sx"]
     # A quarter turn left is the middle of the picture that faced there.
-    assert left90 == {"id": "b", "sx": 48}
+    assert left90 == {"id": "b", "sx": mid}
     # Where no picture faced, nothing: the strip leaves it grey.
     assert left135 is None and right90 is None
 
 
 def test_the_marks_run_from_behind_on_his_left_to_behind_on_his_right() -> None:
-    got = _node("console.log(JSON.stringify([P.marks(), P.seenDeg([{h:0},{h:3}])]))")
-    marks, seen = got
+    got = _node("console.log(JSON.stringify([P.marks(), P.seenDeg([{h:0},{h:3}]), P.PX_DEG]))")
+    marks, seen, px = got
     assert [m["t"] for m in marks] == [
         "behind",
         "135L",
@@ -65,7 +65,7 @@ def test_the_marks_run_from_behind_on_his_left_to_behind_on_his_right() -> None:
         "135R",
         "behind",
     ]
-    assert marks[4]["x"] == 360 and marks[0]["x"] == 0 and marks[-1]["x"] == 720
+    assert marks[4]["x"] == 180 * px and marks[0]["x"] == 0 and marks[-1]["x"] == 360 * px
     # One camera's width, and a few degrees more for a second picture turned 3 degrees.
     assert 58 <= seen <= 62
 
