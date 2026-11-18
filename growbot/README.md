@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-16
+> **Status:** Living · **Last verified:** 2026-11-18
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -457,6 +457,17 @@ Whether it explores when it's quiet is the persona's too (`growbot_personas.expl
 quiet beat reads it each time (`apply.py` `QUIET_TEXT_PATCHES`), so only an explicit `false`
 brings back upstream's old "quiet company" words. No URL switch or phone storage holds it.
 
+On a body, exploring is more than the words (`apply.py` `EXPLORE_PATCHES`, after upstream's
+EXPLORE and LONG WALK of 2026-11-13 to 11-16, rebuilt for the trained walks and the box's
+slower model). Quiet time comes round every 90 s rather than four minutes, thinning by
+half-life only while he leaves it unused (a quiet turn that moves him or starts a goal resets
+it, within 30 minutes of his person). A goal sticks until he finds it, finishes it, swaps it or
+is stopped, never upstream's 24-beat give-up; alone, its turns wait (time since his person) / 60
+after the last, except while he walks. His own walk keeps looking: with no goal or activity
+turn to do it, a look turn goes out 3 s after each answer lands; sending the same walk again
+carries it on without a new stance (`gbOwnWalk`), and a walk with no look for 30 s stops
+itself. The Dave simulator's house (`sim/README.md`) is where this is tried.
+
 ### Settings (migration 0263)
 
 The phone is only a display (owner, 2026-11-12). What upstream keeps outside the soul, each in a
@@ -671,6 +682,60 @@ It switches by voice too (owner, 2026-11-16: *"hey Dave go to travel mode"*): a 
 (`on` / `off`) beside `eye`, heeded only on a turn that answers something the person said, so
 the creature never turns it on or off by itself.
 
+### His map of the house
+
+Dave keeps a rough sketch map of the house (owner, 2026-11-17: rooms "defaulting to square",
+doorways, "extrapolating it out", and tools "not only to log it but also query it", and to
+change it when he changes his mind). It is `growbot-map.js`, loaded by the creature page and
+wired in by `apply.py`'s `MAP_PATCHES`. It is a sketch, not a survey. The phone knows which way
+it faces (the gyro) but not where it is, so his position is dead reckoning from his own walks
+(the trained forward at about 0.04 m/s, as the sim measured), and it drifts.
+
+- **What it holds.** `soul.map`: rooms as rectangles in metres (a new one is a 4 m square, or
+  pushed against the room it would overlap), doorways on their walls joining two rooms, things
+  as points with the room they are in, and `here` (where he thinks he is, his heading and room).
+  It lives in the soul, so the box keeps it with his memory. A merge keeps the newer map, a soul
+  file carries it, and *Forget history* and a template both drop it, since it is learned.
+- **Adding and correcting** (`map` reply field, up to four ops a turn): `room` (he is in it now),
+  `saw` (a thing he sees: `x` where it sits across his picture, 0 left to 1 right, turned into a
+  bearing with the camera's 60 degrees across, and `m` his distance guess, or `dir`, or `h` and
+  `size` from how much of the picture it fills), `door` and `wall` (a doorway or wall seen at a
+  distance moves that wall there, and a doorway into a room he has not been in sketches that room
+  beyond it), `at` (he is beside a thing he knows, which puts him back where the map has it and
+  is what bounds the drift), `fix` (a thing is in another room, or somewhere else), `forget` and
+  `rename`. Seeing a thing again near where it was refines it; more than 1.5 m away moves it.
+- **Asking it** (`where`, a tool like `recall`): a thing, a room, `me` or `map`. The answer comes
+  back next thought: where it is from him, in metres and degrees, and the way there through the
+  doorways ("turn 67 degrees right (walk:{turn:-67}) and walk about 0.8 m to the doorway into the
+  living room"). His own beats may ask once every 20 s; a follow-up never asks again.
+- **Every turn** carries a few lines: his room, the doorways and the nearest things from him,
+  the other rooms, what he just changed, and, when his goal names something on the map, the way
+  to it.
+- **Turning by an angle** (`walk:{turn:degrees}`, `walk:{toward:x}` for a spot in his picture, or
+  `walk:{toward:"piano"}`): the page sends the spin and stops it by the gyro once he has turned
+  that far, so he no longer guesses spin seconds for an angle.
+
+### His view all around, and choosing where to go
+
+`growbot-pano.js` (`apply.py` `PANO_PATCHES`; owner, 2026-11-17: "project his view onto a
+cylinder") keeps the pictures he takes from one spot and paints them, at the headings they faced,
+into one 360-degree strip. It rides his next thought beside his camera's picture once he has seen
+most of a half turn from there: ahead in the middle, behind at both ends, marks every 45 degrees,
+grey where he has not looked, and eight numbered ways. Walking on starts a new strip.
+
+Exploring follows "code moves, Dave picks" (the owner's choice from the research of 2026-11-17):
+`explore:{survey:true}` turns him all the way round in two half turns so the strip fills;
+`explore:{go:N}` faces way N and walks him about a metre along it; `explore:{stop:true}` ends
+it. The survey and the trip move him between his thoughts, not one step per thought, and a move
+of his own ends them. A walk that gets him nowhere ends the trip as blocked. While he explores,
+each turn's explore line says which step he is on, the room he is in and whether he has left it,
+the doorways found from it, and the next thing in the room to go up to (to about 30 cm, to name
+it). While the explore goal stands, a wait for his person becomes a minute's rest instead, and his person's stop ends a trip or survey, and a room called just "room"
+goes back to him for a real name.
+
+The PWA draws it on the persona's **Map** tab (`GrowbotHouseMap.tsx`): rooms, doorways, things,
+and an arrow for where he thinks he is. It is read-only there; he changes it when told.
+
 ### Visual memories (wave G4d)
 
 The saved views upstream keeps in IndexedDB (`v3/visual-memory.js`) live on the box with the
@@ -715,5 +780,6 @@ The backend suite loads `server/serve.py` by path (`backend/tests/unit/test_grow
 static, CSP, cookie gate, `/open`, persona sessions, each shim route against fake api/tts/stt
 servers, the relay, its rider check and WebSocket framing) and runs the Caddy site in a real Caddy
 (`backend/tests/unit/test_growbot_caddy.py`, `test_lan_proxy.py`). The Dave simulator's pure halves are
-loaded the same way (`backend/tests/unit/test_growbot_sim.py`). CI's backend path filter
+loaded the same way (`backend/tests/unit/test_growbot_sim.py`), and the house map runs in node
+(`backend/tests/unit/test_growbot_map.py`). CI's backend path filter
 includes `growbot/**`.

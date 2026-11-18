@@ -1,6 +1,6 @@
 # The Dave simulator
 
-> **Status:** Living · **Last verified:** 2026-11-17
+> **Status:** Living · **Last verified:** 2026-11-18
 
 Runs Dave's whole loop with no robot and no phone: the real creature page
 (`growbot/site/v3/next.html`) in headless Chromium, its legs and phone sensors played by
@@ -100,6 +100,65 @@ he walked in 10 of 16 runs (2026-11-17), where a fresh Dave walks every time. In
 is the page's walk loop ticking at 18 to 20 Hz in the sim, late and uneven, not the steady
 25 Hz the policy was trained at: replaying those late ticks
 in the trainer halves its distance.
+
+## The house
+
+`Options(scene="house")` sets him down in GrowBot_Training's furnished house
+(`growbot_train/house.py`) instead of the bare room: a living room, where he starts at the
+origin facing its far wall, and a kitchen behind him through a doorway. The living room has a
+piano in its far corner, out of his first view, a couch, a bookshelf, a plant and a lamp; the
+kitchen a fridge, a counter and a table. Its walls and furniture stop him, where the bare
+room's walls let him walk through. `Options.at` sets where he starts and which way he faces. `Options.up_vec` (on by default) seeds the page's learned "up" from his standing reading, as an owner's phone has long since learned it; a fresh browser's fallback reads his tall stance as lying on his back.
+
+`Options(scene="flat")` is the bigger house (`house.FLAT`): a hallway across the middle with
+a living room and kitchen south of it and a bedroom and study north, each through its own
+doorway and none of them in line, with the couch between his start and the living room's
+door. The scenarios read the house from `SimBody.layout` (rooms, walls, doors, furniture and
+`route` between rooms), so the floor plan, the camera projection and the pilot work in either.
+
+`find_piano` asks him to find the piano and checks he says so while it is really in his
+view; `walk_to_piano` asks him to walk over to it and checks he gets within 60 cm and says he
+is there only once he is; `piano_from_kitchen` asks the same from the kitchen, through the
+doorway; `cat_errand` sends him from beside his person in the living room to find the cat in
+the kitchen and come back to say where it is, and checks he saw it in that room, didn't claim
+it sooner, came back within 1.5 m of them and named the cat and the room; `flat_piano` and
+`flat_cat` are the same two asks across the flat. `explore_alone` leaves him alone for ten minutes and scores how far he went. `explore_flat` leaves him alone for fifteen minutes in the flat's living-room corner, where the rest of the flat is out of sight, and checks he walks out into the hallway and on through another doorway. They run for
+minutes, so their reports skip the onlooker video, which re-renders every pose. Every run
+instead draws `plan.svg` (`dave_sim/plan.py`): his path from above, coloured by speed, with
+arrows for where his camera faced and a numbered dot wherever he said something, and the
+report lists how far he walked, how long he spent in each room and how close he came to each
+piece of furniture.
+
+`--pilot` swaps the box for a stand-in brain (`dave_sim/pilot.py`) that answers from the
+sim's ground truth: told to find something it turns toward it, sends long forward walks and
+says it found it once there (through the doorways `route` gives, and back to where it was
+asked when the ask says to come back and tell); left alone it heads for the nearest furniture it hasn't been
+near. It answers 4 s after each ask, near the box's pace. That tests the page's plumbing
+(goals that stick, walks that carry on, looks while walking, the no-look stop) with no box,
+so a live run only has to prove the thinking.
+
+### His map
+
+`map_house` asks him to explore the house and put what he finds on his map
+(`growbot-map.js`), leaves him alone for eight minutes, asks where the piano is, then asks him
+to use his map to get to the fridge in the other room. The run polls the page's map each second
+(`Sim.dave_map`, `Sim.map_track`) and `plan.map_score` scores it against the true house: his
+frame laid on the house's by where he started, which rooms he drew, whether each thing he put
+down is in the room it is really in and how far off it lies, whether a doorway joins the two
+rooms, and how far his idea of where he is drifted. `plan.svg` draws his map over the true plan
+in purple: his rooms dashed, doorways as dots, things as crosses, and a dotted line for where he
+thought he was.
+
+`map_flat` is the same ask in the flat, left twenty minutes: the living room, the hallway and
+another room on his map, a doorway that joins the rooms it really does, things in the right
+rooms, and where he thinks he is.
+
+Under `--pilot`, the stand-in brain keeps the map the way a careful Dave would: it names each
+room it walks into, puts what is in view on the map (`view.py` projects the furniture and the
+doorway into the camera's picture from the sim's ground truth), says `at` on arriving, and asked
+to "use your map" it steers by `where` answers alone. So a pilot run tests the map's own
+geometry (bearings, heading, dead reckoning, routes), and a live run only has to show that the
+model uses it.
 
 ## Tests
 

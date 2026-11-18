@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-11-18 — the vitals detail lists every model call (creature thinks, code mode, background jobs, the assistant) above the box events, and the empty roster stops guessing at an image or a load. Prior: the Trained walks sheet folds the walks a master learned from under it. Prior: the GrowBot Body tab is redesigned as a remote plus rows (one walk row and sheet, Tap a move | Steer live in place of the second Drive, tricks on one sideways line, Follow me, Body test and Legs as sheets, the robot's key and Who wears in its sheet, developer tools folded away). Prior: the Jobs Runs list keeps spawn order (newest on top) instead of jumping on every update. Prior: the Ops vitals gain a CPU busy % tile, and the load average reads as threads, not a percent. Prior: leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
+> **Status:** Living · **Last verified:** 2026-11-18 — the vitals detail lists every model call (creature thinks, code mode, background jobs, the assistant) above the box events, and the empty roster stops guessing at an image or a load. Prior: a persona's page gains a *Map* tab, its sketch map of the house. Prior: the Trained walks sheet folds the walks a master learned from under it. Prior: the GrowBot Body tab is redesigned as a remote plus rows (one walk row and sheet, Tap a move | Steer live in place of the second Drive, tricks on one sideways line, Follow me, Body test and Legs as sheets, the robot's key and Who wears in its sheet, developer tools folded away). Prior: the Jobs Runs list keeps spawn order (newest on top) instead of jumping on every update. Prior: the Ops vitals gain a CPU busy % tile, and the load average reads as threads, not a percent. Prior: leaving Jobs returns to the launcher, and its tile dots while a run is live. Prior: the Body tab drives trained walks; picking a launcher tile closes the launcher; the Math tile is now Jobs
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3360,7 +3360,7 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
   code 2 as a link instead* copies the same one-time, two-minute link: that is "launch a
   persona from a link" (owner, 2026-11-10); there is no standing link.
 - **A persona's page** (tapping its row) has a ‹ back chevron, its name with where it is under
-  it, its own tabs (*Soul* · *Memories* · *Checkpoints* · *Manage*, the counted ones with a count
+  it, its own tabs (*Soul* · *Map* · *Memories* · *Checkpoints* · *Manage*, the counted ones with a count
   pill as on the Chats panel's segments), and *Open <name>…* in the foot, which raises the launch
   sheet.
   - *Soul*: *Personality and settings — tap to edit* as rows (Personality, Expression, Name and
@@ -3387,6 +3387,14 @@ another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *
     instead of dropping its new lines. Until the creature first wakes on a phone, Right now, Wants
     and Diary are plain rows saying *It writes this when it first wakes on a phone.* (no chevron):
     its seed fills them in.
+  - *Map* (owner, 2026-11-17): the creature's own sketch map of the house, drawn from its soul as
+    an SVG card that fits whatever it has drawn, north up. Rooms are filled rectangles labelled at
+    their top, the one it is in tinted steel; doorways are amber dots on their walls; things are
+    violet dots with their names (hollow when it knows only the room); a rose arrow is where it
+    thinks it is and which way its camera faces. Under it, *A rough sketch: <name> guesses where
+    it is from its own walking …*, then one line per room (its size, its things, its doorways)
+    and *Not in a room* for the rest. Read-only: the creature changes it when told. With nothing
+    drawn: *<name> hasn't drawn a map yet …*.
   - *Memories* (its count on the tab, read when the tab opens): a grid of saved views, each its
     first picture (the kind's glyph while it loads or if it can't), its name or what it is (*A
     person*, *A thing*, *Handwriting*, *A scene*, *A place*), its date and *Delete* (armed: *Tap

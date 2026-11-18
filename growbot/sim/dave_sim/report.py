@@ -1,6 +1,7 @@
 """A run's report: `timeline.json` (everything), `run.mp4` (an onlooker's view of the robot
-beside what its camera saw), and `report.html`, one page that reads top to bottom: the
-checks, then what Dave heard, said and did, next to where the robot actually went."""
+beside what its camera saw; not for the house's long runs), `plan.svg` (his path from above,
+`plan.py`), and `report.html`, one page that reads top to bottom: the checks, then what Dave
+heard, said and did, next to where the robot actually went."""
 
 from __future__ import annotations
 
@@ -11,6 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+from dave_sim import plan
 
 if TYPE_CHECKING:
     from dave_sim.run import Sim
@@ -173,7 +176,12 @@ def write(sim: Sim) -> Path:
     ]
     (out / "model_calls.json").write_text(json.dumps(calls, indent=1))
     (out / "requests.json").write_text(json.dumps([c["request"] for c in sim.box.calls]))
-    video = _video(sim, out / "run.mp4")
+    # The house's scenarios run for minutes: the floor plan shows where he went, and the
+    # onlooker video, which re-renders every pose, is left to the short ones in the room.
+    video = sim.o.scene != "house" and _video(sim, out / "run.mp4")
+    walk = plan.stats(sim)
+    (out / "plan.svg").write_text(plan.svg(sim))
+    said = plan.replies(sim)
     for i, (t, jpeg) in enumerate(sim.frames[:: max(1, len(sim.frames) // 12)][:12]):
         (out / f"camera_{i:02d}_{t:06.1f}s.jpg").write_bytes(jpeg)
 
@@ -200,6 +208,11 @@ def write(sim: Sim) -> Path:
         f"<title>Dave sim run</title><style>{CSS}</style>"
         f"<h1>Dave sim run: {passed} of {len(sim.checks)} checks passed</h1>"
         + ('<video src="run.mp4" controls muted></video>' if video else "")
+        + '<h2>Where he went</h2><img src="plan.svg" alt="floor plan of his path" width="100%">'
+        + f"<p>{html.escape(json.dumps(walk))}</p>"
+        + "<ol>"
+        + "".join(f"<li>{t:.0f} s: {html.escape(w)}</li>" for t, w in said)
+        + "</ol>"
         + "<table><tr><th>s</th><th>who</th><th>what</th><th>robot</th></tr>"
         + "".join(rows)
         + "</table>\n"

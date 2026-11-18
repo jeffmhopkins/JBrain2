@@ -24,6 +24,7 @@ simchip = importlib.import_module("dave_sim.chip")
 simllm = importlib.import_module("dave_sim.llm")
 simrun = importlib.import_module("dave_sim.run")
 simscen = importlib.import_module("dave_sim.scenarios")
+simplan = importlib.import_module("dave_sim.plan")
 
 
 class Legs:
@@ -310,13 +311,14 @@ def test_forget_keeps_who_and_whose_and_drops_history() -> None:
         "identity": "grown",
         "log": [1],
         "facts": [2],
+        "map": {"v": 1},
         "scratch": {"day": [3], "rules": ["my feet slip"], "reflexes": [{"on": "fall"}]},
         "goals": {"owner": "Jeff", "selfName": "", "wants": ["w"], "funLog": [4]},
     }
     got = simbox.forget(soul)
     assert got["meta"] == {"name": "Dave"} and got["body"] == {"id": "b"}
     assert got["identityCore"] == "core" and got["identity"].startswith("I am Dave.")
-    assert got["log"] == [] and got["facts"] == []
+    assert got["log"] == [] and got["facts"] == [] and "map" not in got
     assert got["scratch"] == {"reflexes": [{"on": "fall"}]}
     assert got["goals"] == {"owner": "Jeff", "selfName": "Dave"}
     assert soul["log"] == [1]  # the original is untouched
@@ -361,3 +363,125 @@ def test_the_sim_body_is_mirrored_as_the_robot_and_one_scenario_unmirrors_it() -
     assert simscen.SETUP["follow_walks_after"]["person"]["face_z"] == 1.55
     # The body test's asks have a scenario each: come here, follow me by voice, stop stop.
     assert {"come_here", "follow_me_away", "stop_stop"} <= set(simscen.SCENARIOS)
+
+
+# ---------------------------------------------------------------------- the house's floor plan
+
+
+class _Item:
+    def __init__(self, name: str, x: float, y: float) -> None:
+        self.name, self.x, self.y, self.hx, self.hy, self.rgb = name, x, y, 0.2, 0.2, (9, 9, 9)
+        self.room = "kitchen" if x > 0 else "living room"
+
+
+class _Door:
+    name, x, y, along, half = "doorway", 0.0, 0.0, "y", 0.4
+    rooms = ("living room", "kitchen")
+
+
+class _House:
+    """GrowBot_Training's house.Layout as plan.py reads it (MuJoCo isn't in the backend's
+    env)."""
+
+    OUTER = (-3.0, -2.0, 2.0, 2.0)
+    ROOMS = {"living room": (-3.0, -2.0, 0.0, 2.0), "kitchen": (0.0, -2.0, 2.0, 2.0)}
+    WALLS = (
+        ("divide_s", 0.0, -2.0, 0.0, -0.4, "m"),
+        ("divide_n", 0.0, 0.4, 0.0, 2.0, "m"),
+    )
+    DOORS = (_Door(),)
+    ITEMS = (_Item("piano", -2.0, 1.0), _Item("rug", -1.0, 0.0))
+
+    @staticmethod
+    def room_at(x: float, y: float) -> str:
+        return "kitchen" if x > 0 else "living room"
+
+    @staticmethod
+    def distance_to(name: str, x: float, y: float) -> float:
+        it = {i.name: i for i in _House.ITEMS}[name]
+        return max(0.0, ((x - it.x) ** 2 + (y - it.y) ** 2) ** 0.5 - 0.2)
+
+
+class _PlanSim:
+    def __init__(self, scene: str = "house") -> None:
+        self.o = type("O", (), {"scene": scene})()
+        self.body = type("Body", (), {"layout": _House if scene == "house" else None})()
+        # Two seconds still, then 4 cm/s along -x for 25 s, as states every 0.08 s.
+        self.states = [
+            {"wall": t * 0.08, "x": 0.5 - max(0.0, t * 0.08 - 2) * 0.04, "y": 0.0, "nose_deg": 0.0}
+            for t in range(int(27 / 0.08))
+        ]
+        self.timeline = [
+            {"t": 3.0, "kind": "dave", "text": json.dumps({"say": "Off to find the <piano>"})},
+            {"t": 4.0, "kind": "dave", "text": json.dumps({"say": ""})},
+            {"t": 5.0, "kind": "dave", "warm": True, "text": json.dumps({"say": "warm"})},
+        ]
+
+
+def test_the_floor_plan_scores_where_he_went() -> None:
+    sim = _PlanSim()
+    st = simplan.stats(sim)  # type: ignore[arg-type]
+    assert st["walked_m"] == pytest.approx(1.0, abs=0.02)
+    assert set(st["rooms_s"]) == {"living room", "kitchen"}
+    assert abs(st["rooms_s"]["kitchen"] - 14.5) <= 1
+    assert "rug" not in st["closest_m"] and st["closest_m"]["piano"] < 2.0
+    tr = simplan.track(sim)  # type: ignore[arg-type]
+    # The camera looks out of the tail: nose at 0 degrees faces 180.
+    assert abs(tr[-1]["face"]) == 180 and tr[-1]["speed"] == pytest.approx(4.0, abs=0.2)
+    assert tr[10]["speed"] == 0.0
+    assert simplan.replies(sim) == [(3.0, "Off to find the <piano>")]  # type: ignore[arg-type]
+    svg = simplan.svg(sim)  # type: ignore[arg-type]
+    assert svg.startswith("<svg") and "piano" in svg and "&lt;piano&gt;" in svg
+    assert "living room" in svg and 'marker-end="url(#ah)"' in svg
+
+
+def test_the_bare_room_has_a_plan_too() -> None:
+    sim = _PlanSim(scene="room")
+    assert "rooms_s" not in simplan.stats(sim)  # type: ignore[arg-type]
+    assert "living room" not in simplan.svg(sim)  # type: ignore[arg-type]
+    assert simscen.SETUP["find_piano"]["scene"] == "house"
+    assert simscen.SETUP["walk_to_piano"]["timeout"] > simscen.SETUP["find_piano"]["timeout"]
+    assert simscen.SETUP["explore_alone"]["person"] is None
+    assert simrun.Options(model=None).scene == "room"  # type: ignore[arg-type]
+
+
+def test_his_map_is_scored_against_the_house_in_his_own_frame() -> None:
+    """plan.map_score lays Dave's map (growbot-map.js) on the house by where he started: he
+    starts at (0.5, 0) with his camera facing 180, where his map has him at the origin facing
+    90, so his +y is the house's -x."""
+    sim = _PlanSim()
+    sim.dave_map = {  # type: ignore[attr-defined]
+        "rooms": [
+            {"n": "living room", "x": 0, "y": 2, "w": 4, "d": 3},
+            {"n": "the kitchen", "x": 0, "y": -1, "w": 4, "d": 2},
+            {"n": "hall", "x": 9, "y": 9, "w": 2, "d": 2},
+        ],
+        "doors": [{"x": 0, "y": 0.5, "a": "living room", "b": "the kitchen"}],
+        "things": [
+            {"n": "grand piano", "x": 1, "y": 2.5, "room": "living room"},
+            {"n": "tuba", "x": 0, "y": 0, "room": "hall"},
+        ],
+    }
+    sim.map_track = [  # type: ignore[attr-defined]
+        {"t": 0, "here": {"x": 0, "y": 0, "h": 90}, "x": 0.5, "y": 0.0, "face": 180.0},
+        {"t": 9, "here": {"x": 0, "y": 0.5}, "x": 0.0, "y": 0.0, "face": 180.0},
+        {"t": 20, "here": {"x": 0, "y": 1.5}, "x": -0.5, "y": 0.0, "face": 180.0},
+    ]
+    got = simplan.map_score(sim)  # type: ignore[arg-type]
+    assert got["rooms_found"] == ["kitchen", "living room"]
+    assert got["things"] == {"piano": {"as": "grand piano", "room_ok": True, "off_m": 0.0}}
+    assert got["doors"] == [{"door": "doorway", "joins_rooms": True, "off_m": 0.0}]
+    assert got["here_off_m"] == 0.5 and got["drift_max_m"] == 0.5
+    svg = simplan.svg(sim)  # type: ignore[arg-type]
+    assert 'stroke="#7c3aed"' in svg and "grand piano" in svg
+    assert simplan.map_score(_PlanSim()) == {}  # type: ignore[arg-type]
+    assert simscen.SETUP["map_house"]["scene"] == "house"
+
+
+def test_the_flat_has_its_own_explore_and_map_runs_from_the_living_room_corner() -> None:
+    for name in ("explore_flat", "map_flat"):
+        setup = simscen.SETUP[name]
+        assert setup["scene"] == "flat" and setup["at"] == simscen.SETUP["flat_piano"]["at"]
+    assert simscen.SETUP["explore_flat"]["person"] is None
+    # The rooms that only walking out through the hallway reaches.
+    assert set(simscen._FLAT_AWAY) == {"kitchen", "bedroom", "study"}

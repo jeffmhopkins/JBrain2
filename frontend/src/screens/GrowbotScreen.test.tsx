@@ -773,6 +773,7 @@ describe("GrowbotScreen a persona's page", () => {
     await openSprout();
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
       "Soul",
+      "Map",
       "Memories0",
       "Checkpoints3",
       "Manage",

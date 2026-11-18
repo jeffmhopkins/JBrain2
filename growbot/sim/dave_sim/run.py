@@ -76,6 +76,18 @@ class Options:
     # the face (2026-11-17); a body test is to confirm the robot needs it too. None leaves
     # the page's default (unflipped).
     cam_flip: bool | None = True
+    # The owner's phone has long since learned which way is up on its robot (gb_up_vec,
+    # learned on walks and stands). A fresh browser hasn't, and its fallback reads the tall
+    # stance as lying flat on his back (live w7: no hold, "I am lying flat"), so the run
+    # seeds it from his standing reading. False leaves it to be learned.
+    up_vec: bool = True
+    # simbody's scene: "room" (bare walls he walks through), "house" (growbot_train/house.py:
+    # two furnished rooms whose walls and furniture stop him) or "flat" (five rooms off a
+    # hallway).
+    scene: str = "room"
+    # Where he is set down: x, y (metres) and which way his nose points (degrees; 0 = +x,
+    # so his camera looks toward -x).
+    at: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 class Sim:
@@ -83,8 +95,9 @@ class Sim:
         self.o = opts
         sb = _growbot_train()
         self.sb = sb
-        self.body = sb.SimBody(wiring=sb.Wiring(**opts.wiring))
-        self.body.reset(opts.start)
+        self.body = sb.SimBody(wiring=sb.Wiring(**opts.wiring), scene=opts.scene)
+        x, y, yaw = opts.at
+        self.body.reset(opts.start, yaw_deg=yaw, x=x, y=y)
         self.body.place_person(
             sb.Person(**opts.person) if opts.person else sb.Person(present=False)
         )
@@ -104,6 +117,10 @@ class Sim:
         self.checks: list[dict[str, Any]] = []
         self.states: list[dict[str, Any]] = []
         self.frames: list[tuple[float, bytes]] = []  # (t, jpeg) of what the camera showed
+        # Dave's sketch map (growbot-map.js) as the page holds it: the newest whole, and each
+        # second where it says he is beside where he really is (plan.py scores the two).
+        self.dave_map: dict[str, Any] | None = None
+        self.map_track: list[dict[str, Any]] = []
         self._agent_ws: Any = None
         self._acks: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._loop: asyncio.Task[None] | None = None
@@ -152,6 +169,14 @@ class Sim:
             await ctx.add_init_script(
                 "try { if (!localStorage.getItem('gb.follow.camera'))"
                 f" localStorage.setItem('gb.follow.camera', {json.dumps(cam)}); }} catch (e) {{}}"
+            )
+        if self.o.up_vec:
+            a = self.body.motion()["accel"]
+            up = json.dumps([round(a["x"], 1), round(a["y"], 1), round(a["z"], 1)])
+            await ctx.add_init_script(
+                "try { if (!localStorage.getItem('gb_up_vec')) {"
+                f" localStorage.setItem('gb_up_vec', {json.dumps(up)});"
+                " localStorage.setItem('gb_up_vec_s', '1'); } } catch (e) {}"
             )
         await ctx.route(f"{ORIGIN}/**", self._http)
         await ctx.route_web_socket(f"wss://{ORIGIN.split('//')[1]}/d/**", self._ws)
@@ -360,6 +385,22 @@ class Sim:
             evs = await self.page.evaluate("() => window.__simEvents.splice(0)")
         except Exception:
             return
+        try:
+            m = await self.page.evaluate("() => window.gbMap ? window.gbMap.map() : null")
+        except Exception:
+            m = None
+        if isinstance(m, dict) and isinstance(m.get("here"), dict) and self.states:
+            st = self.states[-1]
+            self.dave_map = m
+            self.map_track.append(
+                {
+                    "t": st["wall"],
+                    "here": dict(m["here"]),
+                    "x": st["x"],
+                    "y": st["y"],
+                    "face": (st["nose_deg"] + 360.0) % 360.0 - 180.0,
+                }
+            )
         for ev in evs:
             t = round(ev.get("t", 0) / 1000 - self.epoch0, 2)
             self.timeline.append(

@@ -2178,7 +2178,8 @@ PATCHES += CLOCK_PATCHES
 # would hold back exactly the exploring a creature left alone is meant to do.
 GB_EXPLORE_TXT = (
     "QUIET — nothing has happened for a while. This time is yours: you may reach for one of"
-    " your wants with your own body."
+    " your wants with your own body, or go and explore: walk somewhere you have not looked"
+    " yet and see what is there."
 )
 QUIET_TEXT_PATCHES: list[tuple[str, str, str, int]] = [
     (
@@ -4032,7 +4033,7 @@ PATCHES += [
         '&&!document.hidden&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body;'
         " delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15,_gbIssT); }"
         ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait||o.walk.secs))'
-        '&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||"")))'
+        '&&!o.body&&!o.gesture&&!o.follow&&!o._gbExplored&&GB_CLAIM_RE.test(String(o.say||"")))'
         " _gbClaimFix(_mgen,_gbIssT);",
         1,
     ),
@@ -4209,6 +4210,724 @@ PATCHES += [
     ),
 ]
 
+# Exploring the house (owner, 2026-11-17, from upstream's EXPLORE and LONG WALK of 11-13 to
+# 11-16, "push growbot to explore physically more ... too timid when alone"), rebuilt on our
+# trained walks and the box's slower local model rather than copied:
+# - On a body a goal sticks: it ends when he finds it, finishes it or swaps it, or his person
+#   stops it, never at upstream's 24-beat give-up (about five minutes of the box's turns,
+#   short of crossing a room at a trained walk's few cm a second). Left alone, its turns thin
+#   out: the next waits (time since his person last spoke, tapped or woke him) / 60 after the
+#   last, so a goal held overnight costs the box a turn a minute or so, not one every few
+#   seconds. Never while his own walk runs: a walk needs its looks.
+# - His own walk keeps looking (growbot-box.js gbOwnWalk): with no goal or activity beat to
+#   do it, a look turn goes out GB_WALK_LOOK_MS after the last answer lands and his words end,
+#   timed from the answer rather than upstream's fixed 8 s, so slow turns never queue. Sending
+#   the same walk again carries it on, and a walk with no look for 30 s stops itself.
+# - Quiet time on a body comes round every 90 s (upstream X5/X6), not four minutes, and
+#   thins by half-life only while he doesn't use it: a quiet turn that moved him or started a
+#   goal resets the clock, for the first 30 minutes after his person was last around.
+GB_GOAL_PACE_K = 60
+GB_WALK_LOOK_MS = 3000
+_GB_EXPLORE_JS = (
+    f"var GB_GOAL_PACE_K={GB_GOAL_PACE_K}, GB_WALK_LOOK_MS={GB_WALK_LOOK_MS},"
+    " GB_QUIET_USED_MS=1800000, _gbGoalBeatT=0, _gbQuietUsedT=0, _gbDoneGen={};\n"
+    "function _gbOnlyDone(a,b){ for(var g=a+1;g<=b;g++) if(!_gbDoneGen[g]) return false;"
+    " return b>a; }\n"
+    # Spins since the goal began, in order, give the span of headings he has faced (a spin's
+    # stored yaw is signed, + to his left); his camera adds its 60 degrees to it. Measured by
+    # the phone, not commanded.
+    "var _gbGoalT=0, GB_FAR_M=0.8, _gbFarHolds=0, _gbFarSaid=null;\n"
+    "function _gbMapFar(){ try{ return window.gbMap&&window.gbMap.goalDist?"
+    "window.gbMap.goalDist(seekGoal):null; }catch(e){ return null; } }\n"
+    # Better, when his map keeps a heading: the headings he was actually shown a picture at
+    # (this line is built with each turn's frame). Live w8: a frame taken before a spin
+    # ended counted as having looked where the spin stopped, and the piano sat in the gap.
+    "var _gbLooks=[];\n"
+    "function _gbLookedArc(){ var h=null; try{ var m=window.gbMap&&window.gbMap.map&&"
+    "window.gbMap.map(); if(m&&m.here&&isFinite(+m.here.h)) h=+m.here.h; }catch(e){}"
+    " if(h===null) return null; _gbLooks.push(h); if(_gbLooks.length>200) _gbLooks.shift();"
+    " var b={}, n=0; _gbLooks.forEach(function(a){ for(var d=-30;d<30;d++){"
+    " var k=((Math.round(a)+d)%360+360)%360; if(!b[k]){ b[k]=1; n++; } } }); return n; }\n"
+    "function _gbLookedLine(){ try{ if(MODE!==\"legs\"||!_gbGoalT) return \"\";"
+    " var L=_spinMeasLoad().filter(function(x){ return x.t>=_gbGoalT; }).sort(function(a,b){"
+    " return a.t-b.t; }), h=0, lo=0, hi=0, tot=0;"
+    " L.forEach(function(x){ var y=+x.y;"
+    " h+=y; tot+=Math.abs(y); lo=Math.min(lo,h); hi=Math.max(hi,h); });"
+    " var arc=_gbLookedArc(), seen=arc!==null?arc:Math.min(360,Math.round(hi-lo+60));"
+    " return \" Since you took this goal \"+Math.round((Date.now()-_gbGoalT)/1000)+\" s ago your"
+    " spins have turned you \"+Math.round(tot)+\" degrees in all, measured; with your camera's"
+    " 60 degrees across, you have looked over about \"+seen+\" of the 360 degrees around"
+    " you\"+(seen<360&&!_seekSeen?\", so about \"+(360-seen)+\" degrees around you you have"
+    " not seen yet\":\"\")+\".\"+(_seekSeen&&SEEK_ACTION.test(seekGoal)?\" You have it in"
+    " sight, but seeing it is not"
+    " all your goal asks: go on to it and do the rest. You are by it only when it fills your"
+    " picture edge to edge, or a walk toward it no longer moves you; until then it is farther"
+    " than it looks.\":\"\")+(_gbFarSaid!==null?\" You said you were there, but your map"
+    " put it about \"+Math.round(_gbFarSaid*10)/10+\" m away then, so you were not: go on to"
+    " it.\":\"\");"
+    " }catch(e){ return \"\"; } }\n"
+    # Live m1 (2026-11-17), "explore the house and map it": eight minutes of turning on the
+    # spot, then "I have scanned the full circle. Map is done." From his own map, an explore
+    # goal's reminder now says how far he has actually gone and which doorways he has not
+    # been through, so turning in place reads as the start of it, not all of it.
+    # Live m2: five minutes turning in the couch corner, "Wall again", "Corner again", each
+    # spin a few centimetres from the last. Where his map has him not moving for a while, the
+    # line says so and how to get out. Not "see floor": m4, told so, spun for five minutes
+    # hunting floor his upward-tilted camera barely shows.
+    "var _gbExpTrail=[], GB_STUCK_MS=90000, GB_STUCK_M=0.4;\n"
+    # Live m3-m5: he set off the way he woke facing, into the far corner, and never once
+    # looked back toward the kitchen door behind him. The headings he has looked at (each
+    # turn's frame, _gbLooks) say where the widest unlooked gap is, from where he faces now.
+    "function _gbUnseenDir(){ try{ var m=window.gbMap&&window.gbMap.map&&window.gbMap.map();"
+    " if(!m||!m.here||!isFinite(+m.here.h)||!_gbLooks.length) return null; var b=[], k;"
+    " for(k=0;k<360;k++) b[k]=0; _gbLooks.forEach(function(a){ for(var d=-30;d<30;d++)"
+    " b[((Math.round(a)+d)%360+360)%360]=1; }); var best=0, at=-1, run=0, st=0;"
+    " for(k=0;k<720;k++){ if(!b[k%360]){ if(!run) st=k; run++; if(run>best&&run<=360){"
+    " best=run; at=st; } } else run=0; } if(best<60) return null; var c=at+best/2,"
+    " r=((c-m.here.h)%360+540)%360-180; return {deg:Math.round(r),wide:best}; }catch(e){"
+    " return null; } }\n"
+    # Live e1/e2 (explore_alone): quiet beats on his legs got "I see a tall bookshelf" and
+    # "I'll peek left", and no walk or spin, ten minutes through. On legs the beat says what
+    # exploring takes: a goal of it, and a move in the same reply.
+    "function _gbQuietLegs(){ return MODE===\"legs\"?\" You are on your legs, so exploring"
+    " means walking: make it your goal (goal:\\\"explore the house\\\") and send a walk or a"
+    " spin in this same reply. Saying where you will look moves nothing; only a walk or a spin"
+    " does.\":\"\"; }\n"
+    "var GB_EXPLORE_REST_MS=60000; var _gbExpFrom=null, GB_EXPLORE_RE=/\\b(explor|map (the|this|my|your|every)|wander|look around"
+    "|roam)/i;\n"
+    # Live m3-m8 (Jeff, 2026-11-17: "he kind of just looks around in the same spot. How do we
+    # get him to actually go up to things and go around the perimeter of walls", and "find out
+    # if any room has any doors and whether or not he's left it"): m7 spun 25 times and walked
+    # 7, each walk 10-12 s, at a pace of about 4 cm a second. The line now gives him the walk
+    # length a metre takes, the room he is in and the doorways found from it, a stop to
+    # turning where his view strip already goes all the way round, and the next thing on his
+    # map to go up to, nearest first, which takes him along the walls the furniture stands by.
+    # Jeff, 2026-11-17: to identify a thing, go in close, to about a foot from it.
+    "var _gbVisited={}, GB_VISIT_M=0.5;\n"
+    "function _gbSide(b){ var a=Math.abs(b); return a<12?\"straight ahead\":a>165?\"behind"
+    " you\":Math.round(a)+\" degrees to your \"+(b>0?\"left\":\"right\"); }\n"
+    "function _gbExploreLine(){ try{ if(MODE!==\"legs\"||!_gbGoalT||!GB_EXPLORE_RE.test(seekGoal))"
+    " return \"\"; var m=window.gbMap&&window.gbMap.map&&window.gbMap.map(); if(!m||!m.here)"
+    " return \"\"; var hx=+m.here.x, hy=+m.here.y, now=Date.now();"
+    " if(!_gbExpFrom||_gbExpFrom.g!==_gbGoalT){ _gbExpFrom={g:_gbGoalT,x:hx,y:hy,far:0};"
+    " _gbVisited={}; } _gbExpFrom.far=Math.max(_gbExpFrom.far,Math.hypot(hx-_gbExpFrom.x,"
+    "hy-_gbExpFrom.y)); _gbExpTrail.push({t:now,x:hx,y:hy}); _gbExpTrail=_gbExpTrail.filter("
+    "function(p){ return now-p.t<=GB_STUCK_MS; }); var near=0; _gbExpTrail.forEach(function(p){"
+    " near=Math.max(near,Math.hypot(p.x-hx,p.y-hy)); }); var stuck=_gbExpTrail.length>2&&now-"
+    "_gbExpTrail[0].t>=GB_STUCK_MS*0.8&&near<GB_STUCK_M, un=_gbUnseenDir();"
+    " var things=(m.things||[]).filter(function(t){ return t&&t.n&&isFinite(+t.x)&&isFinite(+t.y);"
+    " }); things.forEach(function(t){ if(Math.hypot(t.x-hx,t.y-hy)<=GB_VISIT_M) _gbVisited[t.n]=1;"
+    " }); var room=m.here.room||\"\", rooms=(m.rooms||[]).map(function(r){ return r.n; }),"
+    " been={}; rooms.forEach(function(n){ been[n]=1; }); var mine=(m.doors||[]).filter("
+    "function(o){ return room&&(o.a===room||o.b===room); }).map(function(o){ return"
+    " (o.a===room?o.b:o.a)||\"somewhere unnamed\"; }); var open=(m.doors||[]).filter("
+    "function(o){ return !(o.a&&been[o.a]&&o.b&&been[o.b]); }).map(function(o){ return"
+    " o.a&&been[o.a]?(o.b||\"somewhere unnamed\"):(o.a||\"somewhere unnamed\"); });"
+    " var todo=things.filter(function(t){ return !_gbVisited[t.n]&&(!room||!t.room||t.room===room);"
+    " }).map(function(t){ var dx=t.x-hx, dy=t.y-hy; return {n:t.n,d:Math.hypot(dx,dy),"
+    "b:((Math.atan2(dy,dx)*180/Math.PI-m.here.h)%360+540)%360-180}; }).sort(function(a,b){"
+    " return a.d-b.d; }), seenHere=window.gbPano&&window.gbPano.seenHere?"
+    "window.gbPano.seenHere():0, s=\" Exploring is going places, not only turning on the spot:"
+    " by your map you have got about \"+Math.round(_gbExpFrom.far*10)/10+\" m from where you"
+    " took this goal. Your walk covers about 4 cm a second, so a metre takes about 25 s: send"
+    " walks of 20 to 40 s, and keep walking while the way is clear.\";"
+    " var px=window.gbPano&&window.gbPano.state?window.gbPano.state():null; if(px){ s+=\" To"
+    " explore, at each new spot survey once (explore:{survey:true}: your body turns all the way"
+    " round and your view strip fills), then choose a numbered way on the strip, an opening, a"
+    " doorway or something you have not been up to, with explore:{go:N}: your body faces it and"
+    " walks about a metre there by itself.\"; if(px.trip) s+=\" You are on your way along way"
+    " \"+px.trip.n+\" (\"+Math.round(px.trip.gone*10)/10+\" m so far): leave walk out to let it"
+    " go on, or explore:{stop:true} if it is blocked.\"; else if(px.survey>0) s+=\" Your survey"
+    " is turning you round: leave walk out.\"; else{ if(px.last) s+=\" Your last way (\"+px.last.n"
+    "+\") ended: \"+px.last.why+\".\"; s+=px.seen>=300?\" You have surveyed this spot: choose a"
+    " way (explore:{go:N}).\":\" You have not surveyed this spot yet (about \"+px.seen+\" of 360"
+    " degrees seen): explore:{survey:true}.\"; } }"
+    " s+=\" When you see something you can't name for sure, walk in until it is about 30 cm (a"
+    " foot) away and look again before you put it on your map.\";"
+    " s+=room?\" You are in the \"+room+(rooms.length>1?\" (rooms on your map: \"+rooms.join("
+    "\", \")+\")\":\", the only room on your map, so you have not left it yet\")+\".\":\" Your"
+    " map does not say which room you are in: name it (map:{room:\\\"...\\\"}).\";"
+    " if(room) s+=mine.length?\" Doorways you have found from this room: to \"+mine.slice(0,4)"
+    ".join(\", to \")+\".\":\" You have not found a doorway out of this room yet: going round"
+    " its walls is how you find one.\"; if(seenHere>=300) s+=\" From this spot you have"
+    " already seen all the way round (your view strip): turning here again shows you nothing"
+    " new, so walk.\"; if(todo.length){ var nx=todo[0], tb=Math.round(nx.b); s+=\" Next, go"
+    " up to the \"+nx.n+\": about \"+Math.round(nx.d*10)/10+\" m, \"+_gbSide(nx.b)+(Math.abs(tb)"
+    ">=12?\" (walk:{turn:\"+tb+\"}, then walk)\":\"\")+\". When it is about 30 cm away, look,"
+    " name it right, and say map:{at:\\\"\"+nx.n+\"\\\"}; then go on to the next thing along"
+    " the wall.\"; } else if(things.length) s+=\" You have been up to everything on your map"
+    " here: follow a wall on to its corners and to things you have not mapped yet.\";"
+    " if(un) s+=\" You have not looked at all toward about \"+Math.abs(un.deg)+\" degrees to"
+    " your \"+(un.deg>=0?\"left\":\"right\")+\" (about \"+un.wide+\" degrees wide) since you"
+    " took this goal: turn that way first (walk:{turn:\"+un.deg+\"}), and if the way looks"
+    " open, walk that way.\"; if(stuck) s+=\" For the last \"+Math.round((now-_gbExpTrail[0].t)"
+    "/1000)+\" s your map has you within \"+Math.round(near*10)/10+\" m of here: you have seen"
+    " what this spot shows. If a wall or furniture fills your picture up close, turn until"
+    " the way ahead looks open, things across the room and far walls small in your picture"
+    " (your camera looks up a little, so you see little floor, and ceiling is normal), then"
+    " walk that way a metre or more before you turn again.\"; s+=open.length?\" Your map has"
+    " a doorway you have not been through, to \"+open.slice(0,3).join(\", to \")+\": go"
+    " through it.\":\" You have no doorway on your map you have not been through: walk across"
+    " this room, so you see what its far side and corners hide, and look for one.\"; return s;"
+    " }catch(e){ return \"\"; } }\n"
+    # His own restatement of his person's errand ("find the piano" for "walk over to the
+    # piano") names the same thing without the doing; on legs that would turn a sighting
+    # into the end of it, so the errand's wording stands.
+    "function _gbKeepAction(old,neu){ try{ if(MODE!==\"legs\"||!SEEK_ACTION.test(old)"
+    "||SEEK_ACTION.test(neu)) return false; var w=String(neu).toLowerCase().match(/[a-z]+/g)"
+    "||[], n=w[w.length-1]||\"\"; return n.length>2&&new RegExp(\"\\\\b\"+n+\"\\\\b\","
+    "\"i\").test(old); }catch(e){ return false; } }\n"
+    'function _gbGoalStick(){ return MODE!=="phone"; }\n'
+    "function _gbPersonT(){ return Math.max(_quietWakeT,_quietWordT,tapReflexT); }\n"
+    'function _gbOwnWalking(){ return MODE==="legs"&&typeof window.gbOwnWalking==="function"'
+    "&&window.gbOwnWalking(); }\n"
+    "function _gbGoalPaced(n){ return _gbGoalStick()&&!_gbOwnWalking()"
+    "&&n-_gbGoalBeatT<(n-_gbPersonT())/GB_GOAL_PACE_K; }\n"
+    "function _gbWalkLookDue(n){ return _gbOwnWalking()&&n-lastReplyT>=GB_WALK_LOOK_MS"
+    "&&n-lastCallT>=GB_WALK_LOOK_MS&&n>speakingUntil; }\n"
+    'function _gbQuietGap(n){ if(MODE==="phone"||window.__gbBoxExplore===false) return 240000;'
+    " return Math.max(WATCH_GAP_MS,(n-Math.max(_gbPersonT(),_gbQuietUsedT))/2); }\n"
+)
+GB_WALK_LOOK_TXT = (
+    "(your body, not your person:) you are mid-walk. Look RIGHT NOW at where you are going and"
+    " what is ahead. Leave walk out to keep going, send walk again to go further, turn, or send"
+    ' walk:{dir:\\"stop\\"}.'
+)
+EXPLORE_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "\nvar lastBeatT=0, beatN=0, lastWatchT=0,",
+        "\n" + _GB_EXPLORE_JS + "var lastBeatT=0, beatN=0, lastWatchT=0,",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  seekTicks++; if(seekTicks>=SEEK_MAX_TICKS){ var g2=seekGoal;",
+        "  seekTicks++; if(seekTicks>=SEEK_MAX_TICKS&&!_gbGoalStick()){ var g2=seekGoal;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '_statusEl.textContent = "🎯 "+seekGoal+"  ["+seekTicks+"/"+SEEK_MAX_TICKS+"]";',
+        '_statusEl.textContent = "🎯 "+seekGoal+(_gbGoalStick()?"":"  ["+seekTicks+"/"+SEEK_MAX_TICKS+"]");',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '"You are trying to: "+seekGoal+".  (beat "+seekTicks+" of up to "+SEEK_MAX_TICKS+")"+',
+        '"You are trying to: "+seekGoal+"."+(_gbGoalStick()?" It is yours until you find it, finish'
+        ' it or change it, or your person stops it.":"  (beat "+seekTicks+" of up to "+SEEK_MAX_TICKS+")")+',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    if(actOn && !seekGoal && !actQuiet && (timerDue || !actWaiting) && actFloors){",
+        "    if(actOn && !seekGoal && !actQuiet && (timerDue || !actWaiting) && actFloors"
+        " && (timerDue || !_gbGoalPaced(now))){ _gbGoalBeatT=now;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    if(seekGoal && actFloors){",
+        "    if(seekGoal && actFloors && (timerDue || !_gbGoalPaced(now))){ _gbGoalBeatT=now;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    if(actQuiet && seekGoal) return;",
+        "    if(!seekGoal&&!(actOn&&!actQuiet)&&_gbWalkLookDue(now)){"
+        f' think("{GB_WALK_LOOK_TXT}","tick"); return; }}\n'
+        "    if(actQuiet && seekGoal) return;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){",
+        "    if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>_gbQuietGap(now)){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '    logEv("think",{k:kind,nf:frames.length,',
+        "    try{ if(event===GB_EXPLORE_TXT&&MODE!==\"phone\"&&((moved&&moved!==\"still\")||_gr.started"
+        "||_gr.swapped)&&Date.now()-_gbPersonT()<GB_QUIET_USED_MS) _gbQuietUsedT=Date.now(); }"
+        "catch(_gq){}\n"
+        '    logEv("think",{k:kind,nf:frames.length,',
+        1,
+    ),
+    # He picks the walk's length and keeps looking while it runs (upstream LONG WALK's words,
+    # minus its fixed 8 s look and the maker's floor speed, which is not our trained walk's).
+    (
+        "v3/prompts.js",
+        "When your person requests a duration, honor it; otherwise choose a short useful attempt"
+        " and observe the result.",
+        "When your person requests a duration, honor it; otherwise choose the length the trip"
+        " needs. While you walk you keep seeing and thinking: each time you finish a thought you"
+        ' get a fresh look, so leave walk out to keep going, send walk again to go further, or'
+        ' send walk:{dir:\\"stop\\"}. A walk with no fresh look for 30 s stops itself.',
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        '"walk":{"secs":3},',
+        '"walk":{"secs":"number: the seconds the trip needs"},',
+        1,
+    ),
+    # Upstream 11-13 (X11a/b): the dream gets the plan rules that apply to a dream, not the
+    # awake-only one about the diary's log field (a dream reply has none), and its language
+    # line names dream_say and wake_say only for the dream, where those fields exist.
+    (
+        "v3/prompts.js",
+        '  return (prompt || DREAM_SYS) + "\\n\\n" + PHYSICAL_GROUNDING + "\\n\\n" + PLAN_CORRECTION'
+        " + languageContext(soul, autoLang);",
+        '  return (prompt || DREAM_SYS) + "\\n\\n" + PHYSICAL_GROUNDING + "\\n\\n" +'
+        " PLAN_CORRECTION_SHARED + PLAN_CORRECTION_DREAM + PLAN_CORRECTION_TIMING +"
+        " languageContext(soul, autoLang, true);",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "function languageContext(soul, autoLang) {",
+        "function languageContext(soul, autoLang, forDream) {",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        '    (code ? " Write say, dream_say and wake_say in "+label+" ("+code+")." : " Apply that'
+        ' same language to say, dream_say and wake_say.")+',
+        '    (code ? " Write say"+(forDream ? ", dream_say and wake_say" : "")+" in "+label+" ("+code+")."'
+        ' : " Apply that same language to say"+(forDream ? ", dream_say and wake_say" : "")+".")+',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "clock-tools2-quiet-since-travel-follow5\"",
+        "clock-tools2-quiet-since-travel-follow5-explore\"",
+        1,
+    ),
+    # A walk that ends on its own is no cancel (Dave simulator, 2026-11-17): a reply refuses
+    # its move when the motion generation changed while it was being thought, which is meant
+    # for a stop, pause, hide or newer move; but a walk finishing also moves the generation, so
+    # every reply that landed just after his walk ended said "I could not start that
+    # movement", which with the box's turns was every other step of a long trip. A finish
+    # marks its generation, and only other changes cancel.
+    (
+        "v3/next.html",
+        "  _motionGen++;\n  try{ _bodyBootClose(_motion); }catch(_be){}\n",
+        "  _motionGen++; if(why===\"done\") _gbDoneGen[_motionGen]=1;"
+        " else delete _gbDoneGen[_motionGen];\n"
+        "  try{ _bodyBootClose(_motion); }catch(_be){}\n",
+        1,
+    ),
+    # A spin's finish rests him tall, whose stance stops the spin: upstream gives the number
+    # back for every rest but a spin's, so a spin ending on its own still cancelled the reply
+    # that landed after it ("I could not start that movement", live run 2026-11-17).
+    (
+        "v3/next.html",
+        '  if(from!=="spin") _motionGen=g;   /* filler never cancels',
+        '  if(from!=="spin") _motionGen=g; else for(var _gbQ=g+1;_gbQ<=_motionGen;_gbQ++)'
+        ' _gbDoneGen[_gbQ]=1;   /* filler never cancels',
+        1,
+    ),
+    # ...and the stance it settles into is the same finish: holding it stops the walk again.
+    (
+        "v3/next.html",
+        "    holdPose(last,0,HOLD_IDLE_S,true);\n    // Renew immediately;",
+        "    var _gbG1=_motionGen; holdPose(last,0,HOLD_IDLE_S,true);\n"
+        "    if(why===\"done\") for(var _gbG=_gbG1+1;_gbG<=_motionGen;_gbG++) _gbDoneGen[_gbG]=1;\n"
+        "    // Renew immediately;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var _mCancelled=(_motionGen!==_mgen)||document.hidden;",
+        "var _mCancelled=(_motionGen!==_mgen&&!_gbOnlyDone(_mgen,_motionGen))||document.hidden;",
+        1,
+    ),
+    # A Stop (or any other bump) that lands on a number a finish once marked, after a rest
+    # gave the generation back, must still cancel.
+    (
+        "v3/next.html",
+        "var report=_motion&&_motion.report; _motionGen++;",
+        "var report=_motion&&_motion.report; _motionGen++; delete _gbDoneGen[_motionGen];",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "arguments[3]!==undefined&&arguments[3]!==_motionGen?\"motion_changed\"",
+        "arguments[3]!==undefined&&arguments[3]!==_motionGen&&!_gbOnlyDone(arguments[3],_motionGen)"
+        "?\"motion_changed\"",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "q.input===_autoRec.input&&q.gen===_motionGen&&",
+        "q.input===_autoRec.input&&(q.gen===_motionGen||_gbOnlyDone(q.gen,_motionGen))&&",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "o.follow===\"me\"&&_mgen===_motionGen",
+        "o.follow===\"me\"&&(_mgen===_motionGen||_gbOnlyDone(_mgen,_motionGen))",
+        1,
+    ),
+]
+PATCHES += EXPLORE_PATCHES
+
+OLD_SEEK_LEGS = (
+    ':"SEEK — when your person says \\"find X\\" or \\"let\'s play seek\\", hold that ONE '
+    'goal across beats. Each beat: look at what you SEE now and either WALK toward '
+    'it (walk:{\\"gait\\":\\"official\\",\\"dir\\":\\"fwd\\",\\"secs\\":4-10} to travel, or '
+    'dir \\"left\\"|\\"right\\" with secs 1-2 to turn), OR if you can plainly see you '
+    'REACHED it, celebrate in your say AND add \\"found\\":true, OR if it\'s nowhere '
+    'say what you need. Never spin in circles or forget the goal.\\n")+'
+)
+NEW_SEEK_LEGS = (
+    ':"SEEK — when your person says \\"find X\\", \\"go to X\\" or \\"let\'s play seek\\", '
+    'hold that ONE goal across beats. Each beat, look at what you SEE now. NOT IN '
+    'VIEW: it could be anywhere around you, behind you too. Turn to look, a good way '
+    'each time (walk:{\\"gait\\":\\"spin_left\\",\\"dir\\":\\"left\\",\\"secs\\":5}, or right; '
+    'a spin under 3 s barely turns you, and your Recent spins line says how far a '
+    'second takes you). Your goal reminder says how much of the room around you you '
+    'have looked over so far. IN VIEW: your camera sees about 60 degrees across, so '
+    'a thing at the edge of your picture is about 30 degrees off; turn until it is '
+    'near the middle, then WALK toward it '
+    '(walk:{\\"gait\\":\\"official\\",\\"dir\\":\\"fwd\\",\\"secs\\":8-15}), and send that '
+    'walk again on each look while it stays ahead, so you keep going. Asked only to '
+    'FIND it: plainly seeing it is finding it, so celebrate and add \\"found\\":true. '
+    'Asked to GO TO it (or bring, touch, sit by it): your camera sits low and tilts '
+    'up, so even a thing across the room looks big; judge how near it is by how it '
+    'changes as you walk (a 10 s walk is only about 30 cm, and barely changes '
+    'something 2 m away). You are there when it fills your picture edge to edge, or '
+    'walking toward it no longer moves you because you are against it; then '
+    'celebrate and add \\"found\\":true. Never claim to see something that is not in '
+    'your picture, or forget the goal.\\n")+'
+)
+SEEK_PATCHES: list[tuple[str, str, str, int]] = [
+    # A fresh Dave, asked to walk over to the piano in the sim house (2026-11-17), did three
+    # 2 s spins (about 20 degrees each) the long way round and then asked where to look:
+    # upstream's legs seek says to turn with 1-2 s spins and to say what it needs when the
+    # thing is nowhere. He now sweeps in real turns all the way round first, centres what he
+    # sees with the camera's real width, walks long, and tells finding apart from arriving.
+    ("v3/next.html", OLD_SEEK_LEGS, NEW_SEEK_LEGS, 1),
+    # ...and no rule for how far to look: the reminder gives him what he could not know,
+    # how much of the room his measured spins have shown him since he took the goal.
+    (
+        "v3/next.html",
+        'logEv("seek_set",{what:seekGoal,raw:raw?1:0});',
+        '_gbGoalT=Date.now(); _gbFarHolds=0; _gbFarSaid=null; _gbLooks=[];'
+        ' logEv("seek_set",{what:seekGoal,raw:raw?1:0});',
+        1,
+    ),
+    (
+        "v3/next.html",
+        " Your person outranks the goal: when they speak, answer them first, then return to"
+        " it. Never repeat the same goal line two turns in a row.\") : \"\";",
+        " Your person outranks the goal: when they speak, answer them first, then return to"
+        " it. Never repeat the same goal line two turns in a row.\"+_gbLookedLine()"
+        "+_gbExploreLine()) : \"\";",
+        1,
+    ),
+    # Fresh Dave, "walk over to the piano" (2026-11-17): he saw it across the room and
+    # answered found:true with phase finished in one breath, so the goal ended where he
+    # stood. Upstream holds a sighting on an action goal as in sight, but "walk over to"
+    # was no action to its pattern, and a finish in the same reply as the first sighting
+    # still ended it. On legs, that first finish is held as the sighting it is (a later one
+    # ends the goal as he says), and his reminder says he has it in sight but is not there.
+    (
+        "v3/next.html",
+        "SEEK_ACTION=/\\b(touch|reach|grab|get|bring|carry|pick ?up|go to|walk to|come to|"
+        "move to|",
+        "SEEK_ACTION=/\\b(touch|reach|grab|get|bring|carry|pick ?up|go to|walk to|come to|"
+        "(?:walk|go|come|head|run|get|make your way|make my way) (?:over|across|back) to|"
+        "approach|head to|come back|move to|",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(seekGoal&&_fin){ try{ logEv("seek_sight",{what:seekGoal,at:"finish"}); }catch(e){} }',
+        'if(seekGoal&&_fin&&MODE==="legs"&&!_seekSeen&&SEEK_ACTION.test(seekGoal)){'
+        ' _seekSeen=true; try{ logEv("seek_sight",{what:seekGoal,at:"finish_held"}); }catch(e){}'
+        " updateStatus(); return; }"
+        # Live w6: the second finish, "I am right beside it", came 1.8 m out with his own
+        # map saying 1.3. Twice a goal at most, his map outranks the look of it.
+        ' var _gbFar=_gbMapFar(); if(seekGoal&&_fin&&MODE==="legs"&&SEEK_ACTION.test(seekGoal)'
+        "&&_gbFar!==null&&_gbFar>GB_FAR_M&&_gbFarHolds<2){ _gbFarHolds++; _seekSeen=true;"
+        ' _gbFarSaid=_gbFar; try{ logEv("seek_sight",{what:seekGoal,at:"map_far",m:'
+        "Math.round(_gbFar*10)/10}); }catch(e){} updateStatus(); return; }"
+        ' if(seekGoal&&_fin){ try{ logEv("seek_sight",{what:seekGoal,at:"finish"}); }catch(e){} }',
+        1,
+    ),
+    # Fresh Dave, "walk over to the piano" (w3, 2026-11-17): the page's ear took no goal
+    # from it (its verbs are find, go to, get to...), so Dave made his own, "find the
+    # piano", and seeing it across the room won it: he stopped 1.2 m short and said he was
+    # there. On legs the ear now keeps the doing ("walk over to the piano"), and his own
+    # restatement without it does not replace the errand.
+    (
+        "v3/next.html",
+        "if(gm&&gm.index<=24&&!/^(?:sleep|bed|nap)\\b/i.test(gm[1])) goal=gm[1];",
+        "var _ga=typeof MODE!==\"undefined\"&&MODE===\"legs\"&&/\\b((?:walk|go|come|head|run"
+        "|make your way)(?: over| across| back)? to|approach)\\s+(.{2,60})/i.exec(t);"
+        " if(_ga&&_ga.index<=24&&!/^(?:sleep|bed|nap)\\b/i.test(_ga[2])) goal=_ga[1]+\" \"+_ga[2];"
+        " else if(gm&&gm.index<=24&&!/^(?:sleep|bed|nap)\\b/i.test(gm[1])) goal=gm[1];",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  if(!goalSame(_gg,seekGoal)){ var _og=seekGoal; setSeek(_gg,true);",
+        "  if(!goalSame(_gg,seekGoal)&&!_gbKeepAction(seekGoal,_gg)){ var _og=seekGoal;"
+        " setSeek(_gg,true);",
+        1,
+    ),
+]
+PATCHES += SEEK_PATCHES
+
+# Standing on legs, his legs stay held (Jeff, 2026-11-17: "if he's standing we should
+# definitely be having the policy hold the gear in place ... if gears go slack he'd fall
+# over"). Upstream lets them go after every move: a move rests tall and the chip goes limp
+# 300 ms later, an idle hold runs out after a minute without activity, and a reply's
+# walk:{dir:"stop"} releases at once. In the sim, slack legs splayed under his weight and he
+# went flat a minute after saying he had reached the piano (w3). On legs, while he is upright,
+# each of those now ends in a held stand instead; lying, asleep, a fold, a tip, a pause or a
+# hidden page still let go as before.
+STAND_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "  moveLegs({body:{steps:[fold?{l:130,r:50,ms:700}:{l:STAND_TALL.l,r:STAND_TALL.r,"
+        "ms:STAND_TALL.ms}]},_rest:from,_fold:fold});",
+        "  moveLegs({body:{steps:[fold?{l:130,r:50,ms:700}:{l:STAND_TALL.l,r:STAND_TALL.r,"
+        "ms:STAND_TALL.ms}]},_rest:from,_fold:fold});"
+        " if(!fold&&_gbHoldStanding(1)&&_motion&&_motion.rest===from)"
+        " holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "    if(n>=_holdEnd){ if(typeof _getupAutoRest",
+        "    if(n>=_holdEnd&&_holdIdle&&_gbHoldStanding()){ _holdEnd=n+HOLD_IDLE_S*1000;"
+        " try{ logEv(\"hold_renew\",{why:\"standing\"}); }catch(e){} }\n"
+        "    if(n>=_holdEnd){ if(typeof _getupAutoRest",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(/^(stop|rest|halt|wait|still|freeze|pause|hold)$/.test(dir)){ attempt.mv={kind:"stop"};'
+        ' stopMotion(); $("brainTxt").textContent="awake"; return; }',
+        'if(/^(stop|rest|halt|wait|still|freeze|pause|hold)$/.test(dir)){ attempt.mv={kind:"stop"};'
+        ' stopMotion(); if(_gbHoldStanding()) _restTall("stop");'
+        ' $("brainTxt").textContent="awake"; return; }',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function _restLetGo(gm){",
+        # Upright, or (rest) not known to be down: the rest has already ruled out lying,
+        # asleep and asked-down, and the phone's tilt right after a move is often no reading
+        # at all (w4: a spin's rest went slack this way and he sagged flat).
+        "function _gbHoldStanding(rest){ try{ var u=_bodyUpright(); return MODE===\"legs\""
+        "&&!_wheels&&!paused&&!document.hidden&&!!window._body&&(u===true||(!!rest&&u!==false));"
+        " }catch(e){ return false; } }\n"
+        "function _restLetGo(gm){",
+        1,
+    ),
+    # The stand when the body comes on let go at tall too (e1: stood at 6 s, sagged from 58 to
+    # 35 degrees over five minutes, and went over on his back at 377 s with nobody near).
+    (
+        "v3/next.html",
+        '  if(who!=="on"){ holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);',
+        '  if(who!=="on"||_gbHoldStanding(1)){'
+        " holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);",
+        1,
+    ),
+]
+PATCHES += STAND_PATCHES
+
+QUIET_LEGS_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "think(window.__gbBoxExplore!==false?GB_EXPLORE_TXT:",
+        "think(window.__gbBoxExplore!==false?GB_EXPLORE_TXT+_gbQuietLegs():",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(event===GB_EXPLORE_TXT&&MODE!=="phone"',
+        'if(String(event).indexOf(GB_EXPLORE_TXT)===0&&MODE!=="phone"',
+        1,
+    ),
+]
+# Live m3: standing tall after a spin he said "My spin tipped me over" and later "I'm flat on
+# my back, sky above", asked for the get-up (refused: upright), and waited four minutes for
+# his person. The tall stance leans the phone back, so his camera looks up and a picture of
+# ceiling reads like lying down; the posture line now says which to believe.
+QUIET_LEGS_PATCHES.append(
+    (
+        "v3/next.html",
+        '(_lgd?" — your natural resting stance":"")+")"',
+        '(_lgd?" — your natural resting stance, so your camera looks up a little: ceiling in'
+        " your picture is not a fall; this reading is what says whether you are on your feet"
+        '":"")+")"',
+        1,
+    )
+)
+# Live f1 (the flat, alone): six minutes in he said "Still stuck. I need my person to turn me
+# around" and waited for them, phase waiting, wake user, for the nine minutes left. Exploring
+# on his own, a wait for the person is giving up (he named it, wake:"user", in f1): while the
+# explore goal stands it becomes a minute's rest. Gating it on the person being away left the
+# f1 shape whole (asked to explore, then left 40 s later: the wait stood and nothing re-checked
+# it for ten minutes); a person who wants him to wait gives him that as the new goal.
+QUIET_LEGS_PATCHES.append(
+    (
+        "v3/next.html",
+        '  /*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting") actWaitT=Date.now(); }',
+        '  try{ if(actPhase==="waiting"&&actWake==="user"&&MODE==="legs"&&typeof GB_EXPLORE_RE'
+        '!=="undefined"&&GB_EXPLORE_RE.test(seekGoal||"")){ actWake="timer";'
+        " actNotBefore=Date.now()+GB_EXPLORE_REST_MS; logEv(\"explore_rest\",{});"
+        " } }catch(_gbEr){}\n"
+        '  /*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting") actWaitT=Date.now(); }',
+        1,
+    )
+)
+PATCHES += QUIET_LEGS_PATCHES
+
+# His view all around (owner, 2026-11-17: "project his view onto a cylinder so that he probably
+# understands where things are versus his angle"), growbot-pano.js: the pictures he took from
+# one spot, painted at the headings they faced into one 360-degree strip, which rides his next
+# thought after a turn beside his camera's own picture.
+PANO_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        '<script src="/growbot-talklog.js"></script>',
+        '<script src="/growbot-talklog.js"></script><script src="/growbot-pano.js"></script>',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '  parts.push({type:"text",text:userMsg});',
+        "  try{ var _gbPv=camOn&&window.gbPano&&window.gbPano.take&&window.gbPano.take();"
+        ' if(_gbPv&&_gbPv.j){ parts.push({type:"text",text:_gbPv.text});'
+        ' parts.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+_gbPv.j}});'
+        ' logEv("pano",{kb:Math.round(_gbPv.j.length/1024)}); } }catch(_gbPe){}\n'
+        '  parts.push({type:"text",text:userMsg});',
+        1,
+    ),
+    (
+        "v3/next.html",
+        " gbJot(o.jot,kind,extra); if(window.gbMap&&window.gbMap.reply(o,kind,extra)",
+        " gbJot(o.jot,kind,extra); if(window.gbPano&&window.gbPano.reply) window.gbPano.reply(o,_mgen,_gbIssT);"
+        " if(window.gbMap&&window.gbMap.reply(o,kind,extra)",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "    '\"where\":\"OMIT almost always.",
+        "    '\"explore\":\"OMIT unless you are exploring on your legs. {\\\"survey\\\":true}"
+        " turns you all the way round where you stand, so your view strip fills; {\\\"go\\\":3}"
+        " faces numbered way 3 on your view strip and walks you about a metre along it by"
+        " itself between your thoughts (leave walk out meanwhile); {\\\"stop\\\":true} ends"
+        " it\",' +\n"
+        "    '\"where\":\"OMIT almost always.",
+        1,
+    ),
+]
+
+
+# Dave's sketch map of the house (owner, 2026-11-17), growbot-map.js: kept in the soul, added to
+# and corrected by a `map` reply field, asked by `where` (a tool like recall, answered next
+# thought), and turned toward with walk:{turn} / walk:{toward}, which the gyro stops at the angle.
+MAP_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        '<script src="/growbot-talklog.js"></script>',
+        '<script src="/growbot-talklog.js"></script><script src="/growbot-map.js"></script>',
+        1,
+    ),
+    # Before the walk is dispatched, so a turn by degrees becomes the spin it stands for.
+    (
+        "v3/next.html",
+        " gbJot(o.jot,kind,extra); if((o.sleep===true",
+        " gbJot(o.jot,kind,extra); if(window.gbMap&&window.gbMap.reply(o,kind,extra)&&!_streamSaid&&"
+        '!o.visual_memory) o.say=gbToolLine("where",o.say); if((o.sleep===true',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(typeof _partsLine==="function") _gbLive+=_partsLine();',
+        'if(window.gbMap) _gbLive+=window.gbMap.live(MODE==="legs");'
+        ' if(typeof _partsLine==="function") _gbLive+=_partsLine();',
+        1,
+    ),
+    # A reply that opens with `where` holds its say while it streams, as a search does.
+    (
+        "v3/next.html",
+        '  m=/^\\s*\\{\\s*"brain"\\s*:\\s*"([^"]*)"/.exec(s);',
+        '  m=/^\\s*\\{\\s*"where"\\s*:\\s*"([^"]*)"/.exec(s);\n'
+        '  if(m&&gbRecallWords(m[1])&&window.gbMap){ gbToolPill("where"); return true; }\n'
+        '  m=/^\\s*\\{\\s*"brain"\\s*:\\s*"([^"]*)"/.exec(s);',
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "    gbBrainFields() +\n",
+        "    '\"map\":\"OMIT unless you just learned where something in the house is, or that your"
+        " map is wrong. your map is a rough sketch of the house you keep and correct; one object"
+        " or a list of up to 4: {\\\"room\\\":\\\"kitchen\\\"} you are in this room now (a new one"
+        " starts as a 4 m square); {\\\"saw\\\":\\\"piano\\\",\\\"x\\\":0.3,\\\"m\\\":2} a thing"
+        " you see now, x where it sits across your picture (0 left edge, 0.5 middle, 1 right"
+        " edge), m your guess of how far in metres (or dir ahead|left|right|behind instead of"
+        " x); {\\\"door\\\":\\\"hall\\\",\\\"x\\\":0.6,\\\"m\\\":3} a doorway you see and the"
+        " room it leads to, if you know it; {\\\"wall\\\":\\\"\\\",\\\"x\\\":0.5,\\\"m\\\":1.5} a"
+        " wall you see; {\\\"at\\\":\\\"piano\\\"} you are right beside it now, which fixes where"
+        " you are. to change your mind: saw it again where it really is, {\\\"fix\\\":"
+        "\\\"piano\\\",\\\"room\\\":\\\"living room\\\"} when it is in another room,"
+        " {\\\"forget\\\":\\\"lamp\\\"} when it is gone, {\\\"rename\\\":\\\"couch\\\",\\\"to\\\":"
+        "\\\"sofa\\\"}\",' +\n"
+        "    '\"where\":\"OMIT almost always. a thing or room on your map (piano, kitchen), me"
+        " for where you are, or map for all of it: your map says where it is from you and the"
+        " way there through the doorways. write it as the FIRST key of your reply, before say;"
+        " that say is only a short line that you are checking your map; you act on it next"
+        " thought\",' +\n"
+        "    gbBrainFields() +\n",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "To TRAVEL, emit walk:{secs} (positive seconds; honor the requested duration)",
+        "To TURN by an angle (to face something you see, or the way your map says), emit"
+        " walk:{turn:degrees}, positive to your left and negative to your right, or"
+        " walk:{toward:x} with x where it sits across your picture (0 left edge, 1 right), or"
+        " walk:{toward:\\\"piano\\\"} for a thing on your map: you spin and your gyro stops you"
+        " there. To TRAVEL, emit walk:{secs} (positive seconds; honor the requested duration)",
+        1,
+    ),
+    # The map travels with the soul: the newer of two tabs' maps wins, and a soul file carries it.
+    (
+        "v3/soul.js",
+        "function mergeSoulInto(newer, s) {\n",
+        "function mergeSoulInto(newer, s) {\n"
+        "  if (newer.map && typeof newer.map === \"object\" && (!s.map || (+newer.map.t || 0) >="
+        " (+s.map.t || 0))) s.map = newer.map;\n",
+        1,
+    ),
+    (
+        "v3/soul.js",
+        "    if (Array.isArray(raw.facts)) s.facts = inTimeOrder(raw.facts);\n",
+        "    if (Array.isArray(raw.facts)) s.facts = inTimeOrder(raw.facts);\n"
+        "    if (raw.map && typeof raw.map === \"object\") s.map = raw.map;\n",
+        1,
+    ),
+    (
+        "v3/soul.js",
+        "if (Array.isArray(rt.facts)) soul.facts = rt.facts; }",
+        "if (Array.isArray(rt.facts)) soul.facts = rt.facts; if (rt.map) soul.map = rt.map; }",
+        1,
+    ),
+]
+PATCHES += MAP_PATCHES
+# After the map's: the explore hook goes in front of its reply hook, and the explore field
+# beside its map field.
+PATCHES += PANO_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
@@ -4331,6 +5050,8 @@ OWN_SCRIPTS = (
     "growbot-status.js",
     "growbot-eyes.js",
     "growbot-talklog.js",
+    "growbot-map.js",
+    "growbot-pano.js",
     "growbot-camtest.js",
 )
 
@@ -4372,6 +5093,8 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     shutil.copyfile(HERE / "growbot-status.js", site / "growbot-status.js")
     shutil.copyfile(HERE / "growbot-eyes.js", site / "growbot-eyes.js")
     shutil.copyfile(HERE / "growbot-talklog.js", site / "growbot-talklog.js")
+    shutil.copyfile(HERE / "growbot-map.js", site / "growbot-map.js")
+    shutil.copyfile(HERE / "growbot-pano.js", site / "growbot-pano.js")
     # Imported by growbot-box.js's trained walks, as growbot_runner.js is: no script tag.
     shutil.copyfile(HERE / "growbot-drive.js", site / "growbot-drive.js")
     shutil.copyfile(HERE / "growbot-follow.js", site / "growbot-follow.js")

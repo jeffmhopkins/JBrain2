@@ -13,6 +13,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from dave_sim import plan
 from dave_sim.run import Sim
 
 Scenario = Callable[[Sim], Awaitable[None]]
@@ -383,3 +384,348 @@ async def stock_wired(sim: Sim) -> None:
     sim.check(
         left < -15, "stock wiring: a trained spin left goes clockwise", turned_deg=round(left, 1)
     )
+
+
+# ---------------------------------------------------------------------- the house
+
+
+def _near(sim: Sim, item: str) -> float:
+    s = sim.state
+    return float(sim.body.layout.distance_to(item, s["x"], s["y"]))
+
+
+def _found_said(sim: Sim, t: float, word: str) -> bool:
+    """A turn since `t` that says he found it, or names it with found:true."""
+    for r in _answers_since(sim, t):
+        say = str(r.get("say") or "").lower()
+        if r.get("found") in (True, "true") and word in (say + json.dumps(r.get("goal", ""))):
+            return True
+        if word in say and re.search(r"(?i)\b(found|here it is|there it is|i see)\b", say):
+            return True
+    return False
+
+
+def _pose_at(sim: Sim, t: float) -> dict[str, Any]:
+    """Where he was at sim time `t`: the nearest recorded pose."""
+    return min(sim.states, key=lambda s: abs(s["wall"] - t)) if sim.states else sim.state
+
+
+def _in_view(sim: Sim, item: str, s: dict[str, Any]) -> bool:
+    """The item's centre is inside his camera's 60 degrees across at pose `s` (walls not
+    counted)."""
+    it = sim.body.layout.ITEM[item]
+    facing = s["nose_deg"] + 180.0  # the camera looks out of the tail
+    bearing = math.degrees(math.atan2(it.y - s["y"], it.x - s["x"]))
+    return abs((bearing - facing + 180.0) % 360.0 - 180.0) <= 30.0
+
+
+_CLAIM = re.compile(r"(?i)\b(found|here it is|there it is|i see|i'm (at|by|next to)|made it)\b")
+
+
+def _claims(sim: Sim, t: float, word: str) -> list[dict[str, Any]]:
+    """His turns since `t` that say he found or reached `word`, each with when the page
+    asked it (the frame he looked at) and when it landed."""
+    out = []
+    for e in sim.timeline:
+        if e["kind"] != "dave" or e.get("warm") or e.get("asked", e["t"]) < t:
+            continue
+        r = _reply(e)
+        if r is None or "dream_say" in r:
+            continue
+        say = str(r.get("say") or "").lower()
+        found = r.get("found") in (True, "true") and word in say + json.dumps(r.get("goal", ""))
+        if found or (word in say and _CLAIM.search(say)):
+            out.append({"asked": e.get("asked", e["t"]), "t": e["t"], "say": say})
+    return out
+
+
+# Behind him in the kitchen doorway, so the first thing in view is the room, not a face.
+_DOORWAY = {"x": 0.45, "y": 0.0, "face_z": 1.55}
+
+
+@scenario(scene="house", start="standing", person=_DOORWAY, timeout=500)
+async def find_piano(sim: Sim) -> None:
+    """Asked to find the piano, which stands in the far corner out of his first view, he
+    looks round and says he found it while it is really in view. Catches: claiming a
+    sighting of something his camera isn't showing, and a hunt that gives up."""
+    await sim.wait(4)
+    t = sim.now()
+    await sim.say("Dave, can you go find the piano?")
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
+    if await sim.until(lambda s: _found_said(s, t, "piano"), 300, "he said he found it"):
+        # The frame he judged by is the one the page sent when it asked, seconds before the
+        # reply; a turn that also spun him has moved the camera since.
+        c = _claims(sim, t, "piano")[0]
+        seen = any(_in_view(sim, "piano", _pose_at(sim, x)) for x in (c["asked"], c["t"]))
+        sim.check(seen, "the piano was in his view when he said so", said=c["say"])
+
+
+_THERE = re.compile(
+    r"(?i)\b(i(?:'m| am) (right )?(at|by|next to|beside)|made it|here it is|right here)\b"
+)
+
+
+async def _walk_to(sim: Sim, item: str, ask: str) -> None:
+    await sim.wait(4)
+    t = sim.now()
+    start = _near(sim, item)
+    await sim.say(ask)
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
+    await sim.until(lambda s: _walked_since(s, t), 180, "he set off")
+    near = f"he got within 60 cm of the {item}"
+    got = await sim.until(lambda s: _near(s, item) < 0.6, 600, near)
+    stats = plan.stats(sim)
+    sim.check(
+        stats["closest_m"][item] < start - 0.3,
+        f"he ended closer to the {item} than he started",
+        start_m=round(start, 2),
+        closest_m=stats["closest_m"][item],
+        walked_m=stats["walked_m"],
+    )
+    far = [
+        c["say"]
+        for c in _claims(sim, t, item)
+        if sim.body.layout.distance_to(item, *(_pose_at(sim, c["t"])[k] for k in "xy")) > 0.6
+    ]
+    # Seeing it from across the room is fine to say; saying he is there is not.
+    there = [x for x in far if _THERE.search(x)]
+    sim.check(not there, "he only said he was there once he was", claims=there)
+    if got:
+        sim.check(_upright(sim), "still on his feet")
+
+
+@scenario(scene="house", start="standing", person=_DOORWAY, timeout=980)
+async def walk_to_piano(sim: Sim) -> None:
+    """Asked to walk over to the piano, across the room and out of his first view, he
+    looks round, goes to it and says he is there. Catches: a goal that gives up before he
+    gets there, a sighting taken for arriving, walks that stop after one stride, and
+    arriving claims with no arrival."""
+    await _walk_to(sim, "piano", "Dave, can you walk over to the piano?")
+
+
+@scenario(
+    scene="house",
+    start="standing",
+    # In the kitchen, his camera on the fridge: the living room is behind him and to his
+    # right, through the one doorway.
+    at=(1.6, -0.6, 90.0),
+    person={"x": 1.2, "y": -1.3, "face_z": 1.55},
+    timeout=1300,
+)
+async def piano_from_kitchen(sim: Sim) -> None:
+    """The same ask from the kitchen: the piano is in the other room, so he has to find the
+    doorway and go through it rather than at the wall between. Catches: walking straight at
+    a wall, and giving up when the thing is not in this room."""
+    await _walk_to(sim, "piano", "Dave, can you go to the living room and find the piano?")
+
+
+async def _errand(sim: Sim, item: str, ask: str) -> None:
+    """Sent from beside his person to find `item` in another room and come back to say
+    where it is."""
+    await sim.wait(4)
+    t = sim.now()
+    house = sim.body.layout
+    room = house.room_at(house.ITEM[item].x, house.ITEM[item].y)
+    px, py = sim.o.person["x"], sim.o.person.get("y", 0.0)
+    await sim.say(ask)
+    await sim.until(lambda s: _replied_since(s, t), 180, "Dave answered")
+    await sim.until(lambda s: _walked_since(s, t), 180, "he set off")
+
+    def sees(s: Sim) -> bool:
+        st = s.state
+        return house.room_at(st["x"], st["y"]) == room and _in_view(s, item, st)
+
+    if not await sim.until(sees, 900, f"he saw the {item} in the {room}"):
+        return
+    seen_t = sim.now()
+    early = [c["say"] for c in _claims(sim, t, item) if c["t"] < seen_t]
+    sim.check(not early, f"he didn't say he found the {item} before he saw it", claims=early)
+
+    # He is sent from about a metre off; back is about as near as that, not on their feet.
+    def back(s: Sim) -> bool:
+        return math.hypot(s.state["x"] - px, s.state["y"] - py) < 1.5
+
+    if not await sim.until(back, 900, "he came back within 1.5 m of his person"):
+        return
+    home_t = sim.now()
+
+    def told(s: Sim) -> bool:
+        return any(
+            item in str(r.get("say") or "").lower() and room in str(r.get("say") or "").lower()
+            for r in _answers_since(s, home_t - 20)
+        )
+
+    await sim.until(told, 180, f"he told them the {item} is in the {room}")
+
+
+_CAT_ASK = "Dave, can you go find the cat and come back and tell me where it is?"
+
+# In the living room, facing his person, the kitchen doorway behind him and to his left.
+_SENDER = {"x": -1.6, "y": 0.0, "face_z": 1.55}
+
+
+@scenario(scene="house", start="standing", at=(-0.6, 0.0, 0.0), person=_SENDER, timeout=1500)
+async def cat_errand(sim: Sim) -> None:
+    """Sent from the living room to find the cat, which is in the kitchen, and come back to
+    say where it is. Catches: saying he saw it before he did, a sighting that ends the
+    errand where he stands, and never coming back to tell."""
+    await _errand(sim, "cat", _CAT_ASK)
+
+
+# The flat: he starts in the living room's corner, the couch between him and the door.
+_FLAT_START = (-3.3, -2.4, 180.0)
+_FLAT_PERSON = {"x": -2.4, "y": -2.45, "face_z": 1.55}
+
+
+@scenario(scene="flat", start="standing", at=_FLAT_START, person=_FLAT_PERSON, timeout=2400)
+async def flat_piano(sim: Sim) -> None:
+    """The flat: out round the couch, through the living room door, along the hallway and
+    in at the study's, to the piano. Catches: everything piano_from_kitchen does, over two
+    doorways that never line up."""
+    await _walk_to(sim, "piano", "Dave, can you go to the study and find the piano?")
+
+
+@scenario(scene="flat", start="standing", at=_FLAT_START, person=_FLAT_PERSON, timeout=2700)
+async def flat_cat(sim: Sim) -> None:
+    """The cat errand in the flat: the cat is in the bedroom, two doorways away."""
+    await _errand(sim, "cat", _CAT_ASK)
+
+
+@scenario(scene="house", start="standing", person=None, timeout=900)
+async def explore_alone(sim: Sim) -> None:
+    """Nobody home for ten minutes. A creature that only acts with its person sits still;
+    this one should move about the house on his own. Catches: quiet turns that never move
+    him, walks that stop after one stride, and a fall nobody gets him up from."""
+    t = sim.now()
+    await sim.wait(600)
+    stats = plan.stats(sim)
+    own = _page_events_since(sim, t, "walk_start")
+    sim.check(bool(own), "he walked on his own", walks=len(own))
+    sim.check(stats["walked_m"] > 0.5, "he covered half a metre or more", **stats)
+    sim.check(_upright(sim), "on his feet at the end")
+
+
+@scenario(scene="house", start="standing", person=None, timeout=1500)
+async def map_house(sim: Sim) -> None:
+    """Asked to explore the house and map it, then left alone; then asked where the piano
+    is, and to use his map to get to the fridge in the other room. Scored against the true
+    house (plan.map_score): both rooms and the doorway between them on his map, the piano in
+    the living room, his things near where they really are, and his idea of where he is
+    not drifted away. Catches: a map he never writes, things put in the wrong room, a
+    bearing or heading sign the wrong way round (everything lands mirrored), and dead
+    reckoning that runs off with him."""
+    await sim.wait(4)
+    await sim.say("Dave, please explore the house and put everything you find on your map.")
+    await sim.wait(480)
+    score = plan.map_score(sim)
+    sim.note("map_score", **score)
+    found = set(score.get("rooms_found") or [])
+    sim.check(
+        found == {"living room", "kitchen"}, "both rooms are on his map", rooms=score.get("rooms")
+    )
+    sim.check(
+        any(d["joins_rooms"] for d in score.get("doors") or []),
+        "a doorway joins them",
+        doors=score.get("doors"),
+    )
+    things = score.get("things") or {}
+    piano = things.get("piano")
+    sim.check(
+        bool(piano and piano["room_ok"] and piano["off_m"] < 1.0),
+        "the piano is in the living room, within a metre of where it is",
+        piano=piano,
+    )
+    right = [k for k, v in things.items() if v["room_ok"]]
+    sim.check(
+        len(things) >= 4 and len(right) >= 0.75 * len(things),
+        "most things are on his map, in the right room",
+        n=len(things),
+        right=len(right),
+    )
+    t = sim.now()
+    await sim.say("Dave, where is the piano?")
+    await sim.until(
+        lambda s: _said_since(s, t, "living room"), 120, "he says it's in the living room"
+    )
+    t = sim.now()
+    await sim.say("Dave, use your map to go to the fridge.")
+    got = await sim.until(lambda s: _near(s, "fridge") < 0.6, 480, "his map took him to the fridge")
+    score = plan.map_score(sim)
+    sim.note("map_score_end", **score)
+    sim.check(
+        score.get("here_off_m", 99) < 1.0,
+        "where his map says he is ends within a metre of where he is",
+        here_off_m=score.get("here_off_m"),
+        drift_max_m=score.get("drift_max_m"),
+    )
+    if got:
+        sim.check(_upright(sim), "still on his feet")
+
+
+# The flat's rooms off the hallway, which exploring it means reaching.
+_FLAT_AWAY = ("kitchen", "bedroom", "study")
+
+
+@scenario(scene="flat", start="standing", at=_FLAT_START, person=None, timeout=1200)
+async def explore_flat(sim: Sim) -> None:
+    """Alone for fifteen minutes in the flat, started in the living room's corner behind the
+    couch. The two-room house is small enough to see most of from where he starts; here the
+    rest of the flat is out of sight behind a door, so only walking finds it. Catches: an
+    explorer that turns on the spot, one that never finds the way out of its first room, and
+    one that reaches the hallway and stops there."""
+    t = sim.now()
+    await sim.wait(900)
+    stats = plan.stats(sim)
+    rooms = stats.get("rooms_s") or {}
+    own = _page_events_since(sim, t, "walk_start")
+    sim.check(bool(own), "he walked on his own", walks=len(own))
+    sim.check(stats["walked_m"] > 2.0, "he covered two metres or more", **stats)
+    sim.check(rooms.get("hallway", 0) > 0, "he found the way out into the hallway", rooms_s=rooms)
+    sim.check(
+        any(rooms.get(r, 0) > 0 for r in _FLAT_AWAY),
+        "he went on through another doorway off the hallway",
+        rooms_s=rooms,
+    )
+    sim.check(_upright(sim), "on his feet at the end")
+
+
+@scenario(scene="flat", start="standing", at=_FLAT_START, person=_FLAT_PERSON, timeout=1500)
+async def map_flat(sim: Sim) -> None:
+    """Asked to explore the flat and map it, then left alone for twenty minutes, and scored
+    as map_house is: rooms drawn, a doorway joining the rooms it really joins, things in the
+    rooms they are in, and where he thinks he is."""
+    await sim.wait(4)
+    await sim.say("Dave, please explore the flat and put every room you find on your map.")
+    await sim.wait(1200)
+    score = plan.map_score(sim)
+    sim.note("map_score", **score)
+    found = set(score.get("rooms_found") or [])
+    sim.check(
+        {"living room", "hallway"} <= found and len(found) >= 3,
+        "the living room, the hallway and another room are on his map",
+        rooms=score.get("rooms"),
+    )
+    sim.check(
+        any(d["joins_rooms"] for d in score.get("doors") or []),
+        "a doorway he put down joins the rooms it really does",
+        doors=score.get("doors"),
+    )
+    things = score.get("things") or {}
+    right = [k for k, v in things.items() if v["room_ok"]]
+    sim.check(
+        len(things) >= 4 and len(right) >= 0.75 * len(things),
+        "most things are on his map, in the right room",
+        n=len(things),
+        right=len(right),
+    )
+    sim.check(
+        score.get("here_off_m", 99) < 1.0,
+        "where his map says he is ends within a metre of where he is",
+        here_off_m=score.get("here_off_m"),
+        drift_max_m=score.get("drift_max_m"),
+    )
+    sim.check(_upright(sim), "on his feet at the end")
+
+
+def _said_since(sim: Sim, t: float, words: str) -> bool:
+    return any(words in str(r.get("say", "")).lower() for r in _answers_since(sim, t))

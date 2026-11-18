@@ -854,7 +854,7 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     ].replace("sys+=_gbLive;", "").replace(fixed, "")
     assert (
         '<script src="/v3/prompts.js?v=1008-motion-box-lang-eye-talk-recall-sleep-recall3-clock-'
-        'tools2-quiet-since-travel-follow5"' in page
+        'tools2-quiet-since-travel-follow5-explore"' in page
     )
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
@@ -1197,7 +1197,7 @@ def test_a_streamed_utterance_outlives_the_old_twelve_second_cap() -> None:
 def test_an_ordinary_quiet_beat_waits_ninety_seconds_after_the_last_activity() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "var GB_QUIET_AFTER_MS=90000;" in page
-    assert "if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>240000){" in page
+    assert "if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>_gbQuietGap(now)){" in page
     assert "idle>=8000 && now-lastBeatT" not in page
     assert page.index("var GB_QUIET_AFTER_MS") < page.index("if(idle>=GB_QUIET_AFTER_MS")
     assert "90 seconds after anything last happened" in page
@@ -2747,7 +2747,9 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     words = next(line for line in page.splitlines() if line.startswith("var GB_EXPLORE_TXT="))
     beat = re.search(
-        r'think\((window\.__gbBoxExplore!==false\?GB_EXPLORE_TXT:"QUIET COMPANY[^"]*")', page
+        r"think\((window\.__gbBoxExplore!==false\?GB_EXPLORE_TXT\+_gbQuietLegs\(\):"
+        r'"QUIET COMPANY[^"]*")',
+        page,
     )
     assert beat is not None
     # The beat's own gates are the ones the 90 s test above pins; only its words are chosen.
@@ -2757,7 +2759,7 @@ def test_the_quiet_beat_hands_the_creature_its_own_time_unless_its_persona_says_
     setting = "" if explore is None else f"window.__gbBoxExplore={explore};"
     # Inside a function, so the page's globals never meet whatever this Node version ships.
     script = (
-        f"(function(){{var window={{}};{setting}{words}\n"
+        f"(function(){{var window={{}}, _gbQuietLegs=function(){{ return ''; }};{setting}{words}\n"
         f"console.log(JSON.stringify({beat.group(1)}));}})();"
     )
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
@@ -5259,7 +5261,10 @@ def test_follow_me_starts_the_trained_follower_and_a_stop_wins() -> None:
     """Review: a reply in flight when the person said "stop stop" must not start a follow, and
     asking again while following must not restart it (a restart drops the face it holds)."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert '_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"&&_mgen===_motionGen' in page
+    assert (
+        '_hreqAtIssue&&!dreaming&&MODE==="legs"&&o.follow==="me"'
+        "&&(_mgen===_motionGen||_gbOnlyDone(_mgen,_motionGen))" in page
+    )
     assert (
         "{ delete o.walk; delete o.body; delete o.gesture; o._gbFollowed=true; "
         "window.gbFollowMe(15,_gbIssT); }" in page
@@ -5337,20 +5342,26 @@ def _own_walk(
     start = box.index("  // Dave's own forward and back walks can take")
     fn = box[start : box.index("\n})();", start)]
     script = (
-        "var window={}, started=[], _wheels=false, seekGoal='', duty=60000;"
+        "var window={}, started=[], _wheels=false, seekGoal='', duty=60000, _motion=null,"
+        " _moveLast=null, outcomes=[];"
+        "function _moveReport(a,s,r){ a.state=s; a.reason=r; outcomes.push([s,r]); }"
+        "function logEv(){}"
         "function dutyCapMs(){ return 60000; }"
         f"var location={{search:'{query}'}};"
         "var document={hidden:false,addEventListener:function(){}};"
         "function btRobot(){ return 'gb-1'; }"
         "function policySeconds(s,d){ return s||d; } function dutyLeftMs(){ return duty; }"
-        "function start(set,move,secs,a){ started.push([move,secs,Object.keys(set).join('+')]); }"
+        "function start(set,move,secs,a,drive,fol,own){"
+        " started.push([move,secs,Object.keys(set).join('+')]);"
+        " var M={report:a,left:secs||8}; if(own) M.own=move;"
+        " M.extend=function(s){ if(s<=M.left) return 0; M.left=s; return s+1; }; _motion=M; }"
         "function fetch(){ return Promise.resolve({ok:true,json:function(){"
         f" return {{skills:{skills}}};}}}}); }}"
         + fn
         + "setTimeout(function(){ var a={}, b={}, out=["
         + calls
-        + "]; console.log(JSON.stringify("
-        "{out:out,started:started,mv:a.mv||null,bmv:b.mv||null})); });"
+        + "]; console.log(JSON.stringify({out:out,started:started,mv:a.mv||null,"
+        "bmv:b.mv||null,outcomes:outcomes,last:_moveLast===a?'a':_moveLast===b?'b':null})); });"
     )
     return json.loads(
         subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
@@ -5421,6 +5432,174 @@ def test_daves_own_walks_stay_stock_without_a_skill_set_or_when_asked() -> None:
     assert roomy["out"] == [True]
 
 
+def test_asking_for_the_same_walk_while_it_runs_carries_it_on() -> None:
+    """Exploring the house (owner, 2026-11-17): he sends walk again each look to keep going,
+    and each new walk used to glide back to its stance first, a stutter every few seconds."""
+    got = _own_walk(
+        "window.gbOwnWalk({dir:'fwd'},'fwd',a), window.gbOwnWalk({dir:'fwd',secs:20},'fwd',b)"
+    )
+    assert got["out"] == [True, True]
+    assert got["started"] == [["forward", 0, "look+forward+back"]]
+    assert got["outcomes"] == [["merged", "continued"]]
+    # The running walk stays his latest move, its length and continuations updated.
+    assert got["last"] == "a" and got["mv"]["ext"] == 1 and got["mv"]["secs"] == 21
+    short = _own_walk(
+        "window.gbOwnWalk({dir:'fwd',secs:20},'fwd',a),"
+        " window.gbOwnWalk({dir:'fwd',secs:3},'fwd',b)"
+    )
+    # A shorter ask never trims it: only a stop does.
+    assert short["outcomes"] == [["merged", "already_going"]] and "ext" not in short["mv"]
+    turn = _own_walk(
+        "window.gbOwnWalk({dir:'fwd'},'fwd',a), window.gbOwnWalk({dir:'back'},'back',b)"
+    )
+    assert [m for m, _, _ in turn["started"]] == ["forward", "back"] and turn["outcomes"] == []
+
+
+def test_carrying_a_walk_on_stays_within_the_legs_duty_budget() -> None:
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    # Before the stride, during the stance, and while it runs: each growth is capped by
+    # dutyLeftMs(), and the stance-time growth is logged and widens the self-motion window.
+    assert "s = Math.min(s, dutyLeftMs() / 1000);" in box
+    assert "var more = Math.min(s - walkS, dutyLeftMs() / 1000);" in box
+    assert "_walkLog.push({ t: Date.now(), ms: more * 1000 });" in box
+    assert (
+        "selfMoveUntil = Math.max(selfMoveUntil,"
+        " Math.max(prepEnd, Date.now()) + walkS * 1000 + 3500);" in box
+    )
+    assert "var want = Math.min(Date.now() + s * 1000, endT + dutyLeftMs());" in box
+
+
+def test_his_own_walk_stops_when_he_stops_looking() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    i = box.index("  var OWN_LOOK_MS = 30000;")
+    fn = box[i : box.index("  window.gbOwnWalking", i)]
+    script = (
+        "var inFlight=false, dreaming=false, lastCallT=0, lastReplyT=0, now=Date.now();"
+        + fn
+        + "var out=[ownNoLook(now-29000), ownNoLook(now-31000), ownNoLook(0)];"
+        "lastReplyT=now-10000; out.push(ownNoLook(now-60000));"
+        "lastCallT=now-40000; lastReplyT=now-45000; inFlight=true; out.push(ownNoLook(now-90000));"
+        "dreaming=true; out.push(ownNoLook(now-90000));"
+        "console.log(JSON.stringify(out));"
+    )
+    out = json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+    # 30 s since the stride began with no thought; a reply 10 s ago is a look; a thought in
+    # flight counts for 60 s, but a dream is no look at the room.
+    assert out == [False, True, False, False, False, True]
+    assert 'why: noLook ? "no_look" : "done"' in box
+
+
+def _explore(calls: str, setup: str = "") -> list[Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    i = page.index("var GB_GOAL_PACE_K=")
+    fn = page[i : page.index("\nvar lastBeatT=", i)]
+    script = (
+        "var window={}, MODE='legs', WATCH_GAP_MS=90000, now=Date.now(), _quietWakeT=now,"
+        " _quietWordT=0, tapReflexT=0, lastReplyT=0, lastCallT=0, speakingUntil=0;"
+        + fn
+        + ";"
+        + setup
+        + "console.log(JSON.stringify(["
+        + calls
+        + "]));"
+    )
+    return json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+
+
+def test_a_goal_on_a_body_sticks_and_thins_out_when_he_is_alone() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "if(seekTicks>=SEEK_MAX_TICKS&&!_gbGoalStick()){" in page
+    seek = "    if(seekGoal && actFloors && (timerDue || !_gbGoalPaced(now))){ _gbGoalBeatT=now;"
+    assert seek in page
+    # An hour alone: a goal turn a minute; just after his person spoke: no wait at all.
+    hour = "_quietWakeT=now-3600000; _gbGoalBeatT=now-"
+    assert _explore("_gbGoalPaced(now)", hour + "30000;") == [True]
+    assert _explore("_gbGoalPaced(now)", hour + "61000;") == [False]
+    assert _explore("_gbGoalPaced(now)", "_gbGoalBeatT=now-5000;") == [False]
+    # Never while his own walk runs (it needs its looks), and never in a phone.
+    walking = hour + "30000; window.gbOwnWalking=function(){ return true; };"
+    assert _explore("_gbGoalPaced(now)", walking) == [False]
+    assert _explore("_gbGoalPaced(now), _gbGoalStick()", hour + "30000; MODE='phone';") == [
+        False,
+        False,
+    ]
+
+
+def test_his_own_walk_gets_a_look_once_each_answer_has_landed() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "    if(!seekGoal&&!(actOn&&!actQuiet)&&_gbWalkLookDue(now)){ think(" in page
+    walking = "window.gbOwnWalking=function(){ return true; };"
+    assert _explore("_gbWalkLookDue(now)", walking + "lastReplyT=now-3500;") == [True]
+    assert _explore("_gbWalkLookDue(now)", walking + "lastReplyT=now-1000;") == [False]
+    talking = walking + "lastReplyT=now-9000; speakingUntil=now+500;"
+    assert _explore("_gbWalkLookDue(now)", talking) == [False]
+    assert _explore("_gbWalkLookDue(now)", "lastReplyT=now-9000;") == [False]
+
+
+def test_quiet_time_on_a_body_comes_round_often_while_he_uses_it() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "    if(idle>=GB_QUIET_AFTER_MS && now-lastBeatT>_gbQuietGap(now)){" in page
+    assert "walk somewhere you have not looked yet" in page
+    assert 'String(event).indexOf(GB_EXPLORE_TXT)===0&&MODE!=="phone"' in page
+    # Ten minutes since his person: half that; but a quiet turn he used a minute ago brings
+    # it back to the 90 s floor. A phone, or exploring switched off, keeps four minutes.
+    ten = "_quietWakeT=now-600000;"
+    assert _explore("_gbQuietGap(now)", ten) == [300000]
+    assert _explore("_gbQuietGap(now)", ten + "_gbQuietUsedT=now-60000;") == [90000]
+    assert _explore("_gbQuietGap(now)", ten + "MODE='phone';") == [240000]
+    assert _explore("_gbQuietGap(now)", ten + "window.__gbBoxExplore=false;") == [240000]
+
+
+def test_a_walk_that_ends_on_its_own_does_not_cancel_the_next_reply() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        '_motionGen++; if(why==="done") _gbDoneGen[_motionGen]=1;'
+        " else delete _gbDoneGen[_motionGen];" in page
+    )
+    # A Stop's bump clears a mark a rest's rollback could have left on its number.
+    assert "_motionGen++; delete _gbDoneGen[_motionGen];" in page
+    assert "arguments[3]!==_motionGen&&!_gbOnlyDone(arguments[3],_motionGen)" in page
+    # The stance a finished walk settles into stops it again, and that is the finish too.
+    # The get-up brain's own currency check counts a finish the same way.
+    assert "q.input===_autoRec.input&&(q.gen===_motionGen||_gbOnlyDone(q.gen,_motionGen))&&" in page
+    settle = 'if(why==="done") for(var _gbG=_gbG1+1;_gbG<=_motionGen;_gbG++) _gbDoneGen[_gbG]=1;'
+    assert settle in page
+    assert (
+        "var _mCancelled=(_motionGen!==_mgen&&!_gbOnlyDone(_mgen,_motionGen))||document.hidden;"
+        in page
+    )
+    # Unchanged is no cancel either way; a finish (gen 4) alone is not one; a stop or newer
+    # move (gen 5, unmarked) still is, even after a finish.
+    done = "_gbDoneGen[4]=1;"
+    assert "else for(var _gbQ=g+1;_gbQ<=_motionGen;_gbQ++) _gbDoneGen[_gbQ]=1;" in page
+    assert _explore("_gbOnlyDone(3,3), _gbOnlyDone(3,4), _gbOnlyDone(3,5)", done) == [
+        False,
+        True,
+        False,
+    ]
+
+
+def test_he_picks_a_walks_length_and_dreams_get_only_dream_rules() -> None:
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert "otherwise choose the length the trip needs" in prompts
+    assert "A walk with no fresh look for 30 s stops itself." in prompts
+    assert '"walk":{"secs":3}' not in prompts
+    assert (
+        "PLAN_CORRECTION_SHARED + PLAN_CORRECTION_DREAM + PLAN_CORRECTION_TIMING +"
+        " languageContext(soul, autoLang, true);" in prompts
+    )
+
+
 def _claim_fix(setup: str) -> list[str]:
     node = shutil.which("node")
     if node is None:
@@ -5447,7 +5626,7 @@ def test_a_claimed_move_with_no_move_field_is_asked_about_at_once() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
         'if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait||o.walk.secs))'
-        '&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||""))) '
+        '&&!o.body&&!o.gesture&&!o.follow&&!o._gbExplored&&GB_CLAIM_RE.test(String(o.say||""))) '
         "_gbClaimFix(_mgen,_gbIssT);" in page
     )
     # After the claiming reply's handler has finished (its speech and trace land first), once
@@ -5460,3 +5639,306 @@ def test_a_claimed_move_with_no_move_field_is_asked_about_at_once() -> None:
     # The handler's drainUser sent the person's next words first: that turn's reply is theirs.
     assert _claim_fix("_gbClaimFix(1, 100); inFlight=true;") == []
     assert "MOVE (come here" in page and "Feet that slipped or walks that fell short" in page
+
+
+def test_on_legs_a_seek_sweeps_all_round_and_tells_finding_from_arriving() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "with secs 1-2 to turn" not in page
+    assert "only once you have looked all the way round" not in page  # no rule: a fact
+    assert "Your goal reminder says how much of the room around you you have looked over" in page
+    assert "a thing at the edge of your picture is about 30 degrees off" in page
+    # From a camera a few cm off the floor everything looks big: nearness is how it changes.
+    assert "judge how near it is by how it changes as you walk" in page
+    assert "You are there when it fills your picture edge to edge" in page
+    # The phone's seek, which a person carries, is upstream's.
+    assert "spoken aloud so they turn or carry you" in page
+
+
+def test_his_goal_reminder_says_how_much_of_the_room_he_has_looked_over() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '_gbFarSaid=null; _gbLooks=[]; logEv("seek_set"' in page
+    assert 'two turns in a row."+_gbLookedLine()+_gbExploreLine()) : "";' in page
+    spins = (
+        "_gbGoalT=now-40000; var _seekSeen=false, seekGoal='find the piano', SEEK_ACTION=/x/;"
+        " function _spinMeasLoad(){ return ["
+        "{t:now-50000,g:'spin_left',y:90},{t:now-30000,g:'spin_left',y:90},"
+        "{t:now-20000,g:'spin_right',y:-30}]; }"
+    )
+    # The spin before the goal doesn't count; 90 left then 30 back spans 90, plus the
+    # camera's 60.
+    line = _explore("_gbLookedLine()", spins)[0]
+    assert "turned you 120 degrees in all" in line
+    assert "looked over about 150 of the 360 degrees" in line
+    # What is left is said too, so a sweep that stops short is his call, made knowing it.
+    assert "about 210 degrees around you you have not seen yet" in line
+    assert "not seen yet" not in _explore("_gbLookedLine()", spins + "_seekSeen=true;")[0]
+    # With his map's heading, it is the headings he was shown a picture at that count:
+    # at 90 and then 150 that is 90..180 less nothing, 120 degrees.
+    mapped = spins + "var _h=90; window.gbMap={map:function(){ return {here:{h:_h}}; }};"
+    got = _explore("_gbLookedLine(),(_h=150,_gbLookedLine())", mapped)
+    assert "looked over about 60 of the 360" in got[0]
+    assert "looked over about 120 of the 360" in got[1]
+    assert _explore("_gbLookedLine()", spins + "MODE='phone';") == [""]
+    assert _explore("_gbLookedLine()", spins + "_gbGoalT=0;") == [""]
+
+
+def test_on_legs_seeing_the_thing_he_was_sent_to_is_not_arriving() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "(?:walk|go|come|head|run|get|make your way|make my way) (?:over|across|back) to" in page
+    assert 'logEv("seek_sight",{what:seekGoal,at:"finish_held"})' in page
+    seen = (
+        "var SEEK_ACTION=/\\b(walk to|(?:walk|go) (?:over|across) to)\\b/i, _seekSeen=true,"
+        " seekGoal='walk over to the piano'; _gbGoalT=now-5000;"
+        " function _spinMeasLoad(){ return []; }"
+    )
+    assert "farther than it looks" in _explore("_gbLookedLine()", seen)[0]
+    assert "farther than" not in _explore("_gbLookedLine()", seen + "_seekSeen=false;")[0]
+    found = seen + "seekGoal='find the piano';"
+    assert "farther than" not in _explore("_gbLookedLine()", found)[0]
+
+
+def test_on_legs_his_own_find_goal_does_not_replace_an_errand() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "if(!goalSame(_gg,seekGoal)&&!_gbKeepAction(seekGoal,_gg)){" in page
+    acts = "var SEEK_ACTION=/\\b(walk to|(?:walk|go) (?:over|across) to|come back)\\b/i;"
+    keep = [
+        "_gbKeepAction('walk over to the piano','find the piano')",
+        "_gbKeepAction('find the cat and come back and tell me','find the cat')",
+        "_gbKeepAction('walk over to the piano','find the cat')",
+        "_gbKeepAction('find the piano','walk over to the piano')",
+    ]
+    assert _explore(",".join(keep), acts) == [True, True, False, False]
+    assert _explore(keep[0], acts + "MODE='phone';") == [False]
+
+
+def test_on_legs_the_ear_keeps_the_doing_in_an_errand() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    i = page.index("function _seekWords(t)")
+    fn = page[i : page.index("\nfunction _localCmd", i)]
+    asks = [
+        "Dave, can you walk over to the piano?",
+        "Dave, can you go find the cat and come back and tell me where it is?",
+        "okay, go to sleep",
+    ]
+    calls = ",".join(f"_seekWords({json.dumps(a)}).goal" for a in asks)
+    # setSeek cuts the sentence; the ear hands it the rest of the ask.
+    cat = "the cat and come back and tell me where it is?"
+    for mode, want in (
+        ("legs", ["walk over to the piano?", cat, None]),
+        ("phone", [None, cat, None]),
+    ):
+        script = f"var MODE='{mode}';{fn};console.log(JSON.stringify([{calls}]))"
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+        assert json.loads(out.stdout) == want, mode
+
+
+def test_standing_on_legs_his_legs_stay_held() -> None:
+    """Slack legs splayed and he fell flat a minute after a stop (sim, 2026-11-17); Jeff:
+    standing, the gears are held. A rest, a reply's stop and a lapsed idle hold all end held
+    while he is upright on legs."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        "if(!fold&&_gbHoldStanding(1)&&_motion&&_motion.rest===from)"
+        " holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true);" in page
+    )
+    assert "if(n>=_holdEnd&&_holdIdle&&_gbHoldStanding()){ _holdEnd=n+HOLD_IDLE_S*1000;" in page
+    assert 'stopMotion(); if(_gbHoldStanding()) _restTall("stop");' in page
+    # The stand when the body comes on holds too, not only an asked one.
+    assert 'if(who!=="on"||_gbHoldStanding(1)){ holdPose(' in page
+    # A walk's own first second can't trip the grab abort, whose release splays him mid-stride.
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "tipN = settled && dTilt > 55 ? tipN + 1 : 0;" in box
+    assert "jerkN = settled && lin > 11 ? jerkN + 1 : 0;" in box
+    i = page.index("function _gbHoldStanding(rest){")
+    fn = page[i : page.index("\n", i)]
+    base = (
+        "var MODE='legs', _wheels=false, paused=false, document={hidden:false},"
+        " window={_body:{}}, up=true; function _bodyUpright(){ return up; };"
+    )
+    cases = {
+        "": True,
+        "up=null;": False,
+        "up=false;": False,
+        "MODE='phone';": False,
+        "_wheels=true;": False,
+        "paused=true;": False,
+        "document.hidden=true;": False,
+        "window._body=null;": False,
+    }
+    for setup, want in cases.items():
+        script = f"{base}{fn}{setup}console.log(JSON.stringify(_gbHoldStanding()))"
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+        assert json.loads(out.stdout) is want, setup
+    # A rest has ruled out lying already: no tilt reading still holds; a reading of down
+    # does not.
+    for setup, want in (("up=null;", True), ("up=false;", False), ("MODE='phone';", False)):
+        script = f"{base}{fn}{setup}console.log(JSON.stringify(_gbHoldStanding(1)))"
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+        assert json.loads(out.stdout) is want, setup
+
+
+def test_an_explore_goal_hears_how_far_he_has_gone_and_where_he_has_not_been() -> None:
+    """Live m1: asked to explore and map the house, he turned on the spot for eight minutes
+    and called the map done. His own map now tells him how far he has got and which
+    doorways he hasn't been through."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '_gbLookedLine()+_gbExploreLine()) : "";' in page
+    setup = (
+        "var seekGoal='explore the house and map it', _gbGoalT=now-9000;"
+        " var M={here:{x:0,y:0}, rooms:[{n:'living room'}], doors:[]};"
+        " window.gbMap={map:function(){ return M; }};"
+    )
+    got = _explore(
+        "_gbExploreLine(),"
+        "(M.here={x:1.2,y:0}, M.doors=[{a:'living room',b:'kitchen'}], _gbExploreLine()),"
+        "(M.rooms.push({n:'kitchen'}), _gbExploreLine()),"
+        "(seekGoal='walk over to the piano', _gbExploreLine())",
+        setup,
+    )
+    assert "got about 0 m from where you took this goal" in got[0]
+    assert "walk in until it is about 30 cm (a foot) away and look again" in got[0]
+    assert "no doorway on your map you have not been through: walk across" in got[0]
+    assert (
+        "got about 1.2 m" in got[1] and "a doorway you have not been through, to kitchen" in got[1]
+    )
+    assert "walk across this room" in got[2]
+    assert got[3] == ""
+
+
+def test_standing_tall_he_hears_that_ceiling_in_his_picture_is_not_a_fall() -> None:
+    """Live m3: upright at 60 degrees he said he was flat on his back from a picture of
+    ceiling, and waited four minutes for help."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert (
+        "your natural resting stance, so your camera looks up a little: ceiling in your picture"
+        " is not a fall; this reading is what says whether you are on your feet" in page
+    )
+
+
+def test_on_legs_the_quiet_beat_says_exploring_takes_a_walk() -> None:
+    """Live e2: ten minutes of quiet beats on his legs answered with words and no move."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "GB_EXPLORE_TXT+_gbQuietLegs():" in page
+    legs, phone = _explore("_gbQuietLegs(), (MODE='phone', _gbQuietLegs())")
+    assert 'make it your goal (goal:"explore the house") and send a walk or a spin' in legs
+    assert phone == ""
+
+
+def test_an_explore_goal_sends_him_up_to_the_next_thing_and_says_where_his_room_stands() -> None:
+    """Live m7 (Jeff: "he kind of just looks around in the same spot ... go up to things and
+    go around the perimeter of walls", and "find out if any room has any doors and whether
+    or not he's left it"): 25 spins and 7 short walks."""
+    setup = (
+        "var seekGoal='explore the house', _gbGoalT=now-9000;"
+        " var M={here:{x:0,y:0,h:90,room:'living room'}, rooms:[{n:'living room'}], doors:[],"
+        " things:[{n:'lamp',x:1,y:1,room:'living room'},{n:'piano',x:0,y:3,room:'living room'},"
+        "{n:'fridge',x:5,y:0,room:'kitchen'}]}; window.gbMap={map:function(){ return M; }};"
+        " window.gbPano={seenHere:function(){ return 320; }};"
+    )
+    got = _explore(
+        "_gbExploreLine(),"
+        "(M.here.x=0.9, M.here.y=0.9, _gbExploreLine()),"
+        "(M.rooms.push({n:'kitchen'}), M.doors.push({a:'living room',b:'kitchen'}),"
+        " M.here={x:0,y:2.8,h:90,room:'living room'}, _gbExploreLine())",
+        setup,
+    )
+    assert "a metre takes about 25 s: send walks of 20 to 40 s" in got[0]
+    # With the view strip's explore steps on the page, the line says how to use them.
+    assert "To explore, at each new spot survey once (explore:{survey:true}" not in got[0]
+    assert "the living room, the only room on your map, so you have not left it yet" in got[0]
+    assert "not found a doorway out of this room yet: going round its walls" in got[0]
+    assert "already seen all the way round (your view strip)" in got[0]
+    # The lamp is nearest: 1.4 m off, 45 degrees to his right as he faces +y.
+    assert (
+        "Next, go up to the lamp: about 1.4 m, 45 degrees to your right (walk:{turn:-45}" in got[0]
+    )
+    assert 'say map:{at:"lamp"}' in got[0]
+    # Within half a metre of the lamp, it is visited: the piano is next, the kitchen's fridge
+    # is not this room's.
+    assert "Next, go up to the piano" in got[1] and "fridge" not in got[1]
+    assert "rooms on your map: living room, kitchen" in got[2]
+    assert "Doorways you have found from this room: to kitchen." in got[2]
+    assert "You have been up to everything on your map here" in got[2]
+
+
+def test_an_explore_goal_says_how_to_survey_and_choose_a_way_and_how_the_trip_goes() -> None:
+    setup = (
+        "var seekGoal='explore the house', _gbGoalT=now-9000;"
+        " var M={here:{x:0,y:0,h:90,room:'living room'}, rooms:[{n:'living room'}], doors:[],"
+        " things:[]}; window.gbMap={map:function(){ return M; }}; var PS={trip:null,survey:0,"
+        "last:null,seen:100,ways:false}; window.gbPano={state:function(){ return PS; }};"
+    )
+    got = _explore(
+        "_gbExploreLine(), (PS.seen=330, _gbExploreLine()),"
+        " (PS.trip={n:3,gone:0.42}, _gbExploreLine()),"
+        " (PS.trip=null, PS.last={n:3,why:'arrived'}, PS.seen=40, _gbExploreLine())",
+        setup,
+    )
+    assert "survey once (explore:{survey:true}" in got[0]
+    assert "not surveyed this spot yet (about 100 of 360 degrees seen)" in got[0]
+    assert "You have surveyed this spot: choose a way (explore:{go:N})." in got[1]
+    assert "on your way along way 3 (0.4 m so far): leave walk out" in got[2]
+    assert "Your last way (3) ended: arrived." in got[3]
+    assert "not surveyed this spot yet" in got[3]
+
+
+def test_an_explore_goal_names_the_way_he_has_not_looked_yet() -> None:
+    """Live m3-m5: he set off the way he woke facing and never looked back toward the door
+    behind him. The widest gap in the headings he has looked at is named from his own."""
+    setup = (
+        "var seekGoal='explore the house', _gbGoalT=now-9000;"
+        " var M={here:{x:0,y:0,h:180}, rooms:[], doors:[]};"
+        " window.gbMap={map:function(){ return M; }};"
+    )
+    got = _explore(
+        "(_gbLooks=[180,150,210], _gbExploreLine()),"
+        "(_gbLooks=[180,150,210], M.here.h=90, _gbExploreLine()),"
+        "(_gbLooks=[0,60,120,180,240,300], _gbExploreLine())",
+        setup,
+    )
+    # Looked over 120..240 facing 180: the gap is centred on 0, straight behind him.
+    assert "not looked at all toward about 180 degrees to your" in got[0]
+    assert "(about 240 degrees wide)" in got[0]
+    # Facing 90 now, the same gap's centre (0) is 90 degrees to his right.
+    assert "about 90 degrees to your right" in got[1] and "walk:{turn:-90}" in got[1]
+    assert "not looked at all" not in got[2]
+
+
+def test_an_explore_goal_that_has_kept_him_on_one_spot_says_how_to_get_out() -> None:
+    """Live m2: five minutes turning in the couch corner. Ninety seconds within 0.4 m of one
+    spot by his map, and the line tells him to find open floor and walk a metre."""
+    setup = (
+        "var seekGoal='explore the house', _gbGoalT=now-200000;"
+        " var M={here:{x:0,y:0}, rooms:[], doors:[]}; window.gbMap={map:function(){ return M; }};"
+        " var _t=now; Date.now=function(){ return _t; };"
+    )
+    got = _explore(
+        "_gbExploreLine(), (_t+=50000, M.here={x:0.2,y:0}, _gbExploreLine()),"
+        " (_t+=40000, _gbExploreLine()), (_t+=30000, M.here={x:1.5,y:0}, _gbExploreLine())",
+        setup,
+    )
+    assert "of here: you have seen what this spot shows" not in got[0] + got[1]
+    assert "For the last 90 s your map has you within 0.2 m of here" in got[2]
+    assert "turn until the way ahead looks open" in got[2]
+    assert "walk that way a metre or more before you turn again" in got[2]
+    assert "of here: you have seen" not in got[3]
+
+
+def test_exploring_alone_a_wait_for_his_person_becomes_a_minutes_rest() -> None:
+    """Live f1: alone in the flat he waited for his person (wake user) for nine minutes."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    i = page.index('logEv("explore_rest",{})')
+    rule = page[page.rindex("try{", 0, i) : i]
+    assert 'actWake==="user"' in rule and "GB_EXPLORE_RE.test(seekGoal" in rule
+    # Only while the explore goal stands: a person who wants him to wait gives a new goal.
+    assert "_gbPersonT" not in rule
+    assert 'actWake="timer"; actNotBefore=Date.now()+GB_EXPLORE_REST_MS;' in rule
+    # After the wait's own defaults, before the wait is stamped.
+    assert i < page.index('/*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting")', i)
+    assert "var GB_EXPLORE_REST_MS=60000;" in page
