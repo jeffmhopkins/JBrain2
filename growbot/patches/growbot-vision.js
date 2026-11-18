@@ -12,8 +12,9 @@
    from the maps on, reduce() and what the page does with a scene, is this one file in both, so
    a sim run tests the real logic and the sim's blank walls stop mattering.
 
-   His camera sits about 10 cm off the floor and looks 30 to 47 degrees up, so the floor within
-   about 0.7 m is never in his picture: "where the floor ends" cannot work. What can is each
+   His camera sits about 10 cm off the floor and looks 31 degrees up in his tall stance (47 on
+   neutral legs), so the floor shows only from about 0.9 m out: "where the floor ends" cannot
+   see the half metre that matters. What can is each
    pixel's place in the room (from its depth, the pitch and the lens height): how far away it is
    across the floor, which way, and how high. Anything below HMAX is something he would walk
    into; the nearest of those in each direction is how far he can go that way.
@@ -182,17 +183,23 @@
   /* The nearest thing at his height in one direction of a scene, or null where the scene is
      clear or does not reach. */
   // His words for the vocabulary's things, for matching a name he gives to what the scene saw.
-  var SAYS = { sofa: /couch|sofa|settee/, shelf: /shelf|bookcase/, animal: /cat|dog|animal|pet/,
-    fridge: /fridge|refrigerator/, screen: /tv|television|screen|monitor/, counter: /counter|worktop/,
-    table: /table/, person: /person|man|woman|dad|mum|mom|kid|child/ };
+  // Matched against the last word of his name for it, its head noun: "the bedside table" is a
+  // table, not a bed, and "ottoman" is no man.
+  var SAYS = { sofa: /^(couch|sofa|settee)$/, shelf: /^(shelf|shelves|bookshelf|bookcase)$/,
+    animal: /^(cat|dog|animal|pet|kitten|puppy)$/, fridge: /^(fridge|refrigerator)$/,
+    screen: /^(tv|television|screen|monitor)$/, counter: /^(counter|worktop)$/,
+    person: /^(person|man|woman|dad|mum|mom|kid|child|people)$/ };
   function says(what, name) {
-    if (!name) return false;
-    return SAYS[what] ? SAYS[what].test(name) : name.indexOf(what) >= 0;
+    var head = String(name || "").toLowerCase().trim().split(/\s+/).pop();
+    if (!head) return false;
+    // Plurals: "couches", "tables", "shelves" (as shelf).
+    var forms = [head, head.replace(/s$/, ""), head.replace(/es$/, ""), head.replace(/ves$/, "f")];
+    return forms.some(function (f) { return SAYS[what] ? SAYS[what].test(f) : f === what; });
   }
   function distAt(sc, deg, name) {
     if (!sc) return null;
     // The thing he named, when the scene saw one like it that way: not what stands in front.
-    var named = sc.things.filter(function (x) { return Math.abs(x.deg - deg) <= 8 && says(x.what, String(name || "").toLowerCase()); })[0];
+    var named = sc.things.filter(function (x) { return Math.abs(x.deg - deg) <= 8 && says(x.what, name); })[0];
     if (named) return named.m;
     var best = null;
     sc.cols.forEach(function (c) {

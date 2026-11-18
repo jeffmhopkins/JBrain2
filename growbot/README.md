@@ -767,9 +767,9 @@ wall, door, sofa, person and so on), with the camera's pitch and height. It plac
 the room and keeps what is under half a metre, which is what his legs would walk into, and
 reduces the frame to nine directions across his view. Each direction gets how far the nearest
 thing is, or how far the picture can tell it is clear, plus the open ways among them and the
-labelled things in view with bearing and distance. His camera sits about 10 cm up and looks 30
-to 47 degrees up, so the floor near him is never in the picture, and depth per direction is what
-works.
+labelled things in view with bearing and distance. His camera sits about 10 cm up and looks 31
+degrees up in his tall stance (47 on neutral legs), so the floor shows only from about 0.9 m out,
+and depth per direction is what works.
 
 While a source feeds it, five things change. Each turn on legs carries a one-line summary. A
 forward walk that keeps something under 0.7 m ahead for six seconds with no closer reading is

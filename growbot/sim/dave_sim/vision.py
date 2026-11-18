@@ -36,7 +36,6 @@ _BY_PREFIX = (
     ("house_ceiling", "ceiling"),
     ("house_", "wall"),
     # The bare room's own.
-    ("ceiling", "ceiling"),
     ("wall_", "wall"),
     ("piano", "piano"),
     ("bench", "bench"),
@@ -63,6 +62,9 @@ W, H = 48, 64
 
 
 def label_of(name: str) -> str:
+    # Exactly, so a "ceiling_lamp" would still be a thing in view.
+    if name == "ceiling":
+        return "ceiling"
     for prefix, label in _BY_PREFIX:
         if name == prefix or name.startswith(prefix):
             return label

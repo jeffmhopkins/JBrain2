@@ -26,12 +26,21 @@ brain.
   Pixels. Early drivers left it clocked low. WebGPU on it is unproven, so the wasm path has to
   be good enough on its own. At his walking pace of about 4 cm a second, one frame a second is
   enough.
-- **His camera never sees the floor near him.** In the sim the lens is about 10 cm up and looks
-  30 to 47 degrees up, with a 75 degree tall view, so the bottom of the picture is at or above
-  the horizon. The common "find where the floor ends" approach cannot work. What can work is
-  each pixel's place in the room: from its depth, the camera's pitch and the lens height, how
-  far it is across the floor, which way and how high. Anything under half a metre is something
-  his legs would walk into.
+- **His camera never sees the floor right in front of him.** In the sim the lens is about 10 cm
+  up, and the picture is 75 degrees tall. How far up the camera points depends on his stance:
+
+  | Stance (both legs) | Camera axis | Bottom of the view | Floor visible from |
+  |---|---|---|---|
+  | Neutral, 90/90 | 47° up | 10° above level | nowhere |
+  | STAND_TALL, 50/130 (0.7 rad, where he rests) | 31° up | 6° below level | about 0.9 m out |
+  | 40/140 (0.87 rad) | 28° up | 9° below level | about 0.6 m out |
+  | Past about 1 rad | 27° up (the body bottoms out) | 11° below level | about 0.5 m out |
+
+  The common "find where the floor ends" approach cannot see the half metre that matters. What
+  can work is each pixel's place in the room: from its depth, the camera's pitch and the lens
+  height, how far it is across the floor, which way and how high. Anything under half a metre is
+  something his legs would walk into. The 10 cm lens height is the body model's, not measured
+  on the robot.
 - **Candidate models:**
   - Depth Anything V2 Small (25M parameters, ONNX for Transformers.js, a metric indoor variant
     trained on Hypersim) for depth.
@@ -109,9 +118,15 @@ To pass, depth and labels each need one frame a second or better on wasm, and di
 be within 15% from 0.2 to 2 m. If a model fails, the fallback is sending a small frame to the box
 and running the model on its GPU, at the cost of a LAN round trip.
 
+A body check comes with it: the lens's real height off the floor at STAND_TALL, and whether a
+"look" stance at 40/140 stands steady (owner, 2026-11-18: "maybe default standing stance should
+be more upright"). STAND_TALL itself stays, because it is also the fall get-up's push-up and the
+end of every move.
+
 ### V3 — the phone's source
 
-A worker runs the models V2 picks on the creature's open camera, on legs only, and only while he
+He takes the look stance for a moment before the depth sense takes a frame while he stands,
+and before a survey or a step. A worker runs the models V2 picks on the creature's open camera, on legs only, and only while he
 walks or explores, to save battery. It feeds `gbVision` maps with the pitch from the phone's
 gravity reading and the lens height from his stance. ADE20K's classes map onto `VOCAB`, and the
 classes that are not things go to "unknown". A per-phone switch turns it on, and the PWA's Body

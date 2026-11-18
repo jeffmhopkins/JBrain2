@@ -170,6 +170,19 @@ def test_a_named_thing_behind_another_takes_its_own_distance() -> None:
     assert piano == pytest.approx(0.5, abs=0.05)
 
 
+def test_a_name_matches_a_thing_by_its_last_word_not_part_of_one() -> None:
+    # A person 1.2 m off behind a chair 0.5 m off, in the middle of his view.
+    got = _node(
+        "const s=V.reduce(draw((deg)=>Math.abs(deg)<6?['chair',0.5]:['person',1.2]));"
+        "console.log(JSON.stringify(['dad','the man','ottoman','carpet','people']"
+        ".map(n=>V.distAt(s,0,n))))"
+    )
+    dad, man, ottoman, carpet, people = got
+    assert dad == man == people == pytest.approx(1.2, abs=0.1)
+    # Not a person, nor an animal: the nearest thing that way.
+    assert ottoman == carpet == pytest.approx(0.5, abs=0.05)
+
+
 def test_his_nose_at_the_pictures_edge_is_not_a_wall_whatever_it_is_called() -> None:
     sc = _node(
         "const m=draw(()=>['wall',10]);"

@@ -377,6 +377,13 @@ class Sim:
                 n += 1
                 await asyncio.sleep(max(0.0, 1.0 / self.o.fps - (time.monotonic() - t)))
         finally:
+            # Freed on their own thread, not wherever the collector happens to run.
+            def close() -> None:
+                for r in (renderer, maps and maps.r):
+                    if r is not None:
+                        r.close()
+
+            gl.submit(close)
             gl.shutdown(wait=False)
 
     # ------------------------------------------------------------------ what a scenario does
