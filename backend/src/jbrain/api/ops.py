@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from jbrain import box_events, ops_metrics
+from jbrain import box_events, model_calls, ops_metrics
 from jbrain.agent.prompt_capture import prompt_for
 from jbrain.agent.runlog import RunLogReader
 from jbrain.agent.transcript_store import AgentTranscript
@@ -1055,6 +1055,65 @@ async def vitals_events(
         # narration, and a reader missing the key must lose the percentage, never the line.
         events.append(BoxEventOut(percent=fields.pop("progress", None), **fields))
     return BoxEventsOut(events=events)
+
+
+class ModelCallGroupOut(BaseModel):
+    """Every call in the window from one caller, for one purpose, on one model."""
+
+    # assistant | creature | code | external | pet | background (jbrain.model_calls).
+    caller: str
+    # Whose call: a creature's persona name, else its robot, else empty.
+    who: str
+    label: str
+    model: str
+    # On the box (it is on the GPU trace) or a cloud model (it is not).
+    local: bool
+    calls: int
+    running: int
+    failed: int
+    # How long these calls held a model INSIDE the window, summed. Calls overlap on a pooled
+    # engine, so the groups can add up to more than the window.
+    busy_ms: int
+    last_ms: int | None
+
+
+class ModelCallOut(BaseModel):
+    started_ms: int
+    ended_ms: int | None
+    caller: str
+    who: str
+    label: str
+    model: str
+    local: bool
+    # running | ok | failed | stopped | stale.
+    status: str
+    error: str
+    source: str
+
+
+class ModelCallsOut(BaseModel):
+    groups: list[ModelCallGroupOut]
+    # The newest calls one by one, newest first; the groups cover the rest of the window.
+    calls: list[ModelCallOut]
+
+
+@router.get("/vitals/calls")
+async def vitals_calls(
+    request: Request, principal: PrincipalDep, seconds: int = _MAX_HISTORY_SECONDS
+) -> ModelCallsOut:
+    """Every model call overlapping the window the graph is showing, from every caller.
+
+    The agent roster lists only agent turns, so a GPU pinned by a thinking creature, a code
+    session or the worker's ingest read as "No agent turns" with nothing to name it. This is
+    the record from the layer every one of those passes through (jbrain.model_calls)."""
+    maker = cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
+    ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
+    window = max(1, min(seconds, _MAX_HISTORY_SECONDS))
+    found = await model_calls.window(maker, ctx, seconds=window)
+    return ModelCallsOut(
+        groups=[ModelCallGroupOut(**g) for g in found["groups"]],
+        calls=[ModelCallOut(**c) for c in found["calls"]],
+    )
 
 
 class ClientVitalsReport(BaseModel):

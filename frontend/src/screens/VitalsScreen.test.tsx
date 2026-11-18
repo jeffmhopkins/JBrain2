@@ -1,7 +1,14 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { BoxEvent, LiveTurn, LiveTurns } from "../api/client";
+import type {
+  BoxEvent,
+  LiveTurn,
+  LiveTurns,
+  ModelCall,
+  ModelCallGroup,
+  ModelCalls,
+} from "../api/client";
 import { perSecond } from "../hostVitals";
 import { VitalsScreen, formatElapsed } from "./VitalsScreen";
 
@@ -12,7 +19,14 @@ const history = vi.hoisted(() => ({
 
 vi.mock("../api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/client")>()),
-  api: { opsTurns, opsTurnDetail, opsVitalsHistory, opsVitalsEvents, opsReportClientVitals },
+  api: {
+    opsTurns,
+    opsTurnDetail,
+    opsVitalsHistory,
+    opsVitalsEvents,
+    opsVitalsCalls,
+    opsReportClientVitals,
+  },
 }));
 // Partial: the screen reads a driveable ring, while `perSecond` — pure bucketing the
 // tests above exercise directly — stays real.
@@ -26,6 +40,8 @@ vi.mock("../hostVitals", async (importOriginal) => ({
 const opsTurnDetail = vi.hoisted(() => vi.fn());
 const opsVitalsHistory = vi.hoisted(() => vi.fn());
 const opsVitalsEvents = vi.hoisted(() => vi.fn());
+const noCalls = vi.hoisted(() => async (): Promise<ModelCalls> => ({ groups: [], calls: [] }));
+const opsVitalsCalls = vi.hoisted(() => vi.fn(noCalls));
 const seedSpy = vi.hoisted(() => vi.fn());
 const opsReportClientVitals = vi.hoisted(() => vi.fn(async () => {}));
 
@@ -144,7 +160,9 @@ describe("VitalsScreen", () => {
 
     expect(await screen.findByText(/No agent turns in the last/)).toBeInTheDocument();
     expect(screen.getByText(/94%/)).toBeInTheDocument();
-    expect(screen.getByText(/counts everything the box does/)).toBeInTheDocument();
+    // With nothing recorded it says so, rather than guessing at an image or a model load.
+    expect(screen.getByText(/recorded no model call, load or render/)).toBeInTheDocument();
+    expect(screen.queryByText(/generating an image/)).not.toBeInTheDocument();
   });
 
   it("renders a run that carries no call stamp", async () => {
@@ -937,5 +955,115 @@ describe("a list under load", () => {
     expect(await screen.findByText("research")).toBeInTheDocument();
     expect(screen.getByText("sweep 4")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
+  });
+});
+
+function group(over: Partial<ModelCallGroup> = {}): ModelCallGroup {
+  return {
+    caller: "creature",
+    who: "Dave",
+    label: "think",
+    model: "qwen3-vl-30b",
+    local: true,
+    calls: 214,
+    running: 0,
+    failed: 0,
+    busy_ms: 580_000,
+    last_ms: Date.now() - 3000,
+    ...over,
+  };
+}
+
+function call(over: Partial<ModelCall> = {}): ModelCall {
+  return {
+    started_ms: Date.now() - 2000,
+    ended_ms: null,
+    caller: "creature",
+    who: "Dave",
+    label: "think",
+    model: "qwen3-vl-30b",
+    local: true,
+    status: "running",
+    error: "",
+    source: "api",
+    ...over,
+  };
+}
+
+describe("every model call", () => {
+  beforeEach(() => {
+    history.samples = [];
+    opsTurns.mockReset().mockResolvedValue(roster([], 98));
+    opsTurnDetail.mockReset().mockResolvedValue({ steps: [], output: null, prompt: null });
+    opsVitalsHistory.mockReset().mockResolvedValue([]);
+    opsVitalsEvents.mockReset().mockResolvedValue([]);
+    opsVitalsCalls.mockReset().mockImplementation(noCalls);
+    seedSpy.mockReset();
+  });
+
+  it("names the creatures keeping the GPU busy when no agent turn ran", async () => {
+    // The report this came from: 98% busy, two Daves thinking, and a page that said "No agent
+    // turns" and guessed at an image render.
+    opsVitalsCalls.mockResolvedValue({
+      groups: [
+        group({ running: 1 }),
+        group({ who: "Tamsin's Dave", calls: 120, busy_ms: 300_000 }),
+        group({
+          caller: "background",
+          who: "",
+          label: "reading text in an image",
+          local: false,
+          calls: 3,
+        }),
+      ],
+      calls: [call(), call({ status: "ok", ended_ms: Date.now() - 1000, who: "Tamsin's Dave" })],
+    });
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("Model calls running now")).toBeInTheDocument();
+    expect(screen.getAllByText("Dave thinking").length).toBeGreaterThan(0);
+    expect(screen.getByText("Tamsin's Dave thinking")).toBeInTheDocument();
+    expect(screen.getByText(/214 calls/)).toBeInTheDocument();
+    expect(screen.getByText("cloud")).toBeInTheDocument();
+    expect(screen.getByText(/because of the model calls listed above/)).toBeInTheDocument();
+    expect(screen.queryByText(/generating an image/)).not.toBeInTheDocument();
+  });
+
+  it("lists each call on request", async () => {
+    opsVitalsCalls.mockResolvedValue({
+      groups: [group({ caller: "code", who: "", label: "coding", calls: 1 })],
+      calls: [
+        call({
+          caller: "code",
+          who: "",
+          label: "coding",
+          status: "failed",
+          error: "gateway HTTP 500",
+          ended_ms: Date.now(),
+        }),
+      ],
+    });
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Show each call/ }));
+
+    expect(screen.getByText(/failed: gateway HTTP 500/)).toBeInTheDocument();
+    expect(screen.getAllByText("code mode: coding")).toHaveLength(2);
+  });
+
+  it("asks for the window the graph is showing", async () => {
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+    await waitFor(() => expect(opsVitalsCalls).toHaveBeenCalledWith(60));
+
+    fireEvent.click(screen.getByRole("button", { name: "15m" }));
+
+    await waitFor(() => expect(opsVitalsCalls).toHaveBeenCalledWith(900));
+  });
+
+  it("draws nothing on a window with no calls", async () => {
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+    await waitFor(() => expect(opsVitalsCalls).toHaveBeenCalled());
+
+    expect(screen.queryByText(/Model calls, last/)).not.toBeInTheDocument();
   });
 });

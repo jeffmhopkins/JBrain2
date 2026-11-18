@@ -11,7 +11,7 @@ import structlog
 from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from jbrain import box_events
+from jbrain import box_events, model_calls
 from jbrain.agent.agents import MINECRAFT_DAVE_INGAME_TOOLS
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.brainevents import (
@@ -479,6 +479,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # itself. Wired per PROCESS, not per request: the writers sit inside the gateway
         # client, which has no session of its own. See jbrain.box_events.
         box_events.configure(maker, source="api")
+        # Every model call this process makes, for the same surface (jbrain.model_calls).
+        model_calls.configure(maker, source="api")
         # When this process came up — the debug /version route pairs it with the
         # image's baked build_time so an operator can tell a freshly-published build
         # from one still running behind an un-recreated container.
@@ -1968,6 +1970,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # late narration (a load cancelled during shutdown) would otherwise open a session
         # on a disposed engine.
         box_events.reset()
+        model_calls.reset()
         await engine.dispose()
 
     app = FastAPI(title="JBrain", lifespan=lifespan)

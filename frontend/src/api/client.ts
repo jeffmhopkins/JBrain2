@@ -215,6 +215,48 @@ export interface BoxEvent {
   percent?: number | null;
 }
 
+/** Every call in the window from one caller, for one purpose, on one model
+ *  (GET /api/ops/vitals/calls). The model-call layer sees what the agent roster cannot: a
+ *  GrowBot creature thinking, code mode, the worker's ingest and vision jobs. */
+export interface ModelCallGroup {
+  /** assistant | creature | code | external | pet | background. */
+  caller: string;
+  /** A creature's persona name, else its robot; empty for everything else. */
+  who: string;
+  label: string;
+  model: string;
+  /** On the box's GPU, or a cloud model the trace never sees. */
+  local: boolean;
+  calls: number;
+  running: number;
+  failed: number;
+  /** How long these calls held a model inside the window, summed. Calls can overlap, so
+   *  the groups may add up to more than the window. */
+  busy_ms: number;
+  last_ms: number | null;
+}
+
+/** One model call, newest first. `ended_ms` is null while it runs. */
+export interface ModelCall {
+  started_ms: number;
+  ended_ms: number | null;
+  caller: string;
+  who: string;
+  label: string;
+  model: string;
+  local: boolean;
+  /** running | ok | failed | stopped | stale. */
+  status: string;
+  error: string;
+  source: string;
+}
+
+export interface ModelCalls {
+  groups: ModelCallGroup[];
+  /** The newest calls one by one; the groups cover the whole window. */
+  calls: ModelCall[];
+}
+
 export interface LiveTurns {
   turns: LiveTurn[];
   /** Carried with the roster so the surface can say "busy box, no turns" in one
@@ -6797,6 +6839,12 @@ export const api = {
   async opsVitalsEvents(seconds: number): Promise<BoxEvent[]> {
     const response = await request(`/api/ops/vitals/events?seconds=${seconds}`);
     return ((await response.json()) as { events: BoxEvent[] }).events;
+  },
+
+  /** Every model call overlapping the window, from every caller, grouped by who asked. */
+  async opsVitalsCalls(seconds: number): Promise<ModelCalls> {
+    const response = await request(`/api/ops/vitals/calls?seconds=${seconds}`);
+    return (await response.json()) as ModelCalls;
   },
 
   /** One turn's step trail and raw output, for the vitals detail's level 2. Polled
