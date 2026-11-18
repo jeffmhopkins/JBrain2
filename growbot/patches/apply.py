@@ -4261,8 +4261,8 @@ _GB_EXPLORE_JS = (
     " not seen yet\":\"\")+\".\"+(_seekSeen&&SEEK_ACTION.test(seekGoal)?\" You have it in"
     " sight, but seeing it is not"
     " all your goal asks: go on to it and do the rest. You are by it only when it fills your"
-    " picture edge to edge, or a walk toward it no longer moves you; until then it is farther"
-    " than it looks.\":\"\")+(_gbFarSaid!==null?\" You said you were there, but your map"
+    " picture edge to edge, with no wall or floor showing beside it at either side, or a walk"
+    " toward it no longer moves you; until then it is farther than it looks.\":\"\")+(_gbFarSaid!==null?\" You said you were there, but your map"
     " put it about \"+Math.round(_gbFarSaid*10)/10+\" m away then, so you were not: go on to"
     " it.\":\"\");"
     " }catch(e){ return \"\"; } }\n"
@@ -4614,7 +4614,8 @@ NEW_SEEK_LEGS = (
     'Asked to GO TO it (or bring, touch, sit by it): your camera sits low and tilts '
     'up, so even a thing across the room looks big; judge how near it is by how it '
     'changes as you walk (a 10 s walk is only about 30 cm, and barely changes '
-    'something 2 m away). You are there when it fills your picture edge to edge, or '
+    'something 2 m away). You are there when it fills your picture edge to edge, with no '
+    'wall or floor showing beside it at either side (wall beside it: about a 6 s walk more), or '
     'walking toward it no longer moves you because you are against it; then '
     'celebrate and add \\"found\\":true. Never claim to see something that is not in '
     'your picture, or forget the goal.\\n")+'
