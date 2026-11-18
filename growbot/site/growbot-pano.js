@@ -145,22 +145,27 @@
       tr.clear = blocked ? 0 : (tr.clear || 0) + 1;
       var probe = PROBE_DEG * Math.min(3, Math.ceil(tr.clear / 2));
       tr.want = blocked ? wrap(h.h + side * 90) : wrap((typeof tr.h0 === "number" ? tr.h0 : h.h) - side * probe);
+      // Three blocks within five walks is a pocket (f15, f17: twelve minutes each between the
+      // living room's lamp and its corner, every turn away meeting the lamp or a wall): face
+      // away from all three, the way he came in, and follow the walls the other way round the
+      // room. Not by backing out: he faces the last block, so backing goes toward the one
+      // before it (review).
+      if (blocked) {
+        tr.hits = (tr.hits || []).filter(function (k) { return (tr.steps || 0) - k.n < 5; });
+        tr.hits.push({ n: tr.steps || 0, h: +h.h });
+        if (tr.hits.length >= 3) {
+          var sx = 0, sy = 0;
+          tr.hits.forEach(function (k) { sx += Math.cos(k.h * Math.PI / 180); sy += Math.sin(k.h * Math.PI / 180); });
+          tr.hits = []; tr.side = -side; tr.lastBlock = null; tr.clear = 0;
+          tr.want = Math.abs(sx) + Math.abs(sy) < 0.3 ? wrap(h.h + 180) : wrap(Math.atan2(-sy, -sx) * 180 / Math.PI);
+          tr.why += ", boxed in: turning away, other hand";
+          blocked = false;
+        }
+      }
       // A second wall within a couple of walks that would turn him back the way he came is a
       // corner taken on the wrong hand (f11: heading north into the corner by the door with the
       // wall on his right but following it on his left, he turned east into the side wall,
       // then south, home again): change hands and turn the other way from the first wall.
-      // Three blocks within five walks is a pocket (f15, f17: twelve minutes each between the
-      // living room's lamp and its corner, every turn away meeting the lamp or a wall): back
-      // well out, turn round, and follow the walls the other way round the room.
-      if (blocked) {
-        tr.hits = (tr.hits || []).filter(function (n) { return (tr.steps || 0) - n < 5; });
-        tr.hits.push(tr.steps || 0);
-        if (tr.hits.length >= 3) {
-          tr.hits = []; tr.side = -side; tr.want = wrap(h.h + 180); tr.lastBlock = null; tr.clear = 0;
-          tr.why += ", boxed in: turning round, other hand";
-          return { walk: { gait: "screen_backward", dir: "back", secs: 2 * BACK_S }, gone: gone };
-        }
-      }
       if (blocked) {
         var lb = tr.lastBlock;
         if (lb && (tr.steps || 0) - lb.step <= 2 && Math.abs(wrap(tr.want - lb.h)) > 135) {

@@ -467,7 +467,7 @@ def test_a_walk_that_swings_fifteen_degrees_into_the_wall_was_against_it() -> No
     assert got == [[90, 1], ["fwd", 0]]
 
 
-def test_three_blocks_in_five_walks_back_him_out_and_round_the_other_way() -> None:
+def test_three_blocks_in_five_walks_turn_him_away_from_all_three() -> None:
     """f15 and f17 spent twelve minutes each pocketed between the lamp and its corner."""
     got = _node(
         "const tr={wall:true,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0};"
@@ -477,13 +477,12 @@ def test_three_blocks_in_five_walks_back_him_out_and_round_the_other_way() -> No
         "for(let i=0;i<3;i++){before=tr.side||1;let t=P.wallStep(tr,h(hd),2,true);"
         "out.push(t.walk);if(t.walk.turn!==undefined){hd+=t.walk.turn;"
         "P.wallStep(tr,h(hd),3,false);}}"
-        "out.push(P.wallStep(tr,h(hd),4,false).walk);"
-        "console.log(JSON.stringify([out,before,tr.side,tr.why]))"
+        "console.log(JSON.stringify([out,hd,before,tr.side,tr.why]))"
     )
-    walks, before, side, why = got
-    assert walks[2] == {"gait": "screen_backward", "dir": "back", "secs": 12}
-    # Then round to face the way he came, following the walls on the other hand.
-    assert abs(walks[3]["turn"]) == 180
+    walks, hd, before, side, why = got
+    # Blocked facing 0, 90 (changing hands) and then -90: he turns to face 180, away from
+    # all three and the way he came, not backing toward the one at 90 (review).
+    assert walks[2] == {"turn": -90} and hd % 360 == 180
     assert side == -before and "boxed in" in why
 
 
