@@ -738,15 +738,17 @@ goes back to him for a real name.
 finds its doorways (owner, 2026-11-17: "go around the perimeter of walls"). Each step probes 15
 degrees toward the wall from where the last walk set out (a walk drifts up to 20 degrees either
 way, and probing on from its end added that up) and walks 12 s; a step that is blocked, or whose
-drift has swung him 25 degrees in toward the wall (pushing along it turns him into it), turns him
-90 degrees away from it. Each round takes the other
-side (`"left"`/`"right"` picks one), since one side alone circled the flat's couch for good. It
-ends when his map says he is in another room, after twenty minutes, or when something blocks him
-16 times (into another room by his map, it takes two more walks to clear the doorway first). A second wall within two walks that would turn him back the way he came means
-he took the corner on the wrong hand, so he changes hands and turns the other way from the
-first wall. While it runs his own walks are ignored, so a thought cannot cut it short; his
-person's stop, his pause and a fall still end it. A round or way that ends by itself wakes him for one
-turn if he was waiting, since its end is his news.
+drift has swung him 25 degrees in toward the wall (pushing along it turns him into it), turns
+him 90 degrees away from it. Each round takes the other side (`"left"`/`"right"` picks one),
+since one side alone circled the flat's couch for good. It ends when his map says he is in
+another room, after twenty minutes, or when something blocks him 16 times (once his map has him
+in another room, two more walks carry him clear of the doorway). A second wall within two walks
+that would turn him back the way he came means he took the corner on the wrong hand, so he
+changes hands and turns the other way from the first wall. While it runs his own walks are
+ignored, so a thought cannot cut it short; his person's stop, his pause and a fall still end it.
+A round or way that ends by itself wakes him for one turn if he was waiting, since its end is
+his news. Turns are asked long enough for the gyro, not the clock, to end them: at the 25
+degrees a second first assumed, only 131 of 684 turns on 2026-11-18 reached their angle.
 
 Blocked is read from his camera, since the map's dead reckoning is by time and cannot feel a
 wall: while he walks forward a 16x20 grey thumbnail is compared every second, and three
