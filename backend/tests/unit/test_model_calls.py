@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -109,7 +109,7 @@ async def test_a_stream_the_owner_stops_settles_stopped(writes: Writes) -> None:
     """The router's Stop path: the consumer closes the generator mid-stream (`aclose`), which
     throws GeneratorExit at the yield inside the tracked block."""
 
-    async def stream() -> AsyncIterator[int]:
+    async def stream() -> AsyncGenerator[int]:
         async with model_calls.track(model_calls.ASSISTANT, "assistant turn", model="m"):
             for n in range(10):
                 yield n
