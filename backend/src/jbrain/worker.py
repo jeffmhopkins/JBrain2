@@ -18,7 +18,7 @@ import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from jbrain import box_events, ops_metrics, queue
+from jbrain import box_events, model_calls, ops_metrics, queue
 from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.converse import NOTE_CONVERSE_SPEC, note_converse_handler
@@ -417,6 +417,7 @@ async def _maintain_metrics_safely(maker: async_sessionmaker[AsyncSession], *, b
         await ops_metrics.rollup(maker, queue.SYSTEM_CTX, window=window)
         await ops_metrics.prune(maker, queue.SYSTEM_CTX)
         await box_events.prune(maker, queue.SYSTEM_CTX)
+        await model_calls.prune(maker, queue.SYSTEM_CTX)
     except Exception as exc:  # noqa: BLE001 - rollup/prune is best-effort maintenance
         log.warning("worker.metrics_maintain_error", error=repr(exc))
 
@@ -598,6 +599,8 @@ async def run() -> None:
     # from the PWA — nothing on screen asked for them. Narrate them under this process's
     # own name so the vitals surface can say which half of the box did it.
     box_events.configure(maker, source="worker")
+    model_calls.configure(maker, source="worker")
+    await model_calls.settle_orphans()
     blobs = FsBlobStore(settings.blob_dir)
     # Audio transcription is gated on the whisper backend being configured: an
     # empty whisper_url leaves audio attachments un-enqueued (no chunks) rather

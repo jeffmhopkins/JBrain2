@@ -26,6 +26,7 @@ import time
 from collections.abc import Callable
 from typing import Any, Final, Protocol
 
+from jbrain import model_calls
 from jbrain.llm import local_catalog
 from jbrain.llm.openai_slot_fit import fit_openai_request, pinned_request
 from jbrain.llm.slot_roles import GROWBOT_ROLE
@@ -228,9 +229,12 @@ async def _prime(
     try:
         async with (
             pinned_request(pool_guard, model, body, tokens, GROWBOT_ROLE),
+            # A full prefill of the creature's prompt, so it is listed beside its thinks.
+            model_calls.track(model_calls.CREATURE, "saving its prompt", model=model) as call,
             client.stream("POST", "/chat/completions", json=body) as upstream,
         ):
             if getattr(upstream, "status_code", 200) >= 400:
+                call.failed(f"gateway HTTP {upstream.status_code}")
                 return 0
             async for chunk in upstream.aiter_raw():
                 raw += chunk
