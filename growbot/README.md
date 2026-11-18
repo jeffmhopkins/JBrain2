@@ -758,6 +758,35 @@ seconds in a row that barely change (mean difference under 2.5) stop the walk. I
 walks that never fired in the open and caught about a third of the walls he met; the rest the
 swing rule catches.
 
+### His depth sense
+
+`growbot-vision.js` (`apply.py` `VISION_PATCHES`; owner, 2026-11-18, plan
+`docs/plans/GROWBOT_VISION_PLAN.md`) is a layer between his camera and his thoughts. A source
+hands it a depth map and a label map of one camera frame (labels from a small fixed vocabulary:
+wall, door, sofa, person and so on), with the camera's pitch and height. It places each pixel in
+the room and keeps what is under half a metre, which is what his legs would walk into, and
+reduces the frame to nine directions across his view. Each direction gets how far the nearest
+thing is, or how far the picture can tell it is clear, plus the open ways among them and the
+labelled things in view with bearing and distance. His camera sits about 10 cm up and looks 31
+degrees up in his tall stance (47 on neutral legs), so the floor shows only from about 0.9 m out,
+and depth per direction is what works.
+
+While a source feeds it, five things change. Each turn on legs carries a one-line summary. A
+forward walk that keeps something under 0.7 m ahead for six seconds with no closer reading is
+pushing, and stops as the grey-thumbnail check does. A way or a round of the walls does not
+start a walk into something seen within 0.3 m ahead. The strip's text says how far each way is
+clear. `map:{saw}` with no distance takes the depth sense's. With no source, which is the phone
+today, it says and does nothing. The Dave simulator's `--vision truth|noisy` is the first
+source (below); the phone's own models are the plan's next wave.
+
+He rests a little more upright for it (`apply.py` `REST_STAND_PATCHES`; owner, 2026-11-18). The
+glide every move ends with, the hold after it and an asked stand go to 40/140 (0.87 rad) instead
+of STAND_TALL's 50/130 (0.7 rad), which in the sim lowers his camera from 31 to 28 degrees up
+and shows the floor from about 0.6 m instead of 0.9. STAND_TALL, the fall get-up's push-up, is
+unchanged. The persona's Manage tab (Standing pose: Tall), `?reststand=tall` or the synced pref
+`gb_rest_stand=tall` puts the rest back on it. A trained walk still ends holding its own neutral
+90/90.
+
 Wedged is read from the gyro: a spin of 2.5 s or more that turned him under 8 degrees means
 something presses on his side (mf8 spun 127 times between the lamp and the wall, each spin
 "done"). Following the walls then backs him out 6 s before trying the turn again, and his

@@ -1245,6 +1245,51 @@ describe("GrowbotScreen a persona's page", () => {
     );
   });
 
+  it("sets where a persona's legs rest from Manage, upright unless set tall", async () => {
+    const s = serve(
+      UP,
+      pageRoutes((path, init) => {
+        if (path === `/api/growbot/personas/${SPROUT}/prefs` && init?.method === "PATCH") {
+          return json({ version: 2 });
+        }
+        return null;
+      }),
+    );
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    const stands = screen.getByRole("group", { name: "Standing pose" });
+    expect(within(stands).getByRole("radio", { name: /^Upright/ })).toHaveProperty("checked", true);
+    fireEvent.click(within(stands).getByRole("radio", { name: /^Tall/ }));
+    expect(
+      await screen.findByText("Sprout rests tall (50/130) from the next time it opens."),
+    ).toBeTruthy();
+    expect(s.calls.find((c) => c.method === "PATCH")?.body).toEqual({
+      set: { gb_rest_stand: "tall" },
+      drop: [],
+    });
+    fireEvent.click(within(stands).getByRole("radio", { name: /^Upright/ }));
+    await waitFor(() =>
+      expect(s.calls.filter((c) => c.method === "PATCH").at(-1)?.body).toEqual({
+        set: {},
+        drop: ["gb_rest_stand"],
+      }),
+    );
+  });
+
+  it("shows the standing pose the box holds for a persona", async () => {
+    const ov = overview();
+    ov.personas = ov.personas.map((x) =>
+      x.id === SPROUT ? { ...x, prefs: { gb_rest_stand: "tall" } } : x,
+    );
+    serve(UP, pageRoutes(), null, ov);
+    render(<GrowbotScreen />);
+    await openSprout();
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    const stands = screen.getByRole("group", { name: "Standing pose" });
+    expect(within(stands).getByRole("radio", { name: /^Tall/ })).toHaveProperty("checked", true);
+  });
+
   it("shows the talk style the box holds for a persona", async () => {
     const ov = overview();
     ov.personas = ov.personas.map((x) =>

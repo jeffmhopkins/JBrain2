@@ -87,13 +87,18 @@ def main(argv: list[str] | None = None) -> int:
     # folders hold the persona's soul.
     ap.add_argument("--out", default=str(Path(__file__).resolve().parents[1] / "sim-runs"))
     ap.add_argument("--timeout", type=float, default=300.0)
+    ap.add_argument(
+        "--vision", choices=("off", "truth", "noisy"), default="off", help="his depth sense "
+        "(growbot-vision.js) fed from the sim's true depth and labels, as rendered or with a "
+        "phone model's noise; off as on today's phone"
+    )
     args = ap.parse_args(argv)
     names = list(SCENARIOS) if args.scenarios == ["all"] else args.scenarios
     unknown = [n for n in names if n not in SCENARIOS]
     if unknown:
         ap.error(f"unknown scenario {unknown}")
     policies, skills = library(json.loads(args.skills))
-    base: dict[str, Any] = {"policies": policies, "skills": skills}
+    base: dict[str, Any] = {"policies": policies, "skills": skills, "vision": args.vision}
     if args.live:
         api = BoxApi(*debug_token(args.token_file or None))
         base["model"] = live_model(api)

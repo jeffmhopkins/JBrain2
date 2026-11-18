@@ -99,7 +99,10 @@
     return dflt;
   }
   function seen(m, op, dflt) {
-    var b = bearingOf(op), d = distOf(op, dflt), a = (m.here.h + b) * D;
+    var b = bearingOf(op), d = distOf(op, null), a = (m.here.h + b) * D;
+    // No distance given: his depth sense's, where a source feeds it (growbot-vision.js).
+    if (d === null && root.gbVision && root.gbVision.distNow) d = root.gbVision.distNow(b, op.saw || op.fix || op.moved);
+    if (d === null) d = dflt;
     return { x: m.here.x + d * Math.cos(a), y: m.here.y + d * Math.sin(a), b: b, d: d };
   }
   function relTo(m, x, y) {

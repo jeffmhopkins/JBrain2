@@ -564,6 +564,28 @@ export function talkOf(prefs: Record<string, string> | null | undefined): Growbo
   return prefs?.gb_talk === "grownup" ? "grownup" : "kid";
 }
 
+export type GrowbotStand = "upright" | "tall";
+
+/** Where a persona's legs rest between moves (its `gb_rest_stand` setting, growbot/patches/
+ *  apply.py REST_STAND_PATCHES). Upright is a little past STAND TALL, so the camera sees more
+ *  floor; Tall is the old rest, for a body that doesn't stand steady upright. */
+export const STANDS: { id: GrowbotStand; name: string; what: string }[] = [
+  {
+    id: "upright",
+    name: "Upright",
+    what: "Legs at 40/140: its camera sees the floor from about 0.6 m.",
+  },
+  {
+    id: "tall",
+    name: "Tall",
+    what: "Legs at 50/130, the stand-tall shape: the floor from about 0.9 m.",
+  },
+];
+
+export function standOf(prefs: Record<string, string> | null | undefined): GrowbotStand {
+  return prefs?.gb_rest_stand === "tall" ? "tall" : "upright";
+}
+
 /** The creature's own memories. It writes them itself, as it goes and in its dreams; the owner
  *  may correct each one, and `up` is the soul key (and the box's region) it lives in. */
 export const MEMORY = [

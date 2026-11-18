@@ -4946,6 +4946,94 @@ PATCHES += MAP_PATCHES
 # beside its map field.
 PATCHES += PANO_PATCHES
 
+# His depth sense (owner, 2026-11-18), growbot-vision.js: a source's depth and label maps of his
+# camera reduced to how far things are each way, which open ways there are and what is in view.
+# Its line rides his next thought on legs when a source is feeding it; with none (today's
+# phone) it says nothing. After the pano's, whose strip goes in front of it.
+VISION_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        '<script src="/growbot-talklog.js"></script>',
+        '<script src="/growbot-talklog.js"></script><script src="/growbot-vision.js"></script>',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '  parts.push({type:"text",text:userMsg});',
+        "  try{ var _gbVs=camOn&&window.gbVision&&window.gbVision.take&&window.gbVision.take();"
+        " if(_gbVs) parts.push({type:\"text\",text:_gbVs}); }catch(_gbVe){}\n"
+        '  parts.push({type:"text",text:userMsg});',
+        1,
+    ),
+]
+PATCHES += VISION_PATCHES
+
+# His rest a little more upright (owner, 2026-11-18: "maybe default standing stance should be
+# more upright", "Do it"): the glide every move ends with and the hold after it go to 40/140
+# (0.87 rad) instead of STAND_TALL's 50/130 (0.7 rad). In the sim that tips his camera from 31 to
+# 28 degrees up, and the floor shows from about 0.6 m out instead of 0.9, for the depth sense.
+# STAND_TALL itself, the fall get-up's push-up, is unchanged. ?reststand=tall or localStorage
+# gb_rest_stand=tall puts the rest back on STAND_TALL, should the body not stand steady on it.
+REST_STAND_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "var STAND_TALL={l:50,r:130,ms:600};",
+        "var STAND_TALL={l:50,r:130,ms:600};"
+        " /* the rest stance, a little more upright (REST_STAND_PATCHES) */"
+        " var STAND_REST=(function(){ var v=null; try{ v=new URLSearchParams(location.search)"
+        '.get("reststand"); }catch(e){} if(v==null){ try{ v=localStorage.getItem("gb_rest_stand");'
+        ' }catch(e){} } return v==="tall"?STAND_TALL:{l:40,r:140,ms:600}; })();',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "{l:STAND_TALL.l,r:STAND_TALL.r,ms:STAND_TALL.ms}]},_rest:from,_fold:fold});",
+        "{l:STAND_REST.l,r:STAND_REST.r,ms:STAND_REST.ms}]},_rest:from,_fold:fold});",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "moveLegs({body:{steps:[{l:STAND_TALL.l,r:STAND_TALL.r,ms:STAND_TALL.ms}]},_rest:who});",
+        "moveLegs({body:{steps:[{l:STAND_REST.l,r:STAND_REST.r,ms:STAND_REST.ms}]},_rest:who});",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "holdPose({l:STAND_TALL.l,r:STAND_TALL.r},STAND_TALL.ms,HOLD_IDLE_S,true,true)",
+        "holdPose({l:STAND_REST.l,r:STAND_REST.r},STAND_REST.ms,HOLD_IDLE_S,true,true)",
+        2,
+    ),
+    # His prompt says where the rest goes, so legs read at 40/140 are not a STAND TALL to fix.
+    (
+        "v3/next.html",
+        "your legs glide to your tall stance (your STAND TALL shape) and then",
+        "your legs glide to your resting stance (\"+(STAND_REST===STAND_TALL?\"your STAND TALL"
+        " shape\":\"a little more upright than STAND TALL, about {l:40, r:140}\")+\") and then",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "glide to the tall stance and let go",
+        "glide to the resting stance and let go",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "glide to your tall stance and let go",
+        "glide to your resting stance and let go",
+        1,
+    ),
+    ("v3/next.html", "skips the tall glide", "skips the resting glide", 1),
+    ("v3/next.html", "glides tall at its end", "glides to the resting stance at its end", 1),
+    (
+        "v3/next.html",
+        '"Legs gliding up to the tall stance, then let go."',
+        '"Legs gliding up to the resting stance, then let go."',
+        1,
+    ),
+]
+PATCHES += REST_STAND_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
@@ -5070,6 +5158,7 @@ OWN_SCRIPTS = (
     "growbot-talklog.js",
     "growbot-map.js",
     "growbot-pano.js",
+    "growbot-vision.js",
     "growbot-camtest.js",
 )
 
@@ -5113,6 +5202,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     shutil.copyfile(HERE / "growbot-talklog.js", site / "growbot-talklog.js")
     shutil.copyfile(HERE / "growbot-map.js", site / "growbot-map.js")
     shutil.copyfile(HERE / "growbot-pano.js", site / "growbot-pano.js")
+    shutil.copyfile(HERE / "growbot-vision.js", site / "growbot-vision.js")
     # Imported by growbot-box.js's trained walks, as growbot_runner.js is: no script tag.
     shutil.copyfile(HERE / "growbot-drive.js", site / "growbot-drive.js")
     shutil.copyfile(HERE / "growbot-follow.js", site / "growbot-follow.js")
