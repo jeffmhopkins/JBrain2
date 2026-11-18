@@ -4979,6 +4979,7 @@ REST_STAND_PATCHES: list[tuple[str, str, str, int]] = [
         "v3/next.html",
         "var STAND_TALL={l:50,r:130,ms:600};",
         "var STAND_TALL={l:50,r:130,ms:600};"
+        " /* the rest stance, a little more upright (REST_STAND_PATCHES) */"
         " var STAND_REST=(function(){ var v=null; try{ v=new URLSearchParams(location.search)"
         '.get("reststand"); }catch(e){} if(v==null){ try{ v=localStorage.getItem("gb_rest_stand");'
         ' }catch(e){} } return v==="tall"?STAND_TALL:{l:40,r:140,ms:600}; })();',
@@ -5012,9 +5013,22 @@ REST_STAND_PATCHES: list[tuple[str, str, str, int]] = [
     ),
     (
         "v3/next.html",
-        "var STAND_TALL={l:50,r:130,ms:600}; var STAND_REST=",
-        "var STAND_TALL={l:50,r:130,ms:600};"
-        " /* the rest stance, a little more upright (REST_STAND_PATCHES) */ var STAND_REST=",
+        "glide to the tall stance and let go",
+        "glide to the resting stance and let go",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "glide to your tall stance and let go",
+        "glide to your resting stance and let go",
+        1,
+    ),
+    ("v3/next.html", "skips the tall glide", "skips the resting glide", 1),
+    ("v3/next.html", "glides tall at its end", "glides to the resting stance at its end", 1),
+    (
+        "v3/next.html",
+        '"Legs gliding up to the tall stance, then let go."',
+        '"Legs gliding up to the resting stance, then let go."',
         1,
     ),
 ]

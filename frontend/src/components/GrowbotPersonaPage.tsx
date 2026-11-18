@@ -793,7 +793,7 @@ export function GrowbotPersonaPage({
       );
       setStandSaved({ stand, over: boxStand });
       onChanged();
-      const how = stand === "tall" ? "tall, at 50/130" : "upright, at 40/140";
+      const how = stand === "tall" ? "tall (50/130)" : "upright (40/140)";
       say(`${p.name} rests ${how} from the next time it opens.`);
     } catch (e) {
       say(`The standing pose didn't change — ${message(e)}`);
