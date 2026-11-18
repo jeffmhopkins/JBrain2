@@ -4293,7 +4293,7 @@ _GB_EXPLORE_JS = (
     " means walking: make it your goal (goal:\\\"explore the house\\\") and send a walk or a"
     " spin in this same reply. Saying where you will look moves nothing; only a walk or a spin"
     " does.\":\"\"; }\n"
-    "var _gbExpFrom=null, GB_EXPLORE_RE=/\\b(explor|map (the|this|my|your|every)|wander|look around"
+    "var GB_EXPLORE_REST_MS=60000; var _gbExpFrom=null, GB_EXPLORE_RE=/\\b(explor|map (the|this|my|your|every)|wander|look around"
     "|roam)/i;\n"
     # Live m3-m8 (Jeff, 2026-11-17: "he kind of just looks around in the same spot. How do we
     # get him to actually go up to things and go around the perimeter of walls", and "find out
@@ -4767,6 +4767,22 @@ QUIET_LEGS_PATCHES.append(
         '(_lgd?" — your natural resting stance, so your camera looks up a little: ceiling in'
         " your picture is not a fall; this reading is what says whether you are on your feet"
         '":"")+")"',
+        1,
+    )
+)
+# Live f1 (the flat, alone): six minutes in he said "Still stuck. I need my person to turn me
+# around" and waited for them, phase waiting, wake user, for the nine minutes left. Exploring
+# with nobody home, a wait for the person is giving up; it becomes a minute's rest, and the
+# wait that ends it says so.
+QUIET_LEGS_PATCHES.append(
+    (
+        "v3/next.html",
+        '  /*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting") actWaitT=Date.now(); }',
+        '  try{ if(actPhase==="waiting"&&actWake==="user"&&MODE==="legs"&&typeof GB_EXPLORE_RE'
+        '!=="undefined"&&GB_EXPLORE_RE.test(seekGoal||"")){ actWake="timer";'
+        " actNotBefore=Date.now()+GB_EXPLORE_REST_MS; logEv(\"explore_rest\",{});"
+        " } }catch(_gbEr){}\n"
+        '  /*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting") actWaitT=Date.now(); }',
         1,
     )
 )

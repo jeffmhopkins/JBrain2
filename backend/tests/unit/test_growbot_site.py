@@ -5928,3 +5928,15 @@ def test_an_explore_goal_that_has_kept_him_on_one_spot_says_how_to_get_out() -> 
     assert "turn until the way ahead looks open" in got[2]
     assert "walk that way a metre or more before you turn again" in got[2]
     assert "of here: you have seen" not in got[3]
+
+
+def test_exploring_alone_a_wait_for_his_person_becomes_a_minutes_rest() -> None:
+    """Live f1: alone in the flat he waited for his person (wake user) for nine minutes."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    i = page.index('logEv("explore_rest",{})')
+    rule = page[page.rindex("try{", 0, i) : i]
+    assert 'actWake==="user"' in rule and "GB_EXPLORE_RE.test(seekGoal" in rule
+    assert 'actWake="timer"; actNotBefore=Date.now()+GB_EXPLORE_REST_MS;' in rule
+    # After the wait's own defaults, before the wait is stamped.
+    assert i < page.index('/*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting")', i)
+    assert "var GB_EXPLORE_REST_MS=60000;" in page
