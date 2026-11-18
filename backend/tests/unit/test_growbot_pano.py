@@ -320,3 +320,19 @@ def test_a_walk_that_swings_him_round_counts_as_a_wall() -> None:
     assert right["walk"] == {"turn": 90} and b1 == 1
     # 40 to the left is a clear walk's wobble: probe right again.
     assert left["walk"] == {"turn": -15} and b2 == 1
+
+
+def test_each_round_of_the_walls_takes_the_other_side_unless_he_names_one() -> None:
+    got = _page_node(
+        "const sides=[];"
+        "for (const w of [true,true,'left','left',true]) {"
+        " P.reply({explore:{stop:true}},0,now); now+=1000;"
+        " P.reply({explore:{walls:w}},0,now); sides.push(P.state().trip.side); now+=1000; }"
+        "const left={wall:true,side:-1,x:0,y:0,t:0,want:null,walked:false,blocks:0};"
+        "P.wallStep(left,{x:0,y:0,h:90},1,false);"
+        "const swungLeft=P.wallStep(left,{x:0,y:0.1,h:130},2,false);"
+        "console.log(JSON.stringify({sides,swungLeft}))"
+    )
+    assert got["sides"] == ["right", "left", "left", "left", "right"]
+    # The mirror image: the wall on his left swings him left, and he turns right away from it.
+    assert got["swungLeft"]["walk"] == {"turn": -90}

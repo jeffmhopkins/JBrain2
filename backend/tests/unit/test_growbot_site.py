@@ -5880,7 +5880,7 @@ def test_an_explore_goal_says_how_to_survey_and_choose_a_way_and_how_the_trip_go
         "_gbExploreLine(), (PS.seen=330, _gbExploreLine()),"
         " (PS.trip={n:3,gone:0.42}, _gbExploreLine()),"
         " (PS.trip=null, PS.last={n:3,why:'arrived'}, PS.seen=40, _gbExploreLine()),"
-        " (PS.trip={n:0,wall:true,gone:1.26}, _gbExploreLine()),"
+        " (PS.trip={n:0,wall:true,side:'left',gone:1.26}, _gbExploreLine()),"
         " (PS.trip=null, PS.last={n:0,wall:true,why:'something kept being in the way'}, BA=5000,"
         " M.doors=[], _gbExploreLine())",
         setup,
@@ -5891,7 +5891,7 @@ def test_an_explore_goal_says_how_to_survey_and_choose_a_way_and_how_the_trip_go
     assert "on your way along way 3 (0.4 m so far): leave walk out" in got[2]
     assert "Your last way (3) ended: arrived." in got[3]
     assert "not surveyed this spot yet" in got[3]
-    assert "You are following the walls (1.3 m from where it began)" in got[4]
+    assert "You are following the walls on your left (1.3 m from where it began)" in got[4]
     assert "leave walk out (it is ignored until explore:{stop:true})" in got[4]
     # With no way out found yet, following the walls is what it asks for.
     assert "Following the walls ended: something kept being in the way." in got[5]

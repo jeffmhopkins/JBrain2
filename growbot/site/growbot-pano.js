@@ -114,11 +114,13 @@
       // With the wall on his right, running into it swings him to the right as he walks: over
       // 61 walks in f5-f7, 11 of the 14 that swung 25 degrees or more right went under 0.3 m,
       // and a clear walk swings either way, left as much as 50 degrees.
-      var sw = typeof tr.h0 === "number" ? Math.round(wrap(h.h - tr.h0)) : 0;
-      tr.why = blocked ? "stopped" : sw <= -SWING_DEG ? "swung " + sw : "clear " + sw;
-      if (sw <= -SWING_DEG) blocked = true;
+      // side: 1 keeps the wall on his right, -1 on his left (mirror image).
+      var side = tr.side === -1 ? -1 : 1, sw = typeof tr.h0 === "number" ? Math.round(wrap(h.h - tr.h0)) : 0;
+      var swung = sw * side <= -SWING_DEG;
+      tr.why = blocked ? "stopped" : swung ? "swung " + sw : "clear " + sw;
+      if (swung) blocked = true;
       if (blocked) tr.blocks++;
-      tr.want = wrap(h.h + (blocked ? 90 : -PROBE_DEG));
+      tr.want = wrap(h.h + side * (blocked ? 90 : -PROBE_DEG));
     }
     if (tr.want !== null && tr.want !== undefined) {
       var d = wrap(tr.want - h.h);
@@ -267,6 +269,7 @@
       try { return typeof _motionGen === "number" && _motionGen !== g && !(typeof _gbOnlyDone === "function" && _gbOnlyDone(g, _motionGen)); } catch (e) { return false; }
     }
     function stoppedSince(t) { try { return (window._gbFollowStopT || 0) >= t; } catch (e) { return false; } }
+    var wallSide = -1;
     api.reply = function (o, gen, issT) {
       try {
         if (!o || typeof o !== "object" || (typeof MODE !== "undefined" && MODE !== "legs")) return;
@@ -292,9 +295,14 @@
             // Asked again while it runs: it carries on, not starts over.
             own = false; delete o.walk; chose = true;
           } else if (ex.walls) {
-            trip = { n: 0, wall: true, x: h.x, y: h.y, t: now, room: h.room || "", want: null, walked: false, blocks: 0 };
+            /* Which hand: a round keeping the wall on one side can circle a part of the room
+               that never reaches its door (mf4: round the couch's far end, a metre short of
+               the door, then back), so each new round takes the other side unless he names
+               one (explore:{walls:"left"}). */
+            var sd = ex.walls === "left" ? -1 : ex.walls === "right" ? 1 : (wallSide = -wallSide);
+            trip = { n: 0, wall: true, side: sd, x: h.x, y: h.y, t: now, room: h.room || "", want: null, walked: false, blocks: 0 };
             survey = 0; lastTrip = null; own = false; delete o.walk; chose = true;
-            try { logEv("explore_walls", { room: h.room || "" }); } catch (e) {}
+            try { logEv("explore_walls", { room: h.room || "", side: sd }); } catch (e) {}
           } else if (ex.survey) { survey = 2; trip = null; own = false; delete o.walk; chose = true; try { logEv("explore_survey", {}); } catch (e) {} }
           // A gesture beside the choice would only be cut short by the trip's first step.
           if (chose && !(trip && trip.wall && trip.t < now)) { startT = now; tripRep = null; blockedStep = false; }
@@ -372,7 +380,7 @@
       try {
         var h = here();
         return {
-          trip: trip && h ? { n: trip.n, wall: !!trip.wall, gone: Math.hypot(h.x - trip.x, h.y - trip.y) } : null,
+          trip: trip && h ? { n: trip.n, wall: !!trip.wall, side: trip.side === -1 ? "left" : "right", gone: Math.hypot(h.x - trip.x, h.y - trip.y) } : null,
           survey: survey, last: lastTrip, seen: seenDeg(shots), ways: !!shown
         };
       } catch (e) { return null; }
