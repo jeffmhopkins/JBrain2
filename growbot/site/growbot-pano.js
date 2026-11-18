@@ -177,6 +177,14 @@
       for (var i = 0; i < 320; i++) out[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 3;
       return out;
     }
+    var hist = [];
+    function diff(a, b) { var sum = 0; for (var i = 0; i < 320; i++) sum += Math.abs(a[i] - b[i]); return sum / 320; }
+    // The share of the thumbnail within 6 grey levels of its median, in hundredths.
+    function flat(p) {
+      var q = p.slice().sort(function (x, y) { return x - y; }), md = q[160], n = 0;
+      for (var i = 0; i < 320; i++) if (Math.abs(p[i] - md) <= 6) n++;
+      return Math.round(n / 3.2);
+    }
     function fwdWalking() {
       try { var M = typeof _motion !== "undefined" ? _motion : null, v = M && M.report && M.report.mv; return !!M && !M.loading && M.kind === "walk" && !(v && (v.kind === "spin" || v.direction === "turn")); } catch (e) { return false; }
     }
@@ -184,13 +192,18 @@
       try {
         if (typeof MODE !== "undefined" && MODE !== "legs") return;
         var v = video(), h = here(), now = Date.now();
-        if (!v || !h || !fwdWalking()) { thumbs = []; return; }
-        thumbs.push({ t: now, p: thumb(v), h: +h.h });
+        if (!v || !h || !fwdWalking()) { thumbs = []; hist = []; return; }
+        var p = thumb(v);
+        thumbs.push({ t: now, p: p, h: +h.h });
+        hist.push(p); hist = hist.slice(-5);
         if (thumbs.length < 3) return;
-        var a = thumbs[0].p, b = thumbs[thumbs.length - 1].p, sum = 0;
-        for (var i = 0; i < 320; i++) sum += Math.abs(a[i] - b[i]);
-        var dd = Math.round(sum / 320 * 10) / 10;
-        try { logEv("flow", { d: dd, turn: Math.round(wrap(h.h - thumbs[0].h)) }); } catch (e) {}
+        var a = thumbs[0].p, b = thumbs[thumbs.length - 1].p;
+        var dd = Math.round(diff(a, b) * 10) / 10;
+        // Also logged, to find a better sign than dd (which caught a third of the walls): the
+        // change over four seconds, which a shake does not build up, and how much of the
+        // picture is one flat shade, as a wall right in front of him is.
+        var d4 = hist.length === 5 ? Math.round(diff(hist[0], p) * 10) / 10 : null;
+        try { logEv("flow", { d: dd, d4: d4, u: flat(p), turn: Math.round(wrap(h.h - thumbs[0].h)) }); } catch (e) {}
         thumbs = thumbs.slice(-1);
         flows.push(dd); flows = flows.slice(-BLOCK_N);
         if (blockedRun(flows)) onBlocked();
