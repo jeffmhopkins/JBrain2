@@ -241,3 +241,46 @@ def test_the_stop_button_between_steps_ends_the_trip() -> None:
         "console.log(JSON.stringify({n:ran.length,st:P.state()}))"
     )
     assert got["n"] == 1 and got["st"]["trip"] is None
+
+
+def test_following_the_walls_turns_right_after_a_clear_walk_and_left_after_a_blocked_one() -> None:
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,room:'living room',want:null,walked:false,blocks:0};"
+        "const h=(x,y,hd,room)=>({x,y,h:hd,room:room||'living room'});"
+        "console.log(JSON.stringify(["
+        "P.wallStep(tr,h(0,0,90),1000,false),"  # first: walk
+        "P.wallStep(tr,h(0,0.5,90),20000,false),"  # clear: probe 45 right
+        "P.wallStep(tr,h(0,0.5,48),25000,false),"  # facing it: walk
+        "P.wallStep(tr,h(0.3,0.8,48),40000,true),"  # blocked: 90 left
+        "P.wallStep(tr,h(0.3,0.8,135),45000,false),"  # facing it: walk
+        "P.wallStep(tr,h(0,1.2,135,'hallway'),60000,false),"  # another room: done
+        "P.wallStep({wall:true,x:0,y:0,t:0,want:null,walked:false,blocks:10},h(0,0,0),1,false),"
+        "P.blockedRun([1,2.4,0.3]),P.blockedRun([1,2.6,0.3]),P.blockedRun([0,0])]))"
+    )
+    first, probe, walk, away, walk2, through, boxed, yes, no, short = got
+    assert first["walk"]["dir"] == "fwd" and first["walk"]["secs"] == 15
+    assert probe["walk"] == {"turn": -45}
+    assert walk["walk"]["dir"] == "fwd"
+    assert away["walk"] == {"turn": 90}
+    assert walk2["walk"]["dir"] == "fwd"
+    assert through["done"] == "you went through into the hallway"
+    assert boxed["done"] == "something kept being in the way"
+    assert (yes, no, short) == (True, False, False)
+
+
+def test_a_way_whose_walk_is_blocked_ends_there() -> None:
+    got = _node(
+        "console.log(JSON.stringify(P.step({abs:90,x:0,y:0,t:0},{x:0,y:0.3,h:90},1000,false,true)))"
+    )
+    assert got["done"] == "something was in the way"
+
+
+def test_walls_is_an_explore_choice_and_runs_by_itself() -> None:
+    got = _page_node(
+        "const o={explore:{walls:true},walk:{dir:'fwd'}}; P.reply(o,0,now);"
+        "tick(); now+=2000; tick();"
+        "console.log(JSON.stringify({o,ran,st:P.state(),log}))"
+    )
+    assert "walk" not in got["o"] and got["o"]["_gbExplored"] == 1
+    assert got["ran"] == [{"gait": "screen_forward", "dir": "fwd", "secs": 15}]
+    assert got["st"]["trip"]["wall"] is True and "explore_walls" in got["log"]

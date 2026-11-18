@@ -5870,22 +5870,32 @@ def test_an_explore_goal_sends_him_up_to_the_next_thing_and_says_where_his_room_
 def test_an_explore_goal_says_how_to_survey_and_choose_a_way_and_how_the_trip_goes() -> None:
     setup = (
         "var seekGoal='explore the house', _gbGoalT=now-9000;"
-        " var M={here:{x:0,y:0,h:90,room:'living room'}, rooms:[{n:'living room'}], doors:[],"
-        " things:[]}; window.gbMap={map:function(){ return M; }}; var PS={trip:null,survey:0,"
-        "last:null,seen:100,ways:false}; window.gbPano={state:function(){ return PS; }};"
+        " var M={here:{x:0,y:0,h:90,room:'living room'}, rooms:[{n:'living room'},"
+        " {n:'hallway'}], doors:[{a:'living room',b:'hallway',x:1,y:0}], things:[]};"
+        " window.gbMap={map:function(){ return M; }}; var PS={trip:null,survey:0,"
+        "last:null,seen:100,ways:false}, BA=null; window.gbPano={state:function(){ return PS; },"
+        " blockedAgo:function(){ return BA; }};"
     )
     got = _explore(
         "_gbExploreLine(), (PS.seen=330, _gbExploreLine()),"
         " (PS.trip={n:3,gone:0.42}, _gbExploreLine()),"
-        " (PS.trip=null, PS.last={n:3,why:'arrived'}, PS.seen=40, _gbExploreLine())",
+        " (PS.trip=null, PS.last={n:3,why:'arrived'}, PS.seen=40, _gbExploreLine()),"
+        " (PS.trip={n:0,wall:true,gone:1.26}, _gbExploreLine()),"
+        " (PS.trip=null, PS.last={n:0,wall:true,why:'something kept being in the way'}, BA=5000,"
+        " M.doors=[], _gbExploreLine())",
         setup,
     )
-    assert "survey once (explore:{survey:true}" in got[0]
+    assert "explore:{walls:true} follows this room's walls round" in got[0]
     assert "not surveyed this spot yet (about 100 of 360 degrees seen)" in got[0]
-    assert "You have surveyed this spot: choose a way (explore:{go:N})." in got[1]
+    assert "You have surveyed this spot: choose a way (explore:{go:N})" in got[1]
     assert "on your way along way 3 (0.4 m so far): leave walk out" in got[2]
     assert "Your last way (3) ended: arrived." in got[3]
     assert "not surveyed this spot yet" in got[3]
+    assert "You are following the walls (1.3 m from where it began)" in got[4]
+    # With no way out found yet, following the walls is what it asks for.
+    assert "Following the walls ended: something kept being in the way." in got[5]
+    assert "Your last walk was stopped because your picture stopped changing" in got[5]
+    assert "not found a way out of this room yet: explore:{walls:true}." in got[5]
 
 
 def test_an_explore_goal_names_the_way_he_has_not_looked_yet() -> None:
