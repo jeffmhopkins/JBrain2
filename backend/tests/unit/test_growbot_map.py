@@ -440,9 +440,12 @@ def test_a_room_called_just_room_is_sent_back_for_a_real_name() -> None:
     got = _node(
         "const m=L.fresh(now);"
         "const a=L.apply(m,{room:'room1'},now);const b=L.apply(m,{room:'Room'},now);"
+        "const d=L.apply(m,{room:'room a'},now);const e=L.apply(m,{room:'a'},now);"
         "const c=L.apply(m,{room:'living room'},now);"
-        "console.log(JSON.stringify({a,b,c,rooms:m.rooms.map(r=>r.n)}));"
+        "console.log(JSON.stringify({a,b,c,d,e,rooms:m.rooms.map(r=>r.n)}));"
     )
     assert "is not a name" in got["a"][0] and "living room" in got["a"][0]
     assert "is not a name" in got["b"][0]
+    # The flat's map run named its rooms "room a" and "a" (mf5, 2026-11-18).
+    assert "is not a name" in got["d"][0] and "is not a name" in got["e"][0]
     assert got["rooms"] == ["living room"]
