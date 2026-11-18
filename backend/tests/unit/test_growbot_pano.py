@@ -133,3 +133,66 @@ def test_the_page_takes_his_explore_choice_before_the_map_turns_it_into_a_spin()
     assert hook < page.index("window.gbMap.reply(o,kind,extra)", hook)
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert '"explore":"OMIT unless you are exploring on your legs.' in prompts
+
+
+_HARNESS = """
+let now=1000; Date.now=()=>now;
+const ticks=[]; globalThis.setInterval=(f,ms)=>{ if(ms===500) ticks.push(f); return 0; };
+globalThis.window=globalThis; globalThis.document={hidden:false,createElement:()=>({})};
+globalThis.MODE='legs'; globalThis.dreaming=false; globalThis.paused=false;
+globalThis._motion=null; globalThis._motionGen=0; globalThis._gbDoneGen={};
+const ran=[], log=[]; globalThis.logEv=(k,d)=>log.push(k);
+let refuse=false;
+globalThis.runGait=(s)=>{ ran.push(s); _motionGen+=2; if(!refuse) _motion={kind:'walk'}; };
+window.gbMap={ map:()=>({here:{x:0,y:0,h:90}}),
+  turn:(d)=>({gait:d>0?'spin_left':'spin_right',secs:3}) };
+const P=require(PANO);
+const tick=()=>ticks.forEach(f=>f());
+"""
+
+
+def _page_node(script: str) -> Any:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    prog = _HARNESS.replace("PANO", json.dumps(str(_PANO))) + script
+    out = subprocess.run([node, "-e", prog], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def test_a_chosen_way_moves_him_between_thoughts_without_refusing_the_next_one() -> None:
+    got = _page_node(
+        "const o={say:'heading out to explore',explore:{go:5},walk:{dir:'fwd'}};P.reply(o);"
+        "tick(); now+=2000; tick();"  # settles, then the trip's first step
+        "const first=ran.slice(); const done=Object.keys(_gbDoneGen).map(Number);"
+        "_motion=null; now+=2000; tick(); now+=2000; tick();"  # that move ended: the next step
+        "console.log(JSON.stringify({o,first,done,n:ran.length,log}))"
+    )
+    # His choice is the trip's: no move of his own left in the reply, and no claim nudge.
+    assert "walk" not in got["o"] and got["o"]["_gbExplored"] == 1
+    # Way 5 is 22.5 degrees right of ahead: the first step turns him that way.
+    assert got["first"] == [{"gait": "spin_right", "secs": 3}]
+    # The trip's own motion generations are marked done, so a thought in flight still lands.
+    assert got["done"] == [1, 2]
+    assert got["n"] == 2 and "explore_go" in got["log"]
+
+
+def test_a_trip_step_the_page_refuses_ends_the_trip_without_calling_it_a_wall() -> None:
+    got = _page_node(
+        "P.reply({explore:{go:4}}); refuse=true; tick(); now+=2000; tick();"
+        "console.log(JSON.stringify({st:P.state(),log}))"
+    )
+    assert got["st"]["trip"] is None
+    assert got["st"]["last"]["why"] == "your legs could not move just then"
+
+
+def test_paused_or_a_move_of_his_own_holds_or_ends_the_trip() -> None:
+    got = _page_node(
+        "P.reply({explore:{survey:true}}); paused=true; tick(); now+=2000; tick();"
+        "const whilePaused=ran.length; paused=false;"
+        "P.reply({walk:{dir:'fwd',secs:20}}); tick(); now+=2000; tick();"
+        "console.log(JSON.stringify({whilePaused,after:ran.length,st:P.state()}))"
+    )
+    assert got["whilePaused"] == 0
+    # His own walk outranks the survey he chose before: it ends, and nothing more is sent.
+    assert got["after"] == 0 and got["st"]["survey"] == 0

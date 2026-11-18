@@ -4033,7 +4033,7 @@ PATCHES += [
         '&&!document.hidden&&typeof window.gbFollowMe==="function"){ delete o.walk; delete o.body;'
         " delete o.gesture; o._gbFollowed=true; window.gbFollowMe(15,_gbIssT); }"
         ' if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait||o.walk.secs))'
-        '&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||"")))'
+        '&&!o.body&&!o.gesture&&!o.follow&&!o._gbExplored&&GB_CLAIM_RE.test(String(o.say||"")))'
         " _gbClaimFix(_mgen,_gbIssT);",
         1,
     ),
@@ -4772,13 +4772,15 @@ QUIET_LEGS_PATCHES.append(
 )
 # Live f1 (the flat, alone): six minutes in he said "Still stuck. I need my person to turn me
 # around" and waited for them, phase waiting, wake user, for the nine minutes left. Exploring
-# with nobody home, a wait for the person is giving up; it becomes a minute's rest, and the
-# wait that ends it says so.
+# with nobody heard or seen for a minute, a wait for the person is giving up (he named it,
+# wake:"user", in f1); it becomes a minute's rest. With his person about ("wait for me at the
+# door") the wait stands.
 QUIET_LEGS_PATCHES.append(
     (
         "v3/next.html",
         '  /*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting") actWaitT=Date.now(); }',
-        '  try{ if(actPhase==="waiting"&&actWake==="user"&&MODE==="legs"&&typeof GB_EXPLORE_RE'
+        '  try{ if(actPhase==="waiting"&&actWake==="user"&&MODE==="legs"'
+        '&&Date.now()-_gbPersonT()>GB_EXPLORE_REST_MS&&typeof GB_EXPLORE_RE'
         '!=="undefined"&&GB_EXPLORE_RE.test(seekGoal||"")){ actWake="timer";'
         " actNotBefore=Date.now()+GB_EXPLORE_REST_MS; logEv(\"explore_rest\",{});"
         " } }catch(_gbEr){}\n"

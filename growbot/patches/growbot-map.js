@@ -610,7 +610,9 @@
     if (lapsed || w.done >= w.want - STOP_EARLY) {
       turnWatch = null;
       try { logEv("map_turn", { want: Math.round(w.want * w.sign), did: Math.round(w.done * w.sign), stop: lapsed ? 0 : 1 }); } catch (e) {}
-      if (!lapsed) try { if (typeof runGait === "function") runGait({ dir: "stop" }); } catch (e) {}
+      // The turn ended as asked: the stop's new motion generations are marked done, so a
+      // thought already in flight is not refused as overtaken by it (motion_refused).
+      if (!lapsed) try { if (typeof runGait === "function") { var g0 = typeof _motionGen === "number" ? _motionGen : null; runGait({ dir: "stop" }); if (g0 !== null && typeof _gbDoneGen === "object") for (var g = g0 + 1; g <= _motionGen; g++) _gbDoneGen[g] = 1; } } catch (e) {}
     }
   }
   function turnSpec(spec) {

@@ -181,6 +181,8 @@
             survey = 0; lastTrip = null; own = false; delete o.walk;
             try { logEv("explore_go", { n: n, abs: Math.round(trip.abs) }); } catch (e) {}
           } else if (ex.survey) { survey = 2; trip = null; own = false; delete o.walk; try { logEv("explore_survey", {}); } catch (e) {} }
+          // The move this reply chose is the trip's: no "you said you were moving" nudge.
+          if (trip || survey > 0) o._gbExplored = 1;
         }
         // A move of his own outranks the trip and the survey: he chose it.
         if (own) { if (trip) lastTrip = { n: trip.n, why: "you moved yourself" }; trip = null; survey = 0; }
@@ -194,7 +196,7 @@
     setInterval(function () {
       try {
         if ((!trip && survey <= 0) || (typeof MODE !== "undefined" && MODE !== "legs")) { idleT = 0; return; }
-        if ((typeof _motion !== "undefined" && _motion) || (typeof dreaming !== "undefined" && dreaming) || typeof runGait !== "function") { idleT = 0; return; }
+        if ((typeof _motion !== "undefined" && _motion) || (typeof dreaming !== "undefined" && dreaming) || (typeof paused !== "undefined" && paused) || document.hidden || typeof runGait !== "function") { idleT = 0; return; }
         var now = Date.now(), h = here();
         if (!h) return;
         if (!idleT) idleT = now;
@@ -209,7 +211,16 @@
         if (spec && spec.turn !== undefined) spec = window.gbMap && window.gbMap.turn ? window.gbMap.turn(spec.turn) : null;
         if (!spec) return;
         try { logEv("explore_step", { trip: trip ? trip.n : 0, gait: spec.gait, secs: spec.secs }); } catch (e) {}
+        // The trip's moves are his choice carried out, not news that overtakes a thought in
+        // flight: their generations are marked done, or that thought's move is refused.
+        var g0 = _motionGen;
         runGait(spec);
+        for (var g = g0 + 1; g <= _motionGen; g++) _gbDoneGen[g] = 1;
+        // A move the page refused (duty limit, cooling legs, no body) is not a wall on that way.
+        if (!_motion) {
+          if (trip) { lastTrip = { n: trip.n, why: "your legs could not move just then" }; try { logEv("explore_end", { n: trip.n, why: "refused" }); } catch (e) {} trip = null; }
+          survey = 0;
+        }
       } catch (e) {}
     }, 500);
     /* For the explore line: what the trip or survey is doing now. */

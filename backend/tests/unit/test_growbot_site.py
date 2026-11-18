@@ -5626,7 +5626,7 @@ def test_a_claimed_move_with_no_move_field_is_asked_about_at_once() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert (
         'if(_hreqAtIssue&&!dreaming&&MODE==="legs"&&!(o.walk&&(o.walk.dir||o.walk.gait||o.walk.secs))'
-        '&&!o.body&&!o.gesture&&!o.follow&&GB_CLAIM_RE.test(String(o.say||""))) '
+        '&&!o.body&&!o.gesture&&!o.follow&&!o._gbExplored&&GB_CLAIM_RE.test(String(o.say||""))) '
         "_gbClaimFix(_mgen,_gbIssT);" in page
     )
     # After the claiming reply's handler has finished (its speech and trace land first), once
@@ -5936,6 +5936,8 @@ def test_exploring_alone_a_wait_for_his_person_becomes_a_minutes_rest() -> None:
     i = page.index('logEv("explore_rest",{})')
     rule = page[page.rindex("try{", 0, i) : i]
     assert 'actWake==="user"' in rule and "GB_EXPLORE_RE.test(seekGoal" in rule
+    # Only with nobody about: "wait for me at the door" with his person there stands.
+    assert "Date.now()-_gbPersonT()>GB_EXPLORE_REST_MS" in rule
     assert 'actWake="timer"; actNotBefore=Date.now()+GB_EXPLORE_REST_MS;' in rule
     # After the wait's own defaults, before the wait is stamped.
     assert i < page.index('/*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting")', i)
