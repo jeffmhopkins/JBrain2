@@ -593,8 +593,10 @@
 
 
   /* A turn by degrees: the spin he asked for, stopped by the gyro once it has turned that far,
-     since a spin's own pace changes with the floor. */
-  var SPIN_DEG_S = 25, STOP_EARLY = 6;
+     since a spin's own pace changes with the floor. The time asked is long enough that the
+     gyro, not the clock, ends it: over 684 turns on 2026-11-18 only 131 reached their angle
+     at 25 degrees a second, and the rest turned at a median of 6. */
+  var SPIN_DEG_S = 8, STOP_EARLY = 6;
   function watchTurn(dy) {
     var w = turnWatch, M = typeof _motion !== "undefined" ? _motion : null;
     // Only the spin this turn started is ever stopped: once it ends or another move takes the
@@ -629,7 +631,7 @@
     }
     deg = wrap(deg);
     if (Math.abs(deg) < 8) { try { logEv("map_turn", { want: Math.round(deg), did: 0 }); } catch (e) {} return null; }
-    var left = deg > 0, secs = Math.min(15, Math.max(1.5, Math.abs(deg) / SPIN_DEG_S * 1.6));
+    var left = deg > 0, secs = Math.min(15, Math.max(1.5, Math.abs(deg) / SPIN_DEG_S * 1.3));
     turnWatch = { want: Math.abs(deg), sign: left ? 1 : -1, done: 0, t0: Date.now(), M: undefined, until: Date.now() + secs * 1000 + 4000 };
     return { gait: left ? "spin_left" : "spin_right", dir: left ? "left" : "right", secs: Math.round(secs * 10) / 10, gain: 0.99 };
   }

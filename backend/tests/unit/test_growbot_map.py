@@ -267,7 +267,7 @@ def test_a_turn_by_degrees_spins_and_the_gyro_stops_it_at_the_angle() -> None:
         "console.log(JSON.stringify({walk:o.walk,early,stops,small:o2.walk===undefined,"
         "turn:logs.filter(function(l){ return l[0]==='map_turn'; })}));"
     )
-    assert got["walk"] == {"gait": "spin_right", "dir": "right", "secs": 3.8, "gain": 0.99}
+    assert got["walk"] == {"gait": "spin_right", "dir": "right", "secs": 9.8, "gain": 0.99}
     assert got["early"] == 0 and got["stops"] == 1
     assert got["turn"][0] == ["map_turn", {"want": -60, "did": -55, "stop": 1}]
     assert got["small"] is True  # too small to spin for: dropped
