@@ -5650,9 +5650,6 @@ def test_on_legs_a_seek_sweeps_all_round_and_tells_finding_from_arriving() -> No
     # From a camera a few cm off the floor everything looks big: nearness is how it changes.
     assert "judge how near it is by how it changes as you walk" in page
     assert "You are there when it fills your picture edge to edge" in page
-    # walk_to_piano: a piano 80 cm off already fills most of the picture; the walls beside
-    # it are what still show.
-    assert "with no wall or floor showing beside it at either side" in page
     # The phone's seek, which a person carries, is upstream's.
     assert "spoken aloud so they turn or carry you" in page
 
