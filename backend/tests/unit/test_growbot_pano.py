@@ -145,7 +145,8 @@ globalThis._gbOnlyDone=(a,b)=>{
   for(let g=a+1;g<=b;g++) if(!_gbDoneGen[g]) return false; return b>a; };
 const ran=[], log=[]; globalThis.logEv=(k,d)=>log.push(k);
 let refuse=false;
-globalThis.runGait=(s)=>{ ran.push(s); _motionGen+=2; if(!refuse) _motion={kind:'walk'}; };
+globalThis.runGait=(s)=>{ ran.push(s); _motionGen+=2;
+  if(!refuse) _motion={kind:'walk',report:{state:'started'}}; };
 window.gbMap={ map:()=>({here:{x:0,y:0,h:90}}),
   turn:(d)=>({gait:d>0?'spin_left':'spin_right',secs:3}) };
 const P=require(PANO);
@@ -202,9 +203,10 @@ def test_paused_or_a_move_of_his_own_holds_or_ends_the_trip() -> None:
 
 def test_a_stop_ends_the_trip_and_a_thought_it_overtook_starts_none() -> None:
     got = _page_node(
-        # Walking way 4; his person says stop: a generation not marked done.
+        # Walking way 4; his person's stop button cancels the step that is running.
         "P.reply({explore:{go:4}},0,now); tick(); now+=2000; tick(); const before=ran.length;"
-        "_motion=null; _motionGen++; now+=2000; tick(); now+=2000; tick();"
+        "_motion.report.state='cancelled'; _motion=null; _motionGen++;"
+        "now+=2000; tick(); now+=2000; tick();"
         "const afterStop={n:ran.length-before, st:P.state()};"
         # A thought issued before another stop lands after it, choosing a survey.
         "const g=_motionGen; _motionGen++; const o={explore:{survey:true},walk:{dir:'fwd'}};"
@@ -216,3 +218,17 @@ def test_a_stop_ends_the_trip_and_a_thought_it_overtook_starts_none() -> None:
     assert got["afterStop"]["st"]["last"]["why"] == "you were stopped"
     assert got["late"] == 0 and "explore_refused" in got["log"]
     assert "walk" not in got["o"] and "_gbExplored" not in got["o"]
+
+
+def test_a_turn_the_gyro_ends_or_a_gesture_beside_it_does_not_end_the_trip() -> None:
+    got = _page_node(
+        "const o={explore:{go:5},gesture:'wave'}; P.reply(o,0,now);"
+        # The page's own gesture-time generations, not marked done, do not stop the trip.
+        "_motionGen+=3; tick(); now+=2000; tick();"
+        # The gyro stops the turn as asked: cancelled, but turned.
+        "_motion.report.state='cancelled'; _motion.report._gbTurned=1; _motion=null;"
+        "now+=2000; tick(); now+=2000; tick();"
+        "console.log(JSON.stringify({o,n:ran.length,st:P.state()}))"
+    )
+    assert "gesture" not in got["o"]
+    assert got["n"] == 2 and got["st"]["trip"] is not None
