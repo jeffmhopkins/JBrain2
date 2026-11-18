@@ -391,7 +391,7 @@
           var sst = window.gbMap && window.gbMap.stuckSpinT ? window.gbMap.stuckSpinT() : 0, wedged = sst > (trip.stuckT || trip.t);
           if (wedged) trip.stuckT = sst;
           var st = trip.wall ? wallStep(trip, h, now, bl, wedged) : step(trip, h, now, false, bl);
-          if (st.done) { lastTrip = { n: trip.n, wall: !!trip.wall, why: st.done, gone: st.gone }; try { logEv("explore_end", { n: trip.n, why: st.done, m: Math.round(st.gone * 100) / 100 }); } catch (e) {} trip = null; return; }
+          if (st.done) { lastTrip = { n: trip.n, wall: !!trip.wall, why: st.done, gone: st.gone }; try { logEv("explore_end", { n: trip.n, why: st.done, m: Math.round(st.gone * 100) / 100 }); } catch (e) {} trip = null; wake(); return; }
           spec = st.walk || null;
         } else { survey--; spec = { turn: 180 }; }
         if (spec && spec.turn !== undefined) spec = window.gbMap && window.gbMap.turn ? window.gbMap.turn(spec.turn) : null;
@@ -406,11 +406,17 @@
         tripRep = _motion && _motion.report || null;
         // A move the page refused (duty limit, cooling legs, no body) is not a wall on that way.
         if (!_motion) {
-          if (trip) { lastTrip = { n: trip.n, wall: !!trip.wall, why: "your legs could not move just then" }; try { logEv("explore_end", { n: trip.n, why: "refused" }); } catch (e) {} trip = null; }
+          if (trip) { lastTrip = { n: trip.n, wall: !!trip.wall, why: "your legs could not move just then" }; try { logEv("explore_end", { n: trip.n, why: "refused" }); } catch (e) {} trip = null; wake(); }
           survey = 0;
         }
       } catch (e) {}
     }, 500);
+    /* A trip that ends by itself is his news: waiting on an event or his person while it ran
+       (mf11), he heard nothing for four minutes after it ended. One turn, through the page's
+       own timer wake. */
+    function wake() {
+      try { if (typeof actPhase !== "undefined" && actPhase === "waiting" && actWake !== "timer") { actWake = "timer"; actNotBefore = Date.now(); logEv("explore_wake", {}); } } catch (e) {}
+    }
     /* For the explore line: what the trip or survey is doing now. */
     api.state = function () {
       try {

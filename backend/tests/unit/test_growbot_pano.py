@@ -333,6 +333,17 @@ def test_walls_is_an_explore_choice_and_runs_by_itself() -> None:
     assert got["st"]["trip"]["wall"] is True and "explore_walls" in got["log"]
 
 
+def test_a_round_that_ends_by_itself_wakes_him_once() -> None:
+    """mf11: waiting on an event while the walls ran, he heard nothing for four minutes."""
+    got = _page_node(
+        "globalThis.actPhase='waiting'; globalThis.actWake='event'; globalThis.actNotBefore=0;"
+        "P.reply({explore:{walls:true}},0,now); tick(); now+=2000; tick();"
+        "_motion=null; now+=1300000; tick(); now+=2000; tick();"
+        "console.log(JSON.stringify({w:actWake,t:actNotBefore>0,log}))"
+    )
+    assert got["w"] == "timer" and got["t"] and "explore_wake" in got["log"]
+
+
 def test_asking_for_the_walls_again_carries_the_same_round_on() -> None:
     got = _page_node(
         "P.reply({explore:{walls:true}},0,now); const t0=now; now+=5000;"
