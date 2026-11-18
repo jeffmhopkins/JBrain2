@@ -174,15 +174,19 @@
     return r;
   }
 
+  /* "room", "room1", "room a" or a bare letter tells his map nothing it can be asked for later
+     ("where is the kitchen?"), and "room N" squats the name the map gives an unnamed room
+     itself; mf9 and mf10 called them "start", "outside_start" and "unknown room", names for
+     where he began or what he did not know, not the room. */
+  function notName(n) {
+    if (!/^(the )?((room|area|space|place)( ?([a-z]|\d+))?|[a-z]|\d+)$/.test(n) && !/\b(start|outside|unknown|unnamed)/.test(n)) return "";
+    return "\"" + n + "\" is not a name: call a room what it is by what is in it (a piano or couch makes a living room, a fridge or stove a kitchen, a bed a bedroom, a long narrow way with doorways off it a hallway)";
+  }
   var OPS = {
     room: function (m, op, now) {
       var n = name(op.room), size = Array.isArray(op.size) ? op.size : [];
       if (!n) return "";
-      // "room" or "room1" tells his map nothing it can be asked for later ("where is the
-      // kitchen?"), and squats the name the map gives an unnamed room itself.
-      if (/^(the )?(room|area|space|place) ?\d*$/.test(n)) {
-        return "\"" + n + "\" is not a name: call a room what it is by what is in it (a piano or couch makes a living room, a fridge or stove a kitchen, a bed a bedroom)";
-      }
+      if (notName(n)) return notName(n);
       var w = num(size[0], ROOM_MIN, ROOM_MAX), d = num(size[1], ROOM_MIN, ROOM_MAX), r = roomOf(m, n), cur = here(m);
       if (!r && cur && /^room \d+$/.test(cur.n) && inside(cur, m.here.x, m.here.y)) {
         // The room sketched before he named it is this one: its doorways and things too.
@@ -239,7 +243,9 @@
       return "";
     },
     door: function (m, op, now) {
+      // A doorway to a room he cannot name yet is still a doorway: its far side stays unnamed.
       var to = name(op.door), r = ensureRoom(m, now);
+      if (to && notName(to)) to = "";
       if (!r) return "";
       var b = bearingOf(op), a = m.here.h + b, w = wallHit(r, m.here.x, m.here.y, a);
       if (!w) return "";
@@ -549,6 +555,7 @@
       if (prevR) {
         var dy = yawStep(prevR, c);
         // More than 45 degrees in one reading is the sensor re-referencing, not a turn.
+        if (Math.abs(dy) <= 45 && spinW) { spinW.turned += dy; spinW.n++; }
         if (Math.abs(dy) <= 45 && (m = soulMap())) {
           m.here.h = wrap(m.here.h + dy);
           if (turnWatch) watchTurn(dy);
@@ -578,10 +585,28 @@
     if (v.direction === "screen-backward" || v.gait === "official") return "back";
     return "";
   }
+  /* A spin the gyro says went nowhere: something presses on his side (mf8 spun 127 times
+     wedged between the lamp and the wall, every one "done", his heading unmoved for ten
+     minutes). A spin can do nothing there; walking back out can. */
+  var spinW = null, stuckSpinT = 0, SPIN_STUCK_MS = 2500, SPIN_STUCK_DEG = 8;
+  function watchSpin(now) {
+    // Timed from when the spin's policy has loaded and its legs move, and only with gyro
+    // readings to go by; a spin the gyro stopped as asked turned, however little.
+    var M = typeof _motion !== "undefined" ? _motion : null, sp = spinning(M) && !M.loading;
+    if (sp && (!spinW || spinW.rep !== M.report)) spinW = { rep: M.report, t0: now, turned: 0, n: 0 };
+    else if (!sp && spinW) {
+      if (now - spinW.t0 >= SPIN_STUCK_MS && spinW.n > 0 && !(spinW.rep && spinW.rep._gbTurned) && Math.abs(spinW.turned) < SPIN_STUCK_DEG) {
+        stuckSpinT = now;
+        try { logEv("spin_stuck", { ms: now - spinW.t0, deg: Math.round(spinW.turned) }); } catch (e) {}
+      }
+      spinW = null;
+    }
+  }
   setInterval(function () {
     try {
       var now = Date.now(), dt = lastTick ? Math.min(1, (now - lastTick) / 1000) : 0;
       lastTick = now;
+      watchSpin(now);
       var w = walking(), m;
       if (!w || !dt || !(m = soulMap())) return;
       var v = (w === "back" ? -PACE.back : PACE.forward) * dt, a = m.here.h * D;
@@ -592,8 +617,10 @@
 
 
   /* A turn by degrees: the spin he asked for, stopped by the gyro once it has turned that far,
-     since a spin's own pace changes with the floor. */
-  var SPIN_DEG_S = 25, STOP_EARLY = 6;
+     since a spin's own pace changes with the floor. The time asked is long enough that the
+     gyro, not the clock, ends it: over 684 turns on 2026-11-18 only 131 reached their angle
+     at 25 degrees a second, and the rest turned at a median of 6. */
+  var SPIN_DEG_S = 8, STOP_EARLY = 6;
   function watchTurn(dy) {
     var w = turnWatch, M = typeof _motion !== "undefined" ? _motion : null;
     // Only the spin this turn started is ever stopped: once it ends or another move takes the
@@ -628,7 +655,7 @@
     }
     deg = wrap(deg);
     if (Math.abs(deg) < 8) { try { logEv("map_turn", { want: Math.round(deg), did: 0 }); } catch (e) {} return null; }
-    var left = deg > 0, secs = Math.min(15, Math.max(1.5, Math.abs(deg) / SPIN_DEG_S * 1.6));
+    var left = deg > 0, secs = Math.min(15, Math.max(1.5, Math.abs(deg) / SPIN_DEG_S * 1.3));
     turnWatch = { want: Math.abs(deg), sign: left ? 1 : -1, done: 0, t0: Date.now(), M: undefined, until: Date.now() + secs * 1000 + 4000 };
     return { gait: left ? "spin_left" : "spin_right", dir: left ? "left" : "right", secs: Math.round(secs * 10) / 10, gain: 0.99 };
   }
@@ -683,6 +710,8 @@
     map: function () { return soulMap(); },
     // The spin that stops at the angle, for a turn the explore trip makes between his thoughts.
     turn: function (deg) { return turnSpec({ turn: deg }); },
+    // When the last spin that went nowhere ended (ms since epoch), or 0.
+    stuckSpinT: function () { return stuckSpinT; },
     /* How far, by his map, the thing his goal names is (metres), or null when it isn't on
        the map with a spot. */
     goalDist: function (goal) {

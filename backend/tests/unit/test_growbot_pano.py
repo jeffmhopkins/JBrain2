@@ -241,3 +241,178 @@ def test_the_stop_button_between_steps_ends_the_trip() -> None:
         "console.log(JSON.stringify({n:ran.length,st:P.state()}))"
     )
     assert got["n"] == 1 and got["st"]["trip"] is None
+
+
+def test_following_the_walls_turns_right_after_a_clear_walk_and_left_after_a_blocked_one() -> None:
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,room:'living room',want:null,walked:false,blocks:0};"
+        "const h=(x,y,hd,room)=>({x,y,h:hd,room:room||'living room'});"
+        "console.log(JSON.stringify(["
+        "P.wallStep(tr,h(0,0,90),1000,false),"  # first: walk
+        "P.wallStep(tr,h(0,0.5,90),20000,false),"  # clear: probe 15 right
+        "P.wallStep(tr,h(0,0.5,78),25000,false),"  # facing it: walk
+        "P.wallStep(tr,h(0.3,0.8,78),40000,true),"  # blocked: 90 left
+        "P.wallStep(tr,h(0.3,0.8,166),45000,false),"  # facing it: walk
+        "P.wallStep(tr,h(0,1.2,135,'hallway'),60000,false),"  # another room: two walks on
+        "(tr.steps+=2, P.wallStep(tr,h(0,1.6,135,'hallway'),90000,false)),"  # then done
+        "P.wallStep({wall:true,x:0,y:0,t:0,want:null,walked:false,blocks:16},h(0,0,0),1,false),"
+        "P.blockedRun([1,2.4,0.3]),P.blockedRun([1,2.6,0.3]),P.blockedRun([0,0])]))"
+    )
+    first, probe, walk, away, walk2, into, through, boxed, yes, no, short = got
+    assert first["walk"]["dir"] == "fwd" and first["walk"]["secs"] == 12
+    assert probe["walk"] == {"turn": -15}
+    assert walk["walk"]["dir"] == "fwd"
+    assert away["walk"] == {"turn": 90}
+    assert walk2["walk"]["dir"] == "fwd"
+    assert "done" not in into
+    assert through["done"] == "you went through into the hallway"
+    assert boxed["done"] == "something kept being in the way"
+    assert (yes, no, short) == (True, False, False)
+
+
+def test_a_clear_walls_probe_is_taken_from_where_the_walk_set_out() -> None:
+    """f9: each walk drifts up to 20 degrees, and probing on from its end added the drift up."""
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0};"
+        "const h=(x,y,hd)=>({x,y,h:hd,room:'r'});"
+        "P.wallStep(tr,h(0,0,90),1000,false);"
+        "console.log(JSON.stringify([P.wallStep(tr,h(0,0.5,70),20000,false),"
+        "P.wallStep(tr,h(0,0.5,70),21000,false)]))"
+    )
+    # Set out at 90, drifted to 70: the probe aims at 75, five degrees off, so it walks on;
+    # that walk set out at 70, so the next probe is 15 right of 70.
+    assert got[0]["walk"]["dir"] == "fwd" and got[1]["walk"] == {"turn": -15}
+
+
+def test_a_turn_that_went_nowhere_backs_out_and_turns_again() -> None:
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,room:'r',want:120,walked:false,blocks:0};"
+        "const h=(x,y,hd)=>({x,y,h:hd,room:'r'});"
+        "console.log(JSON.stringify([P.wallStep(tr,h(0,0,30),1000,false,true),tr.blocks,"
+        "P.wallStep(tr,h(0,0,30),9000,false,false)]))"
+    )
+    back, blocks, again = got
+    assert back["walk"] == {"gait": "screen_backward", "dir": "back", "secs": 6} and blocks == 1
+    assert again["walk"] == {"turn": 90}
+
+
+def test_a_corner_taken_on_the_wrong_hand_changes_hands() -> None:
+    """f11: wall on his left, blocked going north, then east, would send him back south."""
+    got = _node(
+        "const tr={wall:true,side:-1,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0};"
+        "const h=(x,y,hd)=>({x,y,h:hd,room:'r'});"
+        "P.wallStep(tr,h(0,0,90),1000,false);"  # walk north
+        "const a=P.wallStep(tr,h(0,1,90),20000,true);"  # blocked: right, to east
+        "P.wallStep(tr,h(0,1,0),25000,false);"  # walk east
+        "P.wallStep(tr,h(0.1,1,0),40000,false);"  # clear: probe left
+        "P.wallStep(tr,h(0.1,1,15),45000,false);"  # walk
+        "const b=P.wallStep(tr,h(0.1,1,15),60000,true);"  # blocked again: would go south
+        "console.log(JSON.stringify([a,b,tr.side,tr.why]))"
+    )
+    a, b, side, why = got
+    assert a["walk"] == {"turn": -90}
+    # West, away from the first wall on the other hand, not south.
+    assert b["walk"] == {"turn": 165} and side == 1 and "changed hands" in why
+
+
+def test_a_way_whose_walk_is_blocked_ends_there() -> None:
+    got = _node(
+        "console.log(JSON.stringify(P.step({abs:90,x:0,y:0,t:0},{x:0,y:0.3,h:90},1000,false,true)))"
+    )
+    assert got["done"] == "something was in the way"
+
+
+def test_walls_is_an_explore_choice_and_runs_by_itself() -> None:
+    got = _page_node(
+        "const o={explore:{walls:true},walk:{dir:'fwd'}}; P.reply(o,0,now);"
+        "tick(); now+=2000; tick();"
+        "console.log(JSON.stringify({o,ran,st:P.state(),log}))"
+    )
+    assert "walk" not in got["o"] and got["o"]["_gbExplored"] == 1
+    assert got["ran"] == [{"gait": "screen_forward", "dir": "fwd", "secs": 12}]
+    assert got["st"]["trip"]["wall"] is True and "explore_walls" in got["log"]
+
+
+def test_a_round_that_ends_by_itself_wakes_him_once() -> None:
+    """mf11: waiting on an event while the walls ran, he heard nothing for four minutes."""
+    got = _page_node(
+        "globalThis.actPhase='waiting'; globalThis.actWake='event'; globalThis.actNotBefore=0;"
+        "P.reply({explore:{walls:true}},0,now); tick(); now+=2000; tick();"
+        "_motion=null; now+=1300000; tick(); now+=2000; tick();"
+        "console.log(JSON.stringify({w:actWake,t:actNotBefore>0,log}))"
+    )
+    assert got["w"] == "timer" and got["t"] and "explore_wake" in got["log"]
+
+
+def test_a_round_that_ends_during_a_long_timer_wait_wakes_him_now() -> None:
+    got = _page_node(
+        "globalThis.actPhase='waiting'; globalThis.actWake='timer';"
+        "globalThis.actNotBefore=now+9000000;"
+        "P.reply({explore:{walls:true}},0,now); tick(); now+=2000; tick();"
+        "_motion=null; now+=1300000; tick(); now+=2000; tick();"
+        "console.log(JSON.stringify({soon:actNotBefore<=now,log}))"
+    )
+    assert got["soon"] and "explore_wake" in got["log"]
+
+
+def test_coming_back_into_the_room_it_began_in_carries_the_round_on() -> None:
+    """Review: his map's drift by a doorway put him in the hallway for one step."""
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0,steps:3};"
+        "const h=(room)=>({x:0,y:0,h:90,room});"
+        "P.wallStep(tr,h('hallway'),1,false);P.wallStep(tr,h('r'),2,false);tr.steps+=2;"
+        "console.log(JSON.stringify(P.wallStep(tr,h('r'),3,false)))"
+    )
+    assert "done" not in got
+
+
+def test_asking_for_the_walls_again_carries_the_same_round_on() -> None:
+    got = _page_node(
+        "P.reply({explore:{walls:true}},0,now); const t0=now; now+=5000;"
+        "P.reply({explore:{walls:true}},0,now);"
+        "console.log(JSON.stringify({log}))"
+    )
+    assert got["log"].count("explore_walls") == 1
+
+
+def test_his_own_turns_do_not_cut_a_round_of_the_walls_short_but_a_stop_does() -> None:
+    got = _page_node(
+        "P.reply({explore:{walls:true}},0,now); now+=5000;"
+        "const spin={walk:{gait:'spin_left',dir:'left',secs:5}}; P.reply(spin,0,now);"
+        "const kept=!!P.state().trip; P.reply({walk:{dir:'stop'}},0,now);"
+        "console.log(JSON.stringify({spin,kept,st:P.state(),log}))"
+    )
+    assert "walk" not in got["spin"] and got["kept"] and "explore_kept" in got["log"]
+    assert got["st"]["trip"] is None
+
+
+def test_a_walk_that_swings_him_round_counts_as_a_wall() -> None:
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,want:null,walked:false,blocks:0};"
+        "P.wallStep(tr,{x:0,y:0,h:90},1000,false);"
+        "const right=P.wallStep(tr,{x:0,y:0.1,h:60},20000,false), b1=tr.blocks;"
+        "P.wallStep(tr,{x:0,y:0.1,h:150},30000,false);"  # faces the turn: walks
+        "const left=P.wallStep(tr,{x:0,y:0.6,h:190},40000,false);"
+        "console.log(JSON.stringify([right,b1,left,tr.blocks]))"
+    )
+    right, b1, left, b2 = got
+    # 30 degrees to the right: into the wall on his right, so turn away left.
+    assert right["walk"] == {"turn": 90} and b1 == 1
+    # 40 to the left is a clear walk's wobble: probe 15 right of where it set out (150).
+    assert left["walk"] == {"turn": -55} and b2 == 1
+
+
+def test_each_round_of_the_walls_takes_the_other_side_unless_he_names_one() -> None:
+    got = _page_node(
+        "const sides=[];"
+        "for (const w of [true,true,'left','left',true]) {"
+        " P.reply({explore:{stop:true}},0,now); now+=1000;"
+        " P.reply({explore:{walls:w}},0,now); sides.push(P.state().trip.side); now+=1000; }"
+        "const left={wall:true,side:-1,x:0,y:0,t:0,want:null,walked:false,blocks:0};"
+        "P.wallStep(left,{x:0,y:0,h:90},1,false);"
+        "const swungLeft=P.wallStep(left,{x:0,y:0.1,h:130},2,false);"
+        "console.log(JSON.stringify({sides,swungLeft}))"
+    )
+    assert got["sides"] == ["right", "left", "left", "left", "right"]
+    # The mirror image: the wall on his left swings him left, and he turns right away from it.
+    assert got["swungLeft"]["walk"] == {"turn": -90}

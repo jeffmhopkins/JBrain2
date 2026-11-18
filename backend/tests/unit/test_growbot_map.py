@@ -258,6 +258,32 @@ def test_his_heading_follows_the_gyro_and_his_walks_carry_him_along_it() -> None
     assert got["after"] == got["walked"]  # a spin carries him nowhere
 
 
+def test_a_spin_the_gyro_says_went_nowhere_is_marked_wedged() -> None:
+    """mf8: 127 spins wedged between the lamp and the wall, each "done", none turning him."""
+    got = _page(
+        "turnTo(10);tick(0);"
+        # The gyro reads on while he spins and does not turn.
+        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};"
+        "for(var i=0;i<16;i++){turnTo(10);tick(250);}"
+        "_motion=null;tick(250);var stuck=window.gbMap.stuckSpinT();"
+        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};tick(250);"
+        "for(i=1;i<=12;i++){turnTo(10+i*5);tick(250);}_motion=null;tick(250);"
+        # A small turn the gyro stopped as asked, and a spin with no gyro readings at all.
+        "_motion={kind:'walk',report:{mv:{kind:'spin'},_gbTurned:1}};"
+        "for(i=0;i<16;i++){turnTo(70);tick(250);}_motion=null;tick(250);"
+        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};for(i=0;i<16;i++) tick(250);"
+        "_motion=null;tick(250);"
+        # Still loading its policy: not yet spinning.
+        "_motion={kind:'walk',loading:true,report:{mv:{kind:'spin'}}};"
+        "for(i=0;i<16;i++){turnTo(70);tick(250);}_motion=null;tick(250);"
+        "console.log(JSON.stringify({stuck:stuck>0,same:window.gbMap.stuckSpinT()===stuck,"
+        "n:logs.filter(function(l){ return l[0]==='spin_stuck'; }).length}));"
+    )
+    # Four seconds of spin and no turn: wedged. A spin that turned 60 degrees is not, nor
+    # one the gyro stopped as asked, one with no gyro to go by, or one still loading.
+    assert got == {"stuck": True, "same": True, "n": 1}
+
+
 def test_a_turn_by_degrees_spins_and_the_gyro_stops_it_at_the_angle() -> None:
     got = _page(
         "turnTo(0);var o={walk:{turn:-60}};window.gbMap.reply(o,'event',{});"
@@ -267,7 +293,7 @@ def test_a_turn_by_degrees_spins_and_the_gyro_stops_it_at_the_angle() -> None:
         "console.log(JSON.stringify({walk:o.walk,early,stops,small:o2.walk===undefined,"
         "turn:logs.filter(function(l){ return l[0]==='map_turn'; })}));"
     )
-    assert got["walk"] == {"gait": "spin_right", "dir": "right", "secs": 3.8, "gain": 0.99}
+    assert got["walk"] == {"gait": "spin_right", "dir": "right", "secs": 9.8, "gain": 0.99}
     assert got["early"] == 0 and got["stops"] == 1
     assert got["turn"][0] == ["map_turn", {"want": -60, "did": -55, "stop": 1}]
     assert got["small"] is True  # too small to spin for: dropped
@@ -440,9 +466,25 @@ def test_a_room_called_just_room_is_sent_back_for_a_real_name() -> None:
     got = _node(
         "const m=L.fresh(now);"
         "const a=L.apply(m,{room:'room1'},now);const b=L.apply(m,{room:'Room'},now);"
+        "const d=L.apply(m,{room:'room a'},now);const e=L.apply(m,{room:'a'},now);"
+        "const f=L.apply(m,{room:'outside_start'},now);"
         "const c=L.apply(m,{room:'living room'},now);"
-        "console.log(JSON.stringify({a,b,c,rooms:m.rooms.map(r=>r.n)}));"
+        "console.log(JSON.stringify({a,b,c,d,e,f,rooms:m.rooms.map(r=>r.n)}));"
     )
     assert "is not a name" in got["a"][0] and "living room" in got["a"][0]
     assert "is not a name" in got["b"][0]
+    # The flat's map run named its rooms "room a" and "a" (mf5, 2026-11-18).
+    assert "is not a name" in got["d"][0] and "is not a name" in got["e"][0]
+    assert "is not a name" in got["f"][0]  # mf9
     assert got["rooms"] == ["living room"]
+
+
+def test_a_doorway_to_a_room_he_cannot_name_leaves_its_far_side_unnamed() -> None:
+    """mf10: "a doorway to the unknown room" put an "unknown room" on his map."""
+    got = _node(
+        "const m=L.fresh(now);L.apply(m,{room:'living room'},now);"
+        "const s=L.apply(m,{door:'unknown room',dir:'ahead',m:1},now);"
+        "console.log(JSON.stringify({s,rooms:m.rooms.map(r=>r.n),doors:m.doors.length,"
+        "b:m.doors[0]&&m.doors[0].b}));"
+    )
+    assert got["rooms"] == ["living room"] and got["doors"] == 1 and got["b"] == ""

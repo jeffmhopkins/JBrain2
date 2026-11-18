@@ -730,8 +730,36 @@ it. The survey and the trip move him between his thoughts, not one step per thou
 of his own ends them. A walk that gets him nowhere ends the trip as blocked. While he explores,
 each turn's explore line says which step he is on, the room he is in and whether he has left it,
 the doorways found from it, and the next thing in the room to go up to (to about 30 cm, to name
-it). While the explore goal stands, a wait for his person becomes a minute's rest instead, and his person's stop ends a trip or survey, and a room called just "room"
+it). While the explore goal stands, a wait for his person becomes a minute's rest instead, and
+his person's stop ends a trip or survey. A room called just "room", "room a" or a bare letter
 goes back to him for a real name.
+
+`explore:{walls:true}` follows the room's walls round, keeping them on one side, which is how he
+finds its doorways (owner, 2026-11-17: "go around the perimeter of walls"). Each step probes 15
+degrees toward the wall from where the last walk set out (a walk drifts up to 20 degrees either
+way, and probing on from its end added that up) and walks 12 s; a step that is blocked, or whose
+drift has swung him 25 degrees in toward the wall (pushing along it turns him into it), turns
+him 90 degrees away from it. Each round takes the other side (`"left"`/`"right"` picks one),
+since one side alone circled the flat's couch for good. It ends when his map says he is in
+another room, after twenty minutes, or when something blocks him 16 times (once his map has him
+in another room, two more walks carry him clear of the doorway). A second wall within two walks
+that would turn him back the way he came means he took the corner on the wrong hand, so he
+changes hands and turns the other way from the first wall. While it runs his own walks are
+ignored, so a thought cannot cut it short; his person's stop, his pause and a fall still end it.
+A round or way that ends by itself wakes him for one turn if he was waiting, since its end is
+his news. Turns are asked long enough for the gyro, not the clock, to end them: at the 25
+degrees a second first assumed, only 131 of 684 turns on 2026-11-18 reached their angle.
+
+Blocked is read from his camera, since the map's dead reckoning is by time and cannot feel a
+wall: while he walks forward a 16x20 grey thumbnail is compared every second, and three
+seconds in a row that barely change (mean difference under 2.5) stop the walk. In the sim's
+walks that never fired in the open and caught about a third of the walls he met; the rest the
+swing rule catches.
+
+Wedged is read from the gyro: a spin of 2.5 s or more that turned him under 8 degrees means
+something presses on his side (mf8 spun 127 times between the lamp and the wall, each spin
+"done"). Following the walls then backs him out 6 s before trying the turn again, and his
+explore line tells him to walk back out rather than spin.
 
 The PWA draws it on the persona's **Map** tab (`GrowbotHouseMap.tsx`): rooms, doorways, things,
 and an arrow for where he thinks he is. It is read-only there; he changes it when told.

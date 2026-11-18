@@ -122,7 +122,7 @@ is there only once he is; `piano_from_kitchen` asks the same from the kitchen, t
 doorway; `cat_errand` sends him from beside his person in the living room to find the cat in
 the kitchen and come back to say where it is, and checks he saw it in that room, didn't claim
 it sooner, came back within 1.5 m of them and named the cat and the room; `flat_piano` and
-`flat_cat` are the same two asks across the flat. `explore_alone` leaves him alone for ten minutes and scores how far he went. `explore_flat` leaves him alone for fifteen minutes in the flat's living-room corner, where the rest of the flat is out of sight, and checks he walks out into the hallway and on through another doorway. They run for
+`flat_cat` are the same two asks across the flat. `explore_alone` leaves him alone for ten minutes and scores how far he went. `explore_flat` leaves him alone for twenty-five minutes in the flat's living-room corner, where the rest of the flat is out of sight, and checks he walks out into the hallway and on through another doorway. They run for
 minutes, so their reports skip the onlooker video, which re-renders every pose. Every run
 instead draws `plan.svg` (`dave_sim/plan.py`): his path from above, coloured by speed, with
 arrows for where his camera faced and a numbered dot wherever he said something, and the
