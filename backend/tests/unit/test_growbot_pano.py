@@ -77,3 +77,38 @@ def test_the_creature_page_loads_it_and_sends_the_strip_with_his_next_thought() 
     # Beside his camera's picture, before the turn's own words.
     assert page.index('parts.push({type:"text",text:userMsg});', i) > i
     assert 'logEv("pano",' in page
+
+
+def test_the_eight_ways_run_left_to_right_between_the_marks() -> None:
+    got = _node("console.log(JSON.stringify(P.ways(90)))")
+    assert [w["n"] for w in got] == list(range(1, 9))
+    # Way 1 is behind on his left, ways 4 and 5 either side of ahead, way 8 behind on his right.
+    assert [w["rel"] for w in got] == [157.5, 112.5, 67.5, 22.5, -22.5, -67.5, -112.5, -157.5]
+    assert got[3]["abs"] == 112.5 and got[4]["abs"] == 67.5
+    assert [w["x"] for w in got] == sorted(w["x"] for w in got)
+
+
+def test_a_trip_turns_to_its_way_walks_it_and_ends_a_metre_on() -> None:
+    got = _node(
+        "const tr={abs:90,x:0,y:0,t:0};"
+        "console.log(JSON.stringify(["
+        "P.step(tr,{x:0,y:0,h:0},1000,false),"  # facing away: turn to it
+        "P.step(tr,{x:0,y:0.1,h:84},2000,false),"  # facing it: walk
+        "P.step(tr,{x:0,y:0.4,h:84},3000,true),"  # walking: let it go on
+        "P.step(tr,{x:0,y:0.95,h:90},4000,true),"  # a metre on: there
+        "P.step(tr,{x:0,y:0.2,h:90},200000,false)]))"  # two minutes and more: over
+    )
+    turn, walk, going, there, late = got
+    assert turn["walk"] == {"turn": 90}
+    assert walk["walk"] == {"gait": "screen_forward", "dir": "fwd", "secs": 25}
+    assert "walk" not in going and "done" not in going
+    assert there["done"] == "arrived"
+    assert late["done"] == "timed out"
+
+
+def test_the_page_takes_his_explore_choice_before_the_map_turns_it_into_a_spin() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    hook = page.index("window.gbPano.reply(o);")
+    assert hook < page.index("window.gbMap.reply(o,kind,extra)", hook)
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert '"explore":"OMIT unless you are exploring on your legs.' in prompts

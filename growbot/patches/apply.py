@@ -4331,6 +4331,17 @@ _GB_EXPLORE_JS = (
     " by your map you have got about \"+Math.round(_gbExpFrom.far*10)/10+\" m from where you"
     " took this goal. Your walk covers about 4 cm a second, so a metre takes about 25 s: send"
     " walks of 20 to 40 s, and keep walking while the way is clear.\";"
+    " var px=window.gbPano&&window.gbPano.state?window.gbPano.state():null; if(px){ s+=\" To"
+    " explore, at each new spot survey once (explore:{survey:true}: your body turns all the way"
+    " round and your view strip fills), then choose a numbered way on the strip, an opening, a"
+    " doorway or something you have not been up to, with explore:{go:N}: your body faces it and"
+    " walks about a metre there by itself.\"; if(px.trip) s+=\" You are on your way along way"
+    " \"+px.trip.n+\" (\"+Math.round(px.trip.gone*10)/10+\" m so far): leave walk out to let it"
+    " go on, or explore:{stop:true} if it is blocked.\"; else if(px.survey>0) s+=\" Your survey"
+    " is turning you round: leave walk out.\"; else{ if(px.last) s+=\" Your last way (\"+px.last.n"
+    "+\") ended: \"+px.last.why+\".\"; s+=px.seen>=300?\" You have surveyed this spot: choose a"
+    " way (explore:{go:N}).\":\" You have not surveyed this spot yet (about \"+px.seen+\" of 360"
+    " degrees seen): explore:{survey:true}.\"; } }"
     " s+=\" When you see something you can't name for sure, walk in until it is about 30 cm (a"
     " foot) away and look again before you put it on your map.\";"
     " s+=room?\" You are in the \"+room+(rooms.length>1?\" (rooms on your map: \"+rooms.join("
@@ -4782,8 +4793,25 @@ PANO_PATCHES: list[tuple[str, str, str, int]] = [
         '  parts.push({type:"text",text:userMsg});',
         1,
     ),
+    (
+        "v3/next.html",
+        " gbJot(o.jot,kind,extra); if(window.gbMap&&window.gbMap.reply(o,kind,extra)",
+        " gbJot(o.jot,kind,extra); if(window.gbPano&&window.gbPano.reply) window.gbPano.reply(o);"
+        " if(window.gbMap&&window.gbMap.reply(o,kind,extra)",
+        1,
+    ),
+    (
+        "v3/prompts.js",
+        "    '\"where\":\"OMIT almost always.",
+        "    '\"explore\":\"OMIT unless you are exploring on your legs. {\\\"survey\\\":true}"
+        " turns you all the way round where you stand, so your view strip fills; {\\\"go\\\":3}"
+        " faces numbered way 3 on your view strip and walks you about a metre along it by"
+        " itself, a step each thought (leave walk out meanwhile); {\\\"stop\\\":true} ends"
+        " it\",' +\n"
+        "    '\"where\":\"OMIT almost always.",
+        1,
+    ),
 ]
-PATCHES += PANO_PATCHES
 
 
 # Dave's sketch map of the house (owner, 2026-11-17), growbot-map.js: kept in the soul, added to
@@ -4878,6 +4906,9 @@ MAP_PATCHES: list[tuple[str, str, str, int]] = [
     ),
 ]
 PATCHES += MAP_PATCHES
+# After the map's: the explore hook goes in front of its reply hook, and the explore field
+# beside its map field.
+PATCHES += PANO_PATCHES
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (

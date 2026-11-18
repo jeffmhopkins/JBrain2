@@ -5849,6 +5849,8 @@ def test_an_explore_goal_sends_him_up_to_the_next_thing_and_says_where_his_room_
         setup,
     )
     assert "a metre takes about 25 s: send walks of 20 to 40 s" in got[0]
+    # With the view strip's explore steps on the page, the line says how to use them.
+    assert "To explore, at each new spot survey once (explore:{survey:true}" not in got[0]
     assert "the living room, the only room on your map, so you have not left it yet" in got[0]
     assert "not found a doorway out of this room yet: going round its walls" in got[0]
     assert "already seen all the way round (your view strip)" in got[0]
@@ -5863,6 +5865,27 @@ def test_an_explore_goal_sends_him_up_to_the_next_thing_and_says_where_his_room_
     assert "rooms on your map: living room, kitchen" in got[2]
     assert "Doorways you have found from this room: to kitchen." in got[2]
     assert "You have been up to everything on your map here" in got[2]
+
+
+def test_an_explore_goal_says_how_to_survey_and_choose_a_way_and_how_the_trip_goes() -> None:
+    setup = (
+        "var seekGoal='explore the house', _gbGoalT=now-9000;"
+        " var M={here:{x:0,y:0,h:90,room:'living room'}, rooms:[{n:'living room'}], doors:[],"
+        " things:[]}; window.gbMap={map:function(){ return M; }}; var PS={trip:null,survey:0,"
+        "last:null,seen:100,ways:false}; window.gbPano={state:function(){ return PS; }};"
+    )
+    got = _explore(
+        "_gbExploreLine(), (PS.seen=330, _gbExploreLine()),"
+        " (PS.trip={n:3,gone:0.42}, _gbExploreLine()),"
+        " (PS.trip=null, PS.last={n:3,why:'arrived'}, PS.seen=40, _gbExploreLine())",
+        setup,
+    )
+    assert "survey once (explore:{survey:true}" in got[0]
+    assert "not surveyed this spot yet (about 100 of 360 degrees seen)" in got[0]
+    assert "You have surveyed this spot: choose a way (explore:{go:N})." in got[1]
+    assert "on your way along way 3 (0.4 m so far): leave walk out" in got[2]
+    assert "Your last way (3) ended: arrived." in got[3]
+    assert "not surveyed this spot yet" in got[3]
 
 
 def test_an_explore_goal_names_the_way_he_has_not_looked_yet() -> None:
