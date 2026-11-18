@@ -606,7 +606,8 @@
       else w.M = null;
     }
     w.done += dy * w.sign;
-    var lapsed = !M || M.report !== w.M || Date.now() > w.until;
+    // No spin seen in its first 3 s (w.M null) is lapsed: a reportless glide must not match.
+    var lapsed = !M || !w.M || M.report !== w.M || Date.now() > w.until;
     if (lapsed || w.done >= w.want - STOP_EARLY) {
       turnWatch = null;
       try { logEv("map_turn", { want: Math.round(w.want * w.sign), did: Math.round(w.done * w.sign), stop: lapsed ? 0 : 1 }); } catch (e) {}

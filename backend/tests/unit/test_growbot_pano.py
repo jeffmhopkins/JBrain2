@@ -232,3 +232,12 @@ def test_a_turn_the_gyro_ends_or_a_gesture_beside_it_does_not_end_the_trip() -> 
     )
     assert "gesture" not in got["o"]
     assert got["n"] == 2 and got["st"]["trip"] is not None
+
+
+def test_the_stop_button_between_steps_ends_the_trip() -> None:
+    got = _page_node(
+        "P.reply({explore:{go:4}},0,now); tick(); now+=2000; tick(); _motion=null;"
+        "globalThis._pauseHard=true; paused=true; tick(); paused=false; now+=2000; tick();"
+        "console.log(JSON.stringify({n:ran.length,st:P.state()}))"
+    )
+    assert got["n"] == 1 and got["st"]["trip"] is None

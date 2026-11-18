@@ -217,6 +217,9 @@
         // asked. Generations are not the test: a gesture, a drive or a spin that runs out its
         // time each leave one not marked done in normal running.
         var cut = stoppedSince(startT) ? "stop" : "";
+        // The stop button is the pause: pressed between steps, with no step to cancel, it ends
+        // the trip too. The Brain panel's own pause (not hard) only holds it.
+        if (!cut && typeof paused !== "undefined" && paused && typeof _pauseHard !== "undefined" && _pauseHard) cut = "paused";
         if (!cut && tripRep && !(typeof _motion !== "undefined" && _motion) && /^(cancelled|blocked|failed)$/.test(tripRep.state || "") && !tripRep._gbTurned) cut = tripRep.reason || tripRep.state;
         if (cut) {
           if (trip) lastTrip = { n: trip.n, why: "you were stopped" };
