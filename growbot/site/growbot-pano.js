@@ -131,7 +131,12 @@
       // A clear walk's probe is taken from where that walk set out, not where it ended: a walk
       // drifts up to 20 degrees either way (f8-f9, mf4-mf6), and turning on from the end let the
       // drift add up, so he ground into the wall or wandered off it.
-      tr.want = blocked ? wrap(h.h + side * 90) : wrap((typeof tr.h0 === "number" ? tr.h0 : h.h) - side * PROBE_DEG);
+      // Clear walk after clear walk means the wall has fallen away (f14 walked straight across
+      // the living room's doorway, 15 degrees at a time): the probe grows, 15, 30, then 45, so
+      // an opening pulls him in. Anything that stops him starts it at 15 again.
+      tr.clear = blocked ? 0 : (tr.clear || 0) + 1;
+      var probe = PROBE_DEG * Math.min(3, Math.ceil(tr.clear / 2));
+      tr.want = blocked ? wrap(h.h + side * 90) : wrap((typeof tr.h0 === "number" ? tr.h0 : h.h) - side * probe);
       // A second wall within a couple of walks that would turn him back the way he came is a
       // corner taken on the wrong hand (f11: heading north into the corner by the door with the
       // wall on his right but following it on his left, he turned east into the side wall,
