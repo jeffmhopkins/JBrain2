@@ -4772,15 +4772,15 @@ QUIET_LEGS_PATCHES.append(
 )
 # Live f1 (the flat, alone): six minutes in he said "Still stuck. I need my person to turn me
 # around" and waited for them, phase waiting, wake user, for the nine minutes left. Exploring
-# with nobody heard or seen for a minute, a wait for the person is giving up (he named it,
-# wake:"user", in f1); it becomes a minute's rest. With his person about ("wait for me at the
-# door") the wait stands.
+# on his own, a wait for the person is giving up (he named it, wake:"user", in f1): while the
+# explore goal stands it becomes a minute's rest. Gating it on the person being away left the
+# f1 shape whole (asked to explore, then left 40 s later: the wait stood and nothing re-checked
+# it for ten minutes); a person who wants him to wait gives him that as the new goal.
 QUIET_LEGS_PATCHES.append(
     (
         "v3/next.html",
         '  /*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting") actWaitT=Date.now(); }',
-        '  try{ if(actPhase==="waiting"&&actWake==="user"&&MODE==="legs"'
-        '&&Date.now()-_gbPersonT()>GB_EXPLORE_REST_MS&&typeof GB_EXPLORE_RE'
+        '  try{ if(actPhase==="waiting"&&actWake==="user"&&MODE==="legs"&&typeof GB_EXPLORE_RE'
         '!=="undefined"&&GB_EXPLORE_RE.test(seekGoal||"")){ actWake="timer";'
         " actNotBefore=Date.now()+GB_EXPLORE_REST_MS; logEv(\"explore_rest\",{});"
         " } }catch(_gbEr){}\n"
@@ -4814,7 +4814,7 @@ PANO_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         " gbJot(o.jot,kind,extra); if(window.gbMap&&window.gbMap.reply(o,kind,extra)",
-        " gbJot(o.jot,kind,extra); if(window.gbPano&&window.gbPano.reply) window.gbPano.reply(o);"
+        " gbJot(o.jot,kind,extra); if(window.gbPano&&window.gbPano.reply) window.gbPano.reply(o,_mgen,_gbIssT);"
         " if(window.gbMap&&window.gbMap.reply(o,kind,extra)",
         1,
     ),

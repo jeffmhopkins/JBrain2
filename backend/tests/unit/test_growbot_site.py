@@ -5936,8 +5936,8 @@ def test_exploring_alone_a_wait_for_his_person_becomes_a_minutes_rest() -> None:
     i = page.index('logEv("explore_rest",{})')
     rule = page[page.rindex("try{", 0, i) : i]
     assert 'actWake==="user"' in rule and "GB_EXPLORE_RE.test(seekGoal" in rule
-    # Only with nobody about: "wait for me at the door" with his person there stands.
-    assert "Date.now()-_gbPersonT()>GB_EXPLORE_REST_MS" in rule
+    # Only while the explore goal stands: a person who wants him to wait gives a new goal.
+    assert "_gbPersonT" not in rule
     assert 'actWake="timer"; actNotBefore=Date.now()+GB_EXPLORE_REST_MS;' in rule
     # After the wait's own defaults, before the wait is stamped.
     assert i < page.index('/*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting")', i)

@@ -166,23 +166,38 @@
 
     /* From the reply handler, before the map's own (which turns walk:{turn} into the spin that
        stops at the angle): his explore choice, and the trip's next step when he sends no move. */
-    api.reply = function (o) {
+    // Whether his body was stopped or moved by anything but the trip since generation g: a
+    // person's stop, a pause, a grab all leave a generation not marked done.
+    function overtaken(g) {
+      try { return typeof _motionGen === "number" && _motionGen !== g && !(typeof _gbOnlyDone === "function" && _gbOnlyDone(g, _motionGen)); } catch (e) { return false; }
+    }
+    function stoppedSince(t) { try { return (window._gbFollowStopT || 0) >= t; } catch (e) { return false; } }
+    var myGen = 0;
+    api.reply = function (o, gen, issT) {
       try {
         if (!o || typeof o !== "object" || (typeof MODE !== "undefined" && MODE !== "legs")) return;
-        var h = here(), now = Date.now(), ex = o.explore;
+        var h = here(), now = Date.now(), ex = o.explore, chose = false;
         if (!h) return;
         var own = o.walk && typeof o.walk === "object";
         if (ex && typeof ex === "object") {
           if (ex.stop) { if (trip) lastTrip = { n: trip.n, why: "you stopped it" }; trip = null; survey = 0; }
           var n = Math.round(+ex.go);
+          // A thought overtaken by a stop, or landing while he is paused or out of sight, starts
+          // nothing: the page refuses its move too (motion_refused).
+          if ((n >= 1 && n <= 8 || ex.survey) && ((typeof gen === "number" && overtaken(gen)) || (issT && stoppedSince(issT)) || (typeof paused !== "undefined" && paused) || document.hidden)) {
+            try { logEv("explore_refused", {}); } catch (e) {}
+            n = 0; ex = {};
+            delete o.walk; own = false;
+          }
           // Before any strip went out the ways are still where they would be drawn now.
           if (n >= 1 && n <= 8) {
             trip = { n: n, abs: (shown || ways(+h.h))[n - 1].abs, x: h.x, y: h.y, t: now };
-            survey = 0; lastTrip = null; own = false; delete o.walk;
+            survey = 0; lastTrip = null; own = false; delete o.walk; chose = true;
             try { logEv("explore_go", { n: n, abs: Math.round(trip.abs) }); } catch (e) {}
-          } else if (ex.survey) { survey = 2; trip = null; own = false; delete o.walk; try { logEv("explore_survey", {}); } catch (e) {} }
+          } else if (ex.survey) { survey = 2; trip = null; own = false; delete o.walk; chose = true; try { logEv("explore_survey", {}); } catch (e) {} }
+          if (chose) { myGen = typeof _motionGen === "number" ? _motionGen : 0; startT = now; }
           // The move this reply chose is the trip's: no "you said you were moving" nudge.
-          if (trip || survey > 0) o._gbExplored = 1;
+          if (chose) o._gbExplored = 1;
         }
         // A move of his own outranks the trip and the survey: he chose it.
         if (own) { if (trip) lastTrip = { n: trip.n, why: "you moved yourself" }; trip = null; survey = 0; }
@@ -192,10 +207,17 @@
        thought takes 20 s or more, and the next one, seeing a turn half done, sent a move of
        its own and ended the trip it had just chosen (live m11, m12). Each step starts only
        once the last move has ended and his legs have had a moment to settle. */
-    var idleT = 0;
+    var idleT = 0, startT = 0;
     setInterval(function () {
       try {
         if ((!trip && survey <= 0) || (typeof MODE !== "undefined" && MODE !== "legs")) { idleT = 0; return; }
+        // His person's stop (or anything else that stopped or moved him) ends the trip and the
+        // survey: they never set him off again after a "stop".
+        if (overtaken(myGen) || stoppedSince(startT)) {
+          if (trip) lastTrip = { n: trip.n, why: "you were stopped" };
+          try { logEv("explore_end", { n: trip ? trip.n : 0, why: "stopped" }); } catch (e) {}
+          trip = null; survey = 0; idleT = 0; return;
+        }
         if ((typeof _motion !== "undefined" && _motion) || (typeof dreaming !== "undefined" && dreaming) || (typeof paused !== "undefined" && paused) || document.hidden || typeof runGait !== "function") { idleT = 0; return; }
         var now = Date.now(), h = here();
         if (!h) return;
@@ -216,6 +238,7 @@
         var g0 = _motionGen;
         runGait(spec);
         for (var g = g0 + 1; g <= _motionGen; g++) _gbDoneGen[g] = 1;
+        myGen = _motionGen;
         // A move the page refused (duty limit, cooling legs, no body) is not a wall on that way.
         if (!_motion) {
           if (trip) { lastTrip = { n: trip.n, why: "your legs could not move just then" }; try { logEv("explore_end", { n: trip.n, why: "refused" }); } catch (e) {} trip = null; }

@@ -129,7 +129,7 @@ def test_the_trip_and_the_survey_move_him_between_thoughts() -> None:
 
 def test_the_page_takes_his_explore_choice_before_the_map_turns_it_into_a_spin() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    hook = page.index("window.gbPano.reply(o);")
+    hook = page.index("window.gbPano.reply(o,_mgen,_gbIssT);")
     assert hook < page.index("window.gbMap.reply(o,kind,extra)", hook)
     prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
     assert '"explore":"OMIT unless you are exploring on your legs.' in prompts
@@ -141,6 +141,8 @@ const ticks=[]; globalThis.setInterval=(f,ms)=>{ if(ms===500) ticks.push(f); ret
 globalThis.window=globalThis; globalThis.document={hidden:false,createElement:()=>({})};
 globalThis.MODE='legs'; globalThis.dreaming=false; globalThis.paused=false;
 globalThis._motion=null; globalThis._motionGen=0; globalThis._gbDoneGen={};
+globalThis._gbOnlyDone=(a,b)=>{
+  for(let g=a+1;g<=b;g++) if(!_gbDoneGen[g]) return false; return b>a; };
 const ran=[], log=[]; globalThis.logEv=(k,d)=>log.push(k);
 let refuse=false;
 globalThis.runGait=(s)=>{ ran.push(s); _motionGen+=2; if(!refuse) _motion={kind:'walk'}; };
@@ -196,3 +198,21 @@ def test_paused_or_a_move_of_his_own_holds_or_ends_the_trip() -> None:
     assert got["whilePaused"] == 0
     # His own walk outranks the survey he chose before: it ends, and nothing more is sent.
     assert got["after"] == 0 and got["st"]["survey"] == 0
+
+
+def test_a_stop_ends_the_trip_and_a_thought_it_overtook_starts_none() -> None:
+    got = _page_node(
+        # Walking way 4; his person says stop: a generation not marked done.
+        "P.reply({explore:{go:4}},0,now); tick(); now+=2000; tick(); const before=ran.length;"
+        "_motion=null; _motionGen++; now+=2000; tick(); now+=2000; tick();"
+        "const afterStop={n:ran.length-before, st:P.state()};"
+        # A thought issued before another stop lands after it, choosing a survey.
+        "const g=_motionGen; _motionGen++; const o={explore:{survey:true},walk:{dir:'fwd'}};"
+        "P.reply(o,g,now-5000); now+=2000; tick(); now+=2000; tick();"
+        "console.log(JSON.stringify({afterStop,late:ran.length-before,o,log}))"
+    )
+    assert got["afterStop"]["n"] == 0
+    assert got["afterStop"]["st"]["trip"] is None
+    assert got["afterStop"]["st"]["last"]["why"] == "you were stopped"
+    assert got["late"] == 0 and "explore_refused" in got["log"]
+    assert "walk" not in got["o"] and "_gbExplored" not in got["o"]

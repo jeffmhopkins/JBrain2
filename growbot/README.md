@@ -730,7 +730,7 @@ it. The survey and the trip move him between his thoughts, not one step per thou
 of his own ends them. A walk that gets him nowhere ends the trip as blocked. While he explores,
 each turn's explore line says which step he is on, the room he is in and whether he has left it,
 the doorways found from it, and the next thing in the room to go up to (to about 30 cm, to name
-it). Alone, a wait for his person becomes a minute's rest instead, and a room called just "room"
+it). While the explore goal stands, a wait for his person becomes a minute's rest instead, and his person's stop ends a trip or survey, and a room called just "room"
 goes back to him for a real name.
 
 The PWA draws it on the persona's **Map** tab (`GrowbotHouseMap.tsx`): rooms, doorways, things,
