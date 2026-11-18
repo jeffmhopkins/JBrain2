@@ -745,7 +745,8 @@ ends when his map says he is in another room, after twenty minutes, or when some
 16 times (into another room by his map, it takes two more walks to clear the doorway first). A second wall within two walks that would turn him back the way he came means
 he took the corner on the wrong hand, so he changes hands and turns the other way from the
 first wall. While it runs his own walks are ignored, so a thought cannot cut it short; his
-person's stop, his pause and a fall still end it.
+person's stop, his pause and a fall still end it. A round or way that ends by itself wakes him for one
+turn if he was waiting, since its end is his news.
 
 Blocked is read from his camera, since the map's dead reckoning is by time and cannot feel a
 wall: while he walks forward a 16x20 grey thumbnail is compared every second, and three
