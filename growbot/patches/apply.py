@@ -4806,7 +4806,7 @@ PANO_PATCHES: list[tuple[str, str, str, int]] = [
         "    '\"explore\":\"OMIT unless you are exploring on your legs. {\\\"survey\\\":true}"
         " turns you all the way round where you stand, so your view strip fills; {\\\"go\\\":3}"
         " faces numbered way 3 on your view strip and walks you about a metre along it by"
-        " itself, a step each thought (leave walk out meanwhile); {\\\"stop\\\":true} ends"
+        " itself between your thoughts (leave walk out meanwhile); {\\\"stop\\\":true} ends"
         " it\",' +\n"
         "    '\"where\":\"OMIT almost always.",
         1,

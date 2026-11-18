@@ -675,6 +675,8 @@
       return s;
     },
     map: function () { return soulMap(); },
+    // The spin that stops at the angle, for a turn the explore trip makes between his thoughts.
+    turn: function (deg) { return turnSpec({ turn: deg }); },
     /* How far, by his map, the thing his goal names is (metres), or null when it isn't on
        the map with a spot. */
     goalDist: function (goal) {

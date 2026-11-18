@@ -106,6 +106,27 @@ def test_a_trip_turns_to_its_way_walks_it_and_ends_a_metre_on() -> None:
     assert late["done"] == "timed out"
 
 
+def test_a_trip_whose_walk_gets_him_nowhere_ends_as_blocked() -> None:
+    got = _node(
+        "const tr={abs:90,x:0,y:0,t:0};"
+        "const a=P.step(tr,{x:0,y:0,h:90},1000,false);"
+        "const b=P.step(tr,{x:0,y:0.05,h:90},30000,false);"
+        "console.log(JSON.stringify([a,b]))"
+    )
+    first, second = got
+    assert first["walk"]["dir"] == "fwd"
+    assert second["done"] == "something was in the way"
+
+
+def test_the_trip_and_the_survey_move_him_between_thoughts() -> None:
+    page = (_SITE / "growbot-pano.js").read_text(encoding="utf-8")
+    # Steps go straight to the page's walk, once his last move has ended.
+    assert "runGait(spec)" in page and "_motion" in page
+    assert "turn: function (deg) { return turnSpec({ turn: deg }); }" in (
+        _SITE / "growbot-map.js"
+    ).read_text(encoding="utf-8")
+
+
 def test_the_page_takes_his_explore_choice_before_the_map_turns_it_into_a_spin() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     hook = page.index("window.gbPano.reply(o);")

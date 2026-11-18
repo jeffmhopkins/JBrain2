@@ -22,7 +22,7 @@
   "use strict";
   var D = Math.PI / 180;
   // The sim's front camera, as growbot-map.js has it: 75 degrees tall, 360x480 portrait.
-  var CAM_VFOV = 75, CAM_ASPECT = 360 / 480;
+  var SETTLE_MS = 1500, BLOCK_M = 0.15, CAM_VFOV = 75, CAM_ASPECT = 360 / 480;
   var CAM_HFOV = 2 * Math.atan(Math.tan(CAM_VFOV * D / 2) * CAM_ASPECT) / D;
   var FW = 144, FH = 192, BIN = 3, PX_DEG = 3, MARK_H = 18;
   // Standing tall his camera looks about 30 degrees up, so the top of each picture is
@@ -81,8 +81,11 @@
     if (gone >= GO_M) return { done: "arrived", gone: gone };
     if (now - tr.t > GO_MS) return { done: "timed out", gone: gone };
     var d = wrap(tr.abs - h.h);
-    if (Math.abs(d) > FACE_DEG) return { walk: { turn: Math.round(d) }, gone: gone };
+    if (Math.abs(d) > FACE_DEG) { tr.from = null; return { walk: { turn: Math.round(d) }, gone: gone }; }
     if (walking) return { gone: gone };
+    // A whole walk that got him nowhere: a wall or furniture is on that way.
+    if (tr.from && Math.hypot(h.x - tr.from.x, h.y - tr.from.y) < BLOCK_M) return { done: "something was in the way", gone: gone };
+    tr.from = { x: h.x, y: h.y };
     return { walk: { gait: "screen_forward", dir: "fwd", secs: WALK_S }, gone: gone };
   }
 
@@ -161,9 +164,6 @@
       } catch (e) { return null; }
     };
 
-    function walkingNow() {
-      try { var M = typeof _motion !== "undefined" ? _motion : null; var v = M && M.report && M.report.mv; return !!M && M.kind === "walk" && !(v && v.kind === "spin"); } catch (e) { return false; }
-    }
     /* From the reply handler, before the map's own (which turns walk:{turn} into the spin that
        stops at the angle): his explore choice, and the trip's next step when he sends no move. */
     api.reply = function (o) {
@@ -183,16 +183,35 @@
           } else if (ex.survey) { survey = 2; trip = null; own = false; delete o.walk; try { logEv("explore_survey", {}); } catch (e) {} }
         }
         // A move of his own outranks the trip and the survey: he chose it.
-        if (own) { if (trip) lastTrip = { n: trip.n, why: "you moved yourself" }; trip = null; survey = 0; return; }
-        if (trip) {
-          var st = step(trip, h, now, walkingNow());
-          if (st.done) { lastTrip = { n: trip.n, why: st.done, gone: st.gone }; try { logEv("explore_end", { n: trip.n, why: st.done, m: Math.round(st.gone * 100) / 100 }); } catch (e) {} trip = null; }
-          else if (st.walk) o.walk = st.walk;
-          return;
-        }
-        if (survey > 0 && !walkingNow()) { survey--; o.walk = { turn: 180 }; }
+        if (own) { if (trip) lastTrip = { n: trip.n, why: "you moved yourself" }; trip = null; survey = 0; }
       } catch (e) {}
     };
+    /* The trip and the survey move him between his thoughts, not one step per thought: a
+       thought takes 20 s or more, and the next one, seeing a turn half done, sent a move of
+       its own and ended the trip it had just chosen (live m11, m12). Each step starts only
+       once the last move has ended and his legs have had a moment to settle. */
+    var idleT = 0;
+    setInterval(function () {
+      try {
+        if ((!trip && survey <= 0) || (typeof MODE !== "undefined" && MODE !== "legs")) { idleT = 0; return; }
+        if ((typeof _motion !== "undefined" && _motion) || (typeof dreaming !== "undefined" && dreaming) || typeof runGait !== "function") { idleT = 0; return; }
+        var now = Date.now(), h = here();
+        if (!h) return;
+        if (!idleT) idleT = now;
+        if (now - idleT < SETTLE_MS) return;
+        idleT = 0;
+        var spec = null;
+        if (trip) {
+          var st = step(trip, h, now, false);
+          if (st.done) { lastTrip = { n: trip.n, why: st.done, gone: st.gone }; try { logEv("explore_end", { n: trip.n, why: st.done, m: Math.round(st.gone * 100) / 100 }); } catch (e) {} trip = null; return; }
+          spec = st.walk || null;
+        } else { survey--; spec = { turn: 180 }; }
+        if (spec && spec.turn !== undefined) spec = window.gbMap && window.gbMap.turn ? window.gbMap.turn(spec.turn) : null;
+        if (!spec) return;
+        try { logEv("explore_step", { trip: trip ? trip.n : 0, gait: spec.gait, secs: spec.secs }); } catch (e) {}
+        runGait(spec);
+      } catch (e) {}
+    }, 500);
     /* For the explore line: what the trip or survey is doing now. */
     api.state = function () {
       try {
