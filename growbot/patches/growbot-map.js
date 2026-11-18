@@ -629,7 +629,8 @@
       var pf = poseNow(), w = walking(), m;
       if (pf && (m = soulMap())) {
         m.here.x = pf.x; m.here.y = pf.y; m.here.h = pf.h; m.here.t = now;
-        m.here.room = roomAt(m, pf.x, pf.y, m.here.room) || m.here.room;
+        // Outside every room on his map is no room: he walked out of the one he was in.
+        m.here.room = roomAt(m, pf.x, pf.y, m.here.room);
         return;
       }
       if (!w || !dt || !(m = soulMap())) return;

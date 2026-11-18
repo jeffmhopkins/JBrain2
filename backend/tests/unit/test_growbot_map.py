@@ -269,19 +269,27 @@ def test_a_fed_pose_replaces_the_reckoned_one_while_it_keeps_coming() -> None:
         "var ok=window.gbPose.feed({x:2.5,y:1.5,h:-170}), bad=window.gbPose.feed({x:'a',y:0,h:0});"
         "var src=window.gbPose.source();"
         "_motion={kind:'walk',own:'forward',report:{mv:{kind:'walk'}}};"
-        "turnTo(40);for(var i=0;i<3;i++) tick(250);"
+        "turnTo(40);var hTurned=_live.map.here.h;for(var i=0;i<3;i++) tick(250);"
         "var fed=JSON.parse(JSON.stringify(_live.map.here));"
         "for(i=0;i<8;i++) tick(250);"
         "var later=JSON.parse(JSON.stringify(_live.map.here)), src2=window.gbPose.source();"
-        "console.log(JSON.stringify({ok,bad,src,src2,fed,later}));"
+        "turnTo(60);var hAfter=_live.map.here.h;"
+        "window.gbPose.feed({x:9,y:9,h:0});tick(250);var out=_live.map.here.room;"
+        "console.log(JSON.stringify({ok,bad,src,src2,fed,later,hTurned,hAfter,out}));"
     )
     assert got["ok"] is True and got["bad"] is False
     assert got["src"] == "fed" and got["src2"] == "reckoned"
     fed = got["fed"]
     # The gyro's 30 degree turn and a second of walking moved nothing.
     assert (fed["x"], fed["y"], fed["h"], fed["room"]) == (2.5, 1.5, -170, "den")
-    # A second after the last fix he is reckoned again, walking on from there.
+    # While fed, the gyro's 30 degree turn adds nothing, even before the next tick sets the
+    # fed heading: it was 90, and stays 90.
+    assert got["hTurned"] == 90
+    # A second after the last fix he is reckoned again, walking and turning on from there.
     assert got["later"]["x"] < 2.5 and got["later"]["h"] == -170
+    assert got["hAfter"] == pytest.approx(-150, abs=0.5)
+    # Fed outside every room on his map, he is in none.
+    assert got["out"] == ""
 
 
 def test_a_spin_the_gyro_says_went_nowhere_is_marked_wedged() -> None:

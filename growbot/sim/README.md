@@ -100,12 +100,11 @@ soul, so a run folder stays on the machine that made it.
 with no model over the flat and the three maze houses, `--seeds` starts each (the scene's start
 turned a third of the way round per seed), `--parallel` at once, for `--minutes` each, and
 writes `battery.md` and `battery.json` under `sim-runs/battery/`: rooms reached of all, metres
-walked, seconds stuck (under 5 cm in 30 s), falls (down 3 s or more), and how far his map's
+walked, seconds stuck (under 5 cm and 10° in 30 s), falls (down 3 s or more), and how far his map's
 idea of where he is ends from the truth. `--pose truth` feeds the page the sim's own pose a few
 times a second (`growbot-map.js` `gbPose`), so a planner is judged on a perfect pose first;
 `--pose reckoned` leaves it to the gyro and walking pace, as on today's phone. `--explorer
-walls` is today's round of the walls. A 2-minute run in maze 2 ended with his reckoned map
-2.0 m from the truth, and 0.0 m with `--pose truth`.
+walls` is today's round of the walls.
 
 ## Scenarios
 

@@ -654,8 +654,8 @@ def test_a_battery_run_is_scored_against_the_house() -> None:
         2,
         3,
     )
-    # The first 30 s can't be judged; still from 30 s to 60 s.
-    assert 25 <= got["stuck_s"] <= 35
+    # Still for the first 60 s: the whole spell counts, not only what follows its first window.
+    assert 55 <= got["stuck_s"] <= 65
     assert got["falls"] == 1 and got["pose_off_m"] == 0.3
     md = simbat.table(
         [{"run": "flat-s0", "scene": "flat", "seed": 0, **got}, {"run": "x-s1", "error": "boom"}]

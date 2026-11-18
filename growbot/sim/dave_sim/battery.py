@@ -43,10 +43,12 @@ SCENES: dict[str, tuple[float, float, float] | None] = {
 # Each further seed starts him facing another third of the way round.
 SEED_TURN_DEG = 120.0
 # Stuck: under this far in a window this long.
-STUCK_M, STUCK_S = 0.05, 30.0
+STUCK_M, STUCK_S, STUCK_DEG = 0.05, 30.0, 10.0
 # Down: not upright for this long in a row.
 DOWN_S = 3.0
 EXPLORERS = ("walls",)
+# Past its minutes, how long a child run may take to start, score and write its report.
+CHILD_SLACK_S = 300.0
 
 
 @dataclass
@@ -69,24 +71,30 @@ def _upright(st: dict[str, Any]) -> bool:
     return bool(st["screen_up"]) and st["z"] > 0.04 and 25 < st["pitch_deg"] < 75
 
 
-def score(sim: Sim) -> dict[str, Any]:
+def score(sim: Sim, fed: bool = True) -> dict[str, Any]:
     """One run against the house: rooms reached of all, walked, stuck time, falls."""
     stats = plan.stats(sim)
     house = plan.layout(sim)
     rooms = stats.get("rooms_s") or {}
     reached = sorted(r for r, s in rooms.items() if s > 0 and r != "outside")
     states = sim.states
-    stuck = 0.0
+    # Stuck: a whole window with under STUCK_M of travel and under STUCK_DEG of turning (a
+    # turn on the spot is doing what it was asked); every moment of such a window counts.
+    marked = [False] * len(states)
     j = 0
-    for s in states:
+    for i, s in enumerate(states):
         while j < len(states) and states[j]["wall"] < s["wall"] - STUCK_S:
             j += 1
         a = states[j]
-        if (
-            s["wall"] - a["wall"] >= STUCK_S - 1
-            and math.hypot(s["x"] - a["x"], s["y"] - a["y"]) < STUCK_M
-        ):
-            stuck += CONTROL_STEP_S
+        if s["wall"] - a["wall"] < STUCK_S - 1:
+            continue
+        span = states[j : i + 1]
+        moved = math.hypot(s["x"] - a["x"], s["y"] - a["y"])
+        turned = max(abs((p["nose_deg"] - a["nose_deg"] + 180.0) % 360.0 - 180.0) for p in span)
+        if moved < STUCK_M and turned < STUCK_DEG:
+            for k in range(j, i + 1):
+                marked[k] = True
+    stuck = sum(marked) * CONTROL_STEP_S
     falls, down_since = 0, None
     for s in states:
         if _upright(s):
@@ -102,12 +110,13 @@ def score(sim: Sim) -> dict[str, Any]:
     off = None
     if sim.map_track:
         a = sim.map_track[-1]
-        off = round(
-            math.hypot(
-                float(a["here"].get("x", 0)) - a["x"], float(a["here"].get("y", 0)) - a["y"]
-            ),
-            2,
-        )
+        here = (float(a["here"].get("x", 0)), float(a["here"].get("y", 0)))
+        # A fed map shares the house's frame; a reckoned one starts at its own origin, so it is
+        # put into the house's frame from his first reading (plan.py's alignment).
+        to_world = None if fed else plan._aligned(sim)
+        if to_world is not None:
+            here = to_world(*here)
+        off = round(math.hypot(here[0] - a["x"], here[1] - a["y"]), 2)
     return {
         "pose_off_m": off,
         "rooms": len(reached),
@@ -175,7 +184,7 @@ async def run_one(r: Run, policies: dict[str, Path], skills: dict[str, str]) -> 
         until = sim.now() + r.minutes * 60
         if r.explorer == "walls":
             await _walls(sim, until)
-        res = score(sim)
+        res = score(sim, fed=r.pose == "truth")
     finally:
         report = await sim.close()
     return {"run": r.name, "scene": r.scene, "seed": r.seed, **res, "report": str(report)}
@@ -262,17 +271,23 @@ def main(argv: list[str] | None = None) -> int:
         str(out),
     ] + (["--skills", args.skills] if args.skills else [])
     rows: list[dict[str, Any]] = []
-    running: list[tuple[str, int, subprocess.Popen[str]]] = []
+    running: list[tuple[str, int, float, subprocess.Popen[str]]] = []
     while jobs or running:
         while jobs and len(running) < max(1, args.parallel):
             s, k = jobs.pop(0)
             cmd = [sys.executable, "-m", "dave_sim.battery", "--one", s, "--seed", str(k), *common]
-            running.append(
-                (s, k, subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, env=os.environ))
-            )
+            child = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, env=os.environ)
+            running.append((s, k, time.monotonic(), child))
         for item in list(running):
-            s, k, p = item
+            s, k, t0, p = item
             if p.poll() is None:
+                # A hung browser must not hold up the whole battery's table.
+                if time.monotonic() - t0 > args.minutes * 60 + CHILD_SLACK_S:
+                    p.kill()
+                    p.wait()
+                    running.remove(item)
+                    rows.append({"run": f"{s}-s{k}", "error": "timed out"})
+                    print(f"timed out {s}-s{k}", flush=True)
                 continue
             running.remove(item)
             lines = (p.stdout.read() if p.stdout else "").strip().splitlines()
