@@ -5873,8 +5873,8 @@ def test_an_explore_goal_says_how_to_survey_and_choose_a_way_and_how_the_trip_go
         " var M={here:{x:0,y:0,h:90,room:'living room'}, rooms:[{n:'living room'},"
         " {n:'hallway'}], doors:[{a:'living room',b:'hallway',x:1,y:0}], things:[]};"
         " window.gbMap={map:function(){ return M; }}; var PS={trip:null,survey:0,"
-        "last:null,seen:100,ways:false}, BA=null; window.gbPano={state:function(){ return PS; },"
-        " blockedAgo:function(){ return BA; }};"
+        "last:null,seen:100,ways:false}, BA=null, WA=null; window.gbPano={state:function(){"
+        " return PS; }, blockedAgo:function(){ return BA; }, wedgedAgo:function(){ return WA; }};"
     )
     got = _explore(
         "_gbExploreLine(), (PS.seen=330, _gbExploreLine()),"
@@ -5882,10 +5882,12 @@ def test_an_explore_goal_says_how_to_survey_and_choose_a_way_and_how_the_trip_go
         " (PS.trip=null, PS.last={n:3,why:'arrived'}, PS.seen=40, _gbExploreLine()),"
         " (PS.trip={n:0,wall:true,side:'left',gone:1.26}, _gbExploreLine()),"
         " (PS.trip=null, PS.last={n:0,wall:true,why:'something kept being in the way'}, BA=5000,"
-        " M.doors=[], _gbExploreLine())",
+        " M.doors=[], _gbExploreLine()), (WA=3000, _gbExploreLine())",
         setup,
     )
     assert "explore:{walls:true} follows this room's walls round" in got[0]
+    assert "Your last spin did not turn you" not in got[5]
+    assert 'walk back out of it (walk:{dir:"back",secs:6})' in got[6]
     assert "not surveyed this spot yet (about 100 of 360 degrees seen)" in got[0]
     assert "You have surveyed this spot: choose a way (explore:{go:N})" in got[1]
     assert "on your way along way 3 (0.4 m so far): leave walk out" in got[2]

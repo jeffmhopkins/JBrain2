@@ -751,6 +751,11 @@ seconds in a row that barely change (mean difference under 2.5) stop the walk. I
 walks that never fired in the open and caught about a third of the walls he met; the rest the
 swing rule catches.
 
+Wedged is read from the gyro: a spin of 2.5 s or more that turned him under 8 degrees means
+something presses on his side (mf8 spun 127 times between the lamp and the wall, each spin
+"done"). Following the walls then backs him out 6 s before trying the turn again, and his
+explore line tells him to walk back out rather than spin.
+
 The PWA draws it on the persona's **Map** tab (`GrowbotHouseMap.tsx`): rooms, doorways, things,
 and an arrow for where he thinks he is. It is read-only there; he changes it when told.
 

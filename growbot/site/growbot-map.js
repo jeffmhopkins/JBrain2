@@ -552,6 +552,7 @@
         // More than 45 degrees in one reading is the sensor re-referencing, not a turn.
         if (Math.abs(dy) <= 45 && (m = soulMap())) {
           m.here.h = wrap(m.here.h + dy);
+          if (spinW) spinW.turned += dy;
           if (turnWatch) watchTurn(dy);
         }
       }
@@ -579,10 +580,26 @@
     if (v.direction === "screen-backward" || v.gait === "official") return "back";
     return "";
   }
+  /* A spin the gyro says went nowhere: something presses on his side (mf8 spun 127 times
+     wedged between the lamp and the wall, every one "done", his heading unmoved for ten
+     minutes). A spin can do nothing there; walking back out can. */
+  var spinW = null, stuckSpinT = 0, SPIN_STUCK_MS = 2500, SPIN_STUCK_DEG = 8;
+  function watchSpin(now) {
+    var M = typeof _motion !== "undefined" ? _motion : null, sp = spinning(M);
+    if (sp && (!spinW || spinW.rep !== M.report)) spinW = { rep: M.report, t0: now, turned: 0 };
+    else if (!sp && spinW) {
+      if (now - spinW.t0 >= SPIN_STUCK_MS && Math.abs(spinW.turned) < SPIN_STUCK_DEG) {
+        stuckSpinT = now;
+        try { logEv("spin_stuck", { ms: now - spinW.t0, deg: Math.round(spinW.turned) }); } catch (e) {}
+      }
+      spinW = null;
+    }
+  }
   setInterval(function () {
     try {
       var now = Date.now(), dt = lastTick ? Math.min(1, (now - lastTick) / 1000) : 0;
       lastTick = now;
+      watchSpin(now);
       var w = walking(), m;
       if (!w || !dt || !(m = soulMap())) return;
       var v = (w === "back" ? -PACE.back : PACE.forward) * dt, a = m.here.h * D;
@@ -686,6 +703,8 @@
     map: function () { return soulMap(); },
     // The spin that stops at the angle, for a turn the explore trip makes between his thoughts.
     turn: function (deg) { return turnSpec({ turn: deg }); },
+    // When the last spin that went nowhere ended (ms since epoch), or 0.
+    stuckSpinT: function () { return stuckSpinT; },
     /* How far, by his map, the thing his goal names is (metres), or null when it isn't on
        the map with a spot. */
     goalDist: function (goal) {

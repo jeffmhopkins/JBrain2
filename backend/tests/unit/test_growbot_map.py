@@ -258,6 +258,21 @@ def test_his_heading_follows_the_gyro_and_his_walks_carry_him_along_it() -> None
     assert got["after"] == got["walked"]  # a spin carries him nowhere
 
 
+def test_a_spin_the_gyro_says_went_nowhere_is_marked_wedged() -> None:
+    """mf8: 127 spins wedged between the lamp and the wall, each "done", none turning him."""
+    got = _page(
+        "turnTo(10);tick(0);"
+        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};for(var i=0;i<16;i++) tick(250);"
+        "_motion=null;tick(250);var stuck=window.gbMap.stuckSpinT();"
+        "_motion={kind:'walk',report:{mv:{kind:'spin'}}};tick(250);"
+        "for(i=1;i<=12;i++){turnTo(10+i*5);tick(250);}_motion=null;tick(250);"
+        "console.log(JSON.stringify({stuck:stuck>0,same:window.gbMap.stuckSpinT()===stuck,"
+        "n:logs.filter(function(l){ return l[0]==='spin_stuck'; }).length}));"
+    )
+    # Four seconds of spin and no turn: wedged. A spin that turned 60 degrees is not.
+    assert got == {"stuck": True, "same": True, "n": 1}
+
+
 def test_a_turn_by_degrees_spins_and_the_gyro_stops_it_at_the_angle() -> None:
     got = _page(
         "turnTo(0);var o={walk:{turn:-60}};window.gbMap.reply(o,'event',{});"

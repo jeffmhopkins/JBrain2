@@ -282,6 +282,18 @@ def test_a_clear_walls_probe_is_taken_from_where_the_walk_set_out() -> None:
     assert got[0]["walk"]["dir"] == "fwd" and got[1]["walk"] == {"turn": -15}
 
 
+def test_a_turn_that_went_nowhere_backs_out_and_turns_again() -> None:
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,room:'r',want:120,walked:false,blocks:0};"
+        "const h=(x,y,hd)=>({x,y,h:hd,room:'r'});"
+        "console.log(JSON.stringify([P.wallStep(tr,h(0,0,30),1000,false,true),tr.blocks,"
+        "P.wallStep(tr,h(0,0,30),9000,false,false)]))"
+    )
+    back, blocks, again = got
+    assert back["walk"] == {"gait": "screen_backward", "dir": "back", "secs": 6} and blocks == 1
+    assert again["walk"] == {"turn": 90}
+
+
 def test_a_way_whose_walk_is_blocked_ends_there() -> None:
     got = _node(
         "console.log(JSON.stringify(P.step({abs:90,x:0,y:0,t:0},{x:0,y:0.3,h:90},1000,false,true)))"
