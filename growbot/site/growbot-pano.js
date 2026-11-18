@@ -32,7 +32,7 @@
   var GO_M = 0.9, GO_MS = 120000, FACE_DEG = 20, WALK_S = 25;
   // Following the walls: short walks, a probe to the right after each clear one and a turn to
   // the left after each blocked one, for up to WALL_MS.
-  var WALL_WALK_S = 15, WALL_MS = 300000, PROBE_DEG = 45, WALL_BLOCKS = 10;
+  var WALL_WALK_S = 15, WALL_MS = 300000, PROBE_DEG = 30, WALL_BLOCKS = 10, SWING_DEG = 25;
   // His picture standing still while he walks forward (mean grey change per pixel, 2 s apart,
   // three in a row): in the flat (f3) 9 of 9 such runs were pushing against a wall or
   // furniture and none was walking, though it catches about a third of the pushing.
@@ -100,7 +100,8 @@
   /* One step of following the walls round (owner, 2026-11-17: "go around the perimeter of
      walls"), keeping them on his right, which takes him out through a doorway on the way: walk;
      a walk that something stopped turns him left, away from it; a clear one turns him a little
-     right, back toward the wall, before the next. It ends when his map has him in another room,
+     right, back toward the wall, before the next. With no wall noticed every probe turns him
+     further right, so he circles (f5, in a corner): noticing the walls is what makes it work. It ends when his map has him in another room,
      after WALL_MS, or when it keeps hitting things. blocked says the last walk was stopped. */
   function wallStep(tr, h, now, blocked) {
     var gone = Math.hypot(h.x - tr.x, h.y - tr.y);
@@ -109,6 +110,9 @@
     if (tr.blocks >= WALL_BLOCKS) return { done: "something kept being in the way", gone: gone };
     if (tr.walked) {
       tr.walked = false;
+      // Scraping along a wall or into a corner swings him round as he walks (f5: 50 degrees on
+      // a walk that went nowhere, a few on a clear one); that is a wall too.
+      if (typeof tr.h0 === "number" && Math.abs(wrap(h.h - tr.h0)) >= SWING_DEG) blocked = true;
       if (blocked) tr.blocks++;
       tr.want = wrap(h.h + (blocked ? 90 : -PROBE_DEG));
     }
@@ -117,7 +121,7 @@
       if (Math.abs(d) > FACE_DEG) return { walk: { turn: Math.round(d) }, gone: gone };
       tr.want = null;
     }
-    tr.walked = true;
+    tr.walked = true; tr.h0 = +h.h;
     return { walk: { gait: "screen_forward", dir: "fwd", secs: WALL_WALK_S }, gone: gone };
   }
   // Whether the last BLOCK_N picture changes (newest last) say he is pushing, not walking.
