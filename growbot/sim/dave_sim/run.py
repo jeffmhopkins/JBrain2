@@ -34,6 +34,8 @@ HERE = Path(__file__).resolve().parent
 CONTROL_DT = 0.04
 # How often his depth sense gets a frame: a phone model's pace (docs/plans/GROWBOT_VISION_PLAN.md).
 VISION_S = 0.33
+# How often the sim hands the page its true pose with --pose truth.
+POSE_S = 0.2
 UA = (
     "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/153.0.0.0 Mobile Safari/537.36"
@@ -92,6 +94,11 @@ class Options:
     # so his camera looks toward -x). None is the scene's own start, or the origin in a scene
     # without one: a maze house's origin can fall inside a wall.
     at: tuple[float, float, float] | None = None
+    # Where he is and which way his camera faces, for his map (growbot-map.js gbPose):
+    # "reckoned" leaves it to the page's gyro and walking pace, as on today's phone; "truth"
+    # feeds the sim's own pose a few times a second, so a layer above can be tested on a
+    # perfect pose (docs/plans/GROWBOT_EXPLORE_PLAN.md, wave E0).
+    pose: str = "reckoned"
     # His depth sense (growbot-vision.js) fed from the sim's true depth and labels: "off" as on
     # today's phone, which has no source yet; "truth" as rendered; "noisy" as a phone model's
     # would be (vision.Noise).
@@ -277,7 +284,7 @@ class Sim:
         from the page's."""
         page = self.page
         start = time.monotonic()
-        n = 0
+        n, fed = 0, -1e9
         while True:
             due = int((time.monotonic() - start) / CONTROL_DT) + 1
             while n < due:
@@ -293,6 +300,9 @@ class Sim:
                     self._record()
             try:
                 await page.evaluate("m => window.__simMotion(m)", self.body.motion())
+                if self.o.pose == "truth" and time.monotonic() - fed >= POSE_S:
+                    fed = time.monotonic()
+                    await page.evaluate("p => window.gbPose && window.gbPose.feed(p)", self.pose())
                 if time.monotonic() - self._drained > 1.0:
                     self._drained = time.monotonic()
                     await self._drain()
@@ -300,6 +310,12 @@ class Sim:
                 self.note("loop", error=str(e)[:200])
                 await asyncio.sleep(0.2)
             await asyncio.sleep(max(0.0, start + n * CONTROL_DT - time.monotonic()))
+
+    def pose(self) -> dict[str, float]:
+        """His true pose in his map's terms: metres, and his camera's heading in degrees
+        counter-clockwise from +x (the nose points the other way)."""
+        st = self.body.state()
+        return {"x": st["x"], "y": st["y"], "h": (st["nose_deg"] + 360.0) % 360.0 - 180.0}
 
     def _record(self) -> None:
         st = self.body.state()

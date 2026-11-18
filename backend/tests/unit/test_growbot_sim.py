@@ -25,6 +25,7 @@ simllm = importlib.import_module("dave_sim.llm")
 simrun = importlib.import_module("dave_sim.run")
 simscen = importlib.import_module("dave_sim.scenarios")
 simplan = importlib.import_module("dave_sim.plan")
+simbat = importlib.import_module("dave_sim.battery")
 
 
 class Legs:
@@ -596,3 +597,68 @@ def test_the_sims_phone_like_noise_wanders_in_scale_and_loses_some_pixels() -> N
 
 def test_a_run_leaves_his_depth_sense_off_unless_asked() -> None:
     assert simrun.Options(model=None).vision == "off"
+
+
+# ------------------------------------------------------------------ the exploring battery
+
+
+def test_a_battery_start_turns_a_third_of_the_way_round_per_seed() -> None:
+    assert simbat.start_of("flat", 0) == (-3.3, -2.4, -180.0)
+    assert simbat.start_of("flat", 1) == (-3.3, -2.4, -60.0)
+    assert simbat.start_of("flat", 2) == (-3.3, -2.4, 60.0)
+
+
+class _Layout:
+    ROOMS = {"living room": (0, 0, 2, 2), "kitchen": (2, 0, 4, 2), "hall": (0, 2, 4, 3)}
+
+    def room_at(self, x: float, y: float) -> str:
+        for n, (x0, y0, x1, y1) in self.ROOMS.items():
+            if x0 <= x < x1 and y0 <= y < y1:
+                return n
+        return ""
+
+    def distance_to(self, item: str, x: float, y: float) -> float:
+        return 1.0
+
+    ITEMS: list[Any] = []
+
+
+class _Body:
+    layout = _Layout()
+
+
+def _state(t: float, x: float, up: bool = True) -> dict[str, Any]:
+    return {
+        "wall": t,
+        "x": x,
+        "y": 1.0,
+        "z": 0.08 if up else 0.01,
+        "nose_deg": 0.0,
+        "pitch_deg": 50.0 if up else 5.0,
+        "screen_up": up,
+    }
+
+
+def test_a_battery_run_is_scored_against_the_house() -> None:
+    """Rooms he was really in, how long he sat still, and a fall counted once per time down."""
+    sim = type("S", (), {})()
+    sim.body = _Body()
+    # 60 s still in the living room, then over into the kitchen, then down for 5 s and up.
+    states = [_state(t * 0.08, 1.0) for t in range(750)]
+    states += [_state(60 + t * 0.08, 1.0 + t * 0.002) for t in range(1, 750)]
+    states += [_state(120 + t * 0.08, 2.5, up=t > 60) for t in range(1, 120)]
+    sim.states = states
+    sim.map_track = [{"here": {"x": 2.5, "y": 1.3}, "x": 2.5, "y": 1.0}]
+    got = simbat.score(sim)
+    assert got["reached"] == ["kitchen", "living room"] and (got["rooms"], got["rooms_total"]) == (
+        2,
+        3,
+    )
+    # The first 30 s can't be judged; still from 30 s to 60 s.
+    assert 25 <= got["stuck_s"] <= 35
+    assert got["falls"] == 1 and got["pose_off_m"] == 0.3
+    md = simbat.table(
+        [{"run": "flat-s0", "scene": "flat", "seed": 0, **got}, {"run": "x-s1", "error": "boom"}]
+    )
+    assert "| flat-s0 | 2/3 |" in md and "| x-s1 | error: boom |" in md
+    assert "Every room reached in 0 of 2 runs" in md

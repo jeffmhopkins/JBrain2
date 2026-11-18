@@ -560,7 +560,7 @@
         // More than 45 degrees in one reading is the sensor re-referencing, not a turn.
         if (Math.abs(dy) <= 45 && spinW) { spinW.turned += dy; spinW.n++; }
         if (Math.abs(dy) <= 45 && (m = soulMap())) {
-          m.here.h = wrap(m.here.h + dy);
+          if (!poseNow()) m.here.h = wrap(m.here.h + dy);
           if (turnWatch) watchTurn(dy);
         }
       }
@@ -572,6 +572,21 @@
      sim measured 0.03 to 0.05 m/s for the trained forward (2026-11-17); a wall or a slip makes
      this an over-guess, which reaching a known thing corrects. */
   var PACE = { forward: 0.04, back: 0.03 }, lastTick = 0;
+  /* A pose source (docs/plans/GROWBOT_EXPLORE_PLAN.md: gbPose): where he is and which way his
+     camera faces, measured rather than reckoned. The Dave sim feeds its ground truth
+     (--pose truth), so the layers above can be tested on a perfect pose before an estimated
+     one. While fixes keep coming they replace the gyro's heading and the pace, and the room he
+     is in is the one his map has at that spot; with none, nothing changes. */
+  var poseFix = null, POSE_FRESH_MS = 1000;
+  function poseNow() { return poseFix && Date.now() - poseFix.t < POSE_FRESH_MS ? poseFix : null; }
+  window.gbPose = {
+    feed: function (p) {
+      if (!p || !isFinite(+p.x) || !isFinite(+p.y) || !isFinite(+p.h)) return false;
+      poseFix = { x: +p.x, y: +p.y, h: wrap(+p.h), t: Date.now() };
+      return true;
+    },
+    source: function () { return poseNow() ? "fed" : "reckoned"; },
+  };
   // A spin runs as a "walk" motion too; its move report says which it is.
   function mv(M) { return (M && M.report && M.report.mv) || {}; }
   function spinning(M) { return !!M && M.kind === "walk" && mv(M).kind === "spin"; }
@@ -611,7 +626,12 @@
       var now = Date.now(), dt = lastTick ? Math.min(1, (now - lastTick) / 1000) : 0;
       lastTick = now;
       watchSpin(now);
-      var w = walking(), m;
+      var pf = poseNow(), w = walking(), m;
+      if (pf && (m = soulMap())) {
+        m.here.x = pf.x; m.here.y = pf.y; m.here.h = pf.h; m.here.t = now;
+        m.here.room = roomAt(m, pf.x, pf.y, m.here.room) || m.here.room;
+        return;
+      }
       if (!w || !dt || !(m = soulMap())) return;
       var v = (w === "back" ? -PACE.back : PACE.forward) * dt, a = m.here.h * D;
       m.here.x += v * Math.cos(a); m.here.y += v * Math.sin(a); m.here.t = now;

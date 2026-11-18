@@ -1,6 +1,6 @@
 # GrowBot exploring — a map and a planner under Dave's thinking
 
-> **Status:** In progress · **Last verified:** 2026-11-18 · **Waves:** E0◻️ E1🟡 E2◻️ E3◻️ E4◻️ E5◻️ E6◻️
+> **Status:** In progress · **Last verified:** 2026-11-18 · **Waves:** E0✅ E1🟡 E2◻️ E3◻️ E4◻️ E5◻️ E6◻️
 
 The owner's ask (2026-11-18): "I feel like maybe we have built a wrong paradigm." Dave went 0
 for 10 in the flat's explore test, and each fix since #1940 (wall-following, the doorway pull,
@@ -57,10 +57,16 @@ The answer is kept on the fridge in the things layer. He stops when the goal is 
 
 Each wave is tested in the sim first on true pose and depth, so a failure points at one layer.
 
-- **E0 — a fast, deterministic sim battery.** `--pose truth` (the page gets the sim's true x, y
-  and yaw through `gbPose`), a scripted explore start with no model, and a batch runner over the
-  three maze houses and the flat, three seeds each. *Pass:* the 12-run battery runs unattended
-  and prints one table (rooms reached, major items identified, falls, time stuck).
+- **E0 — a fast, deterministic sim battery.** ✅ `python -m dave_sim.battery` (growbot/sim)
+  runs the flat and the three maze houses, three starts each (the scene's start turned a third
+  of the way round per seed), with no model, unattended, in parallel, and writes one table
+  (`battery.md` / `battery.json`): rooms reached of all, metres walked, seconds stuck, falls, and
+  how far his map's idea of where he is ends from the truth. `--pose truth` feeds the page the
+  sim's true pose (`growbot-map.js` `gbPose`: while fixes keep coming they replace the gyro
+  heading and walking pace, and his room is the one his map has there); `--pose reckoned` is
+  today's phone. `--explorer walls` is today's round of the walls, started by the page's own
+  explore entry and again whenever it ends: the baseline E2 has to beat. Major items identified
+  joins the table with E2's inspection.
 - **E1 — turns on the master's heading control.** 🟡 A turn by degrees (`gbMap.turn`, used by
   his own `walk:{turn}` and the explore trip) runs on the box skill set's look skill, steered
   onto the angle at camera height 0 and ended once it holds it within 6°, or sits within 12°
