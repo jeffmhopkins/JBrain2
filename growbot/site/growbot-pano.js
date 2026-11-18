@@ -107,7 +107,10 @@
      after WALL_MS, or when it keeps hitting things. blocked says the last walk was stopped. */
   function wallStep(tr, h, now, blocked, wedged) {
     var gone = Math.hypot(h.x - tr.x, h.y - tr.y);
-    if (tr.room && h.room && h.room !== tr.room) return { done: "you went through into the " + h.room, gone: gone };
+    // Into another room by his map: two more walks carry him clear of the doorway (mf10 ended
+    // its round in the doorway by his map's reckoning and spent ten minutes there).
+    if (tr.room && h.room && h.room !== tr.room && tr.into === undefined) tr.into = tr.steps || 0;
+    if (tr.into !== undefined && (tr.steps || 0) - tr.into >= 2) return { done: "you went through into the " + h.room, gone: gone };
     if (now - tr.t > WALL_MS) return { done: "it ran its twenty minutes", gone: gone };
     if (tr.blocks >= WALL_BLOCKS) return { done: "something kept being in the way", gone: gone };
     // The last turn went nowhere (gbMap's spin_stuck): back out first, then the same turn.

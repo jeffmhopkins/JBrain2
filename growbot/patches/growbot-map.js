@@ -174,17 +174,19 @@
     return r;
   }
 
+  /* "room", "room1", "room a" or a bare letter tells his map nothing it can be asked for later
+     ("where is the kitchen?"), and "room N" squats the name the map gives an unnamed room
+     itself; mf9 and mf10 called them "start", "outside_start" and "unknown room", names for
+     where he began or what he did not know, not the room. */
+  function notName(n) {
+    if (!/^(the )?((room|area|space|place)( ?([a-z]|\d+))?|[a-z]|\d+)$/.test(n) && !/\b(start|outside|unknown|unnamed)/.test(n)) return "";
+    return "\"" + n + "\" is not a name: call a room what it is by what is in it (a piano or couch makes a living room, a fridge or stove a kitchen, a bed a bedroom, a long narrow way with doorways off it a hallway)";
+  }
   var OPS = {
     room: function (m, op, now) {
       var n = name(op.room), size = Array.isArray(op.size) ? op.size : [];
       if (!n) return "";
-      // "room", "room1", "room a" or a bare letter tells his map nothing it can be asked for
-      // later ("where is the kitchen?"), and "room N" squats the name the map gives an unnamed
-      // room itself.
-      // mf9 called them "start" and "outside_start": a name for where he began, not the room.
-      if (/^(the )?((room|area|space|place)( ?([a-z]|\d+))?|[a-z]|\d+)$/.test(n) || /\b(start|outside|unknown|unnamed)/.test(n)) {
-        return "\"" + n + "\" is not a name: call a room what it is by what is in it (a piano or couch makes a living room, a fridge or stove a kitchen, a bed a bedroom, a long narrow way with doorways off it a hallway)";
-      }
+      if (notName(n)) return notName(n);
       var w = num(size[0], ROOM_MIN, ROOM_MAX), d = num(size[1], ROOM_MIN, ROOM_MAX), r = roomOf(m, n), cur = here(m);
       if (!r && cur && /^room \d+$/.test(cur.n) && inside(cur, m.here.x, m.here.y)) {
         // The room sketched before he named it is this one: its doorways and things too.
@@ -241,7 +243,9 @@
       return "";
     },
     door: function (m, op, now) {
+      // A doorway to a room he cannot name yet is still a doorway: its far side stays unnamed.
       var to = name(op.door), r = ensureRoom(m, now);
+      if (to && notName(to)) to = "";
       if (!r) return "";
       var b = bearingOf(op), a = m.here.h + b, w = wallHit(r, m.here.x, m.here.y, a);
       if (!w) return "";

@@ -466,3 +466,14 @@ def test_a_room_called_just_room_is_sent_back_for_a_real_name() -> None:
     assert "is not a name" in got["d"][0] and "is not a name" in got["e"][0]
     assert "is not a name" in got["f"][0]  # mf9
     assert got["rooms"] == ["living room"]
+
+
+def test_a_doorway_to_a_room_he_cannot_name_leaves_its_far_side_unnamed() -> None:
+    """mf10: "a doorway to the unknown room" put an "unknown room" on his map."""
+    got = _node(
+        "const m=L.fresh(now);L.apply(m,{room:'living room'},now);"
+        "const s=L.apply(m,{door:'unknown room',dir:'ahead',m:1},now);"
+        "console.log(JSON.stringify({s,rooms:m.rooms.map(r=>r.n),doors:m.doors.length,"
+        "b:m.doors[0]&&m.doors[0].b}));"
+    )
+    assert got["rooms"] == ["living room"] and got["doors"] == 1 and got["b"] == ""

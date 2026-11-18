@@ -253,16 +253,18 @@ def test_following_the_walls_turns_right_after_a_clear_walk_and_left_after_a_blo
         "P.wallStep(tr,h(0,0.5,78),25000,false),"  # facing it: walk
         "P.wallStep(tr,h(0.3,0.8,78),40000,true),"  # blocked: 90 left
         "P.wallStep(tr,h(0.3,0.8,166),45000,false),"  # facing it: walk
-        "P.wallStep(tr,h(0,1.2,135,'hallway'),60000,false),"  # another room: done
+        "P.wallStep(tr,h(0,1.2,135,'hallway'),60000,false),"  # another room: two walks on
+        "(tr.steps+=2, P.wallStep(tr,h(0,1.6,135,'hallway'),90000,false)),"  # then done
         "P.wallStep({wall:true,x:0,y:0,t:0,want:null,walked:false,blocks:16},h(0,0,0),1,false),"
         "P.blockedRun([1,2.4,0.3]),P.blockedRun([1,2.6,0.3]),P.blockedRun([0,0])]))"
     )
-    first, probe, walk, away, walk2, through, boxed, yes, no, short = got
+    first, probe, walk, away, walk2, into, through, boxed, yes, no, short = got
     assert first["walk"]["dir"] == "fwd" and first["walk"]["secs"] == 12
     assert probe["walk"] == {"turn": -15}
     assert walk["walk"]["dir"] == "fwd"
     assert away["walk"] == {"turn": 90}
     assert walk2["walk"]["dir"] == "fwd"
+    assert "done" not in into
     assert through["done"] == "you went through into the hallway"
     assert boxed["done"] == "something kept being in the way"
     assert (yes, no, short) == (True, False, False)

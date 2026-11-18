@@ -742,7 +742,7 @@ drift has swung him 25 degrees in toward the wall (pushing along it turns him in
 90 degrees away from it. Each round takes the other
 side (`"left"`/`"right"` picks one), since one side alone circled the flat's couch for good. It
 ends when his map says he is in another room, after twenty minutes, or when something blocks him
-16 times. A second wall within two walks that would turn him back the way he came means
+16 times (into another room by his map, it takes two more walks to clear the doorway first). A second wall within two walks that would turn him back the way he came means
 he took the corner on the wrong hand, so he changes hands and turns the other way from the
 first wall. While it runs his own walks are ignored, so a thought cannot cut it short; his
 person's stop, his pause and a fall still end it.
