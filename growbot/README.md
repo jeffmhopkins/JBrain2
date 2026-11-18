@@ -730,8 +730,24 @@ it. The survey and the trip move him between his thoughts, not one step per thou
 of his own ends them. A walk that gets him nowhere ends the trip as blocked. While he explores,
 each turn's explore line says which step he is on, the room he is in and whether he has left it,
 the doorways found from it, and the next thing in the room to go up to (to about 30 cm, to name
-it). While the explore goal stands, a wait for his person becomes a minute's rest instead, and his person's stop ends a trip or survey, and a room called just "room"
+it). While the explore goal stands, a wait for his person becomes a minute's rest instead, and
+his person's stop ends a trip or survey. A room called just "room", "room a" or a bare letter
 goes back to him for a real name.
+
+`explore:{walls:true}` follows the room's walls round, keeping them on one side, which is how he
+finds its doorways (owner, 2026-11-17: "go around the perimeter of walls"). Each step probes 15
+degrees toward the wall and walks 12 s; a step that is blocked, or whose drift has swung him 25
+degrees away from the wall side, turns him 90 degrees away from it. Each round takes the other
+side (`"left"`/`"right"` picks one), since one side alone circled the flat's couch for good. It
+ends when his map says he is in another room, after ten minutes, or when something blocks him
+16 times. While it runs his own walks are ignored, so a thought cannot cut it short; his
+person's stop, his pause and a fall still end it.
+
+Blocked is read from his camera, since the map's dead reckoning is by time and cannot feel a
+wall: while he walks forward a 16x20 grey thumbnail is compared every second, and three
+seconds in a row that barely change (mean difference under 2.5) stop the walk. In the sim's
+walks that never fired in the open and caught about a third of the walls he met; the rest the
+swing rule catches.
 
 The PWA draws it on the persona's **Map** tab (`GrowbotHouseMap.tsx`): rooms, doorways, things,
 and an arrow for where he thinks he is. It is read-only there; he changes it when told.
