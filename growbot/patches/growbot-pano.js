@@ -431,11 +431,12 @@
             try { logEv("explore_end", { n: trip.n, why: st.done, m: Math.round(st.gone * 100) / 100 }); } catch (e) {}
             /* Through a doorway into a new room, the walls carry on round that one (f19 reached
                the hallway and then spent four minutes saying where he would go next without
-               going). Three rooms on, he is asked again. */
-            var ch = trip.wall && /^you went through into /.test(st.done) ? (trip.chain || 0) + 1 : 0;
+               going). Three rooms on, he is asked again. The same hand: rounding the jamb on it
+               put a wall beside him, where the other hand has none near to follow (review). */
+            var ch = trip.wall && h.room && /^you went through into /.test(st.done) ? (trip.chain || 0) + 1 : 0;
+            var sd2 = trip.side;
             trip = null;
             if (ch && ch <= WALL_CHAIN) {
-              var sd2 = (wallSide = -wallSide);
               trip = { n: 0, wall: true, side: sd2, x: h.x, y: h.y, t: now, room: h.room || "", want: null, walked: false, blocks: 0, chain: ch };
               try { logEv("explore_walls", { room: h.room || "", side: sd2, chain: ch }); } catch (e) {}
             }

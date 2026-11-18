@@ -400,8 +400,8 @@ def test_through_a_doorway_the_walls_carry_on_round_the_new_room() -> None:
         "console.log(JSON.stringify({t:st.trip,last:st.last,sides,log}))"
     )
     assert got["last"]["why"] == "you went through into the hall"
-    # A new round in the new room, on the other hand.
-    assert got["t"]["wall"] is True and got["t"]["side"] != got["sides"][0]
+    # A new round in the new room, on the same hand that rounded the jamb.
+    assert got["t"]["wall"] is True and got["t"]["side"] == got["sides"][0]
     assert got["log"].count("explore_walls") == 2 and "explore_end" in got["log"]
 
 

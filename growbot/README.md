@@ -747,7 +747,7 @@ round takes the other side (`"left"`/`"right"` picks one),
 since one side alone circled the flat's couch for good. It ends when his map says he is in
 another room, after twenty minutes, or when something blocks him 16 times (once his map has him
 in another room, two more walks carry him clear of the doorway). Through a doorway, a new round starts
-round the new room by itself, on the other hand, for up to three rooms on, so he keeps
+round the new room by itself, on the same hand, for up to three rooms on, so he keeps
 going rather than stopping to decide. A second wall within two walks
 that would turn him back the way he came means he took the corner on the wrong hand, so he
 changes hands and turns the other way from the first wall. While it runs his own walks are
