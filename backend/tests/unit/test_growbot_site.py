@@ -4310,9 +4310,13 @@ def _trained_walk(
     faces: list[dict[str, float]] | None = None,
     wait_ms: int = 0,
     cam: str = "user",
+    turn: float = 0,
+    secs: float = 1,
 ) -> dict[str, Any]:
     env = {
         **os.environ,
+        "GB_TURN": str(turn),
+        "GB_SECS": str(secs),
         "GB_DRIVE": (_SITE / "growbot-drive.js").as_uri(),
         "GB_FOLLOW_JS": (_SITE / "growbot-follow.js").as_uri(),
         "GB_FOLLOW": follow,
@@ -4455,6 +4459,38 @@ def test_a_skill_set_walks_forward_with_the_tall_walk() -> None:
     # A new file starts from a still stance: legs neutral before its first tick.
     assert got["poses"][:2] == [[94, 88], [94, 88]]
     assert got["errs"] == [] and got["last"] == ["rest"]
+
+
+def test_a_skill_set_turn_steers_onto_its_angle_and_ends_there() -> None:
+    """Explore rebuild (2026-11-18): a turn by degrees runs on the look skill, steered by
+    heading, and ends once it holds the angle. The stock spin it replaces reached its angle in
+    131 of 684 turns."""
+    got = _trained_walk("turn", _LEANING, skills=_SET, turn=20, secs=10, wait_ms=5500)
+    assert set(got["files"]) == {_LOOK_F}
+    # Speed 0 throughout, the error shrinking as the phone turns left toward +20.
+    assert all(c["fwd"] == 0 for c in got["cmds"])
+    assert got["cmds"][0]["yaw"] > got["cmds"][-1]["yaw"] >= -4 / 180
+    end = got["ends"][-1]
+    assert end["why"] == "turned" and end["target"] == 20 and abs(end["heading"] - 20) <= 4
+    assert got["errs"] == [] and got["last"] == ["rest"]
+
+
+def test_a_skill_set_turn_that_never_moves_is_not_called_turned() -> None:
+    """A wedged body: neither far off nor near counts as turned while the heading never moves,
+    so gbMap's stuck-spin watch still sees it."""
+    got = _trained_walk("turn", _STILL, skills=_SET, turn=-30, secs=10, wait_ms=2400)
+    assert got["ends"] == []
+    assert all(c["fwd"] == 0 and c["yaw"] == -30 / 180 for c in got["cmds"])
+    near = _trained_walk("turn", _STILL, skills=_SET, turn=10, secs=10, wait_ms=4000)
+    assert near["ends"] == []
+
+
+def test_a_skill_set_half_turn_keeps_its_side() -> None:
+    """At exactly 180 the error's sign would flip with the noise each tick."""
+    left = _trained_walk("turn", _STILL, skills=_SET, turn=180, secs=10, wait_ms=2000)
+    right = _trained_walk("turn", _STILL, skills=_SET, turn=-180, secs=10, wait_ms=2000)
+    assert all(c["yaw"] == pytest.approx(179.9 / 180) for c in left["cmds"])
+    assert all(c["yaw"] == pytest.approx(-179.9 / 180) for c in right["cmds"])
 
 
 def test_a_skill_set_backs_away_nose_first_without_turning_round() -> None:
@@ -5397,6 +5433,40 @@ def test_daves_own_forward_and_back_walks_run_the_trained_skills() -> None:
         "secs": 8,
     }
     assert got["bmv"]["ask"] == 5 and got["bmv"]["direction"] == "screen-backward"
+
+
+def test_daves_turn_by_degrees_takes_the_look_skill() -> None:
+    got = _own_walk(
+        "window.gbOwnWalk({dir:'left',turn:90,secs:18},'left',a),"
+        " window.gbOwnWalk({dir:'right',turn:270},'right',b), window.gbOwnTurnReady()"
+    )
+    assert got["out"] == [True, True, True]
+    assert got["started"] == [["turn", 18, "look+forward+back"], ["turn", 8, "look+forward+back"]]
+    assert got["mv"] == {
+        "kind": "spin",
+        "gait": "trained",
+        "dir": "left",
+        "direction": "turn",
+        "turn": 90,
+        "policy": "set:look+forward+back",
+        "secs": 18,
+    }
+    # 270 to the left is 90 to the right; a half turn keeps the side it was asked on.
+    assert got["bmv"]["turn"] == -90 and got["bmv"]["dir"] == "right"
+    half = _own_walk(
+        "window.gbOwnWalk({turn:180},'left',a), window.gbOwnWalk({turn:-180},'right',b)"
+    )
+    assert (half["mv"]["turn"], half["bmv"]["turn"]) == (180, -180)
+    # No look skill: gbMap keeps the stock spin (gbOwnTurnReady), and a turn that reaches here
+    # anyway is refused, never left to runGait as a timed walk with nothing to stop it.
+    none = _own_walk(
+        "window.gbOwnWalk({dir:'left',turn:90},'left',a), window.gbOwnTurnReady()",
+        skills="{forward:'F',back:'B'}",
+    )
+    assert none["out"] == [True, False] and none["started"] == []
+    assert none["outcomes"] == [["blocked", "turn_unavailable"]] and none["mv"] == {"kind": "stop"}
+    off = _own_walk("window.gbOwnTurnReady()", query="?ownwalk=0")
+    assert off["out"] == [False]
 
 
 def test_daves_own_walks_stay_stock_without_a_skill_set_or_when_asked() -> None:

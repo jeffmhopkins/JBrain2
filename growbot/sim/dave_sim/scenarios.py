@@ -374,6 +374,40 @@ async def trained_turns(sim: Sim) -> None:
     sim.check(right < -15, "a trained spin right turns clockwise", turned_deg=round(right, 1))
 
 
+_TURNS = (90, -45, 180, -120, 30)
+
+
+@scenario(start="standing", person=None, timeout=300)
+async def turns_by_degrees(sim: Sim) -> None:
+    """Turns by degrees, as he and the explore trip ask for them (gbMap.turn), on the box's
+    skill set. Needs no model. Each must end within 10 degrees of its angle by the sim's own
+    yaw and say it turned. Catches: turns left on the stock spin (it reached its angle in 131
+    of 684 turns, 2026-11-18), a turn that never ends, and a sign the wrong way round."""
+    await sim.wait(4)
+    for want in _TURNS:
+        n0, t = sim.state["nose_deg"], sim.now()
+        spec = await sim.page.evaluate(
+            "d => { var s = window.gbMap.turn(d); if (s) runGait(s); return s; }", want
+        )
+        sim.check(
+            bool(spec and "turn" in spec), f"a {want} degree turn takes the look skill", spec=spec
+        )
+        ended = await sim.until(
+            lambda s, t=t: bool(_page_events_since(s, t, "walk_end")), 60, f"the {want} turn ended"
+        )
+        await sim.wait(1.5)
+        did = (sim.state["nose_deg"] - n0 + 180) % 360 - 180
+        why = [e.get("why") for e in _page_events_since(sim, t, "walk_end")]
+        off = abs((did - want + 180) % 360 - 180)
+        sim.check(
+            ended and off <= 10 and why[:1] in (["turned"], ["turned_near"]),
+            f"turned {want} degrees, within 10",
+            did=round(did, 1),
+            why=why,
+        )
+    sim.check(_upright(sim), "on his feet at the end")
+
+
 @scenario(start="standing", wiring={"swap": False}, person={"x": -2.5, "face_z": 0.6})
 async def stock_wired(sim: Sim) -> None:
     """The sim's stock build, its legs the other way round from the robot's. This scenario

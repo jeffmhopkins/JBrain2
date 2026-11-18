@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-11-15
+> **Status:** Living · **Last verified:** 2026-11-18
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -264,6 +264,11 @@ The location + family + intake slices shipped; build records are under
   between (look, the tall walk, the nose-first backing walk) and the "stop stop" emergency stop
   have shipped; the face follower (with a legs-off dry run) is landing, then the follow-me voice
   commands and walk for X seconds or meters.
+
+- **GrowBot exploring** — In progress (`plans/GROWBOT_EXPLORE_PLAN.md`) — how Dave explores the
+  house, rebuilt on a grid map from his depth sense, a measured pose and a frontier planner
+  driving the master skill set by heading, with Qwen setting goals, naming and answering on top.
+  Turns by degrees on the trained look skill have begun (E1).
 
 - **Pet endpoint (PWA first)** — In progress (`plans/PET_ENDPOINT_PWA_PLAN.md`; the face, the
   rig, the renderer and the anti-boredom engine landed as an owner-only troubleshooting screen) — a full-screen
