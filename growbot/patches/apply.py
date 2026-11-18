@@ -4293,8 +4293,10 @@ _GB_EXPLORE_JS = (
     " means walking: make it your goal (goal:\\\"explore the house\\\") and send a walk or a"
     " spin in this same reply. Saying where you will look moves nothing; only a walk or a spin"
     " does.\":\"\"; }\n"
+    # f9: his goal became "follow walls to find a doorway out of the living room", which lost
+    # the explore line and turned his wait for Jeff back into ten idle minutes.
     "var GB_EXPLORE_REST_MS=60000; var _gbExpFrom=null, GB_EXPLORE_RE=/\\b(explor|map (the|this|my|your|every)|wander|look around"
-    "|roam)/i;\n"
+    "|roam|doorway|way out|follow(ing)? (the )?walls?)/i;\n"
     # Live m3-m8 (Jeff, 2026-11-17: "he kind of just looks around in the same spot. How do we
     # get him to actually go up to things and go around the perimeter of walls", and "find out
     # if any room has any doors and whether or not he's left it"): m7 spun 25 times and walked

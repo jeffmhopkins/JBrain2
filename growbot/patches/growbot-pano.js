@@ -120,7 +120,10 @@
       tr.why = blocked ? "stopped" : swung ? "swung " + sw : "clear " + sw;
       if (swung) blocked = true;
       if (blocked) tr.blocks++;
-      tr.want = wrap(h.h + side * (blocked ? 90 : -PROBE_DEG));
+      // A clear walk's probe is taken from where that walk set out, not where it ended: a walk
+      // drifts up to 20 degrees either way (f8-f9, mf4-mf6), and turning on from the end let the
+      // drift add up, so he ground into the wall or wandered off it.
+      tr.want = blocked ? wrap(h.h + side * 90) : wrap((typeof tr.h0 === "number" ? tr.h0 : h.h) - side * PROBE_DEG);
     }
     if (tr.want !== null && tr.want !== undefined) {
       var d = wrap(tr.want - h.h);

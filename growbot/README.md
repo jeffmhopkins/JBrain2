@@ -736,7 +736,9 @@ goes back to him for a real name.
 
 `explore:{walls:true}` follows the room's walls round, keeping them on one side, which is how he
 finds its doorways (owner, 2026-11-17: "go around the perimeter of walls"). Each step probes 15
-degrees toward the wall and walks 12 s; a step that is blocked, or whose drift has swung him 25
+degrees toward the wall from where the last walk set out (a walk drifts up to 20 degrees either
+way, and probing on from its end added that up) and walks 12 s; a step that is blocked, or whose
+drift has swung him 25
 degrees away from the wall side, turns him 90 degrees away from it. Each round takes the other
 side (`"left"`/`"right"` picks one), since one side alone circled the flat's couch for good. It
 ends when his map says he is in another room, after ten minutes, or when something blocks him

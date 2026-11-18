@@ -268,6 +268,20 @@ def test_following_the_walls_turns_right_after_a_clear_walk_and_left_after_a_blo
     assert (yes, no, short) == (True, False, False)
 
 
+def test_a_clear_walls_probe_is_taken_from_where_the_walk_set_out() -> None:
+    """f9: each walk drifts up to 20 degrees, and probing on from its end added the drift up."""
+    got = _node(
+        "const tr={wall:true,x:0,y:0,t:0,room:'r',want:null,walked:false,blocks:0};"
+        "const h=(x,y,hd)=>({x,y,h:hd,room:'r'});"
+        "P.wallStep(tr,h(0,0,90),1000,false);"
+        "console.log(JSON.stringify([P.wallStep(tr,h(0,0.5,70),20000,false),"
+        "P.wallStep(tr,h(0,0.5,70),21000,false)]))"
+    )
+    # Set out at 90, drifted to 70: the probe aims at 75, five degrees off, so it walks on;
+    # that walk set out at 70, so the next probe is 15 right of 70.
+    assert got[0]["walk"]["dir"] == "fwd" and got[1]["walk"] == {"turn": -15}
+
+
 def test_a_way_whose_walk_is_blocked_ends_there() -> None:
     got = _node(
         "console.log(JSON.stringify(P.step({abs:90,x:0,y:0,t:0},{x:0,y:0.3,h:90},1000,false,true)))"
@@ -318,8 +332,8 @@ def test_a_walk_that_swings_him_round_counts_as_a_wall() -> None:
     right, b1, left, b2 = got
     # 30 degrees to the right: into the wall on his right, so turn away left.
     assert right["walk"] == {"turn": 90} and b1 == 1
-    # 40 to the left is a clear walk's wobble: probe right again.
-    assert left["walk"] == {"turn": -15} and b2 == 1
+    # 40 to the left is a clear walk's wobble: probe 15 right of where it set out (150).
+    assert left["walk"] == {"turn": -55} and b2 == 1
 
 
 def test_each_round_of_the_walls_takes_the_other_side_unless_he_names_one() -> None:

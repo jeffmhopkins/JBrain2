@@ -5953,3 +5953,8 @@ def test_exploring_alone_a_wait_for_his_person_becomes_a_minutes_rest() -> None:
     # After the wait's own defaults, before the wait is stamped.
     assert i < page.index('/*WAIT-LOOK{*/try{ if(changed&&actPhase==="waiting")', i)
     assert "var GB_EXPLORE_REST_MS=60000;" in page
+    # f9: a goal of the walls and the doorway is still exploring (the JS regex reads as Python's).
+    at = page.index("GB_EXPLORE_RE=/") + 15
+    rx = re.compile(page[at : page.index("/i;", at)], re.I)
+    goals = ["mission: follow walls to find a doorway out", "explore the flat", "fetch the tea"]
+    assert [bool(rx.search(g)) for g in goals] == [True, True, False]
