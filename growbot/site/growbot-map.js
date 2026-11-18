@@ -178,6 +178,11 @@
     room: function (m, op, now) {
       var n = name(op.room), size = Array.isArray(op.size) ? op.size : [];
       if (!n) return "";
+      // "room" or "room1" tells his map nothing it can be asked for later ("where is the
+      // kitchen?"), and squats the name the map gives an unnamed room itself.
+      if (/^(the )?(room|area|space|place) ?\d*$/.test(n)) {
+        return "\"" + n + "\" is not a name: call a room what it is by what is in it (a piano or couch makes a living room, a fridge or stove a kitchen, a bed a bedroom)";
+      }
       var w = num(size[0], ROOM_MIN, ROOM_MAX), d = num(size[1], ROOM_MIN, ROOM_MAX), r = roomOf(m, n), cur = here(m);
       if (!r && cur && /^room \d+$/.test(cur.n) && inside(cur, m.here.x, m.here.y)) {
         // The room sketched before he named it is this one: its doorways and things too.

@@ -434,3 +434,15 @@ def test_on_legs_a_finish_his_map_calls_far_is_held_twice_at_most() -> None:
     assert "&&_gbFar!==null&&_gbFar>GB_FAR_M&&_gbFarHolds<2){ _gbFarHolds++;" in page
     assert "_gbGoalT=Date.now(); _gbFarHolds=0; _gbFarSaid=null;" in page
     assert "You said you were there, but your map" in page
+
+
+def test_a_room_called_just_room_is_sent_back_for_a_real_name() -> None:
+    got = _node(
+        "const m=L.fresh(now);"
+        "const a=L.apply(m,{room:'room1'},now);const b=L.apply(m,{room:'Room'},now);"
+        "const c=L.apply(m,{room:'living room'},now);"
+        "console.log(JSON.stringify({a,b,c,rooms:m.rooms.map(r=>r.n)}));"
+    )
+    assert "is not a name" in got["a"][0] and "living room" in got["a"][0]
+    assert "is not a name" in got["b"][0]
+    assert got["rooms"] == ["living room"]
