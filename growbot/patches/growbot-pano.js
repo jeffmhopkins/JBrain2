@@ -32,7 +32,9 @@
   var GO_M = 0.9, GO_MS = 120000, FACE_DEG = 20, WALK_S = 25;
   // Following the walls: short walks, a probe to the right after each clear one and a turn to
   // the left after each blocked one, for up to WALL_MS.
-  var WALL_WALK_S = 15, WALL_MS = 300000, PROBE_DEG = 30, WALL_BLOCKS = 10, SWING_DEG = 25;
+  // From f5-f6 in the flat: a clear walk swings him at most about 13 degrees, a scraping one 16
+  // to 30; his walk drifts right on its own, so the probe right is small.
+  var WALL_WALK_S = 12, WALL_MS = 600000, PROBE_DEG = 15, WALL_BLOCKS = 16, SWING_DEG = 15;
   // His picture standing still while he walks forward (mean grey change per pixel, 2 s apart,
   // three in a row): in the flat (f3) 9 of 9 such runs were pushing against a wall or
   // furniture and none was walking, though it catches about a third of the pushing.
@@ -106,7 +108,7 @@
   function wallStep(tr, h, now, blocked) {
     var gone = Math.hypot(h.x - tr.x, h.y - tr.y);
     if (tr.room && h.room && h.room !== tr.room) return { done: "you went through into the " + h.room, gone: gone };
-    if (now - tr.t > WALL_MS) return { done: "it ran its five minutes", gone: gone };
+    if (now - tr.t > WALL_MS) return { done: "it ran its ten minutes", gone: gone };
     if (tr.blocks >= WALL_BLOCKS) return { done: "something kept being in the way", gone: gone };
     if (tr.walked) {
       tr.walked = false;
@@ -118,7 +120,8 @@
     }
     if (tr.want !== null && tr.want !== undefined) {
       var d = wrap(tr.want - h.h);
-      if (Math.abs(d) > FACE_DEG) return { walk: { turn: Math.round(d) }, gone: gone };
+      // Within the 8 degrees a gyro turn will not attempt (gbMap.turn) is facing it.
+      if (Math.abs(d) > 8) return { walk: { turn: Math.round(d) }, gone: gone };
       tr.want = null;
     }
     tr.walked = true; tr.h0 = +h.h;

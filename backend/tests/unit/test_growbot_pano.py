@@ -250,16 +250,16 @@ def test_following_the_walls_turns_right_after_a_clear_walk_and_left_after_a_blo
         "console.log(JSON.stringify(["
         "P.wallStep(tr,h(0,0,90),1000,false),"  # first: walk
         "P.wallStep(tr,h(0,0.5,90),20000,false),"  # clear: probe 45 right
-        "P.wallStep(tr,h(0,0.5,62),25000,false),"  # facing it: walk
-        "P.wallStep(tr,h(0.3,0.8,62),40000,true),"  # blocked: 90 left
-        "P.wallStep(tr,h(0.3,0.8,150),45000,false),"  # facing it: walk
+        "P.wallStep(tr,h(0,0.5,78),25000,false),"  # facing it: walk
+        "P.wallStep(tr,h(0.3,0.8,78),40000,true),"  # blocked: 90 left
+        "P.wallStep(tr,h(0.3,0.8,166),45000,false),"  # facing it: walk
         "P.wallStep(tr,h(0,1.2,135,'hallway'),60000,false),"  # another room: done
-        "P.wallStep({wall:true,x:0,y:0,t:0,want:null,walked:false,blocks:10},h(0,0,0),1,false),"
+        "P.wallStep({wall:true,x:0,y:0,t:0,want:null,walked:false,blocks:16},h(0,0,0),1,false),"
         "P.blockedRun([1,2.4,0.3]),P.blockedRun([1,2.6,0.3]),P.blockedRun([0,0])]))"
     )
     first, probe, walk, away, walk2, through, boxed, yes, no, short = got
-    assert first["walk"]["dir"] == "fwd" and first["walk"]["secs"] == 15
-    assert probe["walk"] == {"turn": -30}
+    assert first["walk"]["dir"] == "fwd" and first["walk"]["secs"] == 12
+    assert probe["walk"] == {"turn": -15}
     assert walk["walk"]["dir"] == "fwd"
     assert away["walk"] == {"turn": 90}
     assert walk2["walk"]["dir"] == "fwd"
@@ -282,7 +282,7 @@ def test_walls_is_an_explore_choice_and_runs_by_itself() -> None:
         "console.log(JSON.stringify({o,ran,st:P.state(),log}))"
     )
     assert "walk" not in got["o"] and got["o"]["_gbExplored"] == 1
-    assert got["ran"] == [{"gait": "screen_forward", "dir": "fwd", "secs": 15}]
+    assert got["ran"] == [{"gait": "screen_forward", "dir": "fwd", "secs": 12}]
     assert got["st"]["trip"]["wall"] is True and "explore_walls" in got["log"]
 
 
