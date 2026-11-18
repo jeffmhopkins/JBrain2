@@ -666,15 +666,16 @@ async def map_house(sim: Sim) -> None:
 _FLAT_AWAY = ("kitchen", "bedroom", "study")
 
 
-@scenario(scene="flat", start="standing", at=_FLAT_START, person=None, timeout=1200)
+@scenario(scene="flat", start="standing", at=_FLAT_START, person=None, timeout=1800)
 async def explore_flat(sim: Sim) -> None:
-    """Alone for fifteen minutes in the flat, started in the living room's corner behind the
-    couch. The two-room house is small enough to see most of from where he starts; here the
+    """Alone for twenty-five minutes in the flat, started in the living room's corner behind
+    the couch. (At his trained walk's 4 cm/s the way round the couch to the door is about four
+    minutes of walking alone; in fifteen, f8 was on its way through the gap when time ran out.) The two-room house is small enough to see most of from where he starts; here the
     rest of the flat is out of sight behind a door, so only walking finds it. Catches: an
     explorer that turns on the spot, one that never finds the way out of its first room, and
     one that reaches the hallway and stops there."""
     t = sim.now()
-    await sim.wait(900)
+    await sim.wait(1500)
     stats = plan.stats(sim)
     rooms = stats.get("rooms_s") or {}
     own = _page_events_since(sim, t, "walk_start")
