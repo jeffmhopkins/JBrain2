@@ -1081,6 +1081,19 @@ describe("every model call", () => {
     await waitFor(() => expect(opsVitalsCalls).toHaveBeenCalledWith(900));
   });
 
+  it("does not blame the GPU on a cloud call", async () => {
+    opsVitalsCalls.mockResolvedValue({
+      groups: [
+        group({ caller: "background", who: "", label: "captioning an image", local: false }),
+      ],
+      running: [],
+      calls: [],
+    });
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText(/recorded no model call, load or render/)).toBeInTheDocument();
+  });
+
   it("draws nothing on a window with no calls", async () => {
     render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
     await waitFor(() => expect(opsVitalsCalls).toHaveBeenCalled());

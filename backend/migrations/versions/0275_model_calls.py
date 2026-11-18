@@ -44,8 +44,14 @@ def upgrade() -> None:
         )
         """
     )
-    # Every read is a trailing window bounded below on the start time (jbrain.model_calls).
+    # The window read is "ended inside the window, or still open" (jbrain.model_calls): one
+    # index per arm, so a 1 Hz poll never walks the whole retention. The start-time one serves
+    # the prune.
     op.execute("CREATE INDEX model_calls_started_idx ON app.model_calls (started_at DESC)")
+    op.execute("CREATE INDEX model_calls_ended_idx ON app.model_calls (ended_at DESC)")
+    op.execute(
+        "CREATE INDEX model_calls_open_idx ON app.model_calls (started_at) WHERE ended_at IS NULL"
+    )
     op.execute("ALTER TABLE app.model_calls ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE app.model_calls FORCE ROW LEVEL SECURITY")
     op.execute(

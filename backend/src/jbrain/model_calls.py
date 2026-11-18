@@ -48,14 +48,13 @@ EXTERNAL = "external"
 PET = "pet"
 BACKGROUND = "background"
 
-# How long rows are kept. The page's widest window is fifteen minutes; a day leaves the debug
-# API something to read back after the fact.
+# How long rows are kept. The page's widest window is fifteen minutes; a day leaves the record
+# readable after the fact.
 RETENTION = timedelta(days=1)
 
 # A row still open after this belongs to a process that died under it, and is no longer listed.
 # Far past any real call (a long generation runs minutes), so a call that is still running is
-# never dropped while it pins the GPU. Also the bound on how far before the window a relevant
-# row can have started, which lets the window read use the start-time index. A process that
+# never dropped while it pins the GPU. A process that
 # restarts settles its own leftovers at once (`settle_orphans`), so this only matters for one
 # that died and never came back.
 STALE_AFTER = timedelta(hours=2)
@@ -141,7 +140,7 @@ _SETTLE = """
 """
 
 _ORPHANS = """
-    UPDATE app.model_calls SET ended_at = now(), status = 'stopped',
+    UPDATE app.model_calls SET ended_at = started_at, status = 'stopped',
         error = 'the process restarted during the call'
     WHERE source = :source AND ended_at IS NULL
 """
@@ -170,7 +169,9 @@ async def settle_orphans() -> None:
 
     Called once at startup, after `configure`. A call cut off by a restart (Ops → Update)
     never settles, and without this it would read as running until it aged out. Only one
-    process carries each source name, so every open row under it is from a life that ended."""
+    process carries each source name, so every open row under it is from a life that ended.
+    Ended at its own start, not now: when the process died is unknown, and the restart time
+    would credit the call with GPU time the box spent down."""
     await _write(_ORPHANS, {"source": _source})
 
 
@@ -254,13 +255,13 @@ async def prune(
     return cast("Any", result).rowcount or 0
 
 
-# Rows overlapping the window: settled inside it, or still open and not abandoned. Bounded below
-# on the start time so the start-time index answers it (no live call is older than STALE_AFTER).
+# Rows overlapping the window: settled inside it, or still open and not abandoned. Each arm
+# has its own index (migration 0275), so a poll reads the window's rows and the open ones,
+# not every row since the oldest call that could still be live.
 _WINDOW = """
     FROM app.model_calls m
     LEFT JOIN app.growbot_personas p ON p.id = m.persona_id
-    WHERE m.started_at >= :floor
-      AND (m.ended_at >= :cut OR (m.ended_at IS NULL AND m.started_at >= :stale))
+    WHERE m.ended_at >= :cut OR (m.ended_at IS NULL AND m.started_at >= :stale)
 """
 
 # Who the row is for: a creature by its persona's name, else its robot, else the label alone.
@@ -307,7 +308,7 @@ async def window(
     moment = now or datetime.now(tz=UTC)
     cut = moment - timedelta(seconds=seconds)
     stale = moment - STALE_AFTER
-    params = {"cut": cut, "floor": min(cut, stale), "stale": stale, "now": moment}
+    params = {"cut": cut, "stale": stale, "now": moment}
     async with scoped_session(maker, ctx) as session:
         groups = (
             await session.execute(

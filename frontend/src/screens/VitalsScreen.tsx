@@ -128,7 +128,7 @@ export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps
         <Roster
           roster={roster}
           range={range}
-          callsExplain={(calls?.groups.length ?? 0) > 0}
+          callsExplain={(calls?.groups ?? []).some((g) => g.local)}
           eventsExplain={events.length > 0}
           onSelect={onSelectTurn}
         />
@@ -331,7 +331,7 @@ function ModelCallsSection({ calls, range }: { calls: ModelCalls | null; range: 
       <section className="card vitals-events">
         {shown.map((group) => (
           <CallGroupRow
-            key={`${group.caller}-${group.who}-${group.label}-${group.model}`}
+            key={JSON.stringify([group.caller, group.who, group.label, group.model])}
             group={group}
           />
         ))}
@@ -616,8 +616,9 @@ function Roster({
 }: {
   roster: LiveTurns | null;
   range: RangeKey;
-  /** Whether the model-call and box-event lists above are carrying anything. When they
-   *  are, the empty state points at them instead of describing work it cannot see. */
+  /** Whether the model-call list above carries a call on the box's own GPU (a cloud call
+   *  explains nothing on the trace), and whether the box-event list carries anything. When
+   *  they do, the empty state points at them instead of describing work it cannot see. */
   callsExplain: boolean;
   eventsExplain: boolean;
   onSelect: (id: string) => void;
