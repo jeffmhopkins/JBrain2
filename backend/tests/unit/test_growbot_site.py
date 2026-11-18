@@ -5895,6 +5895,8 @@ def test_an_explore_goal_says_how_to_survey_and_choose_a_way_and_how_the_trip_go
     assert "not surveyed this spot yet" in got[3]
     assert "You are following the walls on your left (1.3 m from where it began)" in got[4]
     assert "leave walk out (it is ignored until explore:{stop:true})" in got[4]
+    # f18 stopped it himself at each wall it met, three times in ten minutes.
+    assert "not a reason to stop it: it turns you away by itself" in got[4]
     # With no way out found yet, following the walls is what it asks for.
     assert "Following the walls ended: something kept being in the way." in got[5]
     assert "Your last walk was stopped because your picture stopped changing" in got[5]
