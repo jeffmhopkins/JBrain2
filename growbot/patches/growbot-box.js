@@ -1657,8 +1657,9 @@
   // from the library stops walking within a minute rather than at the next reload.
   var D = Math.PI / 180, PREP_MS = 1000, KEEP_MS = 60000, cache = {};
   var STEER_HOLD_MS = 1500, DRIVE_MAX_MS = 120000, steer = null;
-  // One route's walk at most this long; the planner asks again for the rest.
-  var GO_MAX_MS = 120000;
+  // One route's walk at most this long, a room's crossing at his 4 cm/s with its turns; the
+  // route ends itself sooner when stuck or slow, and the planner asks again for the rest.
+  var GO_MAX_MS = 300000;
   // Within 6 degrees held 0.4 s is there: the look skill settles a few degrees short in the sim.
   // Camera height 0 turns it faster than standing tall (GrowBot_Training master follow-me).
   var TURN_DONE_DEG = 6, TURN_HOLD_MS = 400, TURN_PITCH = 0, TURN_NEAR_DEG = 12, TURN_STALL_MS = 2000, TURN_MOVED_DEG = 3;

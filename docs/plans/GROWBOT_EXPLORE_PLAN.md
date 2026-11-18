@@ -80,9 +80,10 @@ Each wave is tested in the sim first on true pose and depth, so a failure points
   timed chunks with a stance glide around each: more than 30° off he stops and turns on the look
   skill, and walks again within 10°. It ends "arrived" at the last point, or "stuck" after 12 s
   with no headway on a fed pose (no range sensor says a wall stopped him; a reckoned pose
-  can't show headway, so there it ends after 1.5 times its expected time), and is kept going past its first
-  seconds while it runs, paying the legs' duty budget as it goes. Sim `square_by_path`: a 1 m
-  square as one route on true pose. *Pass:* 95% of turns within 10°; a scripted 1 m square on
+  can't show headway, so there it ends after 1.5 times its expected time, counting only time
+  on the reckoned pose), and is kept going past its first seconds while it runs, up to 5
+  minutes, paying the legs' duty budget as it goes. Sim `square_by_path`: a 1 m square as one
+  route on true pose arrived in 126 s and closed within 14 cm (2026-11-18). *Pass:* 95% of turns within 10°; a scripted 1 m square on
   true pose closes within 25 cm; no falls in 20 runs.
 - **E2 — grid, frontiers and inspection on true pose and depth.** This is the wave that proves
   the paradigm. *Pass:* 12/12 runs reach every room and identify ≥90% of the sim's major items
