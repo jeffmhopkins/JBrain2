@@ -34,7 +34,7 @@
   // the left after each blocked one, for up to WALL_MS (mf9 ran out of ten minutes at the
   // living room's door, at his 4 cm a second).
   // His walk drifts right on its own (f5-f7), so the probe right is small.
-  var BACK_S = 6, WALL_WALK_S = 12, WALL_MS = 1200000, PROBE_DEG = 15, WALL_BLOCKS = 16, SWING_DEG = 15;
+  var BACK_S = 6, WALL_WALK_S = 12, WALL_MS = 1200000, PROBE_DEG = 15, WALL_BLOCKS = 16, SWING_DEG = 15, WALL_CHAIN = 3;
   // His picture standing still while he walks forward (mean grey change per pixel, 2 s apart,
   // three in a row): in the flat (f3) 9 of 9 such runs were pushing against a wall or
   // furniture and none was walking, though it catches about a third of the pushing.
@@ -421,7 +421,21 @@
           var sst = window.gbMap && window.gbMap.stuckSpinT ? window.gbMap.stuckSpinT() : 0, wedged = sst > (trip.stuckT || trip.t);
           if (wedged) trip.stuckT = sst;
           var st = trip.wall ? wallStep(trip, h, now, bl, wedged) : step(trip, h, now, false, bl);
-          if (st.done) { lastTrip = { n: trip.n, wall: !!trip.wall, why: st.done, gone: st.gone }; try { logEv("explore_end", { n: trip.n, why: st.done, m: Math.round(st.gone * 100) / 100 }); } catch (e) {} trip = null; wake(); return; }
+          if (st.done) {
+            lastTrip = { n: trip.n, wall: !!trip.wall, why: st.done, gone: st.gone };
+            try { logEv("explore_end", { n: trip.n, why: st.done, m: Math.round(st.gone * 100) / 100 }); } catch (e) {}
+            /* Through a doorway into a new room, the walls carry on round that one (f19 reached
+               the hallway and then spent four minutes saying where he would go next without
+               going). Three rooms on, he is asked again. */
+            var ch = trip.wall && /^you went through into /.test(st.done) ? (trip.chain || 0) + 1 : 0;
+            trip = null;
+            if (ch && ch <= WALL_CHAIN) {
+              var sd2 = (wallSide = -wallSide);
+              trip = { n: 0, wall: true, side: sd2, x: h.x, y: h.y, t: now, room: h.room || "", want: null, walked: false, blocks: 0, chain: ch };
+              try { logEv("explore_walls", { room: h.room || "", side: sd2, chain: ch }); } catch (e) {}
+            }
+            wake(); return;
+          }
           spec = st.walk || null;
         } else { survey--; spec = { turn: 180 }; }
         if (spec && spec.turn !== undefined) spec = window.gbMap && window.gbMap.turn ? window.gbMap.turn(spec.turn) : null;

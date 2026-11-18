@@ -386,6 +386,25 @@ def test_a_round_that_ends_during_a_long_timer_wait_wakes_him_now() -> None:
     assert got["soon"] and "explore_wake" in got["log"]
 
 
+def test_through_a_doorway_the_walls_carry_on_round_the_new_room() -> None:
+    """f19 reached the hallway, then spent four minutes saying where he would go next."""
+    got = _page_node(
+        "let room='living room', hd=90;"
+        "window.gbMap.map=()=>({here:{x:0,y:0,h:hd,room},"
+        "rooms:[{n:'living room'},{n:'hall'}]});"
+        "window.gbMap.turn=(d)=>{hd+=d;return {gait:d>0?'spin_left':'spin_right',secs:3};};"
+        "P.reply({explore:{walls:true}},0,now); tick(); now+=2000; tick();"
+        "room='hall'; const sides=[P.state().trip.side];"
+        "for(let i=0;i<12;i++){ _motion=null; now+=2000; tick(); now+=2000; tick(); }"
+        "const st=P.state();"
+        "console.log(JSON.stringify({t:st.trip,last:st.last,sides,log}))"
+    )
+    assert got["last"]["why"] == "you went through into the hall"
+    # A new round in the new room, on the other hand.
+    assert got["t"]["wall"] is True and got["t"]["side"] != got["sides"][0]
+    assert got["log"].count("explore_walls") == 2 and "explore_end" in got["log"]
+
+
 def test_coming_back_into_the_room_it_began_in_carries_the_round_on() -> None:
     """Review: his map's drift by a doorway put him in the hallway for one step."""
     got = _node(
