@@ -246,7 +246,7 @@ global.runGait=()=>{};
 global.gbOwnGoReady=()=>READY;
 global.gbPose={source:()=>isFed?"fed":"reckoned"};
 let goes=0, last=null, refuse=REFUSE, asked=0;
-global.gbMap={map:()=>({here:pos}), turn:()=>null,
+global.gbMap={map:()=>({here:pos}), turn:()=>(TURNS?{dir:"left",turn:90,secs:9}:null),
   go:(pts)=>{asked++; if(refuse-->0) return false; goes++; last=pts[pts.length-1]; return true;},
   goState:()=>last?{why:WHY}:null};
 delete require.cache[require.resolve(GRID)];
@@ -268,6 +268,7 @@ def _page(
     stop: int = 10**6,
     refuse: int = 0,
     ready: bool = True,
+    turns: bool = False,
 ) -> Any:
     return _node(
         _PAGE.replace("GRID", json.dumps(str(_GRID)))
@@ -277,6 +278,7 @@ def _page(
         .replace("STOP", str(stop))
         .replace("REFUSE", str(refuse))
         .replace("READY", json.dumps(ready))
+        .replace("TURNS", json.dumps(turns))
     )
 
 
@@ -343,3 +345,7 @@ def test_a_refused_walk_is_waited_out_not_counted_against_the_frontier() -> None
     # With no route skills at all there is nothing to wait for.
     bare = _page(True, refuse=10**6, ready=False)
     assert bare["st"]["done"] == "no_skills" and bare["now"] < 60000
+    # A refused turn is not a look taken: with every turn refused (nothing ever moves in this
+    # stub) he never gets past looking round to set off anywhere.
+    stalled = _page(True, turns=True)
+    assert stalled["st"]["done"] == "no_legs" and stalled["goes"] == 0

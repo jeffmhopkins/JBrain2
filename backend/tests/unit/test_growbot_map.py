@@ -355,15 +355,15 @@ def test_a_long_turn_kept_to_one_side_is_not_stuck_and_a_new_point_picks_its_own
         "for(var a=0;a<=100;a+=10){ h.h=a; tick(2500); out.push(R(clock)); }"
         "var R1=R;"
         "_live.map.here={x:0,y:0,h:0,room:'',t:0};h=_live.map.here;"
-        # Turning left to the first point, then on it with the second 120 degrees right.
-        "window.gbMap.go([{x:-1,y:0.02},{x:-1.5,y:-0.85}]);h.h=0;tick(200);R(clock);"
+        # Turning left to the first point, then on it with the second 170 degrees right.
+        "window.gbMap.go([{x:-1,y:0.02},{x:-1.4924,y:-0.0668}]);h.h=0;tick(200);R(clock);"
         "h.x=-1;h.y=0.02;tick(200);var nxt=R(clock);"
         "console.log(JSON.stringify({w:w,out:out,nxt:nxt}));"
     )
     # The wobble past 180 is sent as 150 left, which the walk can't wrap the other way.
     assert got["w"]["heading"] == 150
     assert all(not o.get("done") and 0 < o["heading"] <= 150 for o in got["out"])
-    assert got["nxt"]["heading"] == pytest.approx(-120, abs=1)
+    assert got["nxt"]["heading"] == pytest.approx(-150, abs=0.01)
 
 
 def test_a_route_that_stops_getting_closer_ends_itself_and_none_runs_without_skills() -> None:
