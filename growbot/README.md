@@ -373,6 +373,10 @@ which the sidecar hands to the api's `/internal/growbot/bodytests` and answers o
 While it runs `heardText` gives it every line after `gbEStop`, so no model turn moves the legs.
 On a robot's phone the wake screen has its own **body test** button, for an owner with one
 phone: it reads the skill set from `/api/box/skills` (only for a robot the phone drives).
+Leaving the app puts him back behind that screen (`growbot-box.js` `wakeOnReturn`): once the
+wake screen was tapped through, a hide pauses him and stops a body test, and coming back reloads
+the page onto the wake screen. A pause the person chose survives the reload as before; a file
+chooser's or share sheet's round trip (a hide within 3 s of the tap) is not a leave.
 `docs/plans/GROWBOT_POLICY_DRIVE_PLAN.md` "Body test" has the checks.
 
 **The camera test.** `camtest.html` (`growbot-camtest.js`), opened from the wake screen's

@@ -5128,6 +5128,66 @@ def test_the_wake_screen_starts_a_body_test_on_a_robots_phone() -> None:
     assert run("", [200, {"skills": skills}])["n"] == 0
 
 
+def test_leaving_the_app_pauses_him_and_coming_back_lands_on_the_wake_screen() -> None:
+    """Owner, 2026-11-19: paused, left, came back, and the page the phone kept alive was still
+    on the live view. A hide after the wake tap pauses him (stopping a body test) and the return
+    reloads onto the wake screen; a page never woken, or a file chooser's round trip, is left be."""
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    code = box[box.index("  function wakeOnReturn() {") : box.index("  function load(pid) {")]
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    program = (
+        "var said=[], on={}, won={}, gate={style:{display:'none'}}, clock=1e6;"
+        "Date.now=function(){ return clock; };"
+        "var document={readyState:'complete', hidden:false,"
+        " getElementById:function(i){ return i==='wakeGate'?gate:null; },"
+        " addEventListener:function(n,f){ on[n]=f; }};"
+        "var window={_wakeGateUp:false, addEventListener:function(n,f){ won[n]=f; },"
+        " gbBodyTest:{active:function(){ return true; },"
+        " stop:function(w){ said.push('bt:'+w); }}};"
+        "var paused=JSON.parse(process.argv[2]);"
+        "function setPaused(p){ paused=p; said.push('pause:'+p); }"
+        "function logEv(e,d){ said.push(e+':'+d.paused); }"
+        "var location={reload:function(){ said.push('reload:'+gate.style.display); }};"
+        "var navigator={};\n" + code + "\nfunction tap(t){ on.click({target:t}); }"
+        "function vis(h){ document.hidden=h; on.visibilitychange(); }"
+        "JSON.parse(process.argv[1]).forEach(function(s){"
+        " if(s==='wake') tap({id:'wgWake'});"
+        " else if(s==='file') tap({tagName:'INPUT', type:'file'});"
+        " else if(s==='hide') vis(true); else if(s==='show') vis(false);"
+        " else if(s==='wait') clock+=5000;"
+        " else if(s==='bfcache') won.pageshow({persisted:true}); });"
+        "console.log(JSON.stringify(said));"
+    )
+
+    def run(steps: list[str], paused: bool = False) -> list[str]:
+        out = subprocess.run(
+            [node, "-e", program, json.dumps(steps), json.dumps(paused)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(out.stdout)
+
+    assert run(["wake", "hide", "show", "show"]) == [
+        "bt:hidden",
+        "pause:true",
+        "left_app:0",
+        "reload:flex",
+    ]
+    # His own pause stands as it was; the reload keeps it.
+    assert run(["wake", "hide", "show"], paused=True) == ["bt:hidden", "left_app:1", "reload:flex"]
+    # Restored from the back-forward cache: the same return, once.
+    assert run(["wake", "hide", "bfcache", "show"])[-1] == "reload:flex"
+    assert run(["hide", "show"]) == []
+    assert run(["wake", "file", "hide", "show"]) == []
+    # The chooser's round trip spent the exemption; the next leave is a leave.
+    assert run(["wake", "file", "hide", "show", "hide", "show"])[-1] == "reload:flex"
+    # An iOS chooser never hides the page: a leave long after the tap is a leave.
+    assert run(["wake", "file", "wait", "hide", "show"])[-1] == "reload:flex"
+
+
 def test_a_reply_written_as_a_sentence_then_its_json_keeps_its_move() -> None:
     """2026-11-16: "I'm lying flat ...\n\n{"body":{...}}" lost its leg steps: the prose salvage
     took the raw text as the say, so the person-turn say_missing rescue never ran. Now an object
