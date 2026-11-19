@@ -286,9 +286,11 @@ class ConversationSaver:
         self, store: PrefixStore, model: str, lock: asyncio.Lock | None, after_s: float
     ) -> None:
         await asyncio.sleep(after_s)
-        self._saving = True
         try:
             async with lock if lock is not None else contextlib.nullcontext():
+                # Only now: a save still waiting for a turn to finish is cancelled and waits
+                # anew, since that turn's claim is too young for this save to take.
+                self._saving = True
                 await store.save_idle_conversation(model)
         except Exception:  # noqa: BLE001 - the keeper's tick or the next quiet tries again
             log.warning("growbot conversation save failed model=%s", model, exc_info=True)

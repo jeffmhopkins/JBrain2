@@ -847,3 +847,19 @@ async def test_a_save_under_way_is_not_cancelled_by_the_next_turn() -> None:
     # It held the lane's lock, so no turn could start between its slot read and its write.
     async with lock:
         pass
+
+
+async def test_a_save_waiting_on_a_turn_waits_anew_after_it() -> None:
+    """The turn that held the lane leaves a claim too young to save, so its own wait starts."""
+    store = _Store()
+    saver = prefix.ConversationSaver()
+    lock = asyncio.Lock()
+    await lock.acquire()  # a turn is running
+    saver.schedule(store, "m", lock, after_s=0)
+    await asyncio.sleep(0.02)
+    first = saver._task
+    lock.release()
+    saver.schedule(store, "m", lock, after_s=0.05)  # that turn's own schedule
+    assert first is not None and first is not saver._task
+    await asyncio.sleep(0.15)
+    assert store.idle_saves == ["m"]
