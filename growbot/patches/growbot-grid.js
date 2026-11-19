@@ -342,6 +342,10 @@
     // A route that ends some other way than stuck or too long (the legs' duty budget, another
     // move taking over) is tried once more; TRIES_MAX bounds a run that keeps finding edges.
     var NO_POSE_MS = 10000, TRIES_MAX = 300;
+    // A move the page refuses (legs cooling after an abort, the duty budget) says nothing about
+    // the frontier: he waits it out. REFUSED_MAX in a row (200 s, over three of the duty
+    // budget's 60 s windows) is legs that won't move.
+    var REST_MS = 5000, REFUSED_MAX = 40;
     var ex = null, timer = null;
     var busy = function () {
       try { return typeof _motion !== "undefined" && !!_motion; } catch (e) { return false; }
@@ -349,6 +353,7 @@
     var log = function (ev, d) { try { logEv(ev, d); } catch (e) {} };
     function beat() {
       if (!ex || ex.done) return;
+      if (Date.now() < ex.restT) return;
       if (ex.phase === "go") {
         var st = window.gbMap.goState();
         // A route's walk can still be loading its skills when it is asked: not ended yet.
@@ -404,8 +409,9 @@
           ex.looks++;
           var spec = window.gbMap.turn(want);
           if (spec && typeof runGait === "function") runGait(spec);
+          if (spec && !busy()) { ex.looks--; refused(); return; }
+          if (spec) { ex.refused = 0; return; }
           // A turn too small to make is a look already taken.
-          if (spec) return;
         }
         if (want !== null && ex.looks < LOOKS) return;
         ex.started = true;
@@ -423,15 +429,25 @@
       // and is judged by (goal), while giving up gives up the frontier itself (front).
       var goal = nx.points[nx.points.length - 1] || nx.goal;
       if (window.gbMap.go(nx.points)) {
+        ex.refused = 0;
         ex.phase = "go"; ex.goal = goal; ex.front = nx.goal; ex.goT = Date.now(); ex.goM = Math.hypot(goal.x - +h.x, goal.y - +h.y);
       }
-      else { ex.failed.push(nx.goal); ex.phase = "look"; ex.looks = LOOKS; }
+      else if (!(window.gbOwnGoReady && window.gbOwnGoReady())) {
+        // No route skills (stock gait, wheels): no wait brings them back.
+        ex.done = "no_skills"; log("grid_explored", { done: ex.done });
+      }
+      else { ex.tries--; refused(); }
+    }
+    function refused() {
+      ex.restT = Date.now() + REST_MS;
+      if (++ex.refused >= REFUSED_MAX) { ex.done = "no_legs"; log("grid_explored", { done: ex.done }); }
+      else log("grid_rest", { n: ex.refused });
     }
     /* On: explore from here. Off: stop after the current move. */
     api.explore = function (on) {
       if (timer) { clearInterval(timer); timer = null; }
       if (!on) { ex = null; return null; }
-      ex = { phase: "look", looks: 0, failed: [], ended: [], arrived: [], tries: 0, done: "", goal: null, started: false, waitT: 0 };
+      ex = { phase: "look", looks: 0, failed: [], ended: [], arrived: [], tries: 0, done: "", goal: null, started: false, waitT: 0, restT: 0, refused: 0 };
       timer = setInterval(function () { try { beat(); } catch (e) { log("grid_error", { e: String(e).slice(0, 120) }); } }, BEAT_MS);
       return api.state();
     };

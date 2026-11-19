@@ -234,7 +234,8 @@ def test_a_frontier_running_back_to_his_feet_is_still_a_way_on() -> None:
 
 # The page half with its neighbours stubbed: a fed pose (FED) that moves FRAC of the way to his
 # last route's end each beat, routes that end WHY at once, and a beat run by hand until he is
-# done or has set off STOP times.
+# done or has set off STOP times. The first REFUSE routes asked for are refused, as the page
+# refuses a walk while his legs cool after an abort.
 _PAGE = """
 let now=0, beatFn=null, pos={x:1,y:1.5,h:0}, isFed=FED;
 global.document={}; global.window=global;
@@ -242,10 +243,11 @@ global.setInterval=(f)=>{beatFn=f; return 1;}; global.clearInterval=()=>{};
 Date.now=()=>now;
 global.logEv=()=>{};
 global.runGait=()=>{};
+global.gbOwnGoReady=()=>READY;
 global.gbPose={source:()=>isFed?"fed":"reckoned"};
-let goes=0, last=null;
-global.gbMap={map:()=>({here:pos}), turn:()=>null,
-  go:(pts)=>{goes++; last=pts[pts.length-1]; return true;},
+let goes=0, last=null, refuse=REFUSE, asked=0;
+global.gbMap={map:()=>({here:pos}), turn:()=>(TURNS?{dir:"left",turn:90,secs:9}:null),
+  go:(pts)=>{asked++; if(refuse-->0) return false; goes++; last=pts[pts.length-1]; return true;},
   goState:()=>last?{why:WHY}:null};
 delete require.cache[require.resolve(GRID)];
 const P=require(GRID);
@@ -255,17 +257,28 @@ for(let b=0;b<3000&&!P.state().explore.done&&goes<STOP;b++){
   now+=500; beatFn();
   if(last){ pos={x:pos.x+(last.x-pos.x)*FRAC,y:pos.y+(last.y-pos.y)*FRAC,h:0}; }
 }
-console.log(JSON.stringify({st:P.state().explore, goes}));
+console.log(JSON.stringify({st:P.state().explore, goes, asked, now}));
 """
 
 
-def _page(fed: bool, why: str = "arrived", frac: float = 1.0, stop: int = 10**6) -> Any:
+def _page(
+    fed: bool,
+    why: str = "arrived",
+    frac: float = 1.0,
+    stop: int = 10**6,
+    refuse: int = 0,
+    ready: bool = True,
+    turns: bool = False,
+) -> Any:
     return _node(
         _PAGE.replace("GRID", json.dumps(str(_GRID)))
         .replace("FED", json.dumps(fed))
         .replace("WHY", json.dumps(why))
         .replace("FRAC", str(frac))
         .replace("STOP", str(stop))
+        .replace("REFUSE", str(refuse))
+        .replace("READY", json.dumps(ready))
+        .replace("TURNS", json.dumps(turns))
     )
 
 
@@ -317,3 +330,22 @@ def test_a_stuck_route_gives_up_the_frontier_it_was_for() -> None:
     # stands, which a map seen from one spot can't hold; that case is the same push.)
     got = _page(True, why="stuck", frac=0.0)
     assert got["st"]["done"] == "explored" and got["goes"] < 40
+
+
+def test_a_refused_walk_is_waited_out_not_counted_against_the_frontier() -> None:
+    # Cooling legs after an abort refused every route for a while: in the sim he gave up
+    # every frontier in those seconds and called the house explored three minutes in.
+    got = _page(True, why="ended", frac=0.5, stop=3, refuse=5)
+    assert got["goes"] == 3 and got["st"]["failed"] == 0
+    # He waited between asks rather than asking every beat.
+    assert got["asked"] == 8 and got["now"] >= 5 * 5000
+    # Legs that never move end the run as that, not as a house explored.
+    never = _page(True, refuse=10**6)
+    assert never["st"]["done"] == "no_legs" and never["st"]["failed"] == 0
+    # With no route skills at all there is nothing to wait for.
+    bare = _page(True, refuse=10**6, ready=False)
+    assert bare["st"]["done"] == "no_skills" and bare["now"] < 60000
+    # A refused turn is not a look taken: with every turn refused (nothing ever moves in this
+    # stub) he never gets past looking round to set off anywhere.
+    stalled = _page(True, turns=True)
+    assert stalled["st"]["done"] == "no_legs" and stalled["goes"] == 0
