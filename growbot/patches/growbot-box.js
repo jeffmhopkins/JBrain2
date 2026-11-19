@@ -1657,6 +1657,9 @@
   // from the library stops walking within a minute rather than at the next reload.
   var D = Math.PI / 180, PREP_MS = 1000, KEEP_MS = 60000, cache = {};
   var STEER_HOLD_MS = 1500, DRIVE_MAX_MS = 120000, steer = null;
+  // One route's walk at most this long, a room's crossing at his 4 cm/s with its turns; the
+  // route ends itself sooner when stuck or slow, and the planner asks again for the rest.
+  var GO_MAX_MS = 300000;
   // Within 6 degrees held 0.4 s is there: the look skill settles a few degrees short in the sim.
   // Camera height 0 turns it faster than standing tall (GrowBot_Training master follow-me).
   var TURN_DONE_DEG = 6, TURN_HOLD_MS = 400, TURN_PITCH = 0, TURN_NEAR_DEG = 12, TURN_STALL_MS = 2000, TURN_MOVED_DEG = 3;
@@ -2294,7 +2297,7 @@
     });
   }
 
-  function start(pid, move, secs, attempt, drive, following, own, turn) {
+  function start(pid, move, secs, attempt, drive, following, own, turn, route) {
     // `pid` is one library policy, or a skill set {look?, forward?, back?} of them.
     var skills = pid && typeof pid === "object" ? pid : null;
     if (following && !skills) { refuse(attempt, "no_skills", "following needs a skill set"); return; }
@@ -2313,7 +2316,9 @@
     var gen = _motionGen, M = { kind: "walk", loading: true, report: attempt, drive: following ? "" : drive || "" };
     // Dave's own walk (gbOwnWalk): another ask for the same walk while this one runs carries
     // it on (M.extend) instead of a new stance glide, and it stops itself when he stops looking.
-    if (own) M.own = move;
+    if (own) M.own = route ? "go" : move;
+    // A route (gbOwnGo) steers a forward walk by heading each tick and says when it is done.
+    if (route) M.route = route;
     // Until the stride starts, a longer ask is a longer walk; once it runs, extend() below.
     // Each returns the walk's whole length in seconds when it grew, else 0, and grows it no
     // further than the legs' duty budget, as start() grants a walk.
@@ -2491,6 +2496,26 @@
             endT = fwant;
             selfMoveUntil = Math.max(selfMoveUntil, endT + 3500);
           }
+        } else if (M.route) {
+          // The route's heading error is in his map's frame; the gyro's heading carries it into
+          // the walk's. It stops him (speed 0) to turn on the look skill, and ends the walk.
+          var rn = Date.now(), rc = M.route(rn) || { done: "no_route" };
+          if (rc.done) {
+            _imuWhy = "done";
+            if (attempt) attempt._gbGo = rc.done;
+            carryLegMotion({ l: 90, r: 90 });
+            try { logEv("walk_end", { gait: "trained", policy: label, why: rc.done, heading: Math.round(heading / D) }); } catch (e) {}
+            $("brainTxt").textContent = "awake";
+            return;
+          }
+          cmd = { target: wrap180(heading / D + rc.heading), speed: rc.speed };
+          pitch = rc.speed ? 1 : TURN_PITCH;
+          var gwant = Math.min(rn + STEER_HOLD_MS, walkT + GO_MAX_MS);
+          if (gwant > endT && dutyLeftMs() >= gwant - endT) {
+            _walkLog.push({ t: rn, ms: gwant - endT });
+            endT = gwant;
+            selfMoveUntil = Math.max(selfMoveUntil, endT + 3500);
+          }
         } else if (live) {
           // At exactly ±180 the error's sign would flip with the noise, as for the pad's back.
           if (skills) {
@@ -2508,8 +2533,9 @@
             selfMoveUntil = Math.max(selfMoveUntil, endT + 3500);
           }
         }
-        // A turn is bounded by its own time; the dead-man is for walks that carry him somewhere.
-        var noLook = M.own && move !== "turn" && ownNoLook(walkT);
+        // A turn is bounded by its own time, and a route by its own progress watch (it ends when
+        // he stops getting closer): the dead-man is for walks the model keeps going.
+        var noLook = M.own && move !== "turn" && !M.route && ownNoLook(walkT);
         if (Date.now() >= endT || noLook) {
           _imuWhy = "done";
           carryLegMotion({ l: 90, r: 90 });
@@ -2673,6 +2699,26 @@
   window.gbOwnTurnReady = function () {
     return !!(ownSet && ownSet.look) && !stockOnly && !_wheels && !(typeof _diyGaitFlag === "function" && _diyGaitFlag());
   };
+  // Whether a route (gbMap.go) can run: it needs the forward skill to walk and the look to turn.
+  window.gbOwnGoReady = function () {
+    return window.gbOwnTurnReady() && !!ownSet.forward;
+  };
+  // A walk steered by `route(now)` each tick: {heading: degrees left of where his camera faces,
+  // speed: 1 to walk, 0 to turn on the spot} until it answers {done: why}. Returns the move.
+  window.gbOwnGo = function (route, secs) {
+    if (Date.now() - ownT > OWN_MS) { try { readOwnSet(); } catch (e) {} }
+    var attempt = _moveRequest("walk:go");
+    try {
+      if (typeof route !== "function" || !window.gbOwnGoReady()) { _moveReport(attempt, "blocked", "go_unavailable"); return attempt; }
+      attempt.mv = {
+        kind: "walk", gait: "trained", dir: "fwd", direction: "go",
+        policy: "set:" + Object.keys(ownSet).join("+"),
+      };
+      attempt.mv.secs = policySeconds(+secs || 0, 8, dutyLeftMs());
+      start(ownSet, "forward", attempt.mv.secs, attempt, "", false, true, undefined, route);
+    } finally { if (attempt.state === "requested") _moveReport(attempt, "blocked", "not_admitted"); }
+    return attempt;
+  };
   window.gbOwnWalk = function (spec, dir, attempt) {
     if (Date.now() - ownT > OWN_MS) { try { readOwnSet(); } catch (e) {} }
     // The model reads its walks back as "walk fwd (trained)" and may echo the gait. runGait has
@@ -2714,6 +2760,15 @@
     // it on, no new stance. The ask itself is reported merged; the running walk stays his
     // latest move, its granted length and continuation count updated.
     var M = _motion;
+    // A route already walks him forward, steered: a forward ask (the walk look's "send walk
+    // again to go further") is that walk going on, not a new one that would drop the route.
+    if (M && M.own === "go" && move === "forward") {
+      attempt.mv = { kind: "walk", gait: "trained", dir: dir, policy: (M.report && M.report.mv && M.report.mv.policy) || "" };
+      _moveReport(attempt, "merged", "on_route");
+      attempt.ended = 1;
+      _moveLast = M.report;
+      return true;
+    }
     if (M && M.own === move && typeof M.extend === "function" && M.report && M.report.mv) {
       var s = policySeconds(+spec.secs || 0, 8, Infinity), mv = M.report.mv;
       var grew = M.extend(s);

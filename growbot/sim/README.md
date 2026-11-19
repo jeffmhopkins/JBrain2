@@ -53,7 +53,11 @@ they back off) away and sideways for a minute: he walked 0.85 m after them and h
 `stop_stop` says "stop stop" in the middle of a 15 s trained walk: he is still from half a
 second after. `turns_by_degrees` turns him 90, -45, 180, -120 and 30 degrees the way he and the explore
 trip ask (`gbMap.turn`), on the box skill set's look skill, and checks each ends within 10
-degrees of its angle by the sim's own yaw. `follow_walk` circles a standing person round him; with a seated face at 1 m the camera
+degrees of its angle by the sim's own yaw. `square_by_path` walks a 1 m square as one route
+(`gbMap.go`) on his true pose, and checks it ends "arrived" within 25 cm of where it began;
+it took 126 s and closed within 14 cm. The battery's 25-minute runs skip the onlooker video,
+whose re-render of every pose ran each child past its timeout.
+`follow_walk` circles a standing person round him; with a seated face at 1 m the camera
 tilts down, where the trained look barely turns, and he kept up only 2 runs in 5.
 
 ## His depth sense

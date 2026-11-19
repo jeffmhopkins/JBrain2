@@ -292,6 +292,92 @@ def test_a_fed_pose_replaces_the_reckoned_one_while_it_keeps_coming() -> None:
     assert got["out"] == ""
 
 
+def test_a_route_steers_by_heading_point_by_point_and_ends_when_he_arrives() -> None:
+    """Explore rebuild wave E1: a route is one walk steered by heading toward each point in
+    turn. Far off his heading he stops to turn and walks again only once nearly on it; he
+    reaches a point within 15 cm and the last one ends it."""
+    got = _page(
+        "_live.map={v:1,t:0,rooms:[],doors:[],things:[],here:{x:0,y:0,h:0,room:'',t:0}};"
+        "var R=null,asked=null;window.gbOwnGoReady=function(){ return true; };"
+        "window.gbOwnGo=function(r,s){ R=r; asked=s; return {state:'accepted'}; };"
+        "var bad=[window.gbMap.go([]),window.gbMap.go([{x:'a',y:0}])];"
+        "var ok=window.gbMap.go([{x:1,y:0},{x:1,y:1}]);var h=_live.map.here,out=[];"
+        "function at(x,y,hd){ h.x=x;h.y=y;h.h=hd;tick(100);out.push(R(clock)); }"
+        # Ahead to the first point; then past it, the second is 90 left: he stops to turn,
+        # turns on at 20 off, walks from under 10 off; then arrives.
+        "at(0,0,0);at(0.8,0,0);at(1,0.05,0);at(1,0.05,70);at(1,0.05,85);at(1,0.95,90);"
+        "var st=window.gbMap.goState();"
+        "console.log(JSON.stringify({bad,ok,asked,out,st}));"
+    )
+    assert got["bad"] == [False, False] and got["ok"] is True and got["asked"] == 30
+    out = got["out"]
+    assert out[0] == {"heading": 0, "speed": 1}
+    assert out[1]["speed"] == 1 and out[1]["heading"] == pytest.approx(0)
+    # At the first point: the second is about 90 degrees left, too far to walk at.
+    assert out[2]["speed"] == 0 and out[2]["heading"] == pytest.approx(90, abs=0.1)
+    # 20 off is inside the turn's 30 but not yet the walk's 10: still turning.
+    assert out[3]["speed"] == 0 and out[3]["heading"] == pytest.approx(20, abs=0.1)
+    assert out[4]["speed"] == 1 and out[4]["heading"] == pytest.approx(5, abs=0.1)
+    assert out[5] == {"done": "arrived"}
+    assert got["st"] == {"n": 2, "i": 1, "why": "arrived"}
+
+
+def test_a_route_that_stops_getting_closer_ends_itself_and_none_runs_without_skills() -> None:
+    """No range sensor tells him a wall stopped him (owner): a route he makes no headway on
+    for 12 s ends "stuck", and a turn that keeps closing counts as headway."""
+    got = _page(
+        "_live.map={v:1,t:0,rooms:[],doors:[],things:[],here:{x:0,y:0,h:0,room:'',t:0}};"
+        "var ready=false,R=null;window.gbOwnGoReady=function(){ return ready; };"
+        "window.gbOwnGo=function(r){ R=r; return {state:'accepted'}; };"
+        "var none=window.gbMap.go([{x:1,y:0}]);ready=true;"
+        "window.gbMap.go([{x:0,y:-2}]);var h=_live.map.here,out=[];"
+        # Turning right toward it, 3+ degrees closer each 5 s: never stuck.
+        "for(var a=0;a>=-90;a-=10){ h.h=a; tick(5000); out.push(R(clock).done||''); }"
+        "var turned=out.slice();out=[];"
+        # Then walking at it but pinned in place.
+        "for(var i=0;i<4;i++){ tick(5000); out.push(R(clock).done||''); }"
+        "console.log(JSON.stringify({none,turned,out}));"
+    )
+    assert got["none"] is False
+    assert set(got["turned"]) == {""}
+    # He walks once within 10 of it (at -80); pinned, 10 s on he is not stuck yet, 15 s on he is.
+    assert got["out"] == ["", "stuck", "stuck", "stuck"]
+
+
+def test_a_route_on_a_reckoned_pose_ends_when_it_takes_too_long_and_says_how_it_ended() -> None:
+    """On a reckoned pose his place moves at his pace whether he gets anywhere or not, so
+    headway can't say he is pinned: a route there ends once it has taken 1.5 times what its
+    length and turns should. A route whose walk something else ended reads "ended"."""
+    got = _page(
+        "_live.map={v:1,t:0,rooms:[],doors:[],things:[],here:{x:0,y:0,h:0,room:'',t:0}};"
+        "var R=null;window.gbOwnGoReady=function(){ return true; };"
+        "window.gbOwnGo=function(r){ R=r; _motion={route:r}; return {state:'accepted'}; };"
+        # 0.4 m: 1.5 x (10 s at his pace + 20 s for its one point) = 45 s.
+        "window.gbMap.go([{x:0.4,y:0}]);var h=_live.map.here,out=[];"
+        "for(var i=0;i<10;i++){ h.x+=0.02; tick(5000); out.push(R(clock).done||''); }"
+        "var running=window.gbMap.goState().why;"
+        "window.gbMap.go([{x:5,y:0}]);var s1=window.gbMap.goState().why;_motion=null;"
+        "console.log(JSON.stringify({out,running,s1,s2:window.gbMap.goState().why}));"
+    )
+    # Creeping 2 cm each 5 s is headway, so only the time ends it, past 45 s.
+    assert got["out"][:9] == [""] * 9 and got["out"][9] == "too_long"
+    assert got["running"] == "too_long"
+    assert got["s1"] == "" and got["s2"] == "ended"
+
+
+def test_a_route_walk_carries_him_on_his_map_only_while_it_walks() -> None:
+    got = _page(
+        "_live.map={v:1,t:0,rooms:[],doors:[],things:[],here:{x:0,y:0,h:0,room:'',t:0}};"
+        "turnTo(0);tick(0);"
+        "_motion={kind:'walk',own:'go',tele:{sp:0},report:{mv:{kind:'walk'}}};"
+        "for(var i=0;i<8;i++) tick(250);var still=_live.map.here.x;"
+        "_motion.tele.sp=1;for(i=0;i<8;i++) tick(250);"
+        "console.log(JSON.stringify({still,x:_live.map.here.x}));"
+    )
+    assert got["still"] == 0
+    assert got["x"] == pytest.approx(0.08, abs=0.005)
+
+
 def test_a_spin_the_gyro_says_went_nowhere_is_marked_wedged() -> None:
     """mf8: 127 spins wedged between the lamp and the wall, each "done", none turning him."""
     got = _page(
