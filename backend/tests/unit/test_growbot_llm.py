@@ -5,6 +5,8 @@ A bare app with a fake residency and a faked gateway client: no network, no mode
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,9 +16,10 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from jbrain.api import growbot_llm
-from jbrain.llm import engine, gpu_guard, local_catalog, prefill
+from jbrain.llm import engine, gpu_guard, local_catalog, openai_slot_fit, prefill
 from jbrain.llm.kv_pool_guard import KvPoolGuard
 from jbrain.llm.residency import ResidencyError
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, GROWBOT_ROLE
@@ -358,7 +361,8 @@ def test_the_client_cannot_pick_a_slot(tmp_path: Path) -> None:
 def test_a_turn_too_long_for_the_slot_is_refused_before_admission(tmp_path: Path) -> None:
     res = _Residency()
     app, auth, gw = _app(tmp_path, models=(_FLASH,), residency=res, active="flash-next")
-    body = _chat(_FLASH, content=[_IMAGE] * 20)
+    # A picture whose size cannot be read is charged flat (4096), so 40 of them overflow.
+    body = _chat(_FLASH, content=[_IMAGE] * 40)
     r = TestClient(app).post(_COMPLETIONS, json=body, headers=auth)
     assert r.status_code == 400 and r.json()["error"]["code"] == "context_length_exceeded"
     assert res.calls == [] and gw.sent == []
@@ -503,7 +507,7 @@ def test_a_turn_too_long_for_the_slot_it_was_admitted_to_is_an_openai_error(
     # Fitted against an unpooled model, then admitted onto Flash-Next: re-fitted there.
     res = _Residency(_FLASH)
     app, auth, gw = _app(tmp_path, models=(_FLASH, "qwen3-vl-30b"), residency=res)
-    body = _chat(content=[_IMAGE] * 20, stream=True)
+    body = _chat(content=[_IMAGE] * 40, stream=True)
     r = TestClient(app).post(_COMPLETIONS, json=body, headers=auth)
     assert _error(r, True)["code"] == "context_length_exceeded"
     assert res.calls == [_VL] and gw.sent == []
@@ -562,3 +566,49 @@ def test_the_creatures_frames_ask_for_their_own_small_floor(tmp_path: Path) -> N
         client.post(_COMPLETIONS, json=_chat(image_min_tokens=9), headers=auth).status_code == 200
     )
     assert "image_min_tokens" not in gw.sent[-1]["json"]
+
+
+def _jpeg(w: int, h: int) -> dict[str, Any]:
+    out = io.BytesIO()
+    Image.new("RGB", (w, h), (90, 120, 150)).save(out, "JPEG", quality=70)
+    url = "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode()
+    return {"type": "image_url", "image_url": {"url": url}}
+
+
+def test_a_days_small_looks_fit_the_creatures_slot(tmp_path: Path) -> None:
+    """growbot-looks.js: a full pile of small looks rides every turn. At the creature's floor
+    each costs ~270 tokens, not the flat 4096 that would refuse the turn."""
+    res = _Residency()
+    app, auth, gw = _app(tmp_path, models=(_FLASH,), residency=res, active="flash-next")
+    looks = [{"role": "user", "content": [_jpeg(120, 160)] * 160}]
+    body = {"model": _FLASH, "messages": [*looks, {"role": "user", "content": [_jpeg(240, 320)]}]}
+    assert TestClient(app).post(_COMPLETIONS, json=body, headers=auth).status_code == 200
+    assert len(gw.sent) == 1
+    sent = gw.sent[0]["json"]
+    assert sent["image_min_tokens"] == growbot_llm.CREATURE_IMAGE_MIN_TOKENS
+    estimate = openai_slot_fit.estimate_prompt_tokens(
+        _FLASH, sent, image_floor=growbot_llm.CREATURE_IMAGE_MIN_TOKENS
+    )
+    assert 161 * 256 <= estimate <= 161 * 300
+
+
+def test_a_picture_is_charged_at_its_size_against_the_floor() -> None:
+    small, frame = _jpeg(120, 160), _jpeg(240, 320)
+    tokens = openai_slot_fit.image_tokens
+    # Under the floor a picture is scaled up to it, aspect kept.
+    assert 256 <= tokens(small["image_url"]["url"], 256) <= 280
+    assert 256 <= tokens(frame["image_url"]["url"], 256) <= 280
+    # Over the floor it reads at its own size: 8 x 10 blocks of 32 px, plus the markers.
+    assert tokens(frame["image_url"]["url"], 16) == 8 * 10 + 4
+    # Never past the flat charge, and an unreadable picture is charged flat.
+    huge = _jpeg(4000, 4000)["image_url"]["url"]
+    assert tokens(huge, 256) == 4096
+    assert tokens("data:image/jpeg;base64,AAAA", 256) == 4096
+    assert tokens("data:image/png;base64,@@@", 256) == 4096
+
+
+def test_a_png_reads_its_size_too() -> None:
+    out = io.BytesIO()
+    Image.new("RGB", (320, 240)).save(out, "PNG")
+    url = "data:image/png;base64," + base64.b64encode(out.getvalue()).decode()
+    assert openai_slot_fit.image_tokens(url, 16) == 10 * 8 + 4

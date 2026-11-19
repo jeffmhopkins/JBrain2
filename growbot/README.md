@@ -715,6 +715,24 @@ it faces (the gyro) but not where it is, so his position is dead reckoning from 
   `walk:{toward:"piano"}`): the page sends the spin and stops it by the gyro once he has turned
   that far, so he no longer guesses spin seconds for an angle.
 
+### Every look, until he dreams
+
+`growbot-looks.js` (`apply.py` `LOOKS_PATCHES`; owner, 2026-11-19: "keep it in context for all of
+his looks until he dreamed") keeps a small copy (160 px on its long side) of each picture a thought
+sends, tagged with the time and where his map had him standing and facing, and replays it inside
+the turn it was taken in. The history ahead of a new turn therefore reads the same as before, so
+the box resumes from it and a thought reads only its own newest look, not the pile. Looks taken
+since the last turn he kept ride one message at the end of the history; looks whose turn the
+history window has dropped ride one message ahead of the talk that only grows at its end. A look
+that shows what the last one did (same spot, same heading, near-identical picture) is not kept.
+
+A dream clears them. Past 160 looks the older half goes in one step (one cache break, not one a
+turn). The pile is kept in the phone's IndexedDB too, so a reload keeps the day. At the creature's
+picture floor (`CREATURE_IMAGE_MIN_TOKENS`, 256) a small look still costs ~270 tokens, the same as
+a full frame, so the box charges each picture at its real size against that floor
+(`openai_slot_fit.image_tokens`) and the GrowBot slot holds 128k. Fine detail still needs a fresh
+full-size look.
+
 ### His view all around, and choosing where to go
 
 `growbot-pano.js` (`apply.py` `PANO_PATCHES`; owner, 2026-11-17: "project his view onto a

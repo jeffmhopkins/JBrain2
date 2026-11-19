@@ -211,13 +211,15 @@ FLASH_NEXT_POOL: Final = KvPool(
         # the disk store restores in ~2 s. Same cap as A: a chat turn may land in either.
         RoleReservation(SlotRole.INTERACTIVE_ALT, 9, 262_144, 10, "jerv chat B"),
         # The desk robot's creature (docs/plans/GROWBOT_PLAN.md G1), appended so slots 0-9 keep
-        # their ids. A turn is ~9k tokens of prompt plus a camera frame or a few saved views, so
-        # a pet-sized cap doubled for the images. The creature is talked to live and the owner
-        # gave it priority (2026-11-11): its turn resumes from the checkpoint at the end of its
-        # system prompt, which only THIS slot holds, so it never spills (a turn in the small slot
-        # re-reads all ~8k tokens, ~20 s, where waiting out a cancelled turn here is a second or
-        # two), and it is freed only after every background slot, just before the chat pair.
-        RoleReservation(SlotRole.GROWBOT, 10, 65_536, 8, "GrowBot"),
+        # their ids. A turn is ~9k tokens of prompt and up to ~16k of the day's talk, plus every
+        # look he has taken since his last dream (growbot-looks.js: up to 160, ~260 tokens
+        # each at his picture floor), so ~70k at the pile's cap: twice the first 64k. The
+        # creature is talked to live and the owner gave it priority (2026-11-11): its turn
+        # resumes from the checkpoint at the end of its system prompt, which only THIS slot
+        # holds, so it never spills (a turn in the small slot re-reads all ~8k tokens, ~20 s,
+        # where waiting out a cancelled turn here is a second or two), and it is freed only
+        # after every background slot, just before the chat pair.
+        RoleReservation(SlotRole.GROWBOT, 10, 131_072, 8, "GrowBot"),
     ),
 )
 
