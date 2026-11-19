@@ -2278,11 +2278,17 @@ class KvPrefixStore:
         reasoning_effort: str | None,
         *,
         role: SlotRole | None = None,
+        only_into_empty: bool = False,
     ) -> tuple[bool, int]:
         """Before a chat request on a pooled model, in its chat slot `role` (the interactive
-        one when none is named): save the conversation the slot holds if this request is about
-        to repurpose it, then restore this request's own conversation if a file for it (same
-        key, same base identity) is on disk. Returns
+        one when none is named), or the creature's own slot (`GROWBOT_ROLE`, which has one
+        conversation and so passes `only_into_empty`: when the store has no claim on the slot,
+        as after an api restart the engine survived, a slot holding anything holds his live
+        conversation, newer than any file, and a dream may have left it shorter than one; a
+        slot the store knew held another conversation is free to take): save
+        the conversation the slot holds if this request is about to repurpose it, then restore
+        this request's own conversation if a file for it (same key, same base identity) is on
+        disk. Returns
         (restored, sequence): on True the caller skips the persona restore, which would see the
         never-used slot as empty and overwrite it; the sequence goes back with the turn's note.
 
@@ -2326,7 +2332,14 @@ class KvPrefixStore:
             if self._prepare_seq.get(slot_key) != seq:
                 return False, seq  # another request is already taking the slot
             restored = await self._restore_conversation(
-                served_model, pool, conversation_key, base, save_dir, line, role
+                served_model,
+                pool,
+                conversation_key,
+                base,
+                save_dir,
+                line,
+                role,
+                only_into_empty and hold is None,
             )
         return restored, seq
 
@@ -2339,6 +2352,7 @@ class KvPrefixStore:
         save_dir: str,
         line: str,
         role: SlotRole,
+        only_into_empty: bool = False,
     ) -> bool:
         name = kv_conversation.file_name(base, conversation_key)
         path = os.path.join(save_dir, name)
@@ -2363,6 +2377,9 @@ class KvPrefixStore:
             # A busy chat slot is another chat request; this one queues behind
             # it and overwrites whatever it leaves, so a restore now would be wasted.
             self._count("conversation_skipped_busy")
+            return False
+        if only_into_empty and _slot_int(target, "n_prompt_tokens") > 0:
+            self._count("conversation_skipped_slot_occupied")
             return False
         reserved, ticket = await self._reserve(
             served_model, pool, slot_id, meta.n_tokens, slots, line

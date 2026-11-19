@@ -1516,3 +1516,79 @@ async def test_a_saved_prefix_is_found_whatever_the_restore_gate_says(root: Path
     assert await store.has_prefix_file(FLASH, "archivist", MAIL_TOOLS, None)
     assert not await store.has_prefix_file(FLASH, "persona", TOOLS, None)
     assert not await store.has_prefix_file("gpt-oss-120b", "archivist", MAIL_TOOLS, None)
+
+
+# ---- the creature's one conversation (growbot/prefix.py) --------------------------------------
+
+
+def _creature_turn(store: KvPrefixStore, gw: FakeGateway, n_in: int) -> None:
+    """One creature turn, leaving slot 10 holding prompt + answer."""
+    store.note_conversation_turn(
+        FLASH,
+        "growbot:x",
+        fingerprint=store.identity_of(FLASH, "persona", [], None),
+        input_tokens=n_in,
+        output_tokens=40,
+        role=SlotRole.GROWBOT,
+    )
+    gw.slot_state = _slots(s10=n_in + 39)
+
+
+async def _creature_prepare(store: KvPrefixStore) -> bool:
+    restored, _seq = await store.prepare_conversation(
+        FLASH, "growbot:x", "persona", [], None, role=SlotRole.GROWBOT, only_into_empty=True
+    )
+    return restored
+
+
+async def test_the_creatures_quiet_conversation_is_saved_and_comes_back_after_a_restart(
+    root: Path,
+) -> None:
+    """Owner, 2026-11-19: a creature slot left quiet goes to disk, and loads back next time."""
+    store, gw = _store(root)
+    _creature_turn(store, gw, 30_000)
+    assert await store.save_idle_conversation(FLASH, idle_s=0)
+    slot, name = gw.saved[-1]
+    assert slot == FLASH_NEXT_POOL.slot(SlotRole.GROWBOT)
+    assert _claim(root, name).n_tokens == 30_039
+    # The engine restarted (empty slot) and the api with it: the next turn loads it back.
+    store2, gw2 = _store(root)
+    gw2.restore_n = 30_039
+    assert await _creature_prepare(store2)
+    assert gw2.restored == [(slot, name)]
+
+
+@pytest.mark.parametrize("live", [34_000, 5_000])
+async def test_a_creature_slot_holding_anything_is_left_alone(root: Path, live: int) -> None:
+    """Only the api restarted: the engine's slot still holds his conversation, newer than the
+    file, and a restore would throw the newer turns away. Shorter counts too: a dream starts
+    a new history, so a live slot can hold fewer tokens than the save from before it."""
+    store, gw = _store(root)
+    _creature_turn(store, gw, 30_000)
+    assert await store.save_idle_conversation(FLASH, idle_s=0)
+    store2, gw2 = _store(root)
+    gw2.slot_state = _slots(s10=live)
+    assert not await _creature_prepare(store2)
+    assert gw2.restored == []
+    assert store2._counters.get("conversation_skipped_slot_occupied") == 1
+
+
+async def test_a_creature_slot_the_store_knew_held_another_conversation_is_taken(
+    root: Path,
+) -> None:
+    """Another persona talked since his save: the store claimed the slot for that one, saved
+    it, and his own file goes in over it."""
+    store, gw = _store(root)
+    _creature_turn(store, gw, 30_000)
+    assert await store.save_idle_conversation(FLASH, idle_s=0)
+    store.note_conversation_turn(
+        FLASH,
+        "growbot:y",
+        fingerprint=store.identity_of(FLASH, "persona", [], None),
+        input_tokens=12_000,
+        output_tokens=40,
+        role=SlotRole.GROWBOT,
+    )
+    gw.slot_state = _slots(s10=12_039)
+    gw.restore_n = 30_039
+    assert await _creature_prepare(store)

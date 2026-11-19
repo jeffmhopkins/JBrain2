@@ -1,6 +1,6 @@
 # The jerv prompt cache
 
-> **Status:** Living · **Last verified:** 2026-11-10
+> **Status:** Living · **Last verified:** 2026-11-19
 
 How the interactive agent's ~30k-token prefix is kept ready, what it costs when it is not,
 and — the part that did not exist until 2026-09-18 — how to tell which of those is happening.
@@ -165,6 +165,34 @@ data:
   `read_labs`, … — `kv_conversation.EXCLUDED_TOOLS`) has run in ANY of its turns. The chat reads
   that off the transcript before each turn; a turn that runs one deletes the conversation's
   files at once and it is never saved again.
+
+**The GrowBot creature's slot (10) also keeps a conversation file** (owner, 2026-11-19: "when
+that slot has sat there inactive ... disk cache that KV, and just hard load it from the hard
+drive next time it looks"). The creature relay forwards no tools, so with brain access off its
+conversation holds only what Dave said and heard and the low-resolution looks he took
+(`growbot/README.md` "Every look, until he dreams") — the owner's choice to keep on the box
+disk, under the same toggle and budget. **Brain access** (`api/growbot_brain.py`) lets his page
+look up the owner's notes in every domain and put the hits in his prompt, so a persona with it
+on never gets a conversation file, and neither does one a lookup ever ran for: his history
+goes on carrying what a lookup told him after access goes off, the api restarts or he opens on
+another phone, and nothing on the box knows when he next dreams. Each lookup first adds the
+persona (`growbot-persona:<id>`) to the owner setting `llm_kv_conversation_excluded_sessions`
+— jerv's re-scoped sessions' list — and returns nothing if it cannot. The lane reads the
+persona and that list each turn (`_kept_off_disk`; no persona named, none found or a failed
+read count as excluded), and the first excluded turn this process sees deletes his file. Its key is a hash of the creature's system text
+(`growbot/prefix.py` `conversation_key`), so a changed persona or prompt is a different file.
+The creature lane saves it itself, a little over 10 minutes after his last turn
+(`ConversationSaver`; the keeper's tick saves only while it tends jerv's own local model,
+which the creature's engine need not be). A turn's claim counts the whole prompt the slot
+holds, read and reused (`prompt_n + cache_n`: the page streams without usage). A turn after
+more than 5 quiet minutes restores it before the prefix-only restore. When the store has no
+claim on slot 10 it restores only into an empty one (`only_into_empty`): after an api restart
+the engine survived, a slot holding anything holds his live conversation, newer than the file
+and, after a dream, possibly shorter. A slot the store knew held another persona's
+conversation is saved and then taken. The lane's save holds the creature's lock, so no turn
+starts between its slot read and its write, and a turn never cancels a save under way. A
+restore that outlives its 60 s bound gets no prefix restore after it, which would overwrite
+the conversation still arriving. A debug replay drops the claim, never saves.
 
 **Brain/curator chats never get a conversation file.** Role prefix files hold only the system
 prompt and tool schemas, no owner data, and are unaffected. Deleting a chat, or changing its

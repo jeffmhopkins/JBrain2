@@ -21,6 +21,7 @@ from jbrain.db.session import SessionContext
 from jbrain.growbot.calls import CallRecord
 from jbrain.notes.service import UnknownDomain
 from jbrain.search.service import SearchResponse, SearchResult, WikiSearchResult
+from tests.unit.fakes import FakeSettingsStore
 
 PID = "0b7c2f4e-1a2b-4c3d-8e9f-0a1b2c3d4e5f"
 PHONE = "phone-aaaaaaaaaaaaaaaa"
@@ -128,12 +129,14 @@ def world(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         search=_Search(),
         notes=_Notes(),
         log=_Log(),
+        settings=FakeSettingsStore(),
     )
     app.state.session_maker = object()
     app.state.growbot_personas = w.personas
     app.state.search_service = w.search
     app.state.notes_repo = w.notes
     app.state.growbot_calls = w.log
+    app.state.settings_store = w.settings
     w.client = TestClient(app)
     return w
 
@@ -254,3 +257,26 @@ def test_a_creature_filing_note_after_note_is_stopped(world: SimpleNamespace) ->
     assert codes == [200] * 6 + [429]
     assert len(world.notes.made) == 6
     assert world.log.rows[-1].kind == "brain"
+
+
+def test_a_search_keeps_his_conversation_off_the_box_disk_for_good(world: SimpleNamespace) -> None:
+    """Its hits land in his prompt and stay in his history after access goes off: recorded
+    durably before anything is returned (growbot_llm `_kept_off_disk`)."""
+    from jbrain.growbot import prefix
+
+    assert (
+        world.client.post("/internal/growbot/brain/search", json={**WHO, "q": "x"}).status_code
+        == 200
+    )
+    assert world.settings.values["llm_kv_conversation_excluded_sessions"] == [
+        prefix.off_disk_entry(PID)
+    ]
+
+
+def test_a_search_whose_off_disk_mark_fails_returns_nothing(world: SimpleNamespace) -> None:
+    async def broken(ctx: Any, entry: str) -> None:
+        raise RuntimeError("db down")
+
+    world.settings.exclude_llm_kv_conversation = broken
+    r = world.client.post("/internal/growbot/brain/search", json={**WHO, "q": "x"})
+    assert r.status_code == 503 and world.search.asked == []
