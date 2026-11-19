@@ -359,13 +359,13 @@
         if (st.why === "arrived") {
           // Arriving at the same edge a second time means looking from there doesn't clear it:
           // without this he can go back and forth between two such edges for the whole run.
-          if (near(ex.arrived)) ex.failed.push(ex.goal); else ex.arrived.push(ex.goal);
-        } else if (st.why === "stuck" || st.why === "too_long") ex.failed.push(ex.goal);
+          if (near(ex.arrived)) ex.failed.push(ex.front); else ex.arrived.push(ex.goal);
+        } else if (st.why === "stuck" || st.why === "too_long") ex.failed.push(ex.front);
         else {
           // A walk cut off on the way (the legs' duty budget, another move) that got him nearer
           // is progress; only one that ends twice without headway gives the goal up.
           var hw = here(), left = hw ? Math.hypot(+hw.x - ex.goal.x, +hw.y - ex.goal.y) : ex.goM;
-          if (ex.goM - left < 0.1) { if (near(ex.ended)) ex.failed.push(ex.goal); else ex.ended.push(ex.goal); }
+          if (ex.goM - left < 0.1) { if (near(ex.ended)) ex.failed.push(ex.front); else ex.ended.push(ex.goal); }
         }
         log("grid_reached", { why: st.why, to: ex.goal });
         ex.phase = "look"; ex.looks = 0;
@@ -419,10 +419,11 @@
       }
       ex.tries++;
       log("grid_go", { to: nx.goal, m: nx.m, n: nx.points.length, free: c.free });
-      // A route cut to its first points ends short of the frontier: that end is what he goes to.
+      // A route cut to its first points ends short of the frontier: that end is what he goes to
+      // and is judged by (goal), while giving up gives up the frontier itself (front).
       var goal = nx.points[nx.points.length - 1] || nx.goal;
       if (window.gbMap.go(nx.points)) {
-        ex.phase = "go"; ex.goal = goal; ex.goT = Date.now(); ex.goM = Math.hypot(goal.x - +h.x, goal.y - +h.y);
+        ex.phase = "go"; ex.goal = goal; ex.front = nx.goal; ex.goT = Date.now(); ex.goM = Math.hypot(goal.x - +h.x, goal.y - +h.y);
       }
       else { ex.failed.push(nx.goal); ex.phase = "look"; ex.looks = LOOKS; }
     }

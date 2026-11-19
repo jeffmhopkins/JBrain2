@@ -308,3 +308,10 @@ def test_a_walk_cut_off_on_the_way_is_progress_not_a_failed_goal() -> None:
     # Ending where he started, twice, gives the goal up.
     stalled = _page(True, why="ended", frac=0.0, stop=3)
     assert stalled["st"]["failed"] >= 1
+
+
+def test_a_stuck_route_gives_up_the_frontier_it_was_for() -> None:
+    # Stuck where he stands every time: each give-up names a frontier next() then skips, so he
+    # runs out of edges long before the tries cap.
+    got = _page(True, why="stuck", frac=0.0)
+    assert got["st"]["done"] == "explored" and got["goes"] < 40
