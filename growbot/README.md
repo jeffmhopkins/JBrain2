@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-18
+> **Status:** Living · **Last verified:** 2026-11-19
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -794,6 +794,27 @@ explore line tells him to walk back out rather than spin.
 
 The PWA draws it on the persona's **Map** tab (`GrowbotHouseMap.tsx`): rooms, doorways, things,
 and an arrow for where he thinks he is. It is read-only there; he changes it when told.
+
+### His grid
+
+`growbot-grid.js` (`gbGrid`; `apply.py` loads it after the depth sense; plan
+`docs/plans/GROWBOT_EXPLORE_PLAN.md` wave E2) is the map exploring runs on. The depth sense
+hands it a finer scan of each frame as well as the nine directions: 24 columns, each with the
+nearest thing's distance, or when nothing is hit how far floor was seen (`open`), or `blind`
+when a fifth of the column is too close to read. Each scan marks 5 cm cells free along its rays
+and the cell it ends on as hit, adding up evidence so one stray frame can't open a wall. Things
+the depth sense labels are kept on it too, the same thing seen again within 0.75 m joined into
+one. It only listens while the pose is fed (the sim's `--pose truth`); on the phone's reckoned
+pose it does nothing yet, since a grid built on a drifting pose smears (wave E4).
+
+`gbGrid.explore(true)` looks round once, then goes to the nearest edge of what he has seen that
+he can reach: a shortest path over seen floor, costed to keep off walls, pulled straight where
+he can see along it, and walked as one route (`gbMap.go`). At each edge he turns only toward
+the headings that still hide unseen floor. A route that ends stuck backs him out six seconds,
+and a goal he failed to reach, or arrived at twice without clearing it, is not tried again. He is
+done when no edge is left he can reach, or after ten seconds with no fed pose (`no_pose`). A
+depth source with no floor label frees a clear column as far as the picture reaches instead.
+It keeps the grid in page memory; the persona's map is unchanged.
 
 ### Visual memories (wave G4d)
 

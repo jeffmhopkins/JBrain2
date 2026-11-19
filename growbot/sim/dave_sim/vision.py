@@ -59,6 +59,8 @@ _BY_PREFIX = (
 
 # The maps' size: a phone model's output is small too, and the page walks every pixel.
 W, H = 48, 64
+# Nearer a wall's face than this, his lens counts as against it.
+LENS_MARGIN_M = 0.01
 
 
 def label_of(name: str) -> str:
@@ -132,6 +134,24 @@ class Maps:
         self.labels = geom_labels(model)
         self.r = mujoco.Renderer(model, H, W)
         self.vfov = float(model.cam_fovy[model.camera("front").id])
+        # The walls' boxes: his lens can poke a centimetre or two into one as he presses it,
+        # and the renderer then sees through to the next room, which no phone can.
+        wall = _IDX["wall"]
+        self.walls = [
+            g
+            for g in range(model.ngeom)
+            if self.labels[g] == wall and model.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX
+        ]
+
+    def _lens_in_wall(self, data: Any) -> bool:
+        import numpy as np
+
+        p = data.cam_xpos[self.model.camera("front").id]
+        for g in self.walls:
+            local = data.geom_xmat[g].reshape(3, 3).T @ (p - data.geom_xpos[g])
+            if np.all(np.abs(local) <= self.model.geom_size[g] + LENS_MARGIN_M):
+                return True
+        return False
 
     def render(self, data: Any) -> dict[str, Any]:
         """The maps for data's pose, whose kinematics the caller has run."""
@@ -153,10 +173,24 @@ class Maps:
         lab = np.zeros(ids.shape, dtype=np.uint8)
         lab[geom] = self.labels[ids[geom]]
         depth[~geom] = 0.0
+        if self._lens_in_wall(data):
+            # Against the wall, a phone sees the wall a hair away in every pixel.
+            depth[:] = 0.01
+            lab[:] = _IDX["wall"]
         if self.noise is not None:
             depth, lab = self.noise.apply(depth, lab)
         pitch, cam_h = camera_pose(self.model, data)
+        cam = self.model.camera("front").id
+        fwd = -data.cam_xmat[cam].reshape(3, 3)[:, 2]
         return {
+            # Where the lens was for this very frame, as the map's pose (metres, and degrees
+            # counter-clockwise from +x): the body's pose is its middle, 8 cm or more behind
+            # the lens, and a frame is fed a moment after it was taken.
+            "lens": {
+                "x": round(float(data.cam_xpos[cam][0]), 4),
+                "y": round(float(data.cam_xpos[cam][1]), 4),
+                "h": round(math.degrees(math.atan2(float(fwd[1]), float(fwd[0]))), 2),
+            },
             "w": W,
             "h": H,
             "depth_mm": [int(v) for v in np.clip(depth * 1000, 0, 65535).astype(np.uint16).ravel()],

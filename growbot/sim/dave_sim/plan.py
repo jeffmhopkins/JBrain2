@@ -225,6 +225,7 @@ def svg(sim: Sim) -> str:
                 f'<text x="{cx}" y="{cy + 4}" font-size="11" text-anchor="middle" '
                 f'fill="#000" stroke="#fff" stroke-width="3" paint-order="stroke">{it.name}</text>'
             )
+    el.extend(_grid_overlay(sim, P))
     el.extend(_map_overlay(sim, P))
     # Every half second is plenty for a line, and keeps a ten-minute wander's SVG small.
     tr = track(sim)[::6]
@@ -277,6 +278,49 @@ def svg(sim: Sim) -> str:
         + legend
         + "</svg>"
     )
+
+
+def _grid_overlay(sim: Sim, P: Any) -> list[str]:
+    """His occupancy grid over the true plan: floor he has seen free in green, what he has
+    seen standing in dark purple, and his labelled things as dots. On a fed pose his map's
+    frame is the sim's, so no alignment is needed. Free cells are drawn as runs along each
+    row, which keeps a house's picture small."""
+    g = getattr(sim, "dave_grid", None)
+    if not isinstance(g, dict):
+        return []
+    c = float(g.get("cell") or 0.05)
+    el: list[str] = []
+    rows: dict[int, list[int]] = {}
+    for i, j in g.get("free") or []:
+        rows.setdefault(j, []).append(i)
+    for j, xs in rows.items():
+        xs.sort()
+        start = prev = xs[0]
+        for i in [*xs[1:], None]:
+            if i is not None and i == prev + 1:
+                prev = i
+                continue
+            px, py = P(start * c, (j + 1) * c)
+            el.append(
+                f'<rect x="{px}" y="{py}" width="{round((prev - start + 1) * c * PX, 1)}" '
+                f'height="{round(c * PX, 1)}" fill="#16a34a" fill-opacity="0.28"/>'
+            )
+            if i is not None:
+                start = prev = i
+    for i, j in g.get("occ") or []:
+        px, py = P(i * c, (j + 1) * c)
+        el.append(
+            f'<rect x="{px}" y="{py}" width="{round(c * PX, 1)}" height="{round(c * PX, 1)}" '
+            'fill="#3b0764"/>'
+        )
+    for t in g.get("things") or []:
+        tx, ty = P(t["x"], t["y"])
+        el.append(
+            f'<circle cx="{tx}" cy="{ty}" r="5" fill="#db2777"/>'
+            f'<text x="{tx + 7}" y="{ty + 4}" font-size="11" fill="#db2777" stroke="#fff" '
+            f'stroke-width="3" paint-order="stroke">{html.escape(str(t["what"]))}</text>'
+        )
+    return el
 
 
 def _map_overlay(sim: Sim, P: Any) -> list[str]:

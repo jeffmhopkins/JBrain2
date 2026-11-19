@@ -46,7 +46,7 @@ SEED_TURN_DEG = 120.0
 STUCK_M, STUCK_S, STUCK_DEG = 0.05, 30.0, 10.0
 # Down: not upright for this long in a row.
 DOWN_S = 3.0
-EXPLORERS = ("walls",)
+EXPLORERS = ("walls", "grid")
 # Past its minutes, how long a child run may take to start, score and write its report.
 CHILD_SLACK_S = 300.0
 
@@ -164,6 +164,22 @@ async def _walls(sim: Sim, until: float) -> None:
         await sim.wait(5)
 
 
+async def _grid(sim: Sim, until: float) -> None:
+    """The occupancy grid's frontier explorer (wave E2, growbot-grid.js), with no model, until
+    it says it is done; it is started again if the page reloaded under it."""
+    while sim.now() < until:
+        try:
+            st = await sim.page.evaluate("() => window.gbGrid.state()")
+            if not st or not st.get("explore"):
+                st = await sim.page.evaluate("() => window.gbGrid.explore(true)")
+            sim.note("battery", grid=st)
+            if st and st.get("explore") and st["explore"].get("done"):
+                break
+        except Exception as e:  # the page is reloading: try again on the next beat
+            sim.note("battery", error=str(e)[:200])
+        await sim.wait(10)
+
+
 async def run_one(r: Run, policies: dict[str, Path], skills: dict[str, str]) -> dict[str, Any]:
     at = start_of(r.scene, r.seed)
     opts = Options(
@@ -185,6 +201,8 @@ async def run_one(r: Run, policies: dict[str, Path], skills: dict[str, str]) -> 
         until = sim.now() + r.minutes * 60
         if r.explorer == "walls":
             await _walls(sim, until)
+        elif r.explorer == "grid":
+            await _grid(sim, until)
         res = score(sim, fed=r.pose == "truth")
     finally:
         report = await sim.close()
@@ -250,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--one", help=argparse.SUPPRESS)
     ap.add_argument("--seed", type=int, default=0, help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
+    if args.explorer == "grid" and (args.pose != "truth" or args.vision == "off"):
+        ap.error("--explorer grid needs --pose truth and --vision: its map fills only on both")
     if args.one:
         return _one(args)
     scenes = [s for s in args.scenes.split(",") if s]

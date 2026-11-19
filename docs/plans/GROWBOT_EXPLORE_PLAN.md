@@ -1,6 +1,6 @@
 # GrowBot exploring — a map and a planner under Dave's thinking
 
-> **Status:** In progress · **Last verified:** 2026-11-18 · **Waves:** E0✅ E1🟡 E2◻️ E3◻️ E4◻️ E5◻️ E6◻️
+> **Status:** In progress · **Last verified:** 2026-11-19 · **Waves:** E0✅ E1✅ E2🟡 E3◻️ E4◻️ E5◻️ E6◻️
 
 The owner's ask (2026-11-18): "I feel like maybe we have built a wrong paradigm." Dave went 0
 for 10 in the flat's explore test, and each fix since #1940 (wall-following, the doorway pull,
@@ -67,7 +67,7 @@ Each wave is tested in the sim first on true pose and depth, so a failure points
   today's phone. `--explorer walls` is today's round of the walls, started by the page's own
   explore entry and again whenever it ends: the baseline E2 has to beat. Major items identified
   joins the table with E2's inspection.
-- **E1 — turns on the master's heading control.** 🟡 A turn by degrees (`gbMap.turn`, used by
+- **E1 — turns on the master's heading control.** ✅ A turn by degrees (`gbMap.turn`, used by
   his own `walk:{turn}` and the explore trip) runs on the box skill set's look skill, steered
   onto the angle at camera height 0 and ended once it holds it within 6°, or sits within 12°
   and stops closing (`growbot-box.js` `gbOwnWalk` move `"turn"`), with the stock spin kept for
@@ -88,6 +88,37 @@ Each wave is tested in the sim first on true pose and depth, so a failure points
 - **E2 — grid, frontiers and inspection on true pose and depth.** This is the wave that proves
   the paradigm. *Pass:* 12/12 runs reach every room and identify ≥90% of the sim's major items
   (named right, within 0.75 m) in 30 sim-minutes.
+  🟡 Part 1, the map and frontiers, landed: `growbot-grid.js` (`gbGrid`) keeps a 5 cm
+  log-odds grid in page memory, filled from each depth frame's 24-column scan (`growbot-vision.js`
+  `reduce` `scan`; a column with no hit is clear only as far as floor was seen, and one the lens
+  is too close to read is blind and skipped), with the camera's own pose per frame where the sim
+  gives it. Exploring looks round once, then goes to the nearest reachable frontier (Dijkstra on
+  8-connected cells, costed to keep off walls, never through floor not seen), turning on arrival
+  only toward headings that still hide unseen floor, backing off after a stuck route and never
+  retrying a goal it failed. Things he names are kept on the grid, joined within 0.75 m.
+  Battery, 25 sim-minutes, true pose and depth (2026-11-19):
+
+  | run | old (`walls`) rooms | grid rooms | grid walked m | grid stuck s | grid falls |
+  | --- | --- | --- | --- | --- | --- |
+  | flat-s0 | 1/5 | timed out | | | |
+  | flat-s1 | 1/5 | 1/5 | 3.46 | 0 | 1 |
+  | flat-s2 | 1/5 | 3/5 | 25.94 | 168 | 0 |
+  | maze1-s0 | 1/6 | 5/6 | 29.21 | 237 | 0 |
+  | maze1-s1 | 2/6 | 6/6 | 22.66 | 218 | 0 |
+  | maze1-s2 | 4/6 | 5/6 | 17.21 | 522 | 0 |
+  | maze2-s0 | 3/6 | 6/6 | 31.9 | 0 | 0 |
+  | maze2-s1 | 3/6 | 5/6 | 31.71 | 0 | 0 |
+  | maze2-s2 | 1/6 | 5/6 | 30.81 | 108 | 0 |
+  | maze3-s0 | 1/6 | 6/6 | 26.54 | 0 | 0 |
+  | maze3-s1 | 2/6 | 6/6 | 31.72 | 0 | 0 |
+  | maze3-s2 | 1/6 | 4/6 | 13.22 | 394 | 0 |
+
+  Every room in 4 of 12 (old 0 of 12), 52 of 66 rooms in the runs that finished (old 21 of 71),
+  falls 1 (old 6). The table predates the review's fixes (a frontier reaching back to his feet
+  is no longer dropped, an edge arrived at twice is given up), so the next battery re-measures.
+  Still to do in E2: the flat (one run hung, one fell by the lamp, and the
+  kitchen is the room most missed), fewer and shorter looks so the houses finish inside the
+  time, and the inspection phase with major items identified in the table.
 - **E3 — noisy depth** (`--vision noisy`), true pose. *Pass:* ≥10/12, ≥80% identified.
 - **E4 — estimated pose**, web only. *Pass:* ≥9/12, ≥75% identified, never in the wrong room by
   his belief for more than 60 s. If it misses, re-anchor to known places by matching a survey

@@ -4954,7 +4954,8 @@ VISION_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         '<script src="/growbot-talklog.js"></script>',
-        '<script src="/growbot-talklog.js"></script><script src="/growbot-vision.js"></script>',
+        '<script src="/growbot-talklog.js"></script><script src="/growbot-vision.js"></script>'
+        '<script src="/growbot-grid.js"></script>',
         1,
     ),
     (
@@ -5159,6 +5160,7 @@ OWN_SCRIPTS = (
     "growbot-map.js",
     "growbot-pano.js",
     "growbot-vision.js",
+    "growbot-grid.js",
     "growbot-camtest.js",
 )
 
@@ -5203,6 +5205,8 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     shutil.copyfile(HERE / "growbot-map.js", site / "growbot-map.js")
     shutil.copyfile(HERE / "growbot-pano.js", site / "growbot-pano.js")
     shutil.copyfile(HERE / "growbot-vision.js", site / "growbot-vision.js")
+    # His occupancy grid and the frontier explorer on it (wave E2), fed by the vision's scans.
+    shutil.copyfile(HERE / "growbot-grid.js", site / "growbot-grid.js")
     # Imported by growbot-box.js's trained walks, as growbot_runner.js is: no script tag.
     shutil.copyfile(HERE / "growbot-drive.js", site / "growbot-drive.js")
     shutil.copyfile(HERE / "growbot-follow.js", site / "growbot-follow.js")
