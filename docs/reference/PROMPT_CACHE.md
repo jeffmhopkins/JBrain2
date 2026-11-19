@@ -172,7 +172,7 @@ drive next time it looks"). The creature relay forwards no tools, but **brain ac
 (`api/growbot_brain.py`) lets his page look up the owner's notes in every domain and put the
 hits in his prompt, where they stay in his history. Asked whether to save his conversation
 "even after he has looked up your notes", the owner chose "Save it anyway" (2026-11-19): so
-this is the one conversation file that may hold firewalled text (health, finance), on the box
+this is the one conversation file that may hold firewalled text (health, finance, location), on the box
 disk outside Postgres, under the same toggle and budget, and deleted with the rest when the
 toggle goes off. Its key is a hash of the creature's system text
 (`growbot/prefix.py` `conversation_key`), so a changed persona or prompt is a different file.

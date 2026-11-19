@@ -32,7 +32,6 @@ class _Store:
         self.prepares: list[tuple[str | None, Any, bool]] = []
         self.turns: list[dict[str, Any]] = []
         self.abandoned: list[Any] = []
-        self.forgotten: list[str] = []
         self.idle_saves: list[str] = []
         self.restores: list[tuple[str, str, Any]] = []
         self.saves: list[tuple[str, str, int, Any]] = []
@@ -123,10 +122,6 @@ class _Store:
         self, served_model: str, chat_key: str | None = None, *, role: Any = None
     ) -> None:
         self.abandoned.append(role)
-
-    async def forget_conversation(self, conversation_key: str) -> int:
-        self.forgotten.append(conversation_key)
-        return 1
 
     async def save_idle_conversation(self, served_model: str) -> bool:
         self.idle_saves.append(served_model)
@@ -622,6 +617,7 @@ def test_with_no_conversation_on_disk_the_prefix_still_comes_back(tmp_path: Path
 
 
 def test_every_turn_claims_his_slot_for_his_conversation(tmp_path: Path) -> None:
+    """Brain access on or off (owner, 2026-11-19, "Save it anyway"): the lane never asks."""
     store = _Store()
     app, auth = _his(tmp_path, store, _used(30_000, 29_000, 40))
     with TestClient(app) as client:
