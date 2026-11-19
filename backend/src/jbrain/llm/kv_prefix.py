@@ -2282,9 +2282,10 @@ class KvPrefixStore:
     ) -> tuple[bool, int]:
         """Before a chat request on a pooled model, in its chat slot `role` (the interactive
         one when none is named), or the creature's own slot (`GROWBOT_ROLE`, which has one
-        conversation and so passes `only_into_empty`: after an api restart the engine survived,
-        a slot holding anything holds his live conversation, newer than any file, and a dream
-        may have left it shorter than one): save
+        conversation and so passes `only_into_empty`: when the store has no claim on the slot,
+        as after an api restart the engine survived, a slot holding anything holds his live
+        conversation, newer than any file, and a dream may have left it shorter than one; a
+        slot the store knew held another conversation is free to take): save
         the conversation the slot holds if this request is about to repurpose it, then restore
         this request's own conversation if a file for it (same key, same base identity) is on
         disk. Returns
@@ -2331,7 +2332,14 @@ class KvPrefixStore:
             if self._prepare_seq.get(slot_key) != seq:
                 return False, seq  # another request is already taking the slot
             restored = await self._restore_conversation(
-                served_model, pool, conversation_key, base, save_dir, line, role, only_into_empty
+                served_model,
+                pool,
+                conversation_key,
+                base,
+                save_dir,
+                line,
+                role,
+                only_into_empty and hold is None,
             )
         return restored, seq
 

@@ -27,6 +27,7 @@ from jbrain.api.growbot_llm import log_call
 from jbrain.api.internal_auth import require_growbot
 from jbrain.auth.owner import owner_principal_id
 from jbrain.db.session import SessionContext
+from jbrain.growbot import prefix
 from jbrain.growbot.calls import CallRecord
 from jbrain.growbot.personas import PersonaRepo
 from jbrain.notes.service import UnknownDomain
@@ -143,6 +144,15 @@ async def brain_search(request: Request, body: SearchIn) -> FoundOut:
     q = " ".join(body.q.split())[:QUERY_MAX]
     if not q:
         raise HTTPException(status_code=400, detail="a search")
+    # What this returns lands in his prompt, so his conversation never reaches the box disk
+    # again (growbot_llm `_kept_off_disk`). Recorded first and durably, or nothing is returned.
+    try:
+        await request.app.state.settings_store.exclude_llm_kv_conversation(
+            ctx, prefix.off_disk_entry(body.persona)
+        )
+    except Exception as exc:
+        _log(request, body, "search", q, False, "", t0, "off_disk_unrecorded")
+        raise HTTPException(status_code=503, detail="busy") from exc
     search = cast(SearchService, request.app.state.search_service)
     try:
         found = await search.search(ctx, q, None, HITS)

@@ -21,9 +21,9 @@ slot; this drives it for the GrowBot role.
   of the day's talk and looks (growbot-looks.js). That file does hold his words and pictures,
   on the box's own disk beside the slot it came from, under the owner's conversation-cache
   toggle (Ops) like jerv's chats; a dream starts a new history, which the next save replaces.
-  Never while brain access is on for him: his notes lookups (every domain) then reach his
-  prompt, and a file sits outside Postgres, where the domain firewalls cannot reach
-  (`api/growbot_llm.py` `_kept_off_disk`).
+  Never while brain access is on for him, nor ever after a notes lookup ran for him: lookups
+  (every domain) reach his prompt and stay in his history, and a file sits outside Postgres,
+  where the domain firewalls cannot reach (`api/growbot_llm.py` `_kept_off_disk`).
 
 Everything is best-effort: the worst case of any failure is the cold turn this replaces.
 """
@@ -131,7 +131,7 @@ class PrefixStore(Protocol):
     async def save_idle_conversation(self, served_model: str) -> bool: ...
 
 
-def _pooled(model: str) -> bool:
+def pooled(model: str) -> bool:
     """Only a model with a role pool gives the creature a slot of its own. Unpooled, the store
     keys its restore memo and its slot pick by model alone, so a creature restore would land in
     any idle slot and spend jerv's memo."""
@@ -140,7 +140,7 @@ def _pooled(model: str) -> bool:
 
 async def restore(store: PrefixStore | None, model: str, system: str, level: str) -> bool:
     """Put the creature's prefix back into its slot if the slot lost it and a file exists."""
-    if store is None or len(system) < MIN_SYSTEM_CHARS or not _pooled(model):
+    if store is None or len(system) < MIN_SYSTEM_CHARS or not pooled(model):
         return False
     try:
         return await asyncio.wait_for(
@@ -150,6 +150,14 @@ async def restore(store: PrefixStore | None, model: str, system: str, level: str
     except Exception:  # noqa: BLE001 - the turn runs cold rather than fail
         log.warning("growbot prefix restore failed model=%s", model, exc_info=True)
         return False
+
+
+def off_disk_entry(persona_id: str) -> str:
+    """A persona's entry in the owner setting of conversations that never reach disk
+    (`settings_store.LLM_KV_CONVERSATION_EXCLUDED_KEY`), written by its first notes lookup: his
+    history goes on carrying what a lookup told him after brain access is turned off, the api
+    restarts, or he opens on another phone, and nothing on the box knows when he next dreams."""
+    return "growbot-persona:" + persona_id
 
 
 def conversation_key(system: str) -> str:
@@ -165,7 +173,7 @@ async def restore_conversation(
     the store's sequence for this turn's note); restored is None when the restore outlived its
     bound, so the engine may still be loading it: a prefix restore then would see the
     never-used slot as empty and overwrite the conversation arriving in it."""
-    if store is None or len(system) < MIN_SYSTEM_CHARS or not _pooled(model):
+    if store is None or len(system) < MIN_SYSTEM_CHARS or not pooled(model):
         return False, None
     try:
         return await asyncio.wait_for(
@@ -202,7 +210,7 @@ def note_turn(
 ) -> None:
     """A turn ran in his slot: it now holds his conversation, unsaved (or, for a turn that
     did not finish, something unknown that must never be saved under his name)."""
-    if store is None or len(system) < MIN_SYSTEM_CHARS or not _pooled(model):
+    if store is None or len(system) < MIN_SYSTEM_CHARS or not pooled(model):
         return
     try:
         if not ok or not prompt_tokens:
@@ -223,11 +231,10 @@ def note_turn(
 
 
 async def forget(store: PrefixStore | None, system: str) -> None:
-    """Delete his conversation's files and keep it off disk until the api restarts: the
-    owner's notes can now reach his prompt (brain access, `growbot_brain.py`, every domain),
-    and a conversation file sits outside Postgres, where the domain firewalls cannot reach.
-    Kept off for the process's life, not just while access is on, because his history goes on
-    carrying what a lookup told him after access is turned off."""
+    """Delete his conversation's files and keep the key off disk until the api restarts (the
+    owner setting `off_disk_entry` names keeps it off after that): the owner's notes can reach
+    his prompt (brain access, `growbot_brain.py`, every domain), and a conversation file sits
+    outside Postgres, where the domain firewalls cannot reach."""
     if store is None or len(system) < MIN_SYSTEM_CHARS:
         return
     try:
@@ -253,29 +260,40 @@ class ConversationSaver:
     """Saves his slot once he has been quiet `CONVERSATION_SAVE_AFTER_S`. The warm keeper's
     tick does this for jerv's chats, but only while it tends jerv's own local model, so a
     creature on Flash-Next with jerv on another engine or in the cloud would never be saved.
-    Each turn restarts the wait."""
+    Each turn restarts the wait. The save holds the creature's lane lock: a turn that started
+    between the save's slot read and its write would be saved under the old claim's name."""
 
     def __init__(self) -> None:
         self._task: asyncio.Task[None] | None = None
+        self._saving = False
 
     def schedule(
         self,
         store: PrefixStore | None,
         model: str,
+        lock: asyncio.Lock | None = None,
         after_s: float = CONVERSATION_SAVE_AFTER_S,
     ) -> None:
-        if store is None or not _pooled(model):
+        if store is None or not pooled(model):
             return
         if self._task is not None and not self._task.done():
+            if self._saving:
+                return  # a cancelled save leaves a file with no sidecar; it re-checks the claim
             self._task.cancel()
-        self._task = asyncio.create_task(self._save(store, model, after_s))
+        self._task = asyncio.create_task(self._save(store, model, lock, after_s))
 
-    async def _save(self, store: PrefixStore, model: str, after_s: float) -> None:
+    async def _save(
+        self, store: PrefixStore, model: str, lock: asyncio.Lock | None, after_s: float
+    ) -> None:
         await asyncio.sleep(after_s)
+        self._saving = True
         try:
-            await store.save_idle_conversation(model)
+            async with lock if lock is not None else contextlib.nullcontext():
+                await store.save_idle_conversation(model)
         except Exception:  # noqa: BLE001 - the keeper's tick or the next quiet tries again
             log.warning("growbot conversation save failed model=%s", model, exc_info=True)
+        finally:
+            self._saving = False
 
 
 class PrefixSaver:
@@ -308,7 +326,7 @@ class PrefixSaver:
             or len(system) < MIN_SYSTEM_CHARS
             or key in self.saved
             or self.busy()
-            or not _pooled(model)
+            or not pooled(model)
         ):
             return False
         self._task = asyncio.create_task(

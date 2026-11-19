@@ -17,11 +17,12 @@ from fastapi.testclient import TestClient
 from jbrain.growbot import prefix
 from jbrain.llm import local_catalog, prefill
 from jbrain.llm.slot_roles import GROWBOT_ROLE
+from tests.unit.fakes import FakeSettingsStore
 from tests.unit.test_growbot_llm import _COMPLETIONS, _app, _chat, _Gateway
 
 _SYSTEM = "be a small curious robot. " * 800
 # The real check, kept before the autouse fixture stands every model in a pool.
-_REAL_POOLED = prefix._pooled
+_REAL_POOLED = prefix.pooled
 
 
 class _Store:
@@ -147,7 +148,7 @@ def _no_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _pooled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prefix, "_pooled", lambda _model: True)
+    monkeypatch.setattr(prefix, "pooled", lambda _model: True)
 
 
 def _usage(tokens: int) -> tuple[bytes, ...]:
@@ -195,7 +196,7 @@ async def test_a_model_without_a_role_pool_never_touches_the_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Unpooled, the store would key the restore memo by model alone, sharing jerv's.
-    monkeypatch.setattr(prefix, "_pooled", lambda _model: False)
+    monkeypatch.setattr(prefix, "pooled", lambda _model: False)
     store = _Store()
     assert await prefix.restore(store, "m", _SYSTEM, "off") is False
     saver = prefix.PrefixSaver()
@@ -609,7 +610,19 @@ def _his(
     app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=chunks, status=status))
     app.state.kv_prefix = store
     app.state.growbot_personas = personas if personas is not None else _Personas()
+    app.state.settings_store = FakeSettingsStore()
+    app.state.session_maker = object()
     return app, {**auth, "x-growbot-persona": _PERSONA}
+
+
+@pytest.fixture(autouse=True)
+def _an_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jbrain.api import growbot_llm
+
+    async def owner(_maker: Any) -> str:
+        return "00000000-0000-4000-8000-000000000001"
+
+    monkeypatch.setattr(growbot_llm, "owner_principal_id", owner)
 
 
 def _used(prompt: int, cached: int, completion: int) -> tuple[bytes, ...]:
@@ -798,3 +811,39 @@ def test_a_replay_drops_the_claim_on_his_slot(tmp_path: Path) -> None:
         r = client.post("/api/debug/growbot/replay", json=_turn(False))
         assert r.status_code == 200
     assert store.turns == [] and store.abandoned == [GROWBOT_ROLE]
+
+
+def test_a_lookup_once_keeps_him_off_disk_after_access_goes_off_and_a_restart(
+    tmp_path: Path,
+) -> None:
+    """His history goes on carrying what a lookup told him: the owner setting the lookup wrote
+    holds across an api restart, and brain access being off now does not lift it."""
+    store = _Store(conv=True)
+    app, auth = _his(tmp_path, store, _used(30_000, 29_000, 40))
+    app.state.settings_store.values["llm_kv_conversation_excluded_sessions"] = [
+        prefix.off_disk_entry(_PERSONA)
+    ]
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
+    assert store.prepares == [] and store.turns == []
+    assert store.forgotten == [prefix.conversation_key(_SYSTEM)]
+
+
+async def test_a_save_under_way_is_not_cancelled_by_the_next_turn() -> None:
+    class _SlowSave(_Store):
+        async def save_idle_conversation(self, served_model: str) -> bool:
+            await asyncio.sleep(0.1)
+            self.idle_saves.append(served_model)
+            return True
+
+    store = _SlowSave()
+    saver = prefix.ConversationSaver()
+    lock = asyncio.Lock()
+    saver.schedule(store, "m", lock, after_s=0)
+    await asyncio.sleep(0.02)
+    saver.schedule(store, "m", lock, after_s=0)  # the turn arrives mid-save
+    await asyncio.sleep(0.2)
+    assert store.idle_saves == ["m"]
+    # It held the lane's lock, so no turn could start between its slot read and its write.
+    async with lock:
+        pass

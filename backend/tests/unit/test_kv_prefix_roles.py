@@ -1571,3 +1571,24 @@ async def test_a_creature_slot_holding_anything_is_left_alone(root: Path, live: 
     assert not await _creature_prepare(store2)
     assert gw2.restored == []
     assert store2._counters.get("conversation_skipped_slot_occupied") == 1
+
+
+async def test_a_creature_slot_the_store_knew_held_another_conversation_is_taken(
+    root: Path,
+) -> None:
+    """Another persona talked since his save: the store claimed the slot for that one, saved
+    it, and his own file goes in over it."""
+    store, gw = _store(root)
+    _creature_turn(store, gw, 30_000)
+    assert await store.save_idle_conversation(FLASH, idle_s=0)
+    store.note_conversation_turn(
+        FLASH,
+        "growbot:y",
+        fingerprint=store.identity_of(FLASH, "persona", [], None),
+        input_tokens=12_000,
+        output_tokens=40,
+        role=SlotRole.GROWBOT,
+    )
+    gw.slot_state = _slots(s10=12_039)
+    gw.restore_n = 30_039
+    assert await _creature_prepare(store)
