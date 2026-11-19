@@ -4316,9 +4316,11 @@ def _trained_walk(
     held: dict[str, float] | None = None,
     policy: str = "",
     rec: bool = False,
+    mirror: bool = False,
 ) -> dict[str, Any]:
     env = {
         **os.environ,
+        "GB_MIRROR": "1" if mirror else "",
         "GB_REC": "1" if rec else "",
         "GB_POLICY": policy,
         "GB_HELD": json.dumps(held) if held else "",
@@ -4419,9 +4421,12 @@ def test_the_flight_recorder_posts_a_walk_and_closes_its_run_as_the_page_goes() 
     redactor runs after this copy), and the page leaving ends the run, so one back from the
     bfcache opens a fresh run rather than posting into a finished one."""
     got = _trained_walk("forward", _STILL, rec=True, wait_ms=3000)
-    rec = got["rec"]
-    assert rec, "the recorder posted nothing"
-    assert len({c["run"] for c in rec}) == 1
+    runs = list(dict.fromkeys(c["run"] for c in got["rec"]))
+    assert len(runs) == 2
+    # Back from the bfcache: a fresh run of its own, closed as the page goes again.
+    again = [c for c in got["rec"] if c["run"] == runs[1]]
+    assert [(c["seq"], c["status"]) for c in again] == [(0, "done")]
+    rec = [c for c in got["rec"] if c["run"] == runs[0]]
     assert re.fullmatch(r"bt-rec-[a-z0-9]{1,16}", rec[0]["run"])
     assert [c["seq"] for c in rec] == list(range(len(rec)))
     assert [c["status"] for c in rec] == ["running"] * (len(rec) - 1) + ["done"]
@@ -4471,6 +4476,14 @@ def test_a_nose_walk_backs_away_on_its_own_positive_speed(move: str, fwd: int) -
 
 
 _STEER = {"at": 1300, "drive": "d1ce0001", "heading": -45, "speed": 0.5, "pitch": -1}
+
+
+def test_steering_a_nose_walk_back_keeps_its_speed_positive() -> None:
+    steer = {**_STEER, "heading": 0, "speed": -0.5}
+    got = _trained_walk("back", _STILL, steer=steer, policy="33333333-3333-4333-8333-333333333333")
+    assert got["steered"] is True
+    assert got["fed"][0]["cmd"]["fwd"] == 1
+    assert got["tail"][-1]["cmd"]["fwd"] == 0.5
 
 
 def test_the_body_tabs_steering_retargets_its_walk_and_keeps_it_going() -> None:
@@ -4691,6 +4704,21 @@ def test_following_turns_toward_someone_off_to_the_left() -> None:
     assert set(got["files"]) == {_LOOK_F}
     assert got["cmds"][-1]["yaw"] == pytest.approx(19.1 / 180, abs=0.01)
     assert got["cmds"][-1]["fwd"] == 0
+
+
+def test_the_face_mirror_turns_a_follow_the_other_way() -> None:
+    """Owner, 2026-11-19: Settings' Mirror face tracking is how he checks whether face tracking
+    turns him the wrong way, so the follower and the body test turn with it too."""
+    got = _trained_walk(
+        "look",
+        _STILL,
+        skills=_SET,
+        follow="walk",
+        faces=_walking_away(0.15, 1, 20, x=0.8),
+        mirror=True,
+    )
+    assert set(got["files"]) == {_LOOK_F}
+    assert got["cmds"][-1]["yaw"] == pytest.approx(-19.1 / 180, abs=0.01)
 
 
 def test_following_nobody_stops_and_says_so() -> None:

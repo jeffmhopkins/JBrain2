@@ -1700,7 +1700,7 @@
       try { window._body.pose(at.l, at.r); } catch (e) { clearInterval(iv); return; }
       // The leg sense and the IMU log, as the hold's own beats mark each pose they send.
       try { if (typeof _imuPose === "function") _imuPose(at.l, at.r, 1); } catch (e) {}
-      window._gbGlideAt = f >= 1 ? null : { l: at.l, r: at.r, hp: hp };
+      window._gbGlideAt = f >= 1 ? null : { l: at.l, r: at.r, hp: hp, end: t0 + ms };
       if (f >= 1) clearInterval(iv);
     }
     iv = setInterval(beat, GLIDE_TICK_MS);
@@ -1751,6 +1751,8 @@
   function goodBox(b) { return b && isFinite(b.x) && isFinite(b.y) && b.width > 0 && b.height > 0; }
 
   function followBoxes(boxes, src, ms) {
+    // Settings' Mirror face tracking flips these too, so a follow and a body test turn with it.
+    if (typeof window.faceMirrorBoxes === "function") boxes = window.faceMirrorBoxes(boxes);
     // Only the front camera's frames: a face seen by the back eye is behind it, signs reversed.
     if (!frontCamera()) { seen = { boxes: [], t: -Infinity }; return; }
     if (src === "tracker") {
@@ -2221,7 +2223,7 @@
      the debug API's GET /growbot/bodytests/{n}. Not while a body test runs (that one records
      it); ?legrec=0 turns it off. */
   var REC_MS = 50, REC_PRE_MS = 3000, REC_POST_MS = 6000, REC_FLUSH_MS = 2000, REC_ROWS_MAX = 55000, REC_FINAL_ROWS = 200;
-  var REC_EVENTS = /^(walk_start|walk_end|move_end|skill|hold_start|hold_end|hold_abort|rest_tall|self_jolt|fall_think|reflex_[a-z]+|gait_abort|recover_[a-z_]+|action_outcome|act|spin_stuck|shake_block|legs_slack)$/;
+  var REC_EVENTS = /^(walk_start|walk_end|move_end|skill|hold_start|hold_end|hold_abort|rest_tall|self_jolt|fall_think|reflex_[a-z]+|gait_abort|recover_[a-z_]+|action_outcome|act|spin_stuck|shake_block|legs_slack|face_mirror)$/;
   var REC_CODE = /^[A-Za-z0-9_.:-]{0,40}$/;
   var rec = null, recLast = "";
   function recNew() {
@@ -2232,7 +2234,7 @@
     var M = typeof _motion !== "undefined" ? _motion : null;
     if (M && M.tele && isFinite(M.tele.l)) return [btR(M.tele.l), btR(M.tele.r)];
     var ga = window._gbGlideAt;
-    if (ga && typeof _holdPose !== "undefined" && ga.hp === _holdPose) return [btR(ga.l), btR(ga.r)];
+    if (ga && typeof _holdPose !== "undefined" && ga.hp === _holdPose && Date.now() < ga.end) return [btR(ga.l), btR(ga.r)];
     if (typeof _holdPose !== "undefined" && _holdPose) return [btR(_holdPose.l), btR(_holdPose.r)];
     if (typeof _legL !== "undefined" && isFinite(_legL)) return [btR(_legL), btR(_legR)];
     return null;
@@ -2252,6 +2254,8 @@
     function post() {
       return fetch("/api/box/bodytest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(chunk), keepalive: !!final });
     }
+    // Best effort: it can land before a chunk still in flight, whose rows the box then refuses
+    // as the run's ending came first.
     if (final) { try { post().catch(function () {}); } catch (e) {} }
     else r.posting = r.posting.then(post).catch(function () {});
     // A finished run takes no more chunks, so a page back from the bfcache starts a fresh one; a
@@ -2322,6 +2326,8 @@
     if (typeof _motion !== "undefined" && _motion) recMark();
     var row = btTele(true);
     row.t = Date.now(); row.k = "s"; row.lc = recLegs();
+    // Whether Settings' Mirror face tracking had flipped the face's side.
+    if (window.FACE_MIRROR) row.fm = 1;
     // The face tracker's face, its centre across and down the frame (0 is the middle) and
     // whether it holds the legs: with lc, which way a lean moved the face.
     try {
@@ -2556,7 +2562,9 @@
         var ls = typeof _legStart === "function" ? _legStart() : null;
         if (ls && ls.mode === "anchor") from = { l: +ls.anchor.l + L, r: +ls.anchor.r + Rr };
         var ga = window._gbGlideAt;
-        if (from && ga && typeof _holdPose !== "undefined" && ga.hp === _holdPose) from = { l: ga.l + L, r: ga.r + Rr };
+        // Only while its glide would still run: a glide a walk's own _motion cut short leaves the
+        // hold's beats to pin the target once the glide's time is up.
+        if (from && ga && typeof _holdPose !== "undefined" && ga.hp === _holdPose && Date.now() < ga.end) from = { l: ga.l + L, r: ga.r + Rr };
       } catch (e) {}
       var glide = glideMs(from, neutral), glideEnd = Date.now() + glide;
       var prepEnd = glideEnd + PREP_MS, grav = { x: 0, y: 0, z: 0, n: 0 };
@@ -2700,7 +2708,9 @@
             pitch = live.pitch;
           }
           else {
-            cmd = { target: live.heading, fwd: hasSpeed ? live.speed : 1, around: Math.abs(live.heading) === 180 };
+            // A nose walk backs on its own positive speeds, whichever way the steer's sign asks.
+            var lf = !hasSpeed ? 1 : nose ? Math.abs(live.speed) : live.speed;
+            cmd = { target: live.heading, fwd: lf, around: Math.abs(live.heading) === 180 };
             pitch = hasPitch ? live.pitch : 1;
           }
           var want = Math.min(live.t + STEER_HOLD_MS, walkT + DRIVE_MAX_MS);

@@ -335,8 +335,8 @@ A walk asked mid-glide starts from the pose the glide last sent (`_gbGlideAt`), 
 the recorder's `lc` while it glides.
 
 **Nose walks backing.** A single nose-walk policy that takes a speed backs away on its own +1,
-nose first (as a skill set's does, `growbot-drive.js` `inputs`); the -1 it was sent before is
-outside its training and barely moved him in the sim.
+nose first (as a skill set's does, `growbot-drive.js` `inputs`), live steering included; the -1
+it was sent before is outside its training and barely moved him in the sim.
 
 **Skill sets.** A walk move may carry `skills` in place of `policy`: a library policy for each of
 `look`, `forward` and `back` (the box reads which skills a file serves from the file itself,
@@ -709,8 +709,10 @@ the robot's own phone never inherits it.
 
 *Mirror face tracking* (Settings, under travel mode; `FACE_MIRROR_PATCHES`; owner, 2026-11-19:
 *"a camera direction mirror toggle ... if it is backwards we can just flip it real fast and
-verify"*) flips left and right in the boxes the leg tracker takes, so the head, the lean and any
-turn toward a face flip together, while the screen's eyes keep the camera's own boxes. Off by
+verify"*) flips left and right in the boxes the leg tracker takes and in those the follower and
+the body test read (`followBoxes`, on top of the follow camera's own calibrated `flipX`), so the
+head, the lean and any turn toward a face flip together, while the screen's eyes keep the
+camera's own boxes. Recorder samples carry `fm: 1` while it is on. Off by
 default, per phone (`gb_face_mirror`), kept across a reload; each switch logs `face_mirror`.
 
 It switches by voice too (owner, 2026-11-16: *"hey Dave go to travel mode"*): a `travel` verb

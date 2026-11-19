@@ -5086,9 +5086,9 @@ PATCHES += GLIDE_PATCHES
 # Face mirror (owner, 2026-11-19: "a camera direction mirror toggle that I can turn on and off
 # ... if it is backwards we can just flip it real fast and verify"). His body test read up/down
 # as right and left/right as possibly backwards. The flip is applied where the leg tracker takes
-# its boxes, so everything that turns him toward a face (the head, the lean, the look-policy
-# turn) flips together while the screen's eyes, fed the camera's own boxes, keep looking where
-# they did. Per phone and off by default, like travel mode, and kept across a reload.
+# its boxes, and growbot-box.js's followBoxes applies it to what the follower and the body test
+# read, so everything that turns him toward a face flips together, while the screen's eyes, fed
+# the camera's own boxes, keep looking where they did. Per phone and off by default, like travel mode, and kept across a reload.
 _GB_FACE_MIRROR_JS = r"""
 /*FACE-MIRROR{*/var FACE_MIRROR=false;
 try{FACE_MIRROR=localStorage.getItem("gb_face_mirror")==="1";}catch(e){}

@@ -90,6 +90,11 @@ g.fetch = async (url, opts) => {
   const id = decodeURIComponent(url.split("id=")[1] || "");
   return { ok: url.startsWith("/api/box/policy?id="), status: 200, json: async () => FILES[id] || POLICY };
 };
+// GB_MIRROR: Settings' Mirror face tracking on, the page's own block (built next.html) beside BOX.
+if (process.env.GB_MIRROR) {
+  const page = fs.readFileSync(BOX.replace(/growbot-box\.js$/, "v3/next.html"), "utf8");
+  (0, eval)(page.slice(page.indexOf("/*FACE-MIRROR{*/"), page.indexOf("/*}FACE-MIRROR*/")) + "\nsetFaceMirror(true);");
+}
 const src = fs.readFileSync(BOX, "utf8");
 (0, eval)(src.slice(src.indexOf("/* Trained walks from JBrain's policy library")));
 const STEER = process.argv[7] ? JSON.parse(process.argv[7]) : null;
@@ -133,6 +138,11 @@ let rec;
 if (process.env.GB_REC) {
   pageOn.pagehide();
   await new Promise((r) => setTimeout(r, 120));
+  // Back from the bfcache: the next leg event records into a fresh run.
+  g.logEv("walk_start", {});
+  await new Promise((r) => setTimeout(r, 120));
+  pageOn.pagehide();
+  await new Promise((r) => setTimeout(r, 50));
   rec = recPosts.map((c) => ({ run: c.run, seq: c.seq, status: c.status, robot: c.robot, kind: c.summary.kind, moves: c.summary.moves,
     n: c.rows.length, samples: c.rows.filter((r) => r.k === "s").length, lc: c.rows.filter((r) => r.k === "s" && r.lc).length,
     events: c.rows.filter((r) => r.k === "e") }));
