@@ -37,6 +37,12 @@
   // Nearer than this to the lens is his own nose or leg at the picture's edge, whatever a
   // model calls it.
   var SELF_M = 0.05;
+  // The map's scan (growbot-grid.js) takes finer directions than his words do: 2.5 degrees each
+  // across the sim camera's 60, so a doorway's edges land in the right cells.
+  var SCAN_COLS = 24;
+  // A direction this much of whose picture is nearer than SELF_M is blind (his lens against a
+  // wall), not clear: the map learns nothing from it.
+  var BLIND_SHARE = 0.2;
   var BINS = 9, NEAR_PCT = 0.1, OPEN_GAIN_M = 0.8, THING_SHARE = 0.015, THINGS_MAX = 5;
   // A scene this old says nothing about now.
   var FRESH_MS = 1500;
@@ -64,15 +70,22 @@
     var vfov = +mp.vfov || 75, hfov = hfovOf(mp), p = (+mp.pitch || 0) * D, camH = mp.camH === undefined ? 0.1 : +mp.camH;
     var fy = (h / 2) / Math.tan(vfov * D / 2), fx = (w / 2) / Math.tan(hfov * D / 2);
     var cp = Math.cos(p), sp = Math.sin(p), half = hfov / 2, bw = hfov / BINS;
-    var bins = [], things = {}, n = 0;
+    var bins = [], fine = [], things = {}, n = 0, sw = hfov / SCAN_COLS;
     for (var b = 0; b < BINS; b++) bins.push({ d: [], l: [] });
+    for (var f = 0; f < SCAN_COLS; f++) fine.push([]);
+    var blind = [], rows = [], floorFar = [];
+    for (var f2 = 0; f2 < SCAN_COLS; f2++) { blind.push(0); rows.push(0); floorFar.push(0); }
     for (var r = 0; r < h; r++) {
       var vy = (h / 2 - (r + 0.5)) / fy;
       for (var c = 0; c < w; c++) {
         var i = r * w + c, z = +dep[i];
-        if (!(z > SELF_M) || !isFinite(z)) continue;
         var name = names[lab ? lab[i] : 0] || "unknown";
-        if (name === "self" || name === "ceiling") continue;
+        if (name === "self") continue;
+        // The bearing of this pixel's column at the picture's middle row, for blindness.
+        var qb = Math.floor((half - Math.atan2((w / 2 - (c + 0.5)) / fx, 1) / D) / sw);
+        if (qb >= 0 && qb < SCAN_COLS) { rows[qb]++; if (z > 0 && z <= SELF_M) blind[qb]++; }
+        if (!(z > SELF_M) || !isFinite(z)) continue;
+        if (name === "ceiling") continue;
         n++;
         var yc = vy * z, xc = ((w / 2 - (c + 0.5)) / fx) * z;
         var fwd = z * cp - yc * sp, up = camH + z * sp + yc * cp;
@@ -82,7 +95,10 @@
           var t = things[name] || (things[name] = { n: 0, deg: [], d: [] });
           t.n++; t.deg.push(deg); t.d.push(dist);
         }
-        if (name === "floor" || up > HMAX || up < HMIN) continue;
+        var q = Math.floor((half - deg) / sw), inScan = q >= 0 && q < SCAN_COLS;
+        if (name === "floor") { if (inScan && dist > floorFar[q]) floorFar[q] = dist; continue; }
+        if (up > HMAX || up < HMIN) continue;
+        if (inScan) fine[q].push(dist);
         var k = Math.floor((half - deg) / bw);
         if (k < 0 || k >= BINS) continue;
         bins[k].d.push(dist); bins[k].l.push(name);
@@ -114,7 +130,18 @@
     var hit = mid.filter(function (c) { return c.m !== null; });
     var ahead = (hit.length ? hit.map(function (c) { return c.m; }) : mid.map(function (c) { return c.open; }))
       .reduce(function (a, v) { return a === null || v < a ? v : a; }, null);
-    return { cols: cols, ahead: ahead, blocked: hit.length > 0,
+    // m null is clear as far as `reach`: the map frees those cells and marks none.
+    var scan = fine.map(function (d, q) {
+      var col = { deg: r2(half - sw * (q + 0.5)), m: d.length ? r2(pct(d, NEAR_PCT)) : null };
+      if (col.m === null) {
+        if (rows[q] && blind[q] / rows[q] > BLIND_SHARE) col.blind = true;
+        // Clear only as far as floor was seen that way: at the picture's top corners nothing
+        // below his height shows at all, which says nothing about what stands there.
+        col.open = r2(floorFar[q]);
+      }
+      return col;
+    });
+    return { cols: cols, scan: scan, ahead: ahead, blocked: hit.length > 0,
       openings: openings(cols), things: list, reach: r2(reach), hfov: r2(hfov) };
   }
 
@@ -230,7 +257,9 @@
         var sc = reduce(mp), now = Date.now();
         // The page's own clock: a source's may run ahead of it, and a scene would never go stale.
         sc.t = now; sc.h = heading(); sc.src = mp.src || "";
+        if (mp.lens) sc.lens = mp.lens;
         latest = sc; fed++;
+        if (root.gbGrid && root.gbGrid.see) root.gbGrid.see(sc);
         hist.push({ t: now, ahead: sc.blocked ? sc.ahead : null, walking: walkingFwd() });
         hist = hist.filter(function (x) { return now - x.t < api.PUSH_MS + 4000; });
         if (fed % 20 === 1) { try { logEv("vision", { src: sc.src, ahead: sc.ahead, open: sc.openings.length, things: sc.things.map(function (t) { return t.what; }).join(",") }); } catch (e) {} }

@@ -46,7 +46,7 @@ SEED_TURN_DEG = 120.0
 STUCK_M, STUCK_S, STUCK_DEG = 0.05, 30.0, 10.0
 # Down: not upright for this long in a row.
 DOWN_S = 3.0
-EXPLORERS = ("walls",)
+EXPLORERS = ("walls", "grid")
 # Past its minutes, how long a child run may take to start, score and write its report.
 CHILD_SLACK_S = 300.0
 
@@ -164,6 +164,21 @@ async def _walls(sim: Sim, until: float) -> None:
         await sim.wait(5)
 
 
+async def _grid(sim: Sim, until: float) -> None:
+    """The occupancy grid's frontier explorer (wave E2, growbot-grid.js), with no model: once
+    it says it has explored, the rest of the run is idle."""
+    await sim.page.evaluate("() => window.gbGrid.explore(true)")
+    while sim.now() < until:
+        try:
+            st = await sim.page.evaluate("() => window.gbGrid.state()")
+            sim.note("battery", grid=st)
+            if st and st.get("explore") and st["explore"].get("done"):
+                break
+        except Exception as e:  # the page is reloading: try again on the next beat
+            sim.note("battery", error=str(e)[:200])
+        await sim.wait(10)
+
+
 async def run_one(r: Run, policies: dict[str, Path], skills: dict[str, str]) -> dict[str, Any]:
     at = start_of(r.scene, r.seed)
     opts = Options(
@@ -185,6 +200,8 @@ async def run_one(r: Run, policies: dict[str, Path], skills: dict[str, str]) -> 
         until = sim.now() + r.minutes * 60
         if r.explorer == "walls":
             await _walls(sim, until)
+        elif r.explorer == "grid":
+            await _grid(sim, until)
         res = score(sim, fed=r.pose == "truth")
     finally:
         report = await sim.close()

@@ -141,6 +141,8 @@ class Sim:
         # Dave's sketch map (growbot-map.js) as the page holds it: the newest whole, and each
         # second where it says he is beside where he really is (plan.py scores the two).
         self.dave_map: dict[str, Any] | None = None
+        # His occupancy grid at the end of the run (growbot-grid.js), for the plan's picture.
+        self.dave_grid: dict[str, Any] | None = None
         self.map_track: list[dict[str, Any]] = []
         self._agent_ws: Any = None
         self._acks: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -479,6 +481,11 @@ class Sim:
         from dave_sim import report
 
         await self._drain()
+        try:
+            g = await self.page.evaluate("() => window.gbGrid && window.gbGrid.cells()")
+            self.dave_grid = g if isinstance(g, dict) and g.get("free") else None
+        except Exception:
+            pass
         try:
             await self.page.screenshot(path=str(self.o.out / "page.png"))
         except Exception:

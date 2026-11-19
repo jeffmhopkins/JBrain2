@@ -1,6 +1,6 @@
 # The Dave simulator
 
-> **Status:** Living · **Last verified:** 2026-11-18
+> **Status:** Living · **Last verified:** 2026-11-19
 
 Runs Dave's whole loop with no robot and no phone: the real creature page
 (`growbot/site/v3/next.html`) in headless Chromium, its legs and phone sensors played by
@@ -70,7 +70,11 @@ phone model's errors: a whole-frame scale that wanders by about 8%, 3% jitter pe
 holes and 5% of labels lost. The page reduces the maps with the same code a phone source would
 use, so a run tests that code and what Dave does with it, and the sim's blank walls stop
 mattering. Off by default, as on today's phone. Against rays cast in the house, its distances
-per direction came within a few centimetres of the truth.
+per direction came within a few centimetres of the truth. Each frame also carries the lens's own place and heading
+(`lens`), since the camera sits about 8 cm ahead of his middle and a map built from his middle
+smears every wall. When he presses his face to a wall the lens can end up inside it and render
+the room beyond; the sim then hands the page a frame that is all wall at 1 cm, as a real camera
+pressed to a wall would see nothing.
 
 ## Running it
 
@@ -108,7 +112,10 @@ walked, seconds stuck (under 5 cm and 10° in 30 s), falls (down 3 s or more), a
 idea of where he is ends from the truth. `--pose truth` feeds the page the sim's own pose a few
 times a second (`growbot-map.js` `gbPose`), so a planner is judged on a perfect pose first;
 `--pose reckoned` leaves it to the gyro and walking pace, as on today's phone. `--explorer
-walls` is today's round of the walls.
+walls` is today's round of the walls; `--explorer grid` is the map and frontier explorer
+(`gbGrid.explore`), which needs `--vision` and `--pose truth` for now. With `grid`, each run's
+`plan.svg` also draws his grid under the rest: floor he has seen in green, what he hit in dark
+purple, and the things he named as pink dots.
 
 ## Scenarios
 
