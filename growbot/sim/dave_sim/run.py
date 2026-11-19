@@ -241,17 +241,17 @@ class Sim:
         await page.goto(f"{ORIGIN}/v3/next.html?{q}", wait_until="load")
         self._loop = asyncio.create_task(self._run())
         self._cam = asyncio.create_task(self._camera())
-        await asyncio.sleep(2.0)
+        await self.wait(2.0)
         # A creature that has a soul opens on its wake screen; the owner taps Wake.
         gate = page.locator("#wakeGate")
         if await gate.count() and await gate.is_visible():
             wake = gate.get_by_role("button", name="wake", exact=False)
             await (wake.first if await wake.count() else gate).click()
-            await asyncio.sleep(1.0)
+            await self.wait(1.0)
             self.note("woke")
         # A person's first tap: on Android it is what turns the motion sensors on.
         await page.mouse.click(206, 300)
-        await asyncio.sleep(0.5)
+        await self.wait(0.5)
         if self.o.eyes:
             await self.open_eyes()
         self.note("opened")
@@ -260,7 +260,7 @@ class Sim:
         """Tap the camera button, as the owner does, unless the eyes are already open."""
         if not await self.page.evaluate("() => typeof camOn !== 'undefined' && !!camOn"):
             await self.page.click("#gbkSee")
-            await asyncio.sleep(1.0)
+            await self.wait(1.0)
         on = await self.page.evaluate("() => typeof camOn !== 'undefined' && !!camOn")
         self.note("eyes", open=on)
 
@@ -347,6 +347,9 @@ class Sim:
         page = self.page
         n, fed, drained = 0, -1e9, 0.0
         step_ms = round(CONTROL_DT * 1000)
+        # Page time owed: a tick whose page calls failed (a reload) still ran its physics, so
+        # the page's clock catches up on the next tick that reaches it.
+        owed = 0
         while True:
             try:
                 self.body.tick()
@@ -358,22 +361,28 @@ class Sim:
             self.sim_t = n * CONTROL_DT
             if n % 2 == 0:
                 self._record()
+            owed += step_ms
             try:
-                await page.evaluate("m => window.__simMotion(m)", self.body.motion())
+                await page.evaluate("m => window.__simMotion(m, true)", self.body.motion())
                 if self.o.pose == "truth" and self.sim_t - fed >= POSE_S:
                     fed = self.sim_t
                     await page.evaluate("p => window.gbPose && window.gbPose.feed(p)", self.pose())
                 if self.sim_t - drained > 1.0:
                     drained = self.sim_t
                     await self._drain()
-                await page.clock.run_for(step_ms)
+                await page.clock.run_for(owed)
+                owed = 0
             except Exception as e:  # the page navigated or closed: the next tick tries again
                 self.note("loop", error=str(e)[:200])
                 await asyncio.sleep(0.2)
 
     async def _until_sim(self, t: float) -> None:
-        """Wait, on the run's clock, until it reads `t`."""
+        """Wait, on the run's clock, until it reads `t`. Nothing else moves that clock, so a
+        physics loop that died ends the wait with its error rather than hanging it."""
         while self.now() < t:
+            if self._loop is not None and self._loop.done():
+                self._loop.result()
+                raise RuntimeError("the physics loop stopped")
             await asyncio.sleep(0.01)
 
     def pose(self) -> dict[str, float]:

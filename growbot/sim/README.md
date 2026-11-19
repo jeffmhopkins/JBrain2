@@ -34,7 +34,9 @@ of physics is followed by the same 40 ms of the page's time. A loaded machine ma
 longer, never different. On the wall clock (lockstep off) the loop ran owed physics ticks back
 to back on one stale leg command, up to ten at a time with three runs on four cores, and the
 walk loop ticked late and uneven. Scenario waits, the camera's frame rate, the chip's clock and
-every timeline time are on the run's clock too; only the model's latency stays real.
+every timeline time are on the run's clock too, and the phone's motion sensors fire once per
+tick rather than on their own timer; only the model's latency stays real. A physics loop that
+dies ends every wait with its error instead of freezing the run's clock.
 
 Live runs share the creature lane with the real robot: the box answers 409 while the real
 Dave has spoken in the last two minutes, and a run waits briefly for quiet rather than

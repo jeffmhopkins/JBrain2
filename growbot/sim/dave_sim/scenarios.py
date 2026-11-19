@@ -842,7 +842,8 @@ for _k in (1, 2, 3):
 @scenario(start="standing")
 async def gets_up_from_nose_down(sim: Sim) -> None:
     """Tipped onto his nose as the trained forward walk leaves him in the battery (screen up,
-    pitched 40-50 degrees nose-down, legs limp): the Body tab's get-up stands him again."""
+    pitched 40-50 degrees nose-down; the page lets his legs go): the Body tab's get-up stands
+    him again."""
     import mujoco
     import numpy as np
 
@@ -853,7 +854,6 @@ async def gets_up_from_nose_down(sim: Sim) -> None:
     mujoco.mju_euler2Quat(q, np.array([0.0, math.radians(45.0), 0.0]), "XYZ")
     d.qpos[3:7] = q
     d.qpos[2] = 0.3
-    b.servo.limp = True
     mujoco.mj_kinematics(m, d)
     await sim.wait(4)
     s = sim.state
