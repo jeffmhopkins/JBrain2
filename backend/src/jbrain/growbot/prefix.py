@@ -21,9 +21,10 @@ slot; this drives it for the GrowBot role.
   of the day's talk and looks (growbot-looks.js). That file does hold his words and pictures,
   on the box's own disk beside the slot it came from, under the owner's conversation-cache
   toggle (Ops) like jerv's chats; a dream starts a new history, which the next save replaces.
-  Never while brain access is on for him, nor ever after a notes lookup ran for him: lookups
-  (every domain) reach his prompt and stay in his history, and a file sits outside Postgres,
-  where the domain firewalls cannot reach (`api/growbot_llm.py` `_kept_off_disk`).
+  With brain access on too (owner, 2026-11-19, asked whether to save it "even after he has
+  looked up your notes": "Save it anyway"): a lookup's hits from any domain, health and finance
+  included, can then sit in that file, outside Postgres and the domain firewalls. The owner
+  chose that knowingly; it is the one conversation file that may.
 
 Everything is best-effort: the worst case of any failure is the cold turn this replaces.
 """
@@ -126,8 +127,6 @@ class PrefixStore(Protocol):
         self, served_model: str, chat_key: str | None = None, *, role: Any = None
     ) -> None: ...
 
-    async def forget_conversation(self, conversation_key: str) -> int: ...
-
     async def save_idle_conversation(self, served_model: str) -> bool: ...
 
 
@@ -150,14 +149,6 @@ async def restore(store: PrefixStore | None, model: str, system: str, level: str
     except Exception:  # noqa: BLE001 - the turn runs cold rather than fail
         log.warning("growbot prefix restore failed model=%s", model, exc_info=True)
         return False
-
-
-def off_disk_entry(persona_id: str) -> str:
-    """A persona's entry in the owner setting of conversations that never reach disk
-    (`settings_store.LLM_KV_CONVERSATION_EXCLUDED_KEY`), written by its first notes lookup: his
-    history goes on carrying what a lookup told him after brain access is turned off, the api
-    restarts, or he opens on another phone, and nothing on the box knows when he next dreams."""
-    return "growbot-persona:" + persona_id
 
 
 def conversation_key(system: str) -> str:
@@ -228,19 +219,6 @@ def note_turn(
         )
     except Exception:  # noqa: BLE001 - bookkeeping; the turn already ran
         log.warning("growbot conversation note failed model=%s", model, exc_info=True)
-
-
-async def forget(store: PrefixStore | None, system: str) -> None:
-    """Delete his conversation's files and keep the key off disk until the api restarts (the
-    owner setting `off_disk_entry` names keeps it off after that): the owner's notes can reach
-    his prompt (brain access, `growbot_brain.py`, every domain), and a conversation file sits
-    outside Postgres, where the domain firewalls cannot reach."""
-    if store is None or len(system) < MIN_SYSTEM_CHARS:
-        return
-    try:
-        await store.forget_conversation(conversation_key(system))
-    except Exception:  # noqa: BLE001 - the next brain-on turn tries again
-        log.warning("growbot conversation forget failed", exc_info=True)
 
 
 def consumed(store: PrefixStore | None, model: str, system: str, level: str) -> None:

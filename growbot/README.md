@@ -789,8 +789,8 @@ minutes the lane saves his slot; his next thought after more than 5 quiet minute
 save back if his slot is empty (an engine restart the api saw, an eviction), so he resumes without
 a cold read of the pile. Only when no save fits does the prefix alone come back. It is a
 conversation file under Ops' *Keep chats on disk* toggle (`docs/reference/PROMPT_CACHE.md`).
-A persona with brain access on, or one a notes lookup ever ran for, is never saved: the owner's
-notes can be in its prompt and its history.
+Brain access does not stop the save (owner, 2026-11-19, "Save it anyway"): a lookup's hits,
+from any domain, can then be in the file.
 
 ### His view all around, and choosing where to go
 

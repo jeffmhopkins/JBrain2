@@ -44,7 +44,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from jbrain import model_calls
 from jbrain.api.internal_auth import require_growbot
-from jbrain.auth.owner import owner_principal_id
 from jbrain.db.session import SessionContext
 from jbrain.growbot import prefix
 from jbrain.growbot.calls import CallLog, CallRecord, ReplyCollector, is_cold, redact_images
@@ -248,42 +247,6 @@ def _unsafe_part(messages: list[Any]) -> str | None:
     return None
 
 
-async def _kept_off_disk(
-    state: Any, persona_id: str | None, store: Any, model: str, system: str
-) -> bool:
-    """Whether this persona's conversation must stay off disk: the owner's notes (every domain)
-    can be in his prompt, because brain access is on for him now or a lookup ran for him once
-    (`prefix.off_disk_entry`, written by `growbot_brain.brain_search`, durable). Unknown counts
-    as yes. The first time this process sees either, his file goes and his key stays
-    forgotten."""
-    if store is None or not prefix.pooled(model):
-        return True  # nothing reaches disk on this model anyway
-    seen = _forgotten(state)
-    if not persona_id or persona_id in seen:
-        return True
-    try:
-        if not await _notes_may_be_in_it(state, persona_id):
-            return False
-    except Exception:  # noqa: BLE001 - fail closed; the turn itself still runs
-        log.warning("growbot off-disk check failed", exc_info=True)
-        return True
-    seen.add(persona_id)
-    await prefix.forget(store, system)
-    return True
-
-
-async def _notes_may_be_in_it(state: Any, persona_id: str) -> bool:
-    persona = await state.growbot_personas.get_persona(_SYSTEM_OWNER, persona_id)
-    if persona is None or persona.brain_phone_id is not None:
-        return True
-    owner = await owner_principal_id(state.session_maker)
-    if owner is None:
-        return True
-    ctx = SessionContext(principal_id=owner, principal_kind="owner")
-    excluded = await state.settings_store.llm_kv_conversation_excluded(ctx)
-    return "*" in excluded or prefix.off_disk_entry(persona_id) in excluded
-
-
 def _whole_prompt(collector: ReplyCollector, rec: CallRecord) -> int | None:
     """The tokens the slot holds before the answer. The page streams without asking for usage,
     so `rec.prompt_tokens` is llama-server's `prompt_n`, only what this turn evaluated (a few
@@ -299,14 +262,6 @@ def _conversation_saver(state: Any) -> prefix.ConversationSaver:
     if saver is None:
         saver = state.growbot_conversation_saver = prefix.ConversationSaver()
     return saver
-
-
-def _forgotten(state: Any) -> set[str]:
-    """The personas seen with brain access on since the api started."""
-    seen: set[str] | None = getattr(state, "growbot_off_disk", None)
-    if seen is None:
-        seen = state.growbot_off_disk = set()
-    return seen
 
 
 def _floor(payload: dict[str, Any]) -> int | None:
@@ -512,9 +467,9 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
         # error: the app shows a cut stream as a broken brain and retries blind.
         previous: float | None = getattr(state, "growbot_last_turn", None)
         conv_seq: int | None = None
-        # Whether his conversation may go to disk this turn: never while his notes may be in
-        # it (`_kept_off_disk`).
-        to_disk = False
+        # Whether his conversation may go to disk: every live turn, brain access or not (owner,
+        # 2026-11-19, `growbot/prefix.py`); a replay's slot never holds it.
+        to_disk = not replay
         if not replay:
             state.growbot_last_turn = time.monotonic()
             if not warmup:
@@ -551,8 +506,6 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                 long_quiet = previous is None or time.monotonic() - previous > RESTORE_AFTER_QUIET_S
                 store = getattr(state, "kv_prefix", None)
                 restored: bool | None = False
-                if not replay:
-                    to_disk = not await _kept_off_disk(state, rec.persona_id, store, model, system)
                 if not replay and long_quiet:
                     if to_disk:
                         restored, conv_seq = await prefix.restore_conversation(

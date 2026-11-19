@@ -25,7 +25,9 @@ on disk, outside Postgres, where the domain firewalls (health, finance, location
 it. So a conversation gets a file ONLY when it cannot hold firewalled data (`cache_allowed`): a
 persona that reads no knowledge base and holds no mail tools, in a session scoped to `general`
 alone with no subject, in which no location, mail or records tool has ever run. Brain/curator
-chats and the archivist never get one. A deleted or re-scoped session's files are removed
+chats and the archivist never get one. The GrowBot creature's slot is the owner's chosen
+exception (docs/reference/PROMPT_CACHE.md): its file may hold notes lookups from any domain. A
+deleted or re-scoped session's files are removed
 (`KvPrefixStore.forget_conversation`); the toggle, the budget and the clear route remove the rest.
 """
 
