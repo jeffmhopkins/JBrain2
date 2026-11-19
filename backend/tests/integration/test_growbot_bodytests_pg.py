@@ -123,6 +123,25 @@ async def test_runs_list_newest_first_and_each_robot_keeps_its_newest(
     assert await bt.rows(OWNER, made[0] or 0) == []
 
 
+async def test_flight_recorder_runs_never_evict_a_body_test(
+    maker: async_sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of the flight recorder: it opens a run per page load, so a robot's phone that
+    reloads often would otherwise push its owner's guided body tests out."""
+    monkeypatch.setattr(bodytests_mod, "KEEP_RUNS", 2)
+    monkeypatch.setattr(bodytests_mod, "KEEP_RECORDER_RUNS", 2)
+    bt = SqlBodyTests(maker)
+    tests = [await bt.record(SYSTEM_OWNER, _chunk(0, {"t": i}, run=f"bt-t{i}-x")) for i in range(2)]
+    recs = [
+        await bt.record(SYSTEM_OWNER, _chunk(0, {"t": i}, run=f"bt-rec-r{i}")) for i in range(4)
+    ]
+    mine = await bt.runs(OWNER, robot="gb-abc123")
+    assert [r.id for r in mine] == [recs[3], recs[2], tests[1], tests[0]]
+    later = await bt.record(SYSTEM_OWNER, _chunk(0, {"t": 9}, run="bt-t9-x"))
+    mine = await bt.runs(OWNER, robot="gb-abc123")
+    assert [r.id for r in mine] == [later, recs[3], recs[2], tests[1]]
+
+
 async def test_a_run_stops_growing_past_its_cap(
     maker: async_sessionmaker, monkeypatch: pytest.MonkeyPatch
 ) -> None:

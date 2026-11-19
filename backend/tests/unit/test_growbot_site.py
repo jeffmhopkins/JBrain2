@@ -4313,9 +4313,17 @@ def _trained_walk(
     turn: float = 0,
     secs: float = 1,
     go: list[dict[str, Any]] | None = None,
+    held: dict[str, float] | None = None,
+    policy: str = "",
+    rec: bool = False,
+    mirror: bool = False,
 ) -> dict[str, Any]:
     env = {
         **os.environ,
+        "GB_MIRROR": "1" if mirror else "",
+        "GB_REC": "1" if rec else "",
+        "GB_POLICY": policy,
+        "GB_HELD": json.dumps(held) if held else "",
         "GB_GO": json.dumps(go) if go else "",
         "GB_TURN": str(turn),
         "GB_SECS": str(secs),
@@ -4387,6 +4395,59 @@ def test_a_trained_walk_levels_the_stance_and_steers_by_heading() -> None:
     assert [w["ms"] for w in got["walkLog"]] == [1000]
 
 
+def test_a_trained_walk_glides_from_the_held_rest_to_its_stance() -> None:
+    # Owner's body test, 2026-11-19: from his rest (40/140) the stance's 90/90 went out as one
+    # command and threw him back on every walk start.
+    got = _trained_walk("spin_left", _LEANING, held={"l": 40, "r": 140}, wait_ms=3600)
+    poses = got["allPoses"]
+    # From where the legs were held (with this phone's trims, as the stance's 94/88 has them).
+    assert poses[0] == [44, 138]
+    stance = poses.index([94, 88])
+    # No faster than 60 degrees a second, eased, at a pose every 50 ms: a few degrees a step.
+    steps = [
+        max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+        for a, b in zip(poses[:stance], poses[1 : stance + 1], strict=True)
+    ]
+    assert max(steps) <= 6
+    assert 12 <= stance <= 22
+    # Then the stance's own settle and the walk, as before.
+    assert ["started", "stance_commands"] in got["reports"]
+    assert got["n"] >= 18 and got["errs"] == []
+
+
+def test_the_flight_recorder_posts_a_walk_and_closes_its_run_as_the_page_goes() -> None:
+    """Owner's body test, 2026-11-19: "can you pull all of the sensor data?". A walk is kept
+    whole as one recorder run, its diary rows carry only numbers, flags and short codes (the
+    redactor runs after this copy), and the page leaving ends the run, so one back from the
+    bfcache opens a fresh run rather than posting into a finished one."""
+    got = _trained_walk("forward", _STILL, rec=True, wait_ms=3000)
+    runs = list(dict.fromkeys(c["run"] for c in got["rec"]))
+    assert len(runs) == 2
+    # Back from the bfcache: a fresh run of its own, closed as the page goes again.
+    again = [c for c in got["rec"] if c["run"] == runs[1]]
+    assert [(c["seq"], c["status"]) for c in again] == [(0, "done")]
+    rec = [c for c in got["rec"] if c["run"] == runs[0]]
+    assert re.fullmatch(r"bt-rec-[a-z0-9]{1,16}", rec[0]["run"])
+    assert [c["seq"] for c in rec] == list(range(len(rec)))
+    assert [c["status"] for c in rec] == ["running"] * (len(rec) - 1) + ["done"]
+    assert {c["robot"] for c in rec} == {"gb-r1"} and {c["kind"] for c in rec} == {"recorder"}
+    assert rec[-1]["moves"] >= 1
+    # 20 samples a second from before the walk to the page leaving; the one-second walk's own
+    # carry the legs' commanded pose (this stub holds nothing either side of it).
+    assert sum(c["samples"] for c in rec) >= 40
+    assert 15 <= sum(c["lc"] for c in rec) <= 30
+    assert all(c["n"] <= 400 for c in rec)
+    acts = [e for c in rec for e in c["events"] if e["e"] == "act"]
+    assert len(acts) == 1
+    assert {k: v for k, v in acts[0].items() if k != "t"} == {
+        "k": "e",
+        "e": "act",
+        "why": "fwd",
+        "n": 3,
+        "ok": True,
+    }
+
+
 def test_a_trained_walk_rests_when_the_duty_budget_is_spent() -> None:
     got = _trained_walk("forward", _LEANING, duty_ms=500)
     assert got["reports"] == [["blocked", "duty_limit"]]
@@ -4402,7 +4463,27 @@ def test_a_heading_only_walk_turns_around_to_go_back(move: str, yaw: float, fwd:
 
 
 _STILL = {"accel": {"x": 0.0, "y": 0.0, "z": 9.8}, "rate": {"a": 0.0, "b": 0.0, "g": 0.0}}
+
+
+@pytest.mark.parametrize(("move", "fwd"), [("forward", 1), ("back", 1), ("look", 0)])
+def test_a_nose_walk_backs_away_on_its_own_positive_speed(move: str, fwd: int) -> None:
+    """Policy review, 2026-11-19: a nose walk's +1 is backing away (growbot-drive.js inputs);
+    the -1 it was sent is outside its training, and in the sim it barely moved him."""
+    got = _trained_walk(move, _STILL, policy="33333333-3333-4333-8333-333333333333")
+    assert got["errs"] == []
+    assert got["fed"][0]["cmd"]["fwd"] == fwd
+    assert got["fed"][0]["cmd"]["yaw"] == 0
+
+
 _STEER = {"at": 1300, "drive": "d1ce0001", "heading": -45, "speed": 0.5, "pitch": -1}
+
+
+def test_steering_a_nose_walk_back_keeps_its_speed_positive() -> None:
+    steer = {**_STEER, "heading": 0, "speed": -0.5}
+    got = _trained_walk("back", _STILL, steer=steer, policy="33333333-3333-4333-8333-333333333333")
+    assert got["steered"] is True
+    assert got["fed"][0]["cmd"]["fwd"] == 1
+    assert got["tail"][-1]["cmd"]["fwd"] == 0.5
 
 
 def test_the_body_tabs_steering_retargets_its_walk_and_keeps_it_going() -> None:
@@ -4623,6 +4704,21 @@ def test_following_turns_toward_someone_off_to_the_left() -> None:
     assert set(got["files"]) == {_LOOK_F}
     assert got["cmds"][-1]["yaw"] == pytest.approx(19.1 / 180, abs=0.01)
     assert got["cmds"][-1]["fwd"] == 0
+
+
+def test_the_face_mirror_turns_a_follow_the_other_way() -> None:
+    """Owner, 2026-11-19: Settings' Mirror face tracking is how he checks whether face tracking
+    turns him the wrong way, so the follower and the body test turn with it too."""
+    got = _trained_walk(
+        "look",
+        _STILL,
+        skills=_SET,
+        follow="walk",
+        faces=_walking_away(0.15, 1, 20, x=0.8),
+        mirror=True,
+    )
+    assert set(got["files"]) == {_LOOK_F}
+    assert got["cmds"][-1]["yaw"] == pytest.approx(-19.1 / 180, abs=0.01)
 
 
 def test_following_nobody_stops_and_says_so() -> None:
@@ -5222,6 +5318,79 @@ def test_travel_mode_is_wired_into_the_page() -> None:
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "gb_travel_mode" not in shim
     assert "if (window.TRAVEL && typeof toast" in shim
+
+
+def _face_mirror_page(script: str, kept: str = "") -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    code = page[page.index("/*FACE-MIRROR{*/") : page.index("/*}FACE-MIRROR*/")]
+    out = subprocess.run(
+        [
+            node,
+            "-e",
+            "var store=" + json.dumps({"gb_face_mirror": kept} if kept else {}) + ",calls=[];"
+            "var localStorage={getItem:function(k){return k in store?"
+            "store[k]:null;},setItem:function(k,v){store[k]=String(v);}};"
+            "function toast(m){calls.push(['toast',m]);}"
+            "function logEv(k,o){calls.push([k,o.on]);}\n"
+            f"{code}\n{script}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    got = json.loads(out.stdout)
+    assert isinstance(got, dict)
+    return got
+
+
+def test_the_face_mirror_flips_left_and_right_only_when_on() -> None:
+    """Owner, 2026-11-19: "a camera direction mirror toggle ... if it is backwards we can just
+    flip it real fast and verify". A face on the frame's left reads as on its right; up/down,
+    size and the detector's score are kept, and the camera's own box is never changed."""
+    got = _face_mirror_page(
+        "var b={x:0.1,y:0.2,width:0.3,height:0.25,score:0.9},r={};"
+        "r.off=faceMirrorBox(b);setFaceMirror(true);r.on=faceMirrorBoxes([b])[0];"
+        "r.cam=b;r.none=faceMirrorBox(null);r.kept=store.gb_face_mirror;"
+        "setFaceMirror(false);r.back=faceMirrorBox(b)===b;r.calls=calls;"
+        "console.log(JSON.stringify(r));"
+    )
+    assert got["off"] == {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.25, "score": 0.9}
+    assert got["on"]["x"] == pytest.approx(0.6)
+    assert {k: got["on"][k] for k in ("y", "width", "height", "score")} == {
+        "y": 0.2,
+        "width": 0.3,
+        "height": 0.25,
+        "score": 0.9,
+    }
+    assert got["cam"]["x"] == 0.1
+    assert got["none"] is None
+    assert got["kept"] == "1"
+    assert got["back"] is True
+    assert got["calls"] == [["face_mirror", True], ["face_mirror", False]]
+
+
+def test_the_face_mirror_is_kept_across_a_reload_and_off_by_default() -> None:
+    script = "console.log(JSON.stringify({m:FACE_MIRROR,x:faceMirrorBox({x:0,width:0.2}).x}));"
+    assert _face_mirror_page(script) == {"m": False, "x": 0}
+    assert _face_mirror_page(script, kept="1") == {"m": True, "x": 0.8}
+
+
+def test_the_face_mirror_is_wired_into_the_tracker_and_settings() -> None:
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert page.count("tracker.observeFlow(faceMirrorBox(boxes[0]),at,") == 1
+    assert page.count("else tracker.observe(faceMirrorBoxes(boxes),at,video,token);") == 1
+    assert page.count("tracker.observe(faceMirrorBoxes(boxes),now,s.video,token);") == 1
+    assert "tracker.observe(boxes," not in page
+    assert "tracker.observeFlow(boxes[0]," not in page
+    # The screen's eyes keep the camera's own boxes.
+    assert page.count("if(window.gbEyes)window.gbEyes.boxes(boxes);") == 2
+    assert page.count("h+=travelRow();h+=faceMirrorRow();") == 1
+    assert page.count('if(c("#gbkFaceMirror")){ window.setFaceMirror(!window.FACE_MIRROR);') == 1
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "gb_face_mirror" not in shim
 
 
 def test_he_switches_travel_mode_when_asked() -> None:

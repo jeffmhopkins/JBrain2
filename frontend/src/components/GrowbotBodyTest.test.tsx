@@ -119,6 +119,20 @@ describe("GrowbotBodyTest", () => {
     expect(screen.getByRole("button", { name: "Start a body test" })).toBeTruthy();
   });
 
+  it("lists the flight recorder's log of moves, never as a body test under way", async () => {
+    const rec = run({
+      number: 10,
+      run: "bt-rec-k2mhz8",
+      status: "running",
+      summary: { kind: "recorder", label: "flight recorder", moves: 4, secs: 300 },
+    });
+    serve(() => [rec]);
+    show();
+    expect(await screen.findByText(/flight recorder, 4 moves · .* · running/)).toBeTruthy();
+    expect(screen.queryByLabelText("Body test running")).toBeNull();
+    expect(screen.getByRole("button", { name: "Start a body test" })).toBeTruthy();
+  });
+
   it("polls while a test runs, and shows a silent one as lost contact", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const old = new Date(Date.now() - 60_000).toISOString();

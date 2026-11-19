@@ -302,12 +302,41 @@ library (`app.growbot_policies`, added on the Body tab from a finished GrowBot t
 The sidecar passes it in the `box_move` frame and serves the JSON at `GET /api/box/policy?id=`
 (a page session, read from the api's `/internal/growbot/policies/{id}` and cached a minute).
 The page's `gbTrainedWalk` then loads the runner (`/growbot_runner.js`) and drives it the way
-GrowBot_Training trained it: legs neutral and a 1 s settle, the measured gravity rotated to +z,
+GrowBot_Training trained it: legs glided to neutral from wherever they are held and a 1 s settle, the measured gravity rotated to +z,
 heading integrated from the levelled gyro, and `cmd_yaw` the wrapped heading error over 180
 each tick (forward and the `look` trick hold heading; the spins aim ±90°; back backs away when the walk takes
 `cmd_forward`, else turns left until it faces behind). It spends the legs' duty budget as a
 stock walk does, and keeps the stock walks' stops: a tip or a grab, a pause, a hidden page, a
 dream, or the relay dropping. The library refuses a policy with an input the runner can't feed.
+
+**Leg glides.** Legs move between stances no faster than 60 degrees a second, eased
+(`growbot-box.js` `GLIDE_DEG_S`; owner's body test, 2026-11-19: from his 40/140 rest the
+policy's 90/90 went out as one command and threw him back on every walk start). A walk's stance
+glides from the pose its hold had (`_legStart`'s anchor; legs not known to be held still go
+straight to neutral), a skill set's file swap glides from the stride it was in before its
+settle, and a finished walk glides from its last stride into the idle hold (`GLIDE_PATCHES`:
+`carryLegMotion` calls `gbGlideLegs`). The hold lets go on a tip only once the tilt lasts three
+beats (600 ms), so a wobble right after a walk no longer drops him; a grab still lets go at once.
+
+**Flight recorder.** Whenever the legs move, and around the diary rows that matter to them
+(walks, skills, holds, rests, jolts, falls, recoveries), the page keeps what the body test
+samples, 20 a second, with the legs' commanded pose (`lc`) and the face tracker's face across
+and down the frame (`ftx`, `fty`, `fto` while it holds the legs), from 3 s before to 6 s after,
+and posts it to the box as one body-test run per page load (summary `kind: "recorder"`, `moves`;
+the PWA lists it as the flight recorder, never as a test under way). Not while a body test runs;
+`?legrec=0` turns it off. Legs let go with nothing taking them (no hold, no move, no face
+tracking 300 ms after a `holdStop` that was not a hand-off) write a `legs_slack` diary row
+with the leg event before it (`after`), so every slump says why. Its diary rows keep only
+numbers, flags and short codes (the page's redactor runs after its copy). The page leaving
+closes the run with its newest 200 rows under `keepalive`, so a page back from the bfcache
+opens a fresh one. The box keeps a robot's newest 10 recorder runs (`run` prefix `bt-rec-`)
+apart from its newest 50 body tests, so a phone that reloads often never evicts a body test.
+A walk asked mid-glide starts from the pose the glide last sent (`_gbGlideAt`), which is also
+the recorder's `lc` while it glides.
+
+**Nose walks backing.** A single nose-walk policy that takes a speed backs away on its own +1,
+nose first (as a skill set's does, `growbot-drive.js` `inputs`), live steering included; the -1
+it was sent before is outside its training and barely moved him in the sim.
 
 **Skill sets.** A walk move may carry `skills` in place of `policy`: a library policy for each of
 `look`, `forward` and `back` (the box reads which skills a file serves from the file itself,
@@ -681,6 +710,14 @@ body test asked for under travel says why its camera stays shut. Turning travel 
 the camera's generation, so an acquire still in flight is discarded when it lands. The ear, the voice and the brain are
 untouched. It is per phone (`gb_travel_mode`), deliberately not in the persona's synced prefs, so
 the robot's own phone never inherits it.
+
+*Mirror face tracking* (Settings, under travel mode; `FACE_MIRROR_PATCHES`; owner, 2026-11-19:
+*"a camera direction mirror toggle ... if it is backwards we can just flip it real fast and
+verify"*) flips left and right in the boxes the leg tracker takes and in those the follower and
+the body test read (`followBoxes`, on top of the follow camera's own calibrated `flipX`), so the
+head, the lean and any turn toward a face flip together, while the screen's eyes keep the
+camera's own boxes. Recorder samples carry `fm: 1` while it is on. Off by
+default, per phone (`gb_face_mirror`), kept across a reload; each switch logs `face_mirror`.
 
 It switches by voice too (owner, 2026-11-16: *"hey Dave go to travel mode"*): a `travel` verb
 (`on` / `off`) beside `eye`, heeded only on a turn that answers something the person said, so

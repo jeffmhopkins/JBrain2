@@ -1669,6 +1669,43 @@
   }
   // A skill set's file swap: legs neutral this long first, as each file's episodes start.
   var SETTLE_MS = 400;
+  // Legs move between stances no faster than this. A policy's neutral (90/90) is 50 degrees a
+  // leg from his resting stance (40/140), and sent as one command the servos took it at full
+  // speed and threw him back on every walk start (owner's body test, 2026-11-19: "they need to
+  // have a slower averaging move so it doesn't violently change him").
+  var GLIDE_DEG_S = 60, GLIDE_MAX_MS = 1500, GLIDE_TICK_MS = 50;
+  function glideMs(a, b) {
+    if (!a || !b) return 0;
+    var d = Math.max(Math.abs(a.l - b.l), Math.abs(a.r - b.r));
+    return d < 4 ? 0 : Math.min(GLIDE_MAX_MS, d / GLIDE_DEG_S * 1000);
+  }
+  // Eased, so the glide starts and ends at rest rather than with a kick.
+  function between(a, b, f) {
+    var e = f <= 0 ? 0 : f >= 1 ? 1 : f * f * (3 - 2 * f);
+    return { l: a.l + (b.l - a.l) * e, r: a.r + (b.r - a.r) * e };
+  }
+  window.gbGlideMs = glideMs;
+  /* A walk that ends hands its legs to an idle hold of its rest stance (carryLegMotion, which
+     apply.py's GLIDE_PATCHES route here): from its last stride over `ms`, while that hold is
+     still the one holding and nothing newer has the legs. Poses in the page's commanded space. */
+  /* window._gbGlideAt is the pose a glide last sent while its hold still names a pose it has not
+     reached: a walk asked mid-glide starts from there (not the hold's target, a jump back to full
+     speed), and the recorder logs it as the legs' pose. */
+  window._gbGlideAt = null;
+  window.gbGlideLegs = function (a, b, ms, hp) {
+    var t0 = Date.now(), iv = 0;
+    function beat() {
+      if (typeof _holdPose === "undefined" || _holdPose !== hp || _motion || paused || document.hidden || !window._body || !window._body.ready) { clearInterval(iv); return; }
+      var f = (Date.now() - t0) / ms, p = between(a, b, f), at = { l: Math.round(p.l), r: Math.round(p.r) };
+      try { window._body.pose(at.l, at.r); } catch (e) { clearInterval(iv); return; }
+      // The leg sense and the IMU log, as the hold's own beats mark each pose they send.
+      try { if (typeof _imuPose === "function") _imuPose(at.l, at.r, 1); } catch (e) {}
+      window._gbGlideAt = f >= 1 ? null : { l: at.l, r: at.r, hp: hp, end: t0 + ms };
+      if (f >= 1) clearInterval(iv);
+    }
+    iv = setInterval(beat, GLIDE_TICK_MS);
+    beat();
+  };
 
   // True when the walk this steer's drive started still runs here (and so takes it).
   window.gbSteer = function (m) {
@@ -1714,6 +1751,8 @@
   function goodBox(b) { return b && isFinite(b.x) && isFinite(b.y) && b.width > 0 && b.height > 0; }
 
   function followBoxes(boxes, src, ms) {
+    // Settings' Mirror face tracking flips these too, so a follow and a body test turn with it.
+    if (typeof window.faceMirrorBoxes === "function") boxes = window.faceMirrorBoxes(boxes);
     // Only the front camera's frames: a face seen by the back eye is behind it, signs reversed.
     if (!frontCamera()) { seen = { boxes: [], t: -Infinity }; return; }
     if (src === "tracker") {
@@ -1875,9 +1914,10 @@
       score: typeof big.score === "number" ? big.score : null, ms: seen.ms, frame: seen.frame,
     };
   }
+  // `drive` picks whose walk telemetry joins the sample; true takes any running walk's.
   function btTele(drive) {
     var M = typeof _motion !== "undefined" ? _motion : null, out = { kind: M ? String(M.kind || "") : "" };
-    if (M && drive && M.drive === drive && M.tele) {
+    if (M && drive && (drive === true || M.drive === drive) && M.tele) {
       var w = M.tele;
       out.h = btR(w.h); out.tg = btR(w.tg); out.sp = btR(w.sp, 100); out.p = btR(w.p, 100);
       out.mode = w.mode; out.l = btR(w.l); out.r = btR(w.r);
@@ -2174,6 +2214,134 @@
     return /^gb-[A-Za-z0-9]{1,32}$/.test(id) ? id : "";
   }
 
+  /* The flight recorder (owner's body test, 2026-11-19: "can you pull all of the sensor data?").
+     A move from the Body tab or from Dave left only its diary events, so a fall in the hold after
+     a walk could not be told from one in the walk. Whenever his legs move, and around the diary
+     rows that matter to them, it keeps what the body test samples (20 a second, with the legs'
+     commanded pose) from REC_PRE_MS before to REC_POST_MS after, with those diary rows between,
+     and posts it as one body-test run per page load (summary kind "recorder"), read back with
+     the debug API's GET /growbot/bodytests/{n}. Not while a body test runs (that one records
+     it); ?legrec=0 turns it off. */
+  var REC_MS = 50, REC_PRE_MS = 3000, REC_POST_MS = 6000, REC_FLUSH_MS = 2000, REC_ROWS_MAX = 55000, REC_FINAL_ROWS = 200;
+  var REC_EVENTS = /^(walk_start|walk_end|move_end|skill|hold_start|hold_end|hold_abort|rest_tall|self_jolt|fall_think|reflex_[a-z]+|gait_abort|recover_[a-z_]+|action_outcome|act|spin_stuck|shake_block|legs_slack|face_mirror)$/;
+  var REC_CODE = /^[A-Za-z0-9_.:-]{0,40}$/;
+  var rec = null, recLast = "";
+  function recNew() {
+    return { run: "bt-rec-" + Math.random().toString(36).slice(2, 12), seq: 0, ring: [], rows: [], n: 0,
+      until: 0, moves: 0, flushT: Date.now(), t0: Date.now(), posting: Promise.resolve() };
+  }
+  function recLegs() {
+    var M = typeof _motion !== "undefined" ? _motion : null;
+    if (M && M.tele && isFinite(M.tele.l)) return [btR(M.tele.l), btR(M.tele.r)];
+    var ga = window._gbGlideAt;
+    if (ga && typeof _holdPose !== "undefined" && ga.hp === _holdPose && Date.now() < ga.end) return [btR(ga.l), btR(ga.r)];
+    if (typeof _holdPose !== "undefined" && _holdPose) return [btR(_holdPose.l), btR(_holdPose.r)];
+    if (typeof _legL !== "undefined" && isFinite(_legL)) return [btR(_legL), btR(_legR)];
+    return null;
+  }
+  function recFlush(final) {
+    var r = rec, robot = btRobot();
+    if (!r || !r.rows.length && !(final && r.seq)) return;
+    // A page with no robot id has nowhere to post them.
+    if (!robot) { r.rows = []; return; }
+    // The last one goes as the page leaves: on its own, since one queued behind a post still in
+    // flight may never start, and under keepalive's 64 KB, so its newest REC_FINAL_ROWS.
+    var rows = final ? r.rows.slice(-REC_FINAL_ROWS) : r.rows;
+    var chunk = { run: r.run, seq: r.seq++, status: final ? "done" : "running", robot: robot, rows: rows,
+      summary: { kind: "recorder", label: "flight recorder", moves: r.moves, secs: Math.round((Date.now() - r.t0) / 1000) } };
+    r.rows = [];
+    r.flushT = Date.now();
+    function post() {
+      return fetch("/api/box/bodytest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(chunk), keepalive: !!final });
+    }
+    // Best effort: it can land before a chunk still in flight, whose rows the box then refuses
+    // as the run's ending came first.
+    if (final) { try { post().catch(function () {}); } catch (e) {} }
+    else r.posting = r.posting.then(post).catch(function () {});
+    // A finished run takes no more chunks, so a page back from the bfcache starts a fresh one; a
+    // run holds so many rows, and the next goes in a fresh one too.
+    if (final) rec = null;
+    else if (r.n >= REC_ROWS_MAX || r.seq >= 1400) rec = recNew();
+  }
+  function recRow(row) {
+    var r = rec;
+    if (Date.now() < r.until) { r.rows.push(row); r.n++; }
+    else { r.ring.push(row); while (r.ring.length && row.t - r.ring[0].t > REC_PRE_MS) r.ring.shift(); }
+  }
+  // Something his legs did: record from the ring's start until REC_POST_MS from now.
+  function recMark() {
+    var r = rec;
+    if (Date.now() >= r.until) { r.moves++; Array.prototype.push.apply(r.rows, r.ring); r.n += r.ring.length; r.ring = []; }
+    r.until = Date.now() + REC_POST_MS;
+  }
+  function recHook() {
+    var real = window.logEv;
+    if (typeof real !== "function" || real._gbRec || bt) return;
+    var mine = function (e, d) {
+      try {
+        if (rec && !bt && REC_EVENTS.test(String(e))) {
+          var row = { t: Date.now(), k: "e", e: String(e) };
+          // Only numbers, flags and short codes ("why", "state"): every diary string goes
+          // through the page's redactor (0727), which this copy is taken before.
+          if (d) for (var k in d) if (Object.prototype.hasOwnProperty.call(d, k) && k !== "t" && k !== "k") {
+            var v = d[k];
+            if (typeof v === "number" && isFinite(v) || typeof v === "boolean") row[k] = v;
+            else if (typeof v === "string" && REC_CODE.test(v)) row[k] = v;
+          }
+          if (e !== "legs_slack") recLast = String(e);
+          recMark();
+          recRow(row);
+        }
+      } catch (x) {}
+      return real.apply(this, arguments);
+    };
+    mine._gbRec = true;
+    window.logEv = mine;
+    // Every time his legs are let go with nothing taking them after (owner, 2026-11-19: "I want
+    // to verify when he has control of his legs"): a diary row, legs_slack, with the last leg
+    // event before it, so a slump in the recorder (and the brain log) says why. A hand-off
+    // (holdStop(x, 1)) and a hold a walk takes over are not slack.
+    var hs = window.holdStop;
+    if (typeof hs === "function" && !hs._gbRec) {
+      var hsMine = function (sit) {
+        var had = typeof _holdPose !== "undefined" && !!_holdPose, handoff = !!arguments[1];
+        var out = hs.apply(this, arguments);
+        if (had && !handoff) setTimeout(function () {
+          try {
+            var held = typeof _holdPose !== "undefined" && !!_holdPose, moving = typeof _motion !== "undefined" && !!_motion;
+            var face = !!(window._faceTrack && window._faceTrack.owns);
+            if (!held && !moving && !face) window.logEv("legs_slack", { sit: sit ? 1 : 0, after: recLast });
+          } catch (e) {}
+        }, 300);
+        return out;
+      };
+      hsMine._gbRec = true;
+      window.holdStop = hsMine;
+    }
+  }
+  function recTick() {
+    if (bt || document.hidden || !window._body || !window._body.ready || typeof _wheels !== "undefined" && _wheels) return;
+    if (!rec) { try { if (new URLSearchParams(location.search).get("legrec") === "0") return; } catch (e) {} rec = recNew(); }
+    recHook();
+    if (typeof _motion !== "undefined" && _motion) recMark();
+    var row = btTele(true);
+    row.t = Date.now(); row.k = "s"; row.lc = recLegs();
+    // Whether Settings' Mirror face tracking had flipped the face's side.
+    if (window.FACE_MIRROR) row.fm = 1;
+    // The face tracker's face, its centre across and down the frame (0 is the middle) and
+    // whether it holds the legs: with lc, which way a lean moved the face.
+    try {
+      var ft = window._faceTrack, fb = ft && ft.box;
+      if (fb) { row.ftx = btR(fb.x + fb.width / 2 - 0.5, 1000); row.fty = btR(fb.y + fb.height / 2 - 0.5, 1000); row.fto = ft.owns ? 1 : 0; }
+    } catch (e) {}
+    recRow(row);
+    if (rec.rows.length >= 400 || rec.rows.length && Date.now() - rec.flushT >= REC_FLUSH_MS) recFlush(false);
+  }
+  var recIv = setInterval(function () { try { recTick(); } catch (e) {} }, REC_MS);
+  // Under node (the tests' harness) it must not hold the process open; a browser's id is a number.
+  if (recIv && typeof recIv.unref === "function") recIv.unref();
+  if (typeof window.addEventListener === "function") window.addEventListener("pagehide", function () { try { recFlush(true); } catch (e) {} });
+
   // The wake screen's Body test (owner, 2026-11-16: "I only have the one phone"): on a robot's
   // phone, a button under Wake that wakes the creature and starts the test with the library's
   // skill set, so the phone that sits on the body never needs the PWA in hand. The wake tap
@@ -2286,11 +2454,14 @@
 
   // What the pad's move asks of a heading policy: a target (deg, counter-clockwise from where
   // the facing end points at the start) and a speed.
-  function command(move, hasSpeed) {
+  function command(move, hasSpeed, nose) {
     // A trick: hold it facing ahead, in place when it takes a speed; a heading-only one walks.
     if (move === "look") return { target: 0, fwd: hasSpeed ? 0 : 1 };
     if (move === "spin_left") return { target: 90, fwd: hasSpeed ? 0 : 1 };
     if (move === "spin_right") return { target: -90, fwd: hasSpeed ? 0 : 1 };
+    // A nose walk's own +1 is backing away (growbot-drive.js inputs); -1 is outside its training,
+    // and in the sim it barely moved him (1-2 cm in 12 s against 14 cm at +1).
+    if (move === "back" && nose && hasSpeed) return { target: 0, fwd: 1 };
     if (move === "back") return hasSpeed ? { target: 0, fwd: -1 } : { target: 180, fwd: 1, around: true };
     return { target: 0, fwd: 1 };
   }
@@ -2402,7 +2573,7 @@
       if (gen !== _motionGen || _motion !== M) return;
       if (paused || document.hidden || dreaming) { stopMotion(); return; }
       var cal = Object.assign({}, calNow(), { IMU_SIGN: [1, 1, 1], gain: 1, turn: 0 });
-      var walker = null, hz = 25, set = null, sel = null, mode = "look", settleEnd = 0;
+      var walker = null, hz = 25, set = null, sel = null, mode = "look", settleEnd = 0, swFrom = null, swGlide = 0, swT = 0;
       function walkerFor(pj) {
         var w = new mod.Walker(pj, cal);
         w.setFrame("zup");
@@ -2434,11 +2605,24 @@
       }
       var hasSpeed = !skills && channels(policy).indexOf("cmd_forward") >= 0;
       var hasPitch = !skills && channels(policy).indexOf("cmd_pitch") >= 0;
-      var cmd = skills ? setCommand(move, turn) : command(move, hasSpeed), pitch = move === "turn" ? TURN_PITCH : 1, walkT = 0, onT = 0, stall = null, e0 = null;
+      var nose = !skills && ((policy.obs_spec || {}).cmd_yaw || {}).facing === "nose";
+      var cmd = skills ? setCommand(move, turn) : command(move, hasSpeed, nose), pitch = move === "turn" ? TURN_PITCH : 1, walkT = 0, onT = 0, stall = null, e0 = null;
       // A turn's angle is from where he faced when asked; the stance glide before it can turn him.
       var turnH0 = move === "turn" ? mapHeading() : null;
       var L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0;
-      var prepEnd = Date.now() + PREP_MS, grav = { x: 0, y: 0, z: 0, n: 0 };
+      // Where the legs are held now (a rest or the last walk's hold), on the wire: the stance
+      // glides from there, then settles PREP_MS. Not known (legs limp): straight to neutral.
+      var neutral = { l: 90 + L, r: 90 + Rr }, from = null;
+      try {
+        var ls = typeof _legStart === "function" ? _legStart() : null;
+        if (ls && ls.mode === "anchor") from = { l: +ls.anchor.l + L, r: +ls.anchor.r + Rr };
+        var ga = window._gbGlideAt;
+        // Only while its glide would still run: a glide a walk's own _motion cut short leaves the
+        // hold's beats to pin the target once the glide's time is up.
+        if (from && ga && typeof _holdPose !== "undefined" && ga.hp === _holdPose && Date.now() < ga.end) from = { l: ga.l + L, r: ga.r + Rr };
+      } catch (e) {}
+      var glide = glideMs(from, neutral), glideEnd = Date.now() + glide;
+      var prepEnd = glideEnd + PREP_MS, grav = { x: 0, y: 0, z: 0, n: 0 };
       var R = null, heading = 0, lastT = 0, endT = 0, upB = null, tipN = 0, jerkN = 0;
       // At least `s` more seconds from now; an ask within what is left changes nothing (only a
       // stop ever shortens a walk).
@@ -2462,7 +2646,7 @@
       };
       M.loading = false;
       _walkLog.push({ t: Date.now(), ms: walkS * 1000 });
-      selfMoveUntil = Date.now() + PREP_MS + walkS * 1000 + 3500;
+      selfMoveUntil = prepEnd + walkS * 1000 + 3500;
       $("brainTxt").textContent = "finding my stance…";
 
       function gone() {
@@ -2488,11 +2672,12 @@
       }
       var prep = guarded(function () {
         if (gone()) return;
-        try { send(90 + L, 90 + Rr); } catch (e) { stopMotion(); return; }
+        var gNow = glide && Date.now() < glideEnd ? between(from, neutral, 1 - (glideEnd - Date.now()) / glide) : neutral;
+        try { send(Math.round(gNow.l), Math.round(gNow.r)); } catch (e) { stopMotion(); return; }
         if (!M.started) { M.started = true; _moveReport(attempt, "started", "stance_commands", { gait: "trained", policy: label }); }
         // The stance's gravity, from its last 400 ms once the legs have settled.
         if (prepEnd - Date.now() <= 400) { var a = bodyAccel(); grav.x += a.x; grav.y += a.y; grav.z += a.z; grav.n++; }
-        if (Date.now() < prepEnd) { M.loopIv = setTimeout(prep, 100); return; }
+        if (Date.now() < prepEnd) { M.loopIv = setTimeout(prep, Date.now() < glideEnd ? GLIDE_TICK_MS : 100); return; }
         R = grav.n ? levelling({ x: grav.x / grav.n, y: grav.y / grav.n, z: grav.z / grav.n }) : null;
         if (!R) { stopMotion(); setErr("couldn't read which way is up — is motion allowed?"); return; }
         upB = { b: ori.b, g: ori.g };
@@ -2578,7 +2763,9 @@
             pitch = live.pitch;
           }
           else {
-            cmd = { target: live.heading, fwd: hasSpeed ? live.speed : 1, around: Math.abs(live.heading) === 180 };
+            // A nose walk backs on its own positive speeds, whichever way the steer's sign asks.
+            var lf = !hasSpeed ? 1 : nose ? Math.abs(live.speed) : live.speed;
+            cmd = { target: live.heading, fwd: lf, around: Math.abs(live.heading) === 180 };
             pitch = hasPitch ? live.pitch : 1;
           }
           var want = Math.min(live.t + STEER_HOLD_MS, walkT + DRIVE_MAX_MS);
@@ -2656,10 +2843,20 @@
             mode = pick.mode;
             if (fol) fol.mode = mode;
             // Another file takes over from a still stance with a fresh history, as it trained.
-            if (next && next !== was) { settleEnd = Date.now() + SETTLE_MS; next.w.reset(); }
+            // From the stride it was in, glided to neutral before that settle.
+            if (next && next !== was) {
+              swFrom = M.lastPose ? { l: M.lastPose.l + L, r: M.lastPose.r + Rr } : null;
+              swGlide = glideMs(swFrom, neutral);
+              swT = Date.now();
+              settleEnd = swT + swGlide + SETTLE_MS;
+              next.w.reset();
+            }
           }
           var sk = set[mode] || null;
-          if (!sk || Date.now() < settleEnd) out = { l: 90 + L, r: 90 + Rr };
+          if (!sk || Date.now() < settleEnd) {
+            out = swGlide && Date.now() - swT < swGlide ? between(swFrom, neutral, (Date.now() - swT) / swGlide) : neutral;
+            out = { l: Math.round(out.l), r: Math.round(out.r) };
+          }
           else {
             var inp = lib.inputs(sk.prof, mode, c);
             fed = inp;
