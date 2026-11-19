@@ -711,7 +711,7 @@
     GO_RECKONED_X = 1.5, GO_TURN_S = 20, GO_SIDE_DEG = 90;
   var lastGo = null;
   function goRoute(pts) {
-    var i = 0, turning = false, side = 0, best = Infinity, bestT = Date.now(), bestE = Infinity, go = { pts: pts, i: 0, why: "" };
+    var i = 0, turning = false, side = 0, sideI = 0, best = Infinity, bestT = Date.now(), bestE = Infinity, go = { pts: pts, i: 0, why: "" };
     var lastT = Date.now(), reckonedMs = 0, m0 = soulMap(), len = 0, p0 = m0 ? m0.here : pts[0];
     for (var k0 = 0; k0 < pts.length; k0++) {
       var a0 = k0 ? pts[k0 - 1] : p0;
@@ -736,10 +736,12 @@
       // A point nearly behind him flips the error's sign with each wobble: the turn would swing
       // left then right in place, which in the sim's battery is how he fell (4 of 5 falls came
       // turning at 150 to 180 degrees off). He keeps to the side he started turning to, until
-      // the point is in front of him.
-      if (!turning) side = 0;
-      else if (!side) side = err >= 0 ? 1 : -1;
-      else if (err * side < 0 && Math.abs(err) > GO_SIDE_DEG) err = side * GO_SIDE_DEG;
+      // the point is in front of him. The error is then the angle still to turn that way (over
+      // 180), so the stuck watch sees the turn closing. A new point picks its own side.
+      if (!turning || sideI !== i) side = 0;
+      sideI = i;
+      if (turning && !side) side = err >= 0 ? 1 : -1;
+      else if (turning && err * side < 0 && Math.abs(err) > GO_SIDE_DEG) err = side * (360 - Math.abs(err));
       // Progress: the path still to walk shrinking while he walks, or the angle while he turns.
       var left = d;
       for (var k = i; k < pts.length - 1; k++) left += Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].y - pts[k].y);

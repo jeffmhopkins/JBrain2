@@ -243,6 +243,7 @@ global.setInterval=(f)=>{beatFn=f; return 1;}; global.clearInterval=()=>{};
 Date.now=()=>now;
 global.logEv=()=>{};
 global.runGait=()=>{};
+global.gbOwnGoReady=()=>READY;
 global.gbPose={source:()=>isFed?"fed":"reckoned"};
 let goes=0, last=null, refuse=REFUSE, asked=0;
 global.gbMap={map:()=>({here:pos}), turn:()=>null,
@@ -261,7 +262,12 @@ console.log(JSON.stringify({st:P.state().explore, goes, asked, now}));
 
 
 def _page(
-    fed: bool, why: str = "arrived", frac: float = 1.0, stop: int = 10**6, refuse: int = 0
+    fed: bool,
+    why: str = "arrived",
+    frac: float = 1.0,
+    stop: int = 10**6,
+    refuse: int = 0,
+    ready: bool = True,
 ) -> Any:
     return _node(
         _PAGE.replace("GRID", json.dumps(str(_GRID)))
@@ -270,6 +276,7 @@ def _page(
         .replace("FRAC", str(frac))
         .replace("STOP", str(stop))
         .replace("REFUSE", str(refuse))
+        .replace("READY", json.dumps(ready))
     )
 
 
@@ -333,3 +340,6 @@ def test_a_refused_walk_is_waited_out_not_counted_against_the_frontier() -> None
     # Legs that never move end the run as that, not as a house explored.
     never = _page(True, refuse=10**6)
     assert never["st"]["done"] == "no_legs" and never["st"]["failed"] == 0
+    # With no route skills at all there is nothing to wait for.
+    bare = _page(True, refuse=10**6, ready=False)
+    assert bare["st"]["done"] == "no_skills" and bare["now"] < 60000

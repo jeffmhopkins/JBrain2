@@ -343,7 +343,8 @@
     // move taking over) is tried once more; TRIES_MAX bounds a run that keeps finding edges.
     var NO_POSE_MS = 10000, TRIES_MAX = 300;
     // A move the page refuses (legs cooling after an abort, the duty budget) says nothing about
-    // the frontier: he waits it out. REFUSED_MAX in a row (a few minutes) is legs that won't move.
+    // the frontier: he waits it out. REFUSED_MAX in a row (200 s, over three of the duty
+    // budget's 60 s windows) is legs that won't move.
     var REST_MS = 5000, REFUSED_MAX = 40;
     var ex = null, timer = null;
     var busy = function () {
@@ -430,6 +431,10 @@
       if (window.gbMap.go(nx.points)) {
         ex.refused = 0;
         ex.phase = "go"; ex.goal = goal; ex.front = nx.goal; ex.goT = Date.now(); ex.goM = Math.hypot(goal.x - +h.x, goal.y - +h.y);
+      }
+      else if (!(window.gbOwnGoReady && window.gbOwnGoReady())) {
+        // No route skills (stock gait, wheels): no wait brings them back.
+        ex.done = "no_skills"; log("grid_explored", { done: ex.done });
       }
       else { ex.tries--; refused(); }
     }
