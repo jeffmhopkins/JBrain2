@@ -3456,7 +3456,8 @@ PATCHES += PHONE_SWITCH_PATCHES
 _GB_GETUP_JS = (
     "/* GrowBot on the box: the Body tab's Get up (growbot-box.js box_move get_up). The runner\n"
     "   only takes it while _gbGetupOK is set or its own run lasts, so the model's and speech's\n"
-    "   get-ups stay behind upstream's ?getupnamed. */\n"
+    "   get-ups stay behind upstream's ?getupnamed. Its asks are -2, -3, ...: the runner starts\n"
+    "   with -1 as spent, so an ask of -1 was refused as already tried. */\n"
     "var _gbGetupAsk=0, _gbGetupOK=false;\n"
     'function gbBoxGetupOn(){ return typeof MODE!=="undefined"&&MODE==="legs"'
     '&&!(typeof _wheels!=="undefined"&&_wheels); }\n'
@@ -3464,7 +3465,7 @@ _GB_GETUP_JS = (
     " _wireAttempt=a;\n"
     "  try{ if(!gbBoxGetupOn()) throw Error('stock_two_leg_body_only'); r=_wireGet();"
     " if(r.active) throw Error('already_running');\n"
-    "    _gbGetupOK=true; r.start({explicit:true,id:-(++_gbGetupAsk),age:0});\n"
+    "    _gbGetupOK=true; r.start({explicit:true,id:-1-(++_gbGetupAsk),age:0});\n"
     "    if(a.state==='cancelled') a.reason=_namedSay(a.reason,1); }\n"
     "  catch(e){ var why=String((e&&e.message)||e); _wireReadiness(why,true);"
     " _moveReport(a,'blocked',why); a.reason=_namedSay(why); }\n"

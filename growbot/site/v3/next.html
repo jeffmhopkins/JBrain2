@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=11995a4181e8"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-vision.js?v=065e966e3518"></script><script src="/growbot-grid.js?v=881daacb667d"></script><script src="/growbot-pano.js?v=139904412435"></script><script src="/growbot-map.js?v=a59cbabf6b98"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=11995a4181e8"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-vision.js?v=065e966e3518"></script><script src="/growbot-grid.js?v=73fa8d8f8b5f"></script><script src="/growbot-pano.js?v=139904412435"></script><script src="/growbot-map.js?v=a59cbabf6b98"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -4475,12 +4475,13 @@ function _namedEnd(why){ why=String(why||"stopped");
   return {state:"cancelled",r:why}; }
 /* GrowBot on the box: the Body tab's Get up (growbot-box.js box_move get_up). The runner
    only takes it while _gbGetupOK is set or its own run lasts, so the model's and speech's
-   get-ups stay behind upstream's ?getupnamed. */
+   get-ups stay behind upstream's ?getupnamed. Its asks are -2, -3, ...: the runner starts
+   with -1 as spent, so an ask of -1 was refused as already tried. */
 var _gbGetupAsk=0, _gbGetupOK=false;
 function gbBoxGetupOn(){ return typeof MODE!=="undefined"&&MODE==="legs"&&!(typeof _wheels!=="undefined"&&_wheels); }
 window.gbGetUp=function(){ var a=_moveRequest('recover_screen_up'), r; a.nr=1; _wireAttempt=a;
   try{ if(!gbBoxGetupOn()) throw Error('stock_two_leg_body_only'); r=_wireGet(); if(r.active) throw Error('already_running');
-    _gbGetupOK=true; r.start({explicit:true,id:-(++_gbGetupAsk),age:0});
+    _gbGetupOK=true; r.start({explicit:true,id:-1-(++_gbGetupAsk),age:0});
     if(a.state==='cancelled') a.reason=_namedSay(a.reason,1); }
   catch(e){ var why=String((e&&e.message)||e); _wireReadiness(why,true); _moveReport(a,'blocked',why); a.reason=_namedSay(why); }
   finally{ _gbGetupOK=false; } };

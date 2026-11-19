@@ -837,3 +837,26 @@ def _maze_scenario(k: int) -> Scenario:
 
 for _k in (1, 2, 3):
     _maze_scenario(_k)
+
+
+@scenario(start="standing")
+async def gets_up_from_nose_down(sim: Sim) -> None:
+    """Tipped onto his nose as the trained forward walk leaves him in the battery (screen up,
+    pitched 40-50 degrees nose-down, legs limp): the Body tab's get-up stands him again."""
+    import mujoco
+    import numpy as np
+
+    await sim.wait(3)
+    b = sim.body
+    m, d = b.model, b.data
+    q = np.zeros(4)
+    mujoco.mju_euler2Quat(q, np.array([0.0, math.radians(45.0), 0.0]), "XYZ")
+    d.qpos[3:7] = q
+    d.qpos[2] = 0.3
+    b.servo.limp = True
+    mujoco.mj_kinematics(m, d)
+    await sim.wait(4)
+    s = sim.state
+    sim.check(not _upright(sim), "down on his nose", pitch=round(s["pitch_deg"]), up=s["screen_up"])
+    await sim.page.evaluate("() => window.gbGetUp()")
+    await sim.until(_upright, 60, "he is standing on his feet")

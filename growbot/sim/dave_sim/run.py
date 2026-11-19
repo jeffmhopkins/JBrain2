@@ -76,6 +76,11 @@ class Options:
     out: Path = Path(__file__).resolve().parents[1] / "sim-runs" / "run"
     query: str = ""  # extra ?flags for the page, e.g. "getupnamed=1"
     eyes: bool = True  # open the camera at the start, as the owner does
+    # The page's clock (Date, timers, performance.now, animation frames) runs on the physics
+    # clock: each control tick advances both by CONTROL_DT, however long the machine takes.
+    # Off, both run on the wall clock and a loaded machine ran bursts of physics on one stale
+    # leg command (2026-11-19: up to 10 ticks back to back at 3 runs on 4 cores).
+    lockstep: bool = True
     # The follower's camera flip, as a phone whose owner set it from the Body tab's dry run.
     # In the sim, on the robot's wiring as modelled, every unflipped follow turned away from
     # the face (2026-11-17); a body test is to confirm the robot needs it too. None leaves
@@ -122,7 +127,9 @@ class Sim:
         self.body.place_person(
             sb.Person(**opts.person) if opts.person else sb.Person(present=False)
         )
-        self.chip = Chip(self.body)
+        # Seconds of physics run: the run's clock when the page is locked to it.
+        self.sim_t = 0.0
+        self.chip = Chip(self.body, clock=self._chip_ms) if opts.lockstep else Chip(self.body)
         self.box = FakeBox(
             model=opts.model,
             soul=opts.soul,
@@ -134,9 +141,12 @@ class Sim:
             self.box.cal = opts.cal
         self.t0 = time.monotonic()
         self.epoch0 = time.time()
+        # The page's Date.now() when the physics clock reads 0, in ms.
+        self.epoch_ms = int(self.epoch0 * 1000)
         self.timeline: list[dict[str, Any]] = []
         self.checks: list[dict[str, Any]] = []
         self.states: list[dict[str, Any]] = []
+        self._burst = 0
         self.frames: list[tuple[float, bytes]] = []  # (t, jpeg) of what the camera showed
         # Dave's sketch map (growbot-map.js) as the page holds it: the newest whole, and each
         # second where it says he is beside where he really is (plan.py scores the two).
@@ -155,7 +165,16 @@ class Sim:
     # ------------------------------------------------------------------ the record
 
     def now(self) -> float:
+        if self.o.lockstep:
+            return round(self.sim_t, 2)
         return round(time.monotonic() - self.t0, 2)
+
+    def _chip_ms(self) -> int:
+        return int(self.sim_t * 1000)
+
+    def page_ms(self) -> int:
+        """The page's Date.now() for this moment of the run."""
+        return int(self.epoch_ms + self.now() * 1000)
 
     def note(self, kind: str, **data: Any) -> None:
         self.timeline.append({"t": self.now(), "kind": kind, **data})
@@ -204,6 +223,11 @@ class Sim:
         await ctx.route(f"{ORIGIN}/**", self._http)
         await ctx.route_web_socket(f"wss://{ORIGIN.split('//')[1]}/d/**", self._ws)
         self.page = page = await ctx.new_page()
+        if self.o.lockstep:
+            # Paused at the run's zero: from here only the physics loop moves the page's time.
+            # (Playwright for Python takes a number here as seconds.)
+            await page.clock.install(time=self.epoch_ms / 1000)
+            await page.clock.pause_at(self.epoch_ms / 1000)
         page.on("pageerror", lambda e: self.note("page_error", error=str(e)[:300]))
         page.on(
             "console",
@@ -285,10 +309,14 @@ class Sim:
         when the page or the camera kept the loop busy, so the robot's clock never drifts
         from the page's."""
         page = self.page
+        if self.o.lockstep:
+            await self._run_locked()
+            return
         start = time.monotonic()
         n, fed = 0, -1e9
         while True:
             due = int((time.monotonic() - start) / CONTROL_DT) + 1
+            self._burst = max(self._burst, due - n)
             while n < due:
                 try:
                     self.body.tick()
@@ -313,6 +341,41 @@ class Sim:
                 await asyncio.sleep(0.2)
             await asyncio.sleep(max(0.0, start + n * CONTROL_DT - time.monotonic()))
 
+    async def _run_locked(self) -> None:
+        """One control tick of physics, then the same CONTROL_DT of the page's time, and so on:
+        the page never sees the robot's clock run ahead of its own or the other way round."""
+        page = self.page
+        n, fed, drained = 0, -1e9, 0.0
+        step_ms = round(CONTROL_DT * 1000)
+        while True:
+            try:
+                self.body.tick()
+                self.chip.tick()
+            except Exception as e:
+                self.note("sim_error", error=repr(e)[:300])
+                raise
+            n += 1
+            self.sim_t = n * CONTROL_DT
+            if n % 2 == 0:
+                self._record()
+            try:
+                await page.evaluate("m => window.__simMotion(m)", self.body.motion())
+                if self.o.pose == "truth" and self.sim_t - fed >= POSE_S:
+                    fed = self.sim_t
+                    await page.evaluate("p => window.gbPose && window.gbPose.feed(p)", self.pose())
+                if self.sim_t - drained > 1.0:
+                    drained = self.sim_t
+                    await self._drain()
+                await page.clock.run_for(step_ms)
+            except Exception as e:  # the page navigated or closed: the next tick tries again
+                self.note("loop", error=str(e)[:200])
+                await asyncio.sleep(0.2)
+
+    async def _until_sim(self, t: float) -> None:
+        """Wait, on the run's clock, until it reads `t`."""
+        while self.now() < t:
+            await asyncio.sleep(0.01)
+
     def pose(self) -> dict[str, float]:
         """His true pose in his map's terms: metres, and his camera's heading in degrees
         counter-clockwise from +x (the nose points the other way)."""
@@ -325,7 +388,31 @@ class Sim:
         st["pose"] = self.chip.pose
         st["qpos"] = self.body.data.qpos.tolist()
         st["person_at"] = self.body.data.mocap_pos.tolist()
+        st["touch"] = self._touching()
+        # The most physics ticks run back to back since the last row: over 1, the loop fell
+        # behind real time and the legs ran those ticks on one stale command.
+        st["burst"] = self._burst
+        self._burst = 0
         self.states.append(st)
+
+    def _touching(self) -> list[str]:
+        """What, other than the floor, the robot is touching: a fall read against a wall or a
+        chair leg is a different fault from one in the open."""
+        import mujoco
+
+        m, d = self.body.model, self.body.data
+        robot = m.body_rootid[m.body("base_body").id]
+        out: set[str] = set()
+        for c in d.contact[: d.ncon]:
+            a, b = int(c.geom1), int(c.geom2)
+            ra, rb = m.body_rootid[m.geom_bodyid[a]], m.body_rootid[m.geom_bodyid[b]]
+            if (ra == robot) == (rb == robot):
+                continue
+            other = b if ra == robot else a
+            if m.geom_type[other] == mujoco.mjtGeom.mjGEOM_PLANE:
+                continue
+            out.add(mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, other) or f"geom{other}")
+        return sorted(out)
 
     async def _camera(self) -> None:
         """The front camera, as fast as the renderer goes up to its cap: drawn in a thread
@@ -370,7 +457,7 @@ class Sim:
         loop = asyncio.get_running_loop()
         try:
             while True:
-                t = time.monotonic()
+                t = self.now() if self.o.lockstep else time.monotonic()
                 d = self.body.data
                 try:
                     jpeg = await loop.run_in_executor(
@@ -382,7 +469,7 @@ class Sim:
                         mp = await loop.run_in_executor(
                             gl, sense, d.qpos.copy(), d.mocap_pos.copy(), d.mocap_quat.copy()
                         )
-                        mp["t"] = int(time.time() * 1000)
+                        mp["t"] = self.page_ms() if self.o.lockstep else int(time.time() * 1000)
                         await page.evaluate("v => window.gbVision && window.gbVision.feed(v)", mp)
                     if n % 8 == 0:
                         self.frames.append((self.now(), jpeg))
@@ -393,7 +480,10 @@ class Sim:
                     self.note("camera", error=str(e)[:200])
                     await asyncio.sleep(0.5)
                 n += 1
-                await asyncio.sleep(max(0.0, 1.0 / self.o.fps - (time.monotonic() - t)))
+                if self.o.lockstep:
+                    await self._until_sim(t + 1.0 / self.o.fps)
+                else:
+                    await asyncio.sleep(max(0.0, 1.0 / self.o.fps - (time.monotonic() - t)))
         finally:
             # Freed on their own thread, not wherever the collector happens to run.
             def close() -> None:
@@ -412,17 +502,24 @@ class Sim:
         await self.page.evaluate("t => heardText(t, {}, 'en')", text)
 
     async def wait(self, secs: float) -> None:
-        await asyncio.sleep(secs)
+        if self.o.lockstep:
+            await self._until_sim(self.now() + secs)
+        else:
+            await asyncio.sleep(secs)
 
     async def until(
         self, cond: Callable[[Sim], bool], timeout: float, what: str, every: float = 0.2
     ) -> bool:
         """Wait for `cond` up to `timeout` seconds, and record it as a check."""
-        end = time.monotonic() + timeout
-        while time.monotonic() < end:
+        clock = self.now if self.o.lockstep else time.monotonic
+        end = clock() + timeout
+        while clock() < end:
             if cond(self):
                 return self.check(True, what)
-            await asyncio.sleep(every)
+            if self.o.lockstep:
+                await self._until_sim(self.now() + every)
+            else:
+                await asyncio.sleep(every)
         return self.check(False, what, timeout_s=timeout)
 
     def push(self, force: tuple[float, float, float], secs: float = 0.1) -> None:
