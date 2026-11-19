@@ -9,8 +9,11 @@ dropped first, or one request could land in jerv's slot or grow past its cap.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import contextlib
 import json
+import math
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Final
 
@@ -85,9 +88,98 @@ def prompt_chars(payload: dict[str, Any]) -> tuple[int, int]:
     return chars, images
 
 
-def estimate_prompt_tokens(served: str, payload: dict[str, Any]) -> int:
+# The vision projector's tokens: one per 32 x 32 px block (a 320 x 240 camera frame reads as
+# ~75), and a picture under the request's floor is scaled up, aspect kept, until it reaches it.
+_PX_PER_TOKEN: Final = 32
+# The picture's start and end markers, and the grid rounding up on each side.
+_IMAGE_TOKEN_SLACK: Final = 4
+_INLINE_PREFIX: Final = "base64,"
+# The JPEG frame types the engine decodes (baseline, extended, progressive), and the rest.
+_SOF: Final = frozenset({0xC0, 0xC1, 0xC2})
+_UNREAD_SOF: Final = frozenset({0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
+# How much of a picture's base64 is decoded to find its size: a canvas JPEG's frame header is
+# in its first few hundred bytes, and a 4 MB picture is not decoded whole to read it.
+_HEAD_B64: Final = 64 * 1024
+
+
+def _image_size(data: bytes) -> tuple[int, int] | None:
+    """(width, height) from a PNG's IHDR or a JPEG's frame header, read the way the engine's
+    decoder (stb_image) reads it: fill bytes before a marker are skipped, and only the frame
+    types it decodes count. Anything else is None, which charges flat."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        # Only an IHDR first: stb_image also takes Apple's CgBI chunk ahead of it.
+        if data[12:16] != b"IHDR" or len(data) < 24:
+            return None
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data[:2] != b"\xff\xd8":
+        return None
+    i = 2
+    while i < len(data):
+        if data[i] != 0xFF:
+            return None
+        while i < len(data) and data[i] == 0xFF:
+            i += 1
+        if i + 7 >= len(data):
+            return None
+        marker = data[i]
+        if 0xD0 <= marker <= 0xD7 or marker == 0x01:
+            i += 1
+            continue
+        # A frame type stb_image refuses, or the scan before any frame: no size it would use.
+        if marker in _UNREAD_SOF or marker == 0xDA:
+            return None
+        if marker in _SOF:
+            return int.from_bytes(data[i + 6 : i + 8], "big"), int.from_bytes(
+                data[i + 4 : i + 6], "big"
+            )
+        i += 1 + int.from_bytes(data[i + 1 : i + 3], "big")
+    return None
+
+
+def image_tokens(url: str, floor: int) -> int:
+    """What one inline picture costs at a per-request floor (apply-llama-image-floor.sh), or the
+    flat charge when its size cannot be read, so an unread picture never under-books. Only the
+    start is decoded: a header past it reads as unread."""
+    at = url.find(_INLINE_PREFIX)
+    head = url[at + len(_INLINE_PREFIX) :][:_HEAD_B64] if at >= 0 else ""
+    try:
+        data = base64.b64decode(head[: len(head) // 4 * 4], validate=False)
+    except (binascii.Error, ValueError):
+        data = b""
+    size = _image_size(data)
+    if size is None or min(size) <= 0:
+        return slot_roles.IMAGE_TOKENS_CHARGE
+    w, h = size
+    native = (w / _PX_PER_TOKEN) * (h / _PX_PER_TOKEN)
+    scale = math.sqrt(floor / native) if native < floor else 1.0
+    grid = math.ceil(w * scale / _PX_PER_TOKEN) * math.ceil(h * scale / _PX_PER_TOKEN)
+    return min(slot_roles.IMAGE_TOKENS_CHARGE, grid + _IMAGE_TOKEN_SLACK)
+
+
+def _image_urls(payload: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    messages = payload.get("messages")
+    for message in messages if isinstance(messages, list) else []:
+        content = message.get("content") if isinstance(message, dict) else None
+        for part in content if isinstance(content, list) else []:
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                image = part.get("image_url")
+                url = image.get("url") if isinstance(image, dict) else image
+                urls.append(url if isinstance(url, str) else "")
+    return urls
+
+
+def estimate_prompt_tokens(
+    served: str, payload: dict[str, Any], *, image_floor: int | None = None
+) -> int:
+    """`image_floor` is the per-request picture floor the caller sets: its pictures are charged
+    at their real size against it rather than flat (the creature sends a day's small looks, a
+    few hundred tokens each, that the flat charge would book at 4096)."""
     chars, images = prompt_chars(payload)
-    return slot_roles.estimate_prompt_tokens(served, chars=chars, n_images=images)
+    if image_floor is None or image_floor <= 0:
+        return slot_roles.estimate_prompt_tokens(served, chars=chars, n_images=images)
+    pictures = sum(image_tokens(url, image_floor) for url in _image_urls(payload))
+    return slot_roles.estimate_prompt_tokens(served, chars=chars) + pictures
 
 
 def _budget(value: object) -> int | None:
@@ -121,7 +213,9 @@ def _set_budget(payload: dict[str, Any], tokens: int) -> None:
         payload["max_completion_tokens"] = tokens
 
 
-def fit_openai_request(served: str, payload: dict[str, Any], role: SlotRole) -> int:
+def fit_openai_request(
+    served: str, payload: dict[str, Any], role: SlotRole, *, image_floor: int | None = None
+) -> int:
     """Strip the client's slot overrides, then hold a pooled model's request to `role`'s cap,
     rewriting its output budget in `payload`. Returns the prompt estimate for `pinned_request`
     (0 for a model without a pool). Raises `SlotCapError` when the prompt cannot fit."""
@@ -129,7 +223,7 @@ def fit_openai_request(served: str, payload: dict[str, Any], role: SlotRole) -> 
     pool = local_catalog.pool_of(served)
     if pool is None:
         return 0
-    prompt_tokens = estimate_prompt_tokens(served, payload)
+    prompt_tokens = estimate_prompt_tokens(served, payload, image_floor=image_floor)
     asked = _requested_output(payload)
     cap = pool.cap(role)
     if asked is None:

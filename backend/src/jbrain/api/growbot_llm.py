@@ -247,6 +247,13 @@ def _unsafe_part(messages: list[Any]) -> str | None:
     return None
 
 
+def _floor(payload: dict[str, Any]) -> int | None:
+    """The picture floor this turn was given, so its pictures are charged at their real size:
+    the creature carries a day's small looks (growbot-looks.js), each a few hundred tokens."""
+    floor = payload.get("image_min_tokens")
+    return floor if type(floor) is int and floor > 0 else None
+
+
 async def _engine(request: Request) -> engines.Engine:
     active = getattr(request.app.state, "active_engine", None)
     return await active.get() if active is not None else engines.DEFAULT_ENGINE
@@ -384,7 +391,9 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
     payload["max_tokens"] = min([DEFAULT_MAX_TOKENS, *(b for b in budgets if b > 0)])
     # Before the lock: a request too long for its slot must not wait a turn to be refused.
     try:
-        prompt_tokens = fit_openai_request(served, payload, GROWBOT_ROLE)
+        prompt_tokens = fit_openai_request(
+            served, payload, GROWBOT_ROLE, image_floor=_floor(payload)
+        )
     except SlotCapError as exc:
         return JSONResponse(status_code=400, content=context_length_exceeded(exc))
 
@@ -466,7 +475,9 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                         admitted = None
                     if admitted and admitted != served:
                         payload["model"] = admitted
-                        prompt_tokens = fit_openai_request(admitted, payload, GROWBOT_ROLE)
+                        prompt_tokens = fit_openai_request(
+                            admitted, payload, GROWBOT_ROLE, image_floor=_floor(payload)
+                        )
                 mark("admit_ms")
                 model = rec.model = str(payload["model"])
                 # After a long quiet the slot may have lost the prefix to a restart.
