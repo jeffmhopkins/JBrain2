@@ -8,6 +8,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -32,6 +33,7 @@ class _Store:
         self.prepares: list[tuple[str | None, Any, bool]] = []
         self.turns: list[dict[str, Any]] = []
         self.abandoned: list[Any] = []
+        self.forgotten: list[str] = []
         self.restores: list[tuple[str, str, Any]] = []
         self.saves: list[tuple[str, str, int, Any]] = []
         self.efforts: list[str | None] = []
@@ -121,6 +123,10 @@ class _Store:
         self, served_model: str, chat_key: str | None = None, *, role: Any = None
     ) -> None:
         self.abandoned.append(role)
+
+    async def forget_conversation(self, conversation_key: str) -> int:
+        self.forgotten.append(conversation_key)
+        return 1
 
 
 @pytest.fixture(autouse=True)
@@ -571,6 +577,36 @@ def test_a_failed_stamp_does_not_restart_the_awake_cap(
 # --- his whole conversation (owner, 2026-11-19) -----------------------------------------------
 
 
+_PERSONA = "0b9d2f4e-1c3a-4e5f-8a7b-6c5d4e3f2a1b"
+
+
+class _Personas:
+    """The persona repo as the lane reads it: whether brain access is on for him."""
+
+    def __init__(self, brain: bool = False, fail: bool = False) -> None:
+        self.brain = brain
+        self.fail = fail
+        self.reads = 0
+
+    async def get_persona(self, ctx: Any, pid: str) -> Any:
+        self.reads += 1
+        if self.fail:
+            raise RuntimeError("db down")
+        if pid != _PERSONA:
+            return None
+        return SimpleNamespace(brain_phone_id="phone-1" if self.brain else None)
+
+
+def _his(
+    tmp_path: Path, store: _Store, chunks: Any, *, status: int = 200, personas: Any = None
+) -> tuple[Any, dict[str, str]]:
+    """The lane with a store and his persona, its brain access off unless `personas` says."""
+    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=chunks, status=status))
+    app.state.kv_prefix = store
+    app.state.growbot_personas = personas if personas is not None else _Personas()
+    return app, {**auth, "x-growbot-persona": _PERSONA}
+
+
 def _used(prompt: int, cached: int, completion: int) -> tuple[bytes, ...]:
     usage = {"prompt_tokens": prompt, "completion_tokens": completion}
     usage["prompt_tokens_details"] = {"cached_tokens": cached}  # type: ignore[assignment]
@@ -579,8 +615,7 @@ def _used(prompt: int, cached: int, completion: int) -> tuple[bytes, ...]:
 
 def test_a_saved_conversation_comes_back_instead_of_the_prefix(tmp_path: Path) -> None:
     store = _Store(conv=True)
-    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_cold(cached=7000)))
-    app.state.kv_prefix = store
+    app, auth = _his(tmp_path, store, _cold(cached=7000))
     with TestClient(app) as client:
         assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
         assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
@@ -593,8 +628,7 @@ def test_a_saved_conversation_comes_back_instead_of_the_prefix(tmp_path: Path) -
 
 def test_with_no_conversation_on_disk_the_prefix_still_comes_back(tmp_path: Path) -> None:
     store = _Store(conv=False)
-    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_cold(cached=7000)))
-    app.state.kv_prefix = store
+    app, auth = _his(tmp_path, store, _cold(cached=7000))
     with TestClient(app) as client:
         assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
     assert len(store.prepares) == 1 and len(store.restores) == 1
@@ -602,8 +636,7 @@ def test_with_no_conversation_on_disk_the_prefix_still_comes_back(tmp_path: Path
 
 def test_every_turn_claims_his_slot_for_his_conversation(tmp_path: Path) -> None:
     store = _Store()
-    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_used(30_000, 29_000, 40)))
-    app.state.kv_prefix = store
+    app, auth = _his(tmp_path, store, _used(30_000, 29_000, 40))
     with TestClient(app) as client:
         assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
         assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
@@ -619,8 +652,7 @@ def test_every_turn_claims_his_slot_for_his_conversation(tmp_path: Path) -> None
 
 def test_a_turn_that_failed_in_the_slot_leaves_nothing_to_save(tmp_path: Path) -> None:
     store = _Store()
-    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_cold(), status=503))
-    app.state.kv_prefix = store
+    app, auth = _his(tmp_path, store, _cold(), status=503)
     with TestClient(app) as client:
         client.post(_COMPLETIONS, json=_turn(), headers=auth)
     assert store.turns == [] and store.abandoned == [GROWBOT_ROLE]
@@ -654,3 +686,41 @@ async def test_a_failing_conversation_layer_is_only_the_prefix_path() -> None:
     )
     assert await prefix.restore_conversation(None, "m", _SYSTEM, "none") == (False, None)
     assert await prefix.restore_conversation(store, "m", "tiny", "none") == (False, None)
+
+
+@pytest.mark.parametrize(
+    "personas, header",
+    [
+        # Brain access on: the owner's notes (every domain) can be in his prompt.
+        (_Personas(brain=True), True),
+        # Unknown is treated as on: no persona named, none found, or the read failed.
+        (_Personas(), False),
+        (_Personas(fail=True), True),
+    ],
+)
+def test_his_conversation_stays_off_disk_while_his_notes_may_be_in_it(
+    tmp_path: Path, personas: _Personas, header: bool
+) -> None:
+    store = _Store(conv=True)
+    app, auth = _his(tmp_path, store, _used(30_000, 29_000, 40), personas=personas)
+    if not header:
+        del auth["x-growbot-persona"]
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
+    # No save is restored or claimed; the prefix alone comes back after the quiet.
+    assert store.prepares == [] and store.turns == []
+    assert store.abandoned == [GROWBOT_ROLE] and len(store.restores) == 1
+
+
+def test_brain_access_deletes_his_files_and_keeps_them_off_until_restart(tmp_path: Path) -> None:
+    store = _Store()
+    personas = _Personas(brain=True)
+    app, auth = _his(tmp_path, store, _used(30_000, 29_000, 40), personas=personas)
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
+        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
+        # Turned off: his history still carries what the lookups told him.
+        personas.brain = False
+        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
+    assert store.forgotten == [prefix.conversation_key(_SYSTEM)]
+    assert store.turns == [] and store.abandoned == [GROWBOT_ROLE] * 3

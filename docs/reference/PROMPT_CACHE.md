@@ -168,10 +168,15 @@ data:
 
 **The GrowBot creature's slot (10) also keeps a conversation file** (owner, 2026-11-19: "when
 that slot has sat there inactive ... disk cache that KV, and just hard load it from the hard
-drive next time it looks"). The creature relay forwards no tools and reads no knowledge base, so
-its conversation holds only what Dave said and heard and the low-resolution looks he took
+drive next time it looks"). The creature relay forwards no tools, so with brain access off its
+conversation holds only what Dave said and heard and the low-resolution looks he took
 (`growbot/README.md` "Every look, until he dreams") — the owner's choice to keep on the box
-disk, under the same toggle and budget. Its key is a hash of the creature's system text
+disk, under the same toggle and budget. **Brain access** (`api/growbot_brain.py`) lets his page
+look up the owner's notes in every domain and put the hits in his prompt, so a persona with it
+on never gets a conversation file: the lane reads the persona each turn (`_kept_off_disk`;
+no persona named, none found or a failed read count as on), and the first turn that sees it on
+deletes his file and keeps him off disk until the api restarts, since his history goes on
+carrying what a lookup told him after access is turned off. Its key is a hash of the creature's system text
 (`growbot/prefix.py` `conversation_key`), so a changed persona or prompt is a different file.
 The keeper's tick saves it after 10 idle minutes; a turn after more than 5 quiet minutes
 restores it before the prefix-only restore, and only when slot 10 holds fewer tokens than the

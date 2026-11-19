@@ -247,6 +247,38 @@ def _unsafe_part(messages: list[Any]) -> str | None:
     return None
 
 
+async def _kept_off_disk(state: Any, persona_id: str | None, store: Any, system: str) -> bool:
+    """Whether this persona's conversation must stay off disk: brain access is on for it, so
+    the owner's notes (every domain) can be in his prompt. Unknown counts as on. The first
+    time a persona is seen with it on, its files go and its key stays forgotten."""
+    repo = getattr(state, "growbot_personas", None)
+    if not persona_id or repo is None:
+        return True
+    try:
+        persona = await repo.get_persona(_SYSTEM_OWNER, persona_id)
+    except Exception:  # noqa: BLE001 - fail closed; the turn itself still runs
+        log.warning("growbot persona read failed", exc_info=True)
+        return True
+    if persona is None:
+        return True
+    seen = _forgotten(state)
+    if persona_id in seen:
+        return True
+    if persona.brain_phone_id is None:
+        return False
+    seen.add(persona_id)
+    await prefix.forget(store, system)
+    return True
+
+
+def _forgotten(state: Any) -> set[str]:
+    """The personas seen with brain access on since the api started."""
+    seen: set[str] | None = getattr(state, "growbot_off_disk", None)
+    if seen is None:
+        seen = state.growbot_off_disk = set()
+    return seen
+
+
 def _floor(payload: dict[str, Any]) -> int | None:
     """The picture floor this turn was given, so its pictures are charged at their real size:
     the creature carries a day's small looks (growbot-looks.js), each a few hundred tokens."""
@@ -450,6 +482,9 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
         # error: the app shows a cut stream as a broken brain and retries blind.
         previous: float | None = getattr(state, "growbot_last_turn", None)
         conv_seq: int | None = None
+        # Whether his conversation may go to disk this turn: never while his notes may be in
+        # it (`_kept_off_disk`).
+        to_disk = False
         if not replay:
             state.growbot_last_turn = time.monotonic()
             if not warmup:
@@ -486,10 +521,13 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                 long_quiet = previous is None or time.monotonic() - previous > RESTORE_AFTER_QUIET_S
                 store = getattr(state, "kv_prefix", None)
                 restored = False
+                if not replay:
+                    to_disk = not await _kept_off_disk(state, rec.persona_id, store, system)
                 if not replay and long_quiet:
-                    restored, conv_seq = await prefix.restore_conversation(
-                        store, model, system, level
-                    )
+                    if to_disk:
+                        restored, conv_seq = await prefix.restore_conversation(
+                            store, model, system, level
+                        )
                     if restored:
                         mark("conversation_restore_ms")
                     else:
@@ -567,7 +605,7 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                         rec.model,
                         system,
                         level,
-                        ok=rec.ok,
+                        ok=rec.ok and to_disk,
                         prompt_tokens=rec.prompt_tokens,
                         completion_tokens=rec.completion_tokens,
                         cached_tokens=rec.cached_tokens,

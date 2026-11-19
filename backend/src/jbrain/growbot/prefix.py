@@ -21,6 +21,9 @@ slot; this drives it for the GrowBot role.
   of the day's talk and looks (growbot-looks.js). That file does hold his words and pictures,
   on the box's own disk beside the slot it came from, under the owner's conversation-cache
   toggle (Ops) like jerv's chats; a dream starts a new history, which the next save replaces.
+  Never while brain access is on for him: his notes lookups (every domain) then reach his
+  prompt, and a file sits outside Postgres, where the domain firewalls cannot reach
+  (`api/growbot_llm.py` `_kept_off_disk`).
 
 Everything is best-effort: the worst case of any failure is the cold turn this replaces.
 """
@@ -117,6 +120,8 @@ class PrefixStore(Protocol):
         self, served_model: str, chat_key: str | None = None, *, role: Any = None
     ) -> None: ...
 
+    async def forget_conversation(self, conversation_key: str) -> int: ...
+
 
 def _pooled(model: str) -> bool:
     """Only a model with a role pool gives the creature a slot of its own. Unpooled, the store
@@ -202,6 +207,20 @@ def note_turn(
         )
     except Exception:  # noqa: BLE001 - bookkeeping; the turn already ran
         log.warning("growbot conversation note failed model=%s", model, exc_info=True)
+
+
+async def forget(store: PrefixStore | None, system: str) -> None:
+    """Delete his conversation's files and keep it off disk until the api restarts: the
+    owner's notes can now reach his prompt (brain access, `growbot_brain.py`, every domain),
+    and a conversation file sits outside Postgres, where the domain firewalls cannot reach.
+    Kept off for the process's life, not just while access is on, because his history goes on
+    carrying what a lookup told him after access is turned off."""
+    if store is None or len(system) < MIN_SYSTEM_CHARS:
+        return
+    try:
+        await store.forget_conversation(conversation_key(system))
+    except Exception:  # noqa: BLE001 - the next brain-on turn tries again
+        log.warning("growbot conversation forget failed", exc_info=True)
 
 
 def consumed(store: PrefixStore | None, model: str, system: str, level: str) -> None:

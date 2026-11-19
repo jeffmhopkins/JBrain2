@@ -789,6 +789,7 @@ minutes the keeper saves his slot; his next thought after more than 5 quiet minu
 save back if the slot lost it (an engine restart, a halving, an eviction), so he resumes without
 a cold read of the pile. Only when no save fits does the prefix alone come back. It is a
 conversation file under Ops' *Keep chats on disk* toggle (`docs/reference/PROMPT_CACHE.md`).
+A persona with brain access on is never saved: the owner's notes can be in its prompt.
 
 ### His view all around, and choosing where to go
 
