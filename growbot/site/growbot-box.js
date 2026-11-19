@@ -2217,24 +2217,27 @@
   // survives the reload on its own), and the return reloads, which lands on the wake screen.
   // Only a page whose wake screen was tapped through: a new creature never had one, and one
   // still up needs nothing. A file chooser or share sheet hides the page on Android too; coming
-  // back from one is not leaving, and a reload there would drop the picked soul.
+  // back from one is not leaving, and a reload there would drop the picked soul. Only a hide
+  // right after the tap counts as one: on iOS neither hides the page, so a later leave is a leave.
   function wakeOnReturn() {
     if (typeof document.getElementById !== "function" || !document.getElementById("wakeGate")) return false;
-    var woke = false, away = false, picking = false, gone = false;
+    var PICK_MS = 3000, woke = false, away = false, pickT = 0, picked = false, gone = false;
+    function pick() { pickT = Date.now(); }
     document.addEventListener("click", function (e) {
       var t = e && e.target;
       if (t && t.id === "wgWake") woke = true;
-      else if (t && t.tagName === "INPUT" && String(t.type).toLowerCase() === "file") picking = true;
+      else if (t && t.tagName === "INPUT" && String(t.type).toLowerCase() === "file") pick();
     }, true);
     var nav = typeof navigator !== "undefined" ? navigator : null;
     try {
       if (nav && typeof nav.share === "function") {
         var share = nav.share;
-        nav.share = function () { picking = true; return share.apply(this, arguments); };
+        nav.share = function () { pick(); return share.apply(this, arguments); };
       }
     } catch (x) {}
     function hide() {
-      if (away || !woke || window._wakeGateUp || picking) return;
+      if (away || picked || !woke || window._wakeGateUp) return;
+      if (Date.now() - pickT < PICK_MS) { picked = true; return; }
       away = true;
       try {
         if (window.gbBodyTest && window.gbBodyTest.active()) window.gbBodyTest.stop("hidden");
@@ -2245,7 +2248,7 @@
     }
     function back() {
       if (gone) return;
-      if (picking) { picking = false; return; }
+      if (picked) { picked = false; pickT = 0; return; }
       if (!away) return;
       away = false;
       gone = true;
@@ -2258,7 +2261,6 @@
     return true;
   }
   try {
-    // After upstream's own hide listeners, so its stale-build reload still sees him unpaused.
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wakeOnReturn);
     else wakeOnReturn();
   } catch (e) {}

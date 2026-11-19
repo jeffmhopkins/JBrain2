@@ -5042,7 +5042,8 @@ def test_leaving_the_app_pauses_him_and_coming_back_lands_on_the_wake_screen() -
     if node is None:
         pytest.skip("node is not installed")
     program = (
-        "var said=[], on={}, won={}, gate={style:{display:'none'}};"
+        "var said=[], on={}, won={}, gate={style:{display:'none'}}, clock=1e6;"
+        "Date.now=function(){ return clock; };"
         "var document={readyState:'complete', hidden:false,"
         " getElementById:function(i){ return i==='wakeGate'?gate:null; },"
         " addEventListener:function(n,f){ on[n]=f; }};"
@@ -5059,6 +5060,7 @@ def test_leaving_the_app_pauses_him_and_coming_back_lands_on_the_wake_screen() -
         " if(s==='wake') tap({id:'wgWake'});"
         " else if(s==='file') tap({tagName:'INPUT', type:'file'});"
         " else if(s==='hide') vis(true); else if(s==='show') vis(false);"
+        " else if(s==='wait') clock+=5000;"
         " else if(s==='bfcache') won.pageshow({persisted:true}); });"
         "console.log(JSON.stringify(said));"
     )
@@ -5086,6 +5088,8 @@ def test_leaving_the_app_pauses_him_and_coming_back_lands_on_the_wake_screen() -
     assert run(["wake", "file", "hide", "show"]) == []
     # The chooser's round trip spent the exemption; the next leave is a leave.
     assert run(["wake", "file", "hide", "show", "hide", "show"])[-1] == "reload:flex"
+    # An iOS chooser never hides the page: a leave long after the tap is a leave.
+    assert run(["wake", "file", "wait", "hide", "show"])[-1] == "reload:flex"
 
 
 def test_a_reply_written_as_a_sentence_then_its_json_keeps_its_move() -> None:
