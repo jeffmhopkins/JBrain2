@@ -232,8 +232,9 @@ def test_a_frontier_running_back_to_his_feet_is_still_a_way_on() -> None:
     assert got is not None and got["cells"] > 100
 
 
-# The page half with its neighbours stubbed: a fed pose that is wherever his last route ended,
-# routes that arrive at once, and a beat run by hand.
+# The page half with its neighbours stubbed: a fed pose (FED) that moves FRAC of the way to his
+# last route's end each beat, routes that end WHY at once, and a beat run by hand until he is
+# done or has set off STOP times.
 _PAGE = """
 let now=0, beatFn=null, pos={x:1,y:1.5,h:0}, isFed=FED;
 global.document={}; global.window=global;
@@ -245,29 +246,39 @@ global.gbPose={source:()=>isFed?"fed":"reckoned"};
 let goes=0, last=null;
 global.gbMap={map:()=>({here:pos}), turn:()=>null,
   go:(pts)=>{goes++; last=pts[pts.length-1]; return true;},
-  goState:()=>last?{why:"arrived"}:null};
+  goState:()=>last?{why:WHY}:null};
 delete require.cache[require.resolve(GRID)];
 const P=require(GRID);
 look(P.grid(),1,1.5);
 P.explore(true);
-for(let b=0;b<3000&&!P.state().explore.done;b++){
+for(let b=0;b<3000&&!P.state().explore.done&&goes<STOP;b++){
   now+=500; beatFn();
-  if(last){ pos={x:last.x,y:last.y,h:0}; }
+  if(last){ pos={x:pos.x+(last.x-pos.x)*FRAC,y:pos.y+(last.y-pos.y)*FRAC,h:0}; }
 }
 console.log(JSON.stringify({st:P.state().explore, goes}));
 """
 
 
+def _page(fed: bool, why: str = "arrived", frac: float = 1.0, stop: int = 10**6) -> Any:
+    return _node(
+        _PAGE.replace("GRID", json.dumps(str(_GRID)))
+        .replace("FED", json.dumps(fed))
+        .replace("WHY", json.dumps(why))
+        .replace("FRAC", str(frac))
+        .replace("STOP", str(stop))
+    )
+
+
 def test_the_explorer_ends_rather_than_shuttling_between_edges_it_cannot_clear() -> None:
     # The map never grows here (nothing feeds it), so every edge stays: he must give each up
     # after arriving twice, and finish.
-    got = _node(_PAGE.replace("GRID", json.dumps(str(_GRID))).replace("FED", "true"))
+    got = _page(True)
     assert got["st"]["done"] == "explored"
     assert got["goes"] < 40
 
 
 def test_with_no_fed_pose_the_explorer_says_so_and_stops() -> None:
-    got = _node(_PAGE.replace("GRID", json.dumps(str(_GRID))).replace("FED", "false"))
+    got = _page(False)
     assert got["st"]["done"] == "no_pose" and got["goes"] == 0
 
 
@@ -288,3 +299,12 @@ def test_a_frame_with_no_floor_labels_leaves_clear_columns_to_the_picture_s_reac
     got = json.loads(out.stdout)
     assert all(c["m"] is None and "open" not in c for c in got["bare"])
     assert all("open" in c for c in got["floor"])
+
+
+def test_a_walk_cut_off_on_the_way_is_progress_not_a_failed_goal() -> None:
+    # Every walk ends early ("ended": the legs' budget, say) but halfway there: he keeps going.
+    got = _page(True, why="ended", frac=0.5, stop=6)
+    assert got["goes"] == 6 and got["st"]["failed"] == 0
+    # Ending where he started, twice, gives the goal up.
+    stalled = _page(True, why="ended", frac=0.0, stop=3)
+    assert stalled["st"]["failed"] >= 1

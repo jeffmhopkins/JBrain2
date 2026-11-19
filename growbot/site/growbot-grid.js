@@ -37,6 +37,9 @@
   // Looking round: headings tried, the camera's view (about 60 degrees, and what the depth
   // sense reaches), and how many unseen cells make a look worth its turn (about 0.1 m2).
   var LOOK_STEP = 30, VIEW_DEG = 56, VIEW_M = 2.5, LOOK_WORTH = 40;
+  // His camera's floor starts about this far out: nearer than it no look shows, so it is
+  // neither scored by a look nor gone to as a frontier.
+  var FEET_M = 0.4;
   var GO_POINTS_MAX = 64;
   // His phone's lens sits this far ahead of his middle (the Dave sim measured 8 cm: a wall
   // 40 cm from his middle reads 32).
@@ -207,7 +210,7 @@
         // The cells at his feet are the edges of each look's wedge, which start at his lens: a
         // frontier reaching there is aimed at by its nearest cell past them, not dropped.
         var cq = ij(fronts[f][q]), mq = mid(cq[0], cq[1]);
-        if (Math.hypot(mq.x - x, mq.y - y) < 0.2) continue;
+        if (Math.hypot(mq.x - x, mq.y - y) < FEET_M) continue;
         g = { d: d, k: fronts[f][q] };
       }
       if (!g) continue;
@@ -261,7 +264,7 @@
       var seen = new Set(), n = 0;
       for (var a = -VIEW_DEG / 2; a <= VIEW_DEG / 2; a += 2) {
         var ca = Math.cos((h + a) * D), sa = Math.sin((h + a) * D);
-        for (var s = 0.4; s < VIEW_M; s += CELL) {
+        for (var s = FEET_M; s < VIEW_M; s += CELL) {
           var c = cellOf(x + ca * s, y + sa * s), k = key(c[0], c[1]), v = l.get(k);
           if (v !== undefined && v >= OCC_AT) break;
           if (seen.has(k)) continue;
@@ -357,8 +360,13 @@
           // Arriving at the same edge a second time means looking from there doesn't clear it:
           // without this he can go back and forth between two such edges for the whole run.
           if (near(ex.arrived)) ex.failed.push(ex.goal); else ex.arrived.push(ex.goal);
-        } else if (st.why === "stuck" || st.why === "too_long" || near(ex.ended)) ex.failed.push(ex.goal);
-        else ex.ended.push(ex.goal);
+        } else if (st.why === "stuck" || st.why === "too_long") ex.failed.push(ex.goal);
+        else {
+          // A walk cut off on the way (the legs' duty budget, another move) that got him nearer
+          // is progress; only one that ends twice without headway gives the goal up.
+          var hw = here(), left = hw ? Math.hypot(+hw.x - ex.goal.x, +hw.y - ex.goal.y) : ex.goM;
+          if (ex.goM - left < 0.1) { if (near(ex.ended)) ex.failed.push(ex.goal); else ex.ended.push(ex.goal); }
+        }
         log("grid_reached", { why: st.why, to: ex.goal });
         ex.phase = "look"; ex.looks = 0;
         // Stuck is something he can't see holding him (a jamb at his shoulder, a chair leg):
@@ -377,7 +385,8 @@
       if (!h || !fed()) {
         // The grid only fills on a fed pose: without one there is nothing to explore on.
         if (!ex.waitT) ex.waitT = Date.now();
-        else if (Date.now() - ex.waitT > NO_POSE_MS) { ex.done = "no_pose"; log("grid_explored", { done: ex.done }); }
+        // Only before he has started: a gap in the pose mid-run is waited out.
+        else if (!ex.started && Date.now() - ex.waitT > NO_POSE_MS) { ex.done = "no_pose"; log("grid_explored", { done: ex.done }); }
         return;
       }
       ex.waitT = 0;
@@ -410,7 +419,11 @@
       }
       ex.tries++;
       log("grid_go", { to: nx.goal, m: nx.m, n: nx.points.length, free: c.free });
-      if (window.gbMap.go(nx.points)) { ex.phase = "go"; ex.goal = nx.goal; ex.goT = Date.now(); }
+      // A route cut to its first points ends short of the frontier: that end is what he goes to.
+      var goal = nx.points[nx.points.length - 1] || nx.goal;
+      if (window.gbMap.go(nx.points)) {
+        ex.phase = "go"; ex.goal = goal; ex.goT = Date.now(); ex.goM = Math.hypot(goal.x - +h.x, goal.y - +h.y);
+      }
       else { ex.failed.push(nx.goal); ex.phase = "look"; ex.looks = LOOKS; }
     }
     /* On: explore from here. Off: stop after the current move. */
