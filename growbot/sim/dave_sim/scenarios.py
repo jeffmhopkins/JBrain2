@@ -68,7 +68,7 @@ def _spoke_since(sim: Sim, t: float) -> bool:
 
 def _legs_since(sim: Sim, t: float, kinds: tuple[str, ...] = ("pose", "act", "routine")) -> bool:
     """The page sent the legs one of `kinds` after `t` (a walk is a stream of poses)."""
-    since = (t + sim.t0) * 1000
+    since = sim.chip_ms_at(t)
     return any(f["ms"] >= since and f.get("t") in kinds for f in sim.chip.log)
 
 

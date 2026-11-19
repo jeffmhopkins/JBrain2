@@ -31,12 +31,14 @@ drops frames that old. `box.SIM_PATCHES` fails the run if the patch stops matchi
 The page's clock is the physics clock (`Options.lockstep`, on by default): Playwright's page
 clock holds Date, timers, `performance.now` and animation frames, and each 40 ms control tick
 of physics is followed by the same 40 ms of the page's time. A loaded machine makes a run take
-longer, never different. On the wall clock (lockstep off) the loop ran owed physics ticks back
-to back on one stale leg command, up to ten at a time with three runs on four cores, and the
-walk loop ticked late and uneven. Scenario waits, the camera's frame rate, the chip's clock and
-every timeline time are on the run's clock too, and the phone's motion sensors fire once per
-tick rather than on their own timer; only the model's latency stays real. A physics loop that
-dies ends every wait with its error instead of freezing the run's clock.
+longer, not walk differently, and the loop never runs ahead of real time, since the model's
+latency is real. On the wall clock (lockstep off) the loop ran owed physics ticks back to back
+on one stale leg command, up to ten at a time with three runs on four cores, and the walk loop
+ticked late and uneven. Scenario waits, the chip's clock, model call times and every timeline
+time are on the run's clock too, and the phone's motion sensors fire once per tick rather than
+on their own timer. The camera's frame rate is capped on the run's clock, but physics doesn't
+wait for a frame, so a slow render still means fewer frames. A physics loop that dies ends
+every wait with its error instead of freezing the run's clock.
 
 Live runs share the creature lane with the real robot: the box answers 409 while the real
 Dave has spoken in the last two minutes, and a run waits briefly for quiet rather than

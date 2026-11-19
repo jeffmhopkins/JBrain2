@@ -136,6 +136,7 @@ class Sim:
             prefs=dict(opts.prefs),
             policies=opts.policies,
             skills=opts.skills,
+            clock=self.now,
         )
         if opts.cal is not None:
             self.box.cal = opts.cal
@@ -171,6 +172,10 @@ class Sim:
 
     def _chip_ms(self) -> int:
         return int(self.sim_t * 1000)
+
+    def chip_ms_at(self, t: float) -> float:
+        """The chip log's `ms` for run time `t`: its clock is the run's only when locked."""
+        return t * 1000 if self.o.lockstep else (t + self.t0) * 1000
 
     def page_ms(self) -> int:
         """The page's Date.now() for this moment of the run."""
@@ -350,6 +355,7 @@ class Sim:
         # Page time owed: a tick whose page calls failed (a reload) still ran its physics, so
         # the page's clock catches up on the next tick that reaches it.
         owed = 0
+        start = time.monotonic()
         while True:
             try:
                 self.body.tick()
@@ -359,6 +365,7 @@ class Sim:
                 raise
             n += 1
             self.sim_t = n * CONTROL_DT
+            self._burst = 1
             if n % 2 == 0:
                 self._record()
             owed += step_ms
@@ -375,6 +382,9 @@ class Sim:
             except Exception as e:  # the page navigated or closed: the next tick tries again
                 self.note("loop", error=str(e)[:200])
                 await asyncio.sleep(0.2)
+            # Never ahead of real time: the model's latency is real, so a run faster than real
+            # time would make him think slower, in sim seconds, on a faster host.
+            await asyncio.sleep(max(0.0, start + self.sim_t - time.monotonic()))
 
     async def _until_sim(self, t: float) -> None:
         """Wait, on the run's clock, until it reads `t`. Nothing else moves that clock, so a
