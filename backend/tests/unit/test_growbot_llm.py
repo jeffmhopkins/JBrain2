@@ -614,3 +614,32 @@ def test_a_png_reads_its_size_too() -> None:
     Image.new("RGB", (320, 240)).save(out, "PNG")
     url = "data:image/png;base64," + base64.b64encode(out.getvalue()).decode()
     assert openai_slot_fit.image_tokens(url, 16) == 10 * 8 + 4
+
+
+def _sof(marker: int, w: int, h: int) -> bytes:
+    return bytes([0xFF, marker, 0, 17, 8, *h.to_bytes(2, "big"), *w.to_bytes(2, "big"), 3]) + bytes(
+        12
+    )
+
+
+def _url(data: bytes) -> str:
+    return "data:image/jpeg;base64," + base64.b64encode(data).decode()
+
+
+def test_the_size_is_read_as_the_engines_decoder_reads_it() -> None:
+    """A size the engine would not use never under-books: fill bytes before a marker are
+    skipped as stb_image skips them, so a crafted picture cannot hide its real frame behind a
+    fake one the decoder never reads."""
+    tokens = openai_slot_fit.image_tokens
+    soi = b"\xff\xd8"
+    fake_small = b"\xff\xfe\x00\x0c" + _sof(0xC0, 16, 16)[:10]
+    # FF FF C0: a fill byte, then the real 4000x3000 frame; a naive walk reads "FF" as a marker.
+    crafted = soi + b"\xff" + _sof(0xC0, 4000, 3000) + fake_small
+    assert tokens(_url(crafted), 256) == 4096
+    assert tokens(_url(soi + _sof(0xC2, 320, 240)), 16) == 10 * 8 + 4
+    # A frame type the decoder refuses, or the scan before any frame: charged flat.
+    assert tokens(_url(soi + _sof(0xC3, 32, 32)), 16) == 4096
+    assert tokens(_url(soi + b"\xff\xda\x00\x02" + _sof(0xC0, 32, 32)), 16) == 4096
+    # A frame header buried past the decoded start is charged flat, not decoded whole.
+    padded = soi + b"\xff\xe1" + (65_000).to_bytes(2, "big") + bytes(64_998) + _sof(0xC0, 32, 32)
+    assert tokens(_url(padded), 16) == 4096

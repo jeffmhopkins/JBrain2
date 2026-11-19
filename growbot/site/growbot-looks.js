@@ -22,7 +22,10 @@
    walking robot's watch ticks do not fill the pile in minutes. Fine detail still needs a fresh
    look: a small copy keeps the room, not the print on a box.
 
-   The pile is kept in IndexedDB as well, so a reload or an update does not forget the day.
+   The pile is kept in IndexedDB as well, so a reload or an update does not forget the day. Like
+   the faces (growbot-box.js), the pictures leave this phone with the creature: a page that is
+   not running a persona of the box (moved to another phone, deleted, a G2 session) deletes the
+   store and keeps its looks in memory only, and another persona's looks are deleted on sight.
 
    The pure half (which turn each look rides in, the cap, the tag) is tested in node; the page
    half reads the creature page's globals (_live, camFacing) lazily. */
@@ -30,8 +33,6 @@
   "use strict";
   var LOOK_PX = 160, LOOK_Q = 0.7, LOOK_MAX = 60, DB = "gb-looks", STORE = "looks";
   var TICK_GAP_MS = 30000, MOVED_M = 0.5, TURNED_DEG = 30;
-  // Another persona's looks are left alone (it may be running in another tab), until this old.
-  var STALE_MS = 3 * 86400000;
   /* A look that shows what the last one did is not kept: standing still, a person's turns
      send the same view over and over. "The same" is the grey 8x8 copies differing by under
      SAME_GREY a pixel, from within SAME_M and SAME_DEG of where the last was taken. */
@@ -133,6 +134,11 @@
 
   var pile = [], loaded = false, db = null;
 
+  /* Not a persona of the box this phone holds: nothing of it is stored here. */
+  function homeless() {
+    var s = root.__gbBoxSoul;
+    return !s || !!s.away || !!s.g2 || typeof s.persona !== "string" || !s.persona;
+  }
   function soul() {
     var s = root.__gbBoxSoul;
     return (s && typeof s.persona === "string" && s.persona) || "";
@@ -161,6 +167,7 @@
     } catch (e) {}
   }
   function tx(fn) {
+    if (homeless()) return;
     open(function (d) { try { fn(d.transaction(STORE, "readwrite").objectStore(STORE)); } catch (e) {} });
   }
   function drop(gone) { if (gone.length) tx(function (s) { gone.forEach(function (l) { s.delete(l.id); }); }); }
@@ -168,14 +175,18 @@
   /* The kept pile, read once: this persona's looks since its last dream. Older ones and other
      personas' are deleted as they are found. */
   function load() {
+    if (homeless()) {
+      try { root.indexedDB.deleteDatabase(DB); } catch (e) {}
+      loaded = true;
+      return;
+    }
     tx(function (s) {
       var rq = s.getAll();
       rq.onsuccess = function () {
         var me = soul(), dt = dreamT(), keep = [], gone = [];
         (rq.result || []).forEach(function (l) {
           if (!l || typeof l.j !== "string" || !isFinite(+l.t)) { if (l && l.id !== undefined) gone.push(l); return; }
-          if (l.soul !== me) { if (Date.now() - l.t > STALE_MS) gone.push(l); return; }
-          if (l.t > dt) keep.push(l); else gone.push(l);
+          if (l.soul === me && l.t > dt) keep.push(l); else gone.push(l);
         });
         drop(gone);
         var have = {};

@@ -94,38 +94,53 @@ _PX_PER_TOKEN: Final = 32
 # The picture's start and end markers, and the grid rounding up on each side.
 _IMAGE_TOKEN_SLACK: Final = 4
 _INLINE_PREFIX: Final = "base64,"
+# The JPEG frame types the engine decodes (baseline, extended, progressive), and the rest.
+_SOF: Final = frozenset({0xC0, 0xC1, 0xC2})
+_UNREAD_SOF: Final = frozenset({0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
+# How much of a picture's base64 is decoded to find its size: a canvas JPEG's frame header is
+# in its first few hundred bytes, and a 4 MB picture is not decoded whole to read it.
+_HEAD_B64: Final = 64 * 1024
 
 
 def _image_size(data: bytes) -> tuple[int, int] | None:
-    """(width, height) from a JPEG's frame header or a PNG's IHDR, or None for anything else."""
+    """(width, height) from a PNG's IHDR or a JPEG's frame header, read the way the engine's
+    decoder (stb_image) reads it: fill bytes before a marker are skipped, and only the frame
+    types it decodes count. Anything else is None, which charges flat."""
     if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
         return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
     if data[:2] != b"\xff\xd8":
         return None
     i = 2
-    while i + 9 < len(data):
+    while i < len(data):
         if data[i] != 0xFF:
             return None
-        marker = data[i + 1]
-        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
-            i += 2
+        while i < len(data) and data[i] == 0xFF:
+            i += 1
+        if i + 7 >= len(data):
+            return None
+        marker = data[i]
+        if 0xD0 <= marker <= 0xD7 or marker == 0x01:
+            i += 1
             continue
-        length = int.from_bytes(data[i + 2 : i + 4], "big")
-        # Every start-of-frame marker but DHT (C4), JPG (C8) and DAC (CC) carries the size.
-        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
-            return int.from_bytes(data[i + 7 : i + 9], "big"), int.from_bytes(
-                data[i + 5 : i + 7], "big"
+        # A frame type stb_image refuses, or the scan before any frame: no size it would use.
+        if marker in _UNREAD_SOF or marker == 0xDA:
+            return None
+        if marker in _SOF:
+            return int.from_bytes(data[i + 6 : i + 8], "big"), int.from_bytes(
+                data[i + 4 : i + 6], "big"
             )
-        i += 2 + length
+        i += 1 + int.from_bytes(data[i + 1 : i + 3], "big")
     return None
 
 
 def image_tokens(url: str, floor: int) -> int:
     """What one inline picture costs at a per-request floor (apply-llama-image-floor.sh), or the
-    flat charge when its size cannot be read, so an unread picture never under-books."""
+    flat charge when its size cannot be read, so an unread picture never under-books. Only the
+    start is decoded: a header past it reads as unread."""
     at = url.find(_INLINE_PREFIX)
+    head = url[at + len(_INLINE_PREFIX) :][:_HEAD_B64] if at >= 0 else ""
     try:
-        data = base64.b64decode(url[at + len(_INLINE_PREFIX) :], validate=False) if at >= 0 else b""
+        data = base64.b64decode(head[: len(head) // 4 * 4], validate=False)
     except (binascii.Error, ValueError):
         data = b""
     size = _image_size(data)

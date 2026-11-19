@@ -171,3 +171,17 @@ def test_the_page_keeps_each_sent_picture_and_replays_the_looks() -> None:
     assert "_gbL.early(_gbLk.early)" in hist
     # A new look is new history: a warm-up or seal from before it no longer fits.
     assert "window.gbLooks.key()" in page[page.index("function gbWarmKey()") :][:400]
+
+
+def test_the_pictures_leave_this_phone_with_the_creature() -> None:
+    """As the faces do (growbot-box.js): a page not running a persona of the box (moved away,
+    deleted, a G2 session) deletes the store, and nothing of it is written there."""
+    src = _LOOKS.read_text(encoding="utf-8")
+    homeless = src[src.index("function homeless()") :][:200]
+    assert "s.away" in homeless and "s.g2" in homeless and "!s.persona" in homeless
+    load = src[src.index("function load()") :][:200]
+    assert "if (homeless())" in load and "deleteDatabase(DB)" in load
+    tx = src[src.index("function tx(fn)") :][:80]
+    assert "if (homeless()) return;" in tx
+    # Another persona's looks are not kept, whatever their age.
+    assert "if (l.soul === me && l.t > dt) keep.push(l); else gone.push(l);" in src
