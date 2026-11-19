@@ -8,7 +8,6 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -17,7 +16,6 @@ from fastapi.testclient import TestClient
 from jbrain.growbot import prefix
 from jbrain.llm import local_catalog, prefill
 from jbrain.llm.slot_roles import GROWBOT_ROLE
-from tests.unit.fakes import FakeSettingsStore
 from tests.unit.test_growbot_llm import _COMPLETIONS, _app, _chat, _Gateway
 
 _SYSTEM = "be a small curious robot. " * 800
@@ -586,43 +584,14 @@ def test_a_failed_stamp_does_not_restart_the_awake_cap(
 _PERSONA = "0b9d2f4e-1c3a-4e5f-8a7b-6c5d4e3f2a1b"
 
 
-class _Personas:
-    """The persona repo as the lane reads it: whether brain access is on for him."""
-
-    def __init__(self, brain: bool = False, fail: bool = False) -> None:
-        self.brain = brain
-        self.fail = fail
-        self.reads = 0
-
-    async def get_persona(self, ctx: Any, pid: str) -> Any:
-        self.reads += 1
-        if self.fail:
-            raise RuntimeError("db down")
-        if pid != _PERSONA:
-            return None
-        return SimpleNamespace(brain_phone_id="phone-1" if self.brain else None)
-
-
 def _his(
-    tmp_path: Path, store: _Store, chunks: Any, *, status: int = 200, personas: Any = None
+    tmp_path: Path, store: _Store, chunks: Any, *, status: int = 200
 ) -> tuple[Any, dict[str, str]]:
-    """The lane with a store and his persona, its brain access off unless `personas` says."""
+    """The lane with a store, a turn for his persona. Brain access is not read: his
+    conversation is saved either way (owner, 2026-11-19, "Save it anyway")."""
     app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=chunks, status=status))
     app.state.kv_prefix = store
-    app.state.growbot_personas = personas if personas is not None else _Personas()
-    app.state.settings_store = FakeSettingsStore()
-    app.state.session_maker = object()
     return app, {**auth, "x-growbot-persona": _PERSONA}
-
-
-@pytest.fixture(autouse=True)
-def _an_owner(monkeypatch: pytest.MonkeyPatch) -> None:
-    from jbrain.api import growbot_llm
-
-    async def owner(_maker: Any) -> str:
-        return "00000000-0000-4000-8000-000000000001"
-
-    monkeypatch.setattr(growbot_llm, "owner_principal_id", owner)
 
 
 def _used(prompt: int, cached: int, completion: int) -> tuple[bytes, ...]:
@@ -706,44 +675,6 @@ async def test_a_failing_conversation_layer_is_only_the_prefix_path() -> None:
     assert await prefix.restore_conversation(store, "m", "tiny", "none") == (False, None)
 
 
-@pytest.mark.parametrize(
-    "personas, header",
-    [
-        # Brain access on: the owner's notes (every domain) can be in his prompt.
-        (_Personas(brain=True), True),
-        # Unknown is treated as on: no persona named, none found, or the read failed.
-        (_Personas(), False),
-        (_Personas(fail=True), True),
-    ],
-)
-def test_his_conversation_stays_off_disk_while_his_notes_may_be_in_it(
-    tmp_path: Path, personas: _Personas, header: bool
-) -> None:
-    store = _Store(conv=True)
-    app, auth = _his(tmp_path, store, _used(30_000, 29_000, 40), personas=personas)
-    if not header:
-        del auth["x-growbot-persona"]
-    with TestClient(app) as client:
-        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
-    # No save is restored or claimed; the prefix alone comes back after the quiet.
-    assert store.prepares == [] and store.turns == []
-    assert store.abandoned == [GROWBOT_ROLE] and len(store.restores) == 1
-
-
-def test_brain_access_deletes_his_files_and_keeps_them_off_until_restart(tmp_path: Path) -> None:
-    store = _Store()
-    personas = _Personas(brain=True)
-    app, auth = _his(tmp_path, store, _used(30_000, 29_000, 40), personas=personas)
-    with TestClient(app) as client:
-        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
-        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
-        # Turned off: his history still carries what the lookups told him.
-        personas.brain = False
-        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
-    assert store.forgotten == [prefix.conversation_key(_SYSTEM)]
-    assert store.turns == [] and store.abandoned == [GROWBOT_ROLE] * 3
-
-
 def test_a_streamed_turn_claims_the_whole_prompt_not_just_what_it_read(tmp_path: Path) -> None:
     """The page streams without usage, so the engine's timings are all there is: the slot
     holds what the turn reused AND what it read, and a claim of only the latter fails the
@@ -811,22 +742,6 @@ def test_a_replay_drops_the_claim_on_his_slot(tmp_path: Path) -> None:
         r = client.post("/api/debug/growbot/replay", json=_turn(False))
         assert r.status_code == 200
     assert store.turns == [] and store.abandoned == [GROWBOT_ROLE]
-
-
-def test_a_lookup_once_keeps_him_off_disk_after_access_goes_off_and_a_restart(
-    tmp_path: Path,
-) -> None:
-    """His history goes on carrying what a lookup told him: the owner setting the lookup wrote
-    holds across an api restart, and brain access being off now does not lift it."""
-    store = _Store(conv=True)
-    app, auth = _his(tmp_path, store, _used(30_000, 29_000, 40))
-    app.state.settings_store.values["llm_kv_conversation_excluded_sessions"] = [
-        prefix.off_disk_entry(_PERSONA)
-    ]
-    with TestClient(app) as client:
-        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
-    assert store.prepares == [] and store.turns == []
-    assert store.forgotten == [prefix.conversation_key(_SYSTEM)]
 
 
 async def test_a_save_under_way_is_not_cancelled_by_the_next_turn() -> None:

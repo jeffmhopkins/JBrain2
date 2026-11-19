@@ -168,18 +168,13 @@ data:
 
 **The GrowBot creature's slot (10) also keeps a conversation file** (owner, 2026-11-19: "when
 that slot has sat there inactive ... disk cache that KV, and just hard load it from the hard
-drive next time it looks"). The creature relay forwards no tools, so with brain access off its
-conversation holds only what Dave said and heard and the low-resolution looks he took
-(`growbot/README.md` "Every look, until he dreams") — the owner's choice to keep on the box
-disk, under the same toggle and budget. **Brain access** (`api/growbot_brain.py`) lets his page
-look up the owner's notes in every domain and put the hits in his prompt, so a persona with it
-on never gets a conversation file, and neither does one a lookup ever ran for: his history
-goes on carrying what a lookup told him after access goes off, the api restarts or he opens on
-another phone, and nothing on the box knows when he next dreams. Each lookup first adds the
-persona (`growbot-persona:<id>`) to the owner setting `llm_kv_conversation_excluded_sessions`
-— jerv's re-scoped sessions' list — and returns nothing if it cannot. The lane reads the
-persona and that list each turn (`_kept_off_disk`; no persona named, none found or a failed
-read count as excluded), and the first excluded turn this process sees deletes his file. Its key is a hash of the creature's system text
+drive next time it looks"). The creature relay forwards no tools, but **brain access**
+(`api/growbot_brain.py`) lets his page look up the owner's notes in every domain and put the
+hits in his prompt, where they stay in his history. Asked whether to save his conversation
+"even after he has looked up your notes", the owner chose "Save it anyway" (2026-11-19): so
+this is the one conversation file that may hold firewalled text (health, finance), on the box
+disk outside Postgres, under the same toggle and budget, and deleted with the rest when the
+toggle goes off. Its key is a hash of the creature's system text
 (`growbot/prefix.py` `conversation_key`), so a changed persona or prompt is a different file.
 The creature lane saves it itself, a little over 10 minutes after his last turn
 (`ConversationSaver`; the keeper's tick saves only while it tends jerv's own local model,
