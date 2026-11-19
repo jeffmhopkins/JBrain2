@@ -13,6 +13,15 @@ slot; this drives it for the GrowBot role.
   store restores only into an EMPTY slot, so a live conversation is never overwritten, and only
   a file saved for this exact system text, model and launch line.
 
+- His whole conversation too (owner, 2026-11-19: "when that slot has sat there inactive ...
+  disk cache that KV, and just hard load it from the hard drive next time"): every turn claims
+  the slot for his conversation, and the store's keeper saves it once it has been quiet
+  `kv_prefix.CONVERSATION_IDLE_SAVE_S`, as it does jerv's chats. A turn after a long quiet
+  loads it back when the slot has lost it, so a restart costs a disk read rather than a re-read
+  of the day's talk and looks (growbot-looks.js). That file does hold his words and pictures,
+  on the box's own disk beside the slot it came from, under the owner's conversation-cache
+  toggle (Ops) like jerv's chats; a dream starts a new history, which the next save replaces.
+
 Everything is best-effort: the worst case of any failure is the cold turn this replaces.
 """
 
@@ -20,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import time
@@ -78,6 +88,35 @@ class PrefixStore(Protocol):
         self, served_model: str, fingerprint: str | None, *, role: Any = None
     ) -> None: ...
 
+    async def prepare_conversation(
+        self,
+        served_model: str,
+        conversation_key: str | None,
+        system: str,
+        tools: list[Any],
+        reasoning_effort: str | None,
+        *,
+        role: Any = None,
+        keep_bigger: bool = False,
+    ) -> tuple[bool, int]: ...
+
+    def note_conversation_turn(
+        self,
+        served_model: str,
+        conversation_key: str | None,
+        *,
+        fingerprint: str | None,
+        input_tokens: int,
+        output_tokens: int,
+        cached_tokens: int = 0,
+        seq: int | None = None,
+        role: Any = None,
+    ) -> None: ...
+
+    def note_conversation_abandoned(
+        self, served_model: str, chat_key: str | None = None, *, role: Any = None
+    ) -> None: ...
+
 
 def _pooled(model: str) -> bool:
     """Only a model with a role pool gives the creature a slot of its own. Unpooled, the store
@@ -98,6 +137,71 @@ async def restore(store: PrefixStore | None, model: str, system: str, level: str
     except Exception:  # noqa: BLE001 - the turn runs cold rather than fail
         log.warning("growbot prefix restore failed model=%s", model, exc_info=True)
         return False
+
+
+def conversation_key(system: str) -> str:
+    """His one conversation, named by the system text it runs under: another persona, or a
+    changed prompt, is another conversation, whose file the store keeps apart."""
+    return "growbot:" + hashlib.sha256(system.encode()).hexdigest()
+
+
+async def restore_conversation(
+    store: PrefixStore | None, model: str, system: str, level: str
+) -> tuple[bool, int | None]:
+    """Load his saved conversation back into his slot if the slot lost it. Returns (restored,
+    the store's sequence for this turn's note)."""
+    if store is None or len(system) < MIN_SYSTEM_CHARS or not _pooled(model):
+        return False, None
+    try:
+        return await asyncio.wait_for(
+            store.prepare_conversation(
+                model,
+                conversation_key(system),
+                system,
+                [],
+                level,
+                role=GROWBOT_ROLE,
+                keep_bigger=True,
+            ),
+            RESTORE_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 - the turn re-reads rather than fail
+        log.warning("growbot conversation restore failed model=%s", model, exc_info=True)
+        return False, None
+
+
+def note_turn(
+    store: PrefixStore | None,
+    model: str,
+    system: str,
+    level: str,
+    *,
+    ok: bool,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    cached_tokens: int | None,
+    seq: int | None,
+) -> None:
+    """A turn ran in his slot: it now holds his conversation, unsaved (or, for a turn that
+    did not finish, something unknown that must never be saved under his name)."""
+    if store is None or len(system) < MIN_SYSTEM_CHARS or not _pooled(model):
+        return
+    try:
+        if not ok or not prompt_tokens:
+            store.note_conversation_abandoned(model, role=GROWBOT_ROLE)
+            return
+        store.note_conversation_turn(
+            model,
+            conversation_key(system),
+            fingerprint=store.identity_of(model, system, [], level),
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens or 0,
+            cached_tokens=cached_tokens or 0,
+            seq=seq,
+            role=GROWBOT_ROLE,
+        )
+    except Exception:  # noqa: BLE001 - bookkeeping; the turn already ran
+        log.warning("growbot conversation note failed model=%s", model, exc_info=True)
 
 
 def consumed(store: PrefixStore | None, model: str, system: str, level: str) -> None:

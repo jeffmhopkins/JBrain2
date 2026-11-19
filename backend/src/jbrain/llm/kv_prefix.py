@@ -2278,11 +2278,15 @@ class KvPrefixStore:
         reasoning_effort: str | None,
         *,
         role: SlotRole | None = None,
+        keep_bigger: bool = False,
     ) -> tuple[bool, int]:
         """Before a chat request on a pooled model, in its chat slot `role` (the interactive
-        one when none is named): save the conversation the slot holds if this request is about
-        to repurpose it, then restore this request's own conversation if a file for it (same
-        key, same base identity) is on disk. Returns
+        one when none is named), or the creature's own slot (`GROWBOT_ROLE`, which has one
+        conversation and so passes `keep_bigger`: a slot already holding at least the file's
+        tokens is that conversation, newer, after an api restart the engine survived): save
+        the conversation the slot holds if this request is about to repurpose it, then restore
+        this request's own conversation if a file for it (same key, same base identity) is on
+        disk. Returns
         (restored, sequence): on True the caller skips the persona restore, which would see the
         never-used slot as empty and overwrite it; the sequence goes back with the turn's note.
 
@@ -2326,7 +2330,7 @@ class KvPrefixStore:
             if self._prepare_seq.get(slot_key) != seq:
                 return False, seq  # another request is already taking the slot
             restored = await self._restore_conversation(
-                served_model, pool, conversation_key, base, save_dir, line, role
+                served_model, pool, conversation_key, base, save_dir, line, role, keep_bigger
             )
         return restored, seq
 
@@ -2339,6 +2343,7 @@ class KvPrefixStore:
         save_dir: str,
         line: str,
         role: SlotRole,
+        keep_bigger: bool = False,
     ) -> bool:
         name = kv_conversation.file_name(base, conversation_key)
         path = os.path.join(save_dir, name)
@@ -2363,6 +2368,9 @@ class KvPrefixStore:
             # A busy chat slot is another chat request; this one queues behind
             # it and overwrites whatever it leaves, so a restore now would be wasted.
             self._count("conversation_skipped_busy")
+            return False
+        if keep_bigger and _slot_int(target, "n_prompt_tokens") >= meta.n_tokens:
+            self._count("conversation_skipped_slot_holds_more")
             return False
         reserved, ticket = await self._reserve(
             served_model, pool, slot_id, meta.n_tokens, slots, line

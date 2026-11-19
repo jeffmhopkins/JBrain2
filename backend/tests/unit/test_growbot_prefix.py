@@ -24,7 +24,14 @@ _REAL_POOLED = prefix._pooled
 
 
 class _Store:
-    def __init__(self, restored: bool = True, saved: bool = True, fail: bool = False) -> None:
+    def __init__(
+        self, restored: bool = True, saved: bool = True, fail: bool = False, conv: bool = False
+    ) -> None:
+        # Whether a conversation restore finds a save on disk to load.
+        self.conv = conv
+        self.prepares: list[tuple[str | None, Any, bool]] = []
+        self.turns: list[dict[str, Any]] = []
+        self.abandoned: list[Any] = []
         self.restores: list[tuple[str, str, Any]] = []
         self.saves: list[tuple[str, str, int, Any]] = []
         self.efforts: list[str | None] = []
@@ -71,6 +78,49 @@ class _Store:
         self, served_model: str, fingerprint: str | None, *, role: Any = None
     ) -> None:
         self.used.append((served_model, fingerprint, role))
+
+    async def prepare_conversation(
+        self,
+        served_model: str,
+        conversation_key: str | None,
+        system: str,
+        tools: list[Any],
+        reasoning_effort: str | None,
+        *,
+        role: Any = None,
+        keep_bigger: bool = False,
+    ) -> tuple[bool, int]:
+        self.prepares.append((conversation_key, role, keep_bigger))
+        return self.conv, len(self.prepares)
+
+    def note_conversation_turn(
+        self,
+        served_model: str,
+        conversation_key: str | None,
+        *,
+        fingerprint: str | None,
+        input_tokens: int,
+        output_tokens: int,
+        cached_tokens: int = 0,
+        seq: int | None = None,
+        role: Any = None,
+    ) -> None:
+        self.turns.append(
+            {
+                "key": conversation_key,
+                "fingerprint": fingerprint,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cached_tokens": cached_tokens,
+                "seq": seq,
+                "role": role,
+            }
+        )
+
+    def note_conversation_abandoned(
+        self, served_model: str, chat_key: str | None = None, *, role: Any = None
+    ) -> None:
+        self.abandoned.append(role)
 
 
 @pytest.fixture(autouse=True)
@@ -516,3 +566,91 @@ def test_a_failed_stamp_does_not_restart_the_awake_cap(
         assert app.state.growbot_awake_since == since
 
     asyncio.run(run())
+
+
+# --- his whole conversation (owner, 2026-11-19) -----------------------------------------------
+
+
+def _used(prompt: int, cached: int, completion: int) -> tuple[bytes, ...]:
+    usage = {"prompt_tokens": prompt, "completion_tokens": completion}
+    usage["prompt_tokens_details"] = {"cached_tokens": cached}  # type: ignore[assignment]
+    return (json.dumps({"choices": [], "usage": usage}).encode(),)
+
+
+def test_a_saved_conversation_comes_back_instead_of_the_prefix(tmp_path: Path) -> None:
+    store = _Store(conv=True)
+    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_cold(cached=7000)))
+    app.state.kv_prefix = store
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
+        assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
+    # Asked once, after the long quiet, for his own slot, keeping a slot that holds more.
+    assert store.prepares == [(prefix.conversation_key(_SYSTEM), GROWBOT_ROLE, True)]
+    # The prefix alone is not loaded over it, and the turn that used it released the memo.
+    assert store.restores == []
+    assert [u[2] for u in store.used] == [GROWBOT_ROLE]
+
+
+def test_with_no_conversation_on_disk_the_prefix_still_comes_back(tmp_path: Path) -> None:
+    store = _Store(conv=False)
+    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_cold(cached=7000)))
+    app.state.kv_prefix = store
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
+    assert len(store.prepares) == 1 and len(store.restores) == 1
+
+
+def test_every_turn_claims_his_slot_for_his_conversation(tmp_path: Path) -> None:
+    store = _Store()
+    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_used(30_000, 29_000, 40)))
+    app.state.kv_prefix = store
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
+        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
+    first, second = store.turns
+    assert first["key"] == prefix.conversation_key(_SYSTEM) and first["role"] == GROWBOT_ROLE
+    assert (first["input_tokens"], first["output_tokens"]) == (30_000, 40)
+    assert first["cached_tokens"] == 29_000
+    # The prepare's sequence rides the turn that followed it; a close turn prepares nothing.
+    assert first["seq"] == 1 and second["seq"] is None
+    # The fingerprint is the slot's prefix identity for the model that served the turn.
+    assert first["fingerprint"].endswith(store.identity_of("", _SYSTEM, [], "none"))
+
+
+def test_a_turn_that_failed_in_the_slot_leaves_nothing_to_save(tmp_path: Path) -> None:
+    store = _Store()
+    app, auth, _gw = _app(tmp_path, gateway=_Gateway(chunks=_cold(), status=503))
+    app.state.kv_prefix = store
+    with TestClient(app) as client:
+        client.post(_COMPLETIONS, json=_turn(), headers=auth)
+    assert store.turns == [] and store.abandoned == [GROWBOT_ROLE]
+
+
+def test_a_different_system_is_a_different_conversation() -> None:
+    assert prefix.conversation_key(_SYSTEM) != prefix.conversation_key(_SYSTEM + "x")
+    assert prefix.conversation_key(_SYSTEM).startswith("growbot:")
+
+
+async def test_a_failing_conversation_layer_is_only_the_prefix_path() -> None:
+    class _Broken(_Store):
+        async def prepare_conversation(self, *a: Any, **kw: Any) -> tuple[bool, int]:
+            raise RuntimeError("disk gone")
+
+        def note_conversation_turn(self, *a: Any, **kw: Any) -> None:
+            raise RuntimeError("disk gone")
+
+    store = _Broken()
+    assert await prefix.restore_conversation(store, "m", _SYSTEM, "none") == (False, None)
+    prefix.note_turn(
+        store,
+        "m",
+        _SYSTEM,
+        "none",
+        ok=True,
+        prompt_tokens=10,
+        completion_tokens=1,
+        cached_tokens=0,
+        seq=None,
+    )
+    assert await prefix.restore_conversation(None, "m", _SYSTEM, "none") == (False, None)
+    assert await prefix.restore_conversation(store, "m", "tiny", "none") == (False, None)

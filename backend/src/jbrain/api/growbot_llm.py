@@ -449,6 +449,7 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
         # The headers are out by now, so every refusal is written into the body as an OpenAI
         # error: the app shows a cut stream as a broken brain and retries blind.
         previous: float | None = getattr(state, "growbot_last_turn", None)
+        conv_seq: int | None = None
         if not replay:
             state.growbot_last_turn = time.monotonic()
             if not warmup:
@@ -480,15 +481,19 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                         )
                 mark("admit_ms")
                 model = rec.model = str(payload["model"])
-                # After a long quiet the slot may have lost the prefix to a restart.
+                # After a long quiet the slot may have lost the prefix to a restart: his whole
+                # conversation comes back from disk if it was saved, else the prefix alone.
                 long_quiet = previous is None or time.monotonic() - previous > RESTORE_AFTER_QUIET_S
-                restored = (
-                    not replay
-                    and long_quiet
-                    and await prefix.restore(
-                        getattr(state, "kv_prefix", None), model, system, level
+                store = getattr(state, "kv_prefix", None)
+                restored = False
+                if not replay and long_quiet:
+                    restored, conv_seq = await prefix.restore_conversation(
+                        store, model, system, level
                     )
-                )
+                    if restored:
+                        mark("conversation_restore_ms")
+                    else:
+                        restored = await prefix.restore(store, model, system, level)
                 if restored:
                     mark("restore_ms")
                     state.growbot_prefix_unused = (model, level)
@@ -555,6 +560,19 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                 # The quiet window a replay waits for runs from the END of a turn: a cold
                 # turn can outlast it.
                 state.growbot_last_turn = time.monotonic()
+                # Only a turn that reached the slot changed what it holds.
+                if "first_byte_ms" in rec.timings:
+                    prefix.note_turn(
+                        getattr(state, "kv_prefix", None),
+                        rec.model,
+                        system,
+                        level,
+                        ok=rec.ok,
+                        prompt_tokens=rec.prompt_tokens,
+                        completion_tokens=rec.completion_tokens,
+                        cached_tokens=rec.cached_tokens,
+                        seq=conv_seq,
+                    )
                 if rec.ok and is_cold(rec):
                     _quietly(_save_prefix, request, rec.model, system, level, lock, pool_guard)
             log_call(request, rec)

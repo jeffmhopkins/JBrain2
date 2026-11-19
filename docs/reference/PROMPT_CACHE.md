@@ -1,6 +1,6 @@
 # The jerv prompt cache
 
-> **Status:** Living · **Last verified:** 2026-11-10
+> **Status:** Living · **Last verified:** 2026-11-19
 
 How the interactive agent's ~30k-token prefix is kept ready, what it costs when it is not,
 and — the part that did not exist until 2026-09-18 — how to tell which of those is happening.
@@ -165,6 +165,17 @@ data:
   `read_labs`, … — `kv_conversation.EXCLUDED_TOOLS`) has run in ANY of its turns. The chat reads
   that off the transcript before each turn; a turn that runs one deletes the conversation's
   files at once and it is never saved again.
+
+**The GrowBot creature's slot (10) also keeps a conversation file** (owner, 2026-11-19: "when
+that slot has sat there inactive ... disk cache that KV, and just hard load it from the hard
+drive next time it looks"). The creature relay forwards no tools and reads no knowledge base, so
+its conversation holds only what Dave said and heard and the low-resolution looks he took
+(`growbot/README.md` "Every look, until he dreams") — the owner's choice to keep on the box
+disk, under the same toggle and budget. Its key is a hash of the creature's system text
+(`growbot/prefix.py` `conversation_key`), so a changed persona or prompt is a different file.
+The keeper's tick saves it after 10 idle minutes; a turn after more than 5 quiet minutes
+restores it before the prefix-only restore, and only when slot 10 holds fewer tokens than the
+file (`keep_bigger`), so an api restart never overwrites a live slot with an older save.
 
 **Brain/curator chats never get a conversation file.** Role prefix files hold only the system
 prompt and tool schemas, no owner data, and are unaffected. Deleting a chat, or changing its

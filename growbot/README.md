@@ -783,6 +783,13 @@ the whole pile (after a halving or an engine restart) inside the turn's 90 s fus
 is measured on the box; a bigger pile needs that number first. Fine detail still needs a fresh
 full-size look.
 
+His whole conversation, talk and looks, is kept on the box disk too (owner, 2026-11-19: "disk
+cache that KV, and just hard load it from the hard drive next time it looks"). After 10 quiet
+minutes the keeper saves his slot; his next thought after more than 5 quiet minutes loads that
+save back if the slot lost it (an engine restart, a halving, an eviction), so he resumes without
+a cold read of the pile. Only when no save fits does the prefix alone come back. It is a
+conversation file under Ops' *Keep chats on disk* toggle (`docs/reference/PROMPT_CACHE.md`).
+
 ### His view all around, and choosing where to go
 
 `growbot-pano.js` (`apply.py` `PANO_PATCHES`; owner, 2026-11-17: "project his view onto a
