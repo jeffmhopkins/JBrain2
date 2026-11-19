@@ -736,16 +736,17 @@
       // A point nearly behind him flips the error's sign with each wobble: the turn would swing
       // left then right in place, which in the sim's battery is how he fell (4 of 5 falls came
       // turning at 150 to 180 degrees off). He keeps to the side he started turning to, until
-      // the point is in front of him. The error is then the angle still to turn that way (over
-      // 180), so the stuck watch sees the turn closing. A new point picks its own side.
+      // the point is in front of him. The walk is sent a quarter turn that way (it wraps what it
+      // is sent, so the true angle past 180 would flip it back), and the stuck watch is given
+      // the angle still to turn that way, which keeps closing. A new point picks its own side.
+      var e = Math.abs(err);
       if (!turning || sideI !== i) side = 0;
       sideI = i;
       if (turning && !side) side = err >= 0 ? 1 : -1;
-      else if (turning && err * side < 0 && Math.abs(err) > GO_SIDE_DEG) err = side * (360 - Math.abs(err));
+      else if (turning && err * side < 0 && e > GO_SIDE_DEG) { e = 360 - e; err = side * GO_SIDE_DEG; }
       // Progress: the path still to walk shrinking while he walks, or the angle while he turns.
       var left = d;
       for (var k = i; k < pts.length - 1; k++) left += Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].y - pts[k].y);
-      var e = Math.abs(err);
       // Each mark moves only on headway, so a slow creep adds up to it.
       if (left < best - GO_PROGRESS_M) { best = left; bestT = now; }
       if (!turning) bestE = Infinity;
