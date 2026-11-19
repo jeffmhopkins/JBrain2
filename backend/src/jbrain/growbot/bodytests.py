@@ -29,6 +29,10 @@ SEQ_MAX: Final = 1500
 RUN_ROWS_MAX: Final = 60_000
 # Per robot, so one phone's runs never evict another robot's.
 KEEP_RUNS: Final = 50
+# The flight recorder (growbot-box.js) opens a run per page load, and the robot's phone reloads
+# on every update and wake: kept apart, so its runs never evict a guided body test's.
+RECORDER_PREFIX: Final = "bt-rec-"
+KEEP_RECORDER_RUNS: Final = 10
 # A listing spans robots, so it isn't bounded by one robot's keep.
 LIST_MAX: Final = 200
 STATUSES: Final = frozenset({"running", "done", "stopped", "failed"})
@@ -177,13 +181,20 @@ class SqlBodyTests:
                     {"n": len(rows), "id": number},
                 )
             if row["made"]:
+                recorder = chunk.run.startswith(RECORDER_PREFIX)
                 await session.execute(
                     text(
-                        "DELETE FROM app.growbot_bodytests WHERE robot = :robot AND id NOT IN"
+                        "DELETE FROM app.growbot_bodytests WHERE robot = :robot"
+                        " AND starts_with(run, :prefix) = :rec AND id NOT IN"
                         " (SELECT id FROM app.growbot_bodytests WHERE robot = :robot"
-                        " ORDER BY id DESC LIMIT :keep)"
+                        " AND starts_with(run, :prefix) = :rec ORDER BY id DESC LIMIT :keep)"
                     ),
-                    {"robot": chunk.robot, "keep": KEEP_RUNS},
+                    {
+                        "robot": chunk.robot,
+                        "prefix": RECORDER_PREFIX,
+                        "rec": recorder,
+                        "keep": KEEP_RECORDER_RUNS if recorder else KEEP_RUNS,
+                    },
                 )
             return number
 

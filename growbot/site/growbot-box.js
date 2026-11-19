@@ -1688,12 +1688,19 @@
   /* A walk that ends hands its legs to an idle hold of its rest stance (carryLegMotion, which
      apply.py's GLIDE_PATCHES route here): from its last stride over `ms`, while that hold is
      still the one holding and nothing newer has the legs. Poses in the page's commanded space. */
+  /* window._gbGlideAt is the pose a glide last sent while its hold still names a pose it has not
+     reached: a walk asked mid-glide starts from there (not the hold's target, a jump back to full
+     speed), and the recorder logs it as the legs' pose. */
+  window._gbGlideAt = null;
   window.gbGlideLegs = function (a, b, ms, hp) {
     var t0 = Date.now(), iv = 0;
     function beat() {
       if (typeof _holdPose === "undefined" || _holdPose !== hp || _motion || paused || document.hidden || !window._body || !window._body.ready) { clearInterval(iv); return; }
-      var f = (Date.now() - t0) / ms, p = between(a, b, f);
-      try { window._body.pose(Math.round(p.l), Math.round(p.r)); } catch (e) { clearInterval(iv); return; }
+      var f = (Date.now() - t0) / ms, p = between(a, b, f), at = { l: Math.round(p.l), r: Math.round(p.r) };
+      try { window._body.pose(at.l, at.r); } catch (e) { clearInterval(iv); return; }
+      // The leg sense and the IMU log, as the hold's own beats mark each pose they send.
+      try { if (typeof _imuPose === "function") _imuPose(at.l, at.r, 1); } catch (e) {}
+      window._gbGlideAt = f >= 1 ? null : { l: at.l, r: at.r, hp: hp };
       if (f >= 1) clearInterval(iv);
     }
     iv = setInterval(beat, GLIDE_TICK_MS);
@@ -2213,8 +2220,9 @@
      and posts it as one body-test run per page load (summary kind "recorder"), read back with
      the debug API's GET /growbot/bodytests/{n}. Not while a body test runs (that one records
      it); ?legrec=0 turns it off. */
-  var REC_MS = 50, REC_PRE_MS = 3000, REC_POST_MS = 6000, REC_FLUSH_MS = 2000, REC_ROWS_MAX = 55000;
+  var REC_MS = 50, REC_PRE_MS = 3000, REC_POST_MS = 6000, REC_FLUSH_MS = 2000, REC_ROWS_MAX = 55000, REC_FINAL_ROWS = 200;
   var REC_EVENTS = /^(walk_start|walk_end|move_end|skill|hold_start|hold_end|hold_abort|rest_tall|self_jolt|fall_think|reflex_[a-z]+|gait_abort|recover_[a-z_]+|action_outcome|act|spin_stuck|shake_block|legs_slack)$/;
+  var REC_CODE = /^[A-Za-z0-9_.:-]{0,40}$/;
   var rec = null, recLast = "";
   function recNew() {
     return { run: "bt-rec-" + Math.random().toString(36).slice(2, 12), seq: 0, ring: [], rows: [], n: 0,
@@ -2223,24 +2231,33 @@
   function recLegs() {
     var M = typeof _motion !== "undefined" ? _motion : null;
     if (M && M.tele && isFinite(M.tele.l)) return [btR(M.tele.l), btR(M.tele.r)];
+    var ga = window._gbGlideAt;
+    if (ga && typeof _holdPose !== "undefined" && ga.hp === _holdPose) return [btR(ga.l), btR(ga.r)];
     if (typeof _holdPose !== "undefined" && _holdPose) return [btR(_holdPose.l), btR(_holdPose.r)];
     if (typeof _legL !== "undefined" && isFinite(_legL)) return [btR(_legL), btR(_legR)];
     return null;
   }
   function recFlush(final) {
     var r = rec, robot = btRobot();
-    if (!r || !r.rows.length) return;
+    if (!r || !r.rows.length && !(final && r.seq)) return;
     // A page with no robot id has nowhere to post them.
     if (!robot) { r.rows = []; return; }
-    var chunk = { run: r.run, seq: r.seq++, status: final ? "done" : "running", robot: robot, rows: r.rows,
+    // The last one goes as the page leaves: on its own, since one queued behind a post still in
+    // flight may never start, and under keepalive's 64 KB, so its newest REC_FINAL_ROWS.
+    var rows = final ? r.rows.slice(-REC_FINAL_ROWS) : r.rows;
+    var chunk = { run: r.run, seq: r.seq++, status: final ? "done" : "running", robot: robot, rows: rows,
       summary: { kind: "recorder", label: "flight recorder", moves: r.moves, secs: Math.round((Date.now() - r.t0) / 1000) } };
     r.rows = [];
     r.flushT = Date.now();
-    r.posting = r.posting.then(function () {
+    function post() {
       return fetch("/api/box/bodytest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(chunk), keepalive: !!final });
-    }).catch(function () {});
-    // A run holds so many rows; the next goes in a fresh one.
-    if (r.n >= REC_ROWS_MAX || r.seq >= 1400) rec = recNew();
+    }
+    if (final) { try { post().catch(function () {}); } catch (e) {} }
+    else r.posting = r.posting.then(post).catch(function () {});
+    // A finished run takes no more chunks, so a page back from the bfcache starts a fresh one; a
+    // run holds so many rows, and the next goes in a fresh one too.
+    if (final) rec = null;
+    else if (r.n >= REC_ROWS_MAX || r.seq >= 1400) rec = recNew();
   }
   function recRow(row) {
     var r = rec;
@@ -2260,9 +2277,12 @@
       try {
         if (rec && !bt && REC_EVENTS.test(String(e))) {
           var row = { t: Date.now(), k: "e", e: String(e) };
+          // Only numbers, flags and short codes ("why", "state"): every diary string goes
+          // through the page's redactor (0727), which this copy is taken before.
           if (d) for (var k in d) if (Object.prototype.hasOwnProperty.call(d, k) && k !== "t" && k !== "k") {
             var v = d[k];
-            row[k] = typeof v === "string" ? v.slice(0, 80) : v;
+            if (typeof v === "number" && isFinite(v) || typeof v === "boolean") row[k] = v;
+            else if (typeof v === "string" && REC_CODE.test(v)) row[k] = v;
           }
           if (e !== "legs_slack") recLast = String(e);
           recMark();
@@ -2373,11 +2393,14 @@
 
   // What the pad's move asks of a heading policy: a target (deg, counter-clockwise from where
   // the facing end points at the start) and a speed.
-  function command(move, hasSpeed) {
+  function command(move, hasSpeed, nose) {
     // A trick: hold it facing ahead, in place when it takes a speed; a heading-only one walks.
     if (move === "look") return { target: 0, fwd: hasSpeed ? 0 : 1 };
     if (move === "spin_left") return { target: 90, fwd: hasSpeed ? 0 : 1 };
     if (move === "spin_right") return { target: -90, fwd: hasSpeed ? 0 : 1 };
+    // A nose walk's own +1 is backing away (growbot-drive.js inputs); -1 is outside its training,
+    // and in the sim it barely moved him (1-2 cm in 12 s against 14 cm at +1).
+    if (move === "back" && nose && hasSpeed) return { target: 0, fwd: 1 };
     if (move === "back") return hasSpeed ? { target: 0, fwd: -1 } : { target: 180, fwd: 1, around: true };
     return { target: 0, fwd: 1 };
   }
@@ -2521,7 +2544,8 @@
       }
       var hasSpeed = !skills && channels(policy).indexOf("cmd_forward") >= 0;
       var hasPitch = !skills && channels(policy).indexOf("cmd_pitch") >= 0;
-      var cmd = skills ? setCommand(move, turn) : command(move, hasSpeed), pitch = move === "turn" ? TURN_PITCH : 1, walkT = 0, onT = 0, stall = null, e0 = null;
+      var nose = !skills && ((policy.obs_spec || {}).cmd_yaw || {}).facing === "nose";
+      var cmd = skills ? setCommand(move, turn) : command(move, hasSpeed, nose), pitch = move === "turn" ? TURN_PITCH : 1, walkT = 0, onT = 0, stall = null, e0 = null;
       // A turn's angle is from where he faced when asked; the stance glide before it can turn him.
       var turnH0 = move === "turn" ? mapHeading() : null;
       var L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0;
@@ -2531,6 +2555,8 @@
       try {
         var ls = typeof _legStart === "function" ? _legStart() : null;
         if (ls && ls.mode === "anchor") from = { l: +ls.anchor.l + L, r: +ls.anchor.r + Rr };
+        var ga = window._gbGlideAt;
+        if (from && ga && typeof _holdPose !== "undefined" && ga.hp === _holdPose) from = { l: ga.l + L, r: ga.r + Rr };
       } catch (e) {}
       var glide = glideMs(from, neutral), glideEnd = Date.now() + glide;
       var prepEnd = glideEnd + PREP_MS, grav = { x: 0, y: 0, z: 0, n: 0 };

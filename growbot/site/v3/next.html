@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=5a64f14c6bed"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-vision.js?v=065e966e3518"></script><script src="/growbot-grid.js?v=73fa8d8f8b5f"></script><script src="/growbot-pano.js?v=139904412435"></script><script src="/growbot-map.js?v=a59cbabf6b98"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=eac13caa9a8c"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-vision.js?v=065e966e3518"></script><script src="/growbot-grid.js?v=73fa8d8f8b5f"></script><script src="/growbot-pano.js?v=139904412435"></script><script src="/growbot-map.js?v=a59cbabf6b98"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -844,6 +844,16 @@ function setTravel(on){
   else{ try{ if(eyeWantOn&&!camOn&&!captureBlocked()) ensureCam(); }catch(e){} }
   try{logEv("travel_mode",{on:TRAVEL});}catch(e){}
 }/*}TRAVEL*/
+/*FACE-MIRROR{*/var FACE_MIRROR=false;
+try{FACE_MIRROR=localStorage.getItem("gb_face_mirror")==="1";}catch(e){}
+function faceMirrorBox(b){ if(!FACE_MIRROR||!b||!isFinite(b.x)||!(b.width>0)) return b;
+  var o={}; for(var k in b) o[k]=b[k]; o.x=1-b.x-b.width; return o; }
+function faceMirrorBoxes(bs){ return FACE_MIRROR&&Array.isArray(bs)?bs.map(faceMirrorBox):bs; }
+function setFaceMirror(on){
+  FACE_MIRROR=!!on;
+  try{localStorage.setItem("gb_face_mirror",FACE_MIRROR?"1":"0");}catch(e){try{toast("Changed for now; this phone could not save the setting.");}catch(_e){}}
+  try{logEv("face_mirror",{on:FACE_MIRROR});}catch(e){}
+}/*}FACE-MIRROR*/
 /* Staged named recovery: exact ?getupnamed=1, or ?getupauto=1 for the shared automatic owner.
    Default off pending the supervised behavior decision; ?getupnamed=0 disables both in this tab.
    URL only, carried through pairing. Shared motion timing and expression changes remain independent. */
@@ -15113,6 +15123,9 @@ function lowPowerRow(){var on=!!window.LOW_POWER;
 function travelRow(){var on=!!window.TRAVEL;
  return '<button type="button" class="gbkWrow" id="gbkTravel" aria-pressed="'+on+'"><span class="gbkTt"><b>Travel mode</b><small>Off the body, like in a car: eyes shut and a calmer face so the phone stays cool. Talking still works</small></span><span style="margin-left:auto;color:'+(on?'#37E0C8':'#7F93AB')+'">'+(on?'On':'Off')+'</span></button>';
 }
+function faceMirrorRow(){var on=!!window.FACE_MIRROR;
+ return '<button type="button" class="gbkWrow" id="gbkFaceMirror" aria-pressed="'+on+'"><span class="gbkTt"><b>Mirror face tracking</b><small>Flips left and right for turning toward a face. Try it if he turns the wrong way</small></span><span style="margin-left:auto;color:'+(on?'#37E0C8':'#7F93AB')+'">'+(on?'On':'Off')+'</span></button>';
+}
 function showBrainLogLink(link){
  var row=g("gbkBrainLogs");if(!row)return;
  var old=g("gbkBrainLogLink");if(old){old.focus();old.select();return;}
@@ -15477,7 +15490,7 @@ function roomHTML(){ var h="";
        hands off to it. */
     '</div>'; }
   h+=moveMeRow();
-  h+=lowPowerRow();h+=travelRow();
+  h+=lowPowerRow();h+=travelRow();h+=faceMirrorRow();
   if(!window.__gbBox)h+=wRow("byok","brain","#FFB24D","your own key","bring your own brain, optional");
   /* 0908 (Brit): these were two dead INPUTS, not just dead buttons — one asked for a real
      sk-or- key and threw it away. Removed, and the row hands off to the host's own key pane where
@@ -15691,6 +15704,7 @@ g("gbkBBody").addEventListener("click",function(e){
    return; }
  if(c("#gbkCreditsBack")){ bTab=W.moveFrom||"c"; W.moveOpen=false; renderBrainP(); g("gbkPackOpen").focus(); return; }
  if((x=c("[data-hand]"))){ handOff(x.getAttribute("data-hand"),x.getAttribute("data-full")==="1"); return; }
+ if(c("#gbkFaceMirror")){ window.setFaceMirror(!window.FACE_MIRROR); renderBrainP(); var fm=g("gbkFaceMirror");if(fm)fm.focus();return; }
  if(c("#gbkTravel")){ window.setTravel(!window.TRAVEL); renderBrainP(); var tv=g("gbkTravel");if(tv)tv.focus();return; }
  if(c("#gbkLowPower")){ window.setLowPower(!window.LOW_POWER); renderBrainP(); var lp=g("gbkLowPower");if(lp)lp.focus();return; }
  if(c("#gbkBrainLogs")){
@@ -16502,8 +16516,8 @@ body.gbkWake #landing{padding-top:76px!important}
       if(window.gbEyes)window.gbEyes.boxes(boxes); if(boxes.length&&result.source!=="flow")lastFaceAt=at;
       if(!sightOnly){
         if(detFails&&tracker.metrics.decoded%300===0)detFails=0;
-        if(result.source==="flow")tracker.observeFlow(boxes[0],at,result.anchorAt,video,token);
-        else tracker.observe(boxes,at,video,token);
+        if(result.source==="flow")tracker.observeFlow(faceMirrorBox(boxes[0]),at,result.anchorAt,video,token);
+        else tracker.observe(faceMirrorBoxes(boxes),at,video,token);
         tracker.tick(now);
       }
     }
@@ -16565,7 +16579,7 @@ body.gbkWake #landing{padding-top:76px!important}
             /*WORLD-EYE{*/try{if(typeof _worldEye!=="undefined"&&_worldEye&&result&&Array.isArray(result.detections))_worldFaceResult(s.video,Date.now()-(performance.now()-now),!!boxes.length,true);}catch(_wo){}/*}WORLD-EYE*/if(window.gbEyes)window.gbEyes.boxes(boxes); if(boxes.length)lastFaceAt=now;
             if(!sightOnly){
             if(detFails&&tracker.metrics.decoded%300===0)detFails=0;   /* ~10s of clean detection forgives earlier failures */
-            tracker.observe(boxes,now,s.video,token);
+            tracker.observe(faceMirrorBoxes(boxes),now,s.video,token);
             tracker.tick(performance.now()); }
           } else tracker.metrics.dropped++;
           }

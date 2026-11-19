@@ -32,6 +32,7 @@ g._wheels = false; g.paused = false; g.dreaming = false; g.document = { hidden: 
 g.ori = { a: 0, b: 0, g: 0 }; g.accel = PHONE.accel; g.rate = PHONE.rate; g.linMag = 0;
 g._motion = null; g._motionGen = 0; g.selfMoveUntil = 0; g._gaitCoolUntil = 0; g._imuWhy = "";
 g._body = { ready: true, pose(l, r) { poses.push([l, r]); } };
+// GB_POLICY runs that one file from FILES alone instead of the default heading-only POLICY.
 // GB_HELD: the legs held at a pose when the walk starts (a rest's hold), as _legStart reads it.
 if (process.env.GB_HELD) { const held = JSON.parse(process.env.GB_HELD); g._legStart = () => ({ mode: "anchor", anchor: held }); }
 g._bodyAlive = () => true; g.ensureIMU = () => {}; g.holdStop = () => {}; g.logEv = () => {};
@@ -79,7 +80,12 @@ const FILES = {
 const GO = process.env.GB_GO ? JSON.parse(process.env.GB_GO) : null;
 // The robot this phone wears (btRobot), so the box's skill set is read for gbOwnGo.
 if (GO) { g.location.search = "?id=gb-r1"; g.document.addEventListener = () => {}; }
-g.fetch = async (url) => {
+// GB_REC watches the flight recorder: the robot id it posts under, its posts, and the page's
+// pagehide, fired once the walk is watched.
+const recPosts = [], pageOn = {};
+if (process.env.GB_REC) { g.location.search = "?id=gb-r1"; g.addEventListener = (k, f) => { pageOn[k] = f; }; }
+g.fetch = async (url, opts) => {
+  if (url === "/api/box/bodytest") { recPosts.push(JSON.parse(opts.body)); return { ok: true, status: 200, json: async () => ({}) }; }
   if (url.startsWith("/api/box/skills")) return { ok: true, status: 200, json: async () => ({ skills: JSON.parse(process.env.GB_SKILLS) }) };
   const id = decodeURIComponent(url.split("id=")[1] || "");
   return { ok: url.startsWith("/api/box/policy?id="), status: 200, json: async () => FILES[id] || POLICY };
@@ -109,7 +115,7 @@ if (GO) {
   // The model's own forward ask in the middle of it (the walk look's "send walk again").
   setTimeout(() => { const a = g._moveRequest("walk"); goAsk = [g.gbOwnWalk({}, "fwd", a), a.state, a.reason]; }, 1500);
 } else if (FOLLOW === "dry") g.gbFollow.dry(SKILLS);
-else g.gbTrainedWalk(SKILLS || "0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, Number(process.env.GB_SECS || 1), STEER ? "d1ce0001" : "", FOLLOW === "walk", Number(process.env.GB_TURN || 0));
+else g.gbTrainedWalk(SKILLS || process.env.GB_POLICY || "0f3e9a6c-1b2d-4c5e-8f90-a1b2c3d4e5f6", MOVE, Number(process.env.GB_SECS || 1), STEER ? "d1ce0001" : "", FOLLOW === "walk", Number(process.env.GB_TURN || 0));
 let estopped = null, estopAt = -1;
 if (process.env.GB_ESTOP_AT) {
   setTimeout(() => { estopped = [g.gbEStop("stop"), g.gbEStop("stop, stop!")]; estopAt = fed.length; }, Number(process.env.GB_ESTOP_AT));
@@ -120,8 +126,17 @@ if (STEER) setTimeout(() => { steered = g.gbSteer(STEER); }, STEER.at);
 // What the body test samples off the walk (growbot-box.js M.tele), as last seen.
 let tele = null;
 const teleIv = setInterval(() => { if (g._motion && g._motion.tele) tele = g._motion.tele; }, 20);
+if (process.env.GB_REC) setTimeout(() => g.logEv("act", { said: "my name is Quorra", why: "fwd", n: 3, ok: true, o: { a: 1 } }), 500);
 await new Promise((r) => setTimeout(r, Number(process.env.GB_WAIT || 0) || (STEER ? 3600 : 2400)));
 clearInterval(teleIv);
+let rec;
+if (process.env.GB_REC) {
+  pageOn.pagehide();
+  await new Promise((r) => setTimeout(r, 120));
+  rec = recPosts.map((c) => ({ run: c.run, seq: c.seq, status: c.status, robot: c.robot, kind: c.summary.kind, moves: c.summary.moves,
+    n: c.rows.length, samples: c.rows.filter((r) => r.k === "s").length, lc: c.rows.filter((r) => r.k === "s" && r.lc).length,
+    events: c.rows.filter((r) => r.k === "e") }));
+}
 const screen = shown.length ? shown[shown.length - 1].innerHTML : "";
-console.log(JSON.stringify({ go: go && { state: go.state, mv: go.mv, why: go._gbGo }, goCalls, goAsk, tele, screen, logs: logs.map((l) => l[0]), ends: logs.filter((l) => l[0] === "walk_end").map((l) => l[1]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), allPoses: process.env.GB_HELD ? poses : undefined, last: poses[poses.length - 1], errs }));
+console.log(JSON.stringify({ go: go && { state: go.state, mv: go.mv, why: go._gbGo }, goCalls, goAsk, tele, screen, logs: logs.map((l) => l[0]), ends: logs.filter((l) => l[0] === "walk_end").map((l) => l[1]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), allPoses: process.env.GB_HELD ? poses : undefined, rec, last: poses[poses.length - 1], errs }));
 if (FOLLOW) process.exit(0);

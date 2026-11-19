@@ -5082,6 +5082,66 @@ GLIDE_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += GLIDE_PATCHES
 
+
+# Face mirror (owner, 2026-11-19: "a camera direction mirror toggle that I can turn on and off
+# ... if it is backwards we can just flip it real fast and verify"). His body test read up/down
+# as right and left/right as possibly backwards. The flip is applied where the leg tracker takes
+# its boxes, so everything that turns him toward a face (the head, the lean, the look-policy
+# turn) flips together while the screen's eyes, fed the camera's own boxes, keep looking where
+# they did. Per phone and off by default, like travel mode, and kept across a reload.
+_GB_FACE_MIRROR_JS = r"""
+/*FACE-MIRROR{*/var FACE_MIRROR=false;
+try{FACE_MIRROR=localStorage.getItem("gb_face_mirror")==="1";}catch(e){}
+function faceMirrorBox(b){ if(!FACE_MIRROR||!b||!isFinite(b.x)||!(b.width>0)) return b;
+  var o={}; for(var k in b) o[k]=b[k]; o.x=1-b.x-b.width; return o; }
+function faceMirrorBoxes(bs){ return FACE_MIRROR&&Array.isArray(bs)?bs.map(faceMirrorBox):bs; }
+function setFaceMirror(on){
+  FACE_MIRROR=!!on;
+  try{localStorage.setItem("gb_face_mirror",FACE_MIRROR?"1":"0");}catch(e){try{toast("Changed for now; this phone could not save the setting.");}catch(_e){}}
+  try{logEv("face_mirror",{on:FACE_MIRROR});}catch(e){}
+}/*}FACE-MIRROR*/"""
+_GB_FACE_MIRROR_ROW_JS = (
+    "function faceMirrorRow(){var on=!!window.FACE_MIRROR;\n"
+    " return '<button type=\"button\" class=\"gbkWrow\" id=\"gbkFaceMirror\" aria-pressed=\"'+on+'\">"
+    "<span class=\"gbkTt\"><b>Mirror face tracking</b><small>Flips left and right for turning"
+    " toward a face. Try it if he turns the wrong way</small></span>"
+    "<span style=\"margin-left:auto;color:'+(on?'#37E0C8':'#7F93AB')+'\">'+(on?'On':'Off')+'</span>"
+    "</button>';\n}\n"
+)
+FACE_MIRROR_PATCHES: list[tuple[str, str, str, int]] = [
+    ("v3/next.html", "/*}TRAVEL*/", "/*}TRAVEL*/" + _GB_FACE_MIRROR_JS, 1),
+    (
+        "v3/next.html",
+        "if(result.source===\"flow\")tracker.observeFlow(boxes[0],at,result.anchorAt,video,token);\n"
+        "        else tracker.observe(boxes,at,video,token);",
+        "if(result.source===\"flow\")tracker.observeFlow(faceMirrorBox(boxes[0]),at,"
+        "result.anchorAt,video,token);\n"
+        "        else tracker.observe(faceMirrorBoxes(boxes),at,video,token);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "tracker.observe(boxes,now,s.video,token);",
+        "tracker.observe(faceMirrorBoxes(boxes),now,s.video,token);",
+        1,
+    ),
+    ("v3/next.html", "h+=travelRow();", "h+=travelRow();h+=faceMirrorRow();", 1),
+    (
+        "v3/next.html",
+        "function showBrainLogLink(link){",
+        _GB_FACE_MIRROR_ROW_JS + "function showBrainLogLink(link){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(c("#gbkTravel")){',
+        'if(c("#gbkFaceMirror")){ window.setFaceMirror(!window.FACE_MIRROR); renderBrainP();'
+        ' var fm=g("gbkFaceMirror");if(fm)fm.focus();return; }\n if(c("#gbkTravel")){',
+        1,
+    ),
+]
+PATCHES += FACE_MIRROR_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

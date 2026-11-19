@@ -326,7 +326,17 @@ and posts it to the box as one body-test run per page load (summary `kind: "reco
 the PWA lists it as the flight recorder, never as a test under way). Not while a body test runs;
 `?legrec=0` turns it off. Legs let go with nothing taking them (no hold, no move, no face
 tracking 300 ms after a `holdStop` that was not a hand-off) write a `legs_slack` diary row
-with the leg event before it (`after`), so every slump says why.
+with the leg event before it (`after`), so every slump says why. Its diary rows keep only
+numbers, flags and short codes (the page's redactor runs after its copy). The page leaving
+closes the run with its newest 200 rows under `keepalive`, so a page back from the bfcache
+opens a fresh one. The box keeps a robot's newest 10 recorder runs (`run` prefix `bt-rec-`)
+apart from its newest 50 body tests, so a phone that reloads often never evicts a body test.
+A walk asked mid-glide starts from the pose the glide last sent (`_gbGlideAt`), which is also
+the recorder's `lc` while it glides.
+
+**Nose walks backing.** A single nose-walk policy that takes a speed backs away on its own +1,
+nose first (as a skill set's does, `growbot-drive.js` `inputs`); the -1 it was sent before is
+outside its training and barely moved him in the sim.
 
 **Skill sets.** A walk move may carry `skills` in place of `policy`: a library policy for each of
 `look`, `forward` and `back` (the box reads which skills a file serves from the file itself,
@@ -696,6 +706,12 @@ body test asked for under travel says why its camera stays shut. Turning travel 
 the camera's generation, so an acquire still in flight is discarded when it lands. The ear, the voice and the brain are
 untouched. It is per phone (`gb_travel_mode`), deliberately not in the persona's synced prefs, so
 the robot's own phone never inherits it.
+
+*Mirror face tracking* (Settings, under travel mode; `FACE_MIRROR_PATCHES`; owner, 2026-11-19:
+*"a camera direction mirror toggle ... if it is backwards we can just flip it real fast and
+verify"*) flips left and right in the boxes the leg tracker takes, so the head, the lean and any
+turn toward a face flip together, while the screen's eyes keep the camera's own boxes. Off by
+default, per phone (`gb_face_mirror`), kept across a reload; each switch logs `face_mirror`.
 
 It switches by voice too (owner, 2026-11-16: *"hey Dave go to travel mode"*): a `travel` verb
 (`on` / `off`) beside `eye`, heeded only on a turn that answers something the person said, so
