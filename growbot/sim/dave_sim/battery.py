@@ -165,12 +165,13 @@ async def _walls(sim: Sim, until: float) -> None:
 
 
 async def _grid(sim: Sim, until: float) -> None:
-    """The occupancy grid's frontier explorer (wave E2, growbot-grid.js), with no model: once
-    it says it has explored, the rest of the run is idle."""
-    await sim.page.evaluate("() => window.gbGrid.explore(true)")
+    """The occupancy grid's frontier explorer (wave E2, growbot-grid.js), with no model, until
+    it says it is done; it is started again if the page reloaded under it."""
     while sim.now() < until:
         try:
             st = await sim.page.evaluate("() => window.gbGrid.state()")
+            if not st or not st.get("explore"):
+                st = await sim.page.evaluate("() => window.gbGrid.explore(true)")
             sim.note("battery", grid=st)
             if st and st.get("explore") and st["explore"].get("done"):
                 break
@@ -267,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--one", help=argparse.SUPPRESS)
     ap.add_argument("--seed", type=int, default=0, help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
+    if args.explorer == "grid" and (args.pose != "truth" or args.vision == "off"):
+        ap.error("--explorer grid needs --pose truth and --vision: its map fills only on both")
     if args.one:
         return _one(args)
     scenes = [s for s in args.scenes.split(",") if s]

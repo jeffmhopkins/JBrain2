@@ -214,3 +214,77 @@ def test_he_looks_toward_what_he_has_not_seen_and_not_through_walls() -> None:
     )
     assert 240 <= got["a"]["h"] <= 300 and got["a"]["n"] > 200
     assert got["b"]["n"] < got["a"]["n"] / 4
+
+
+def test_a_frontier_running_back_to_his_feet_is_still_a_way_on() -> None:
+    # Each look's wedge starts at his lens, so the frontier it leaves joins up with his own
+    # spot; its far reaches must still be gone to, not dropped with the cells at his feet.
+    got = _node(
+        "const g=new G.Grid(), cols=n=>Array.from({length:24},(_,q)=>({deg:30-2.5*(q+0.5),"
+        "m:null,open:n}));"
+        "for(let h=0;h<360;h+=30) for(let k=0;k<2;k++) g.add({x:0,y:0,h},cols(1.0),0);"
+        "const a=g.next(0,0,[]), b=g.bestLook(a.goal.x,a.goal.y);"
+        "for(let k=0;k<2;k++) g.add({x:a.goal.x,y:a.goal.y,h:b.h},cols(1.0),0);"
+        "const n=g.next(a.goal.x,a.goal.y,[]);"
+        "console.log(JSON.stringify(n&&{cells:n.cells}))"
+    )
+    # The unseen ring a metre out is still ahead of him: the old ring plus the new wedge.
+    assert got is not None and got["cells"] > 100
+
+
+# The page half with its neighbours stubbed: a fed pose that is wherever his last route ended,
+# routes that arrive at once, and a beat run by hand.
+_PAGE = """
+let now=0, beatFn=null, pos={x:1,y:1.5,h:0}, isFed=FED;
+global.document={}; global.window=global;
+global.setInterval=(f)=>{beatFn=f; return 1;}; global.clearInterval=()=>{};
+Date.now=()=>now;
+global.logEv=()=>{};
+global.runGait=()=>{};
+global.gbPose={source:()=>isFed?"fed":"reckoned"};
+let goes=0, last=null;
+global.gbMap={map:()=>({here:pos}), turn:()=>null,
+  go:(pts)=>{goes++; last=pts[pts.length-1]; return true;},
+  goState:()=>last?{why:"arrived"}:null};
+delete require.cache[require.resolve(GRID)];
+const P=require(GRID);
+look(P.grid(),1,1.5);
+P.explore(true);
+for(let b=0;b<3000&&!P.state().explore.done;b++){
+  now+=500; beatFn();
+  if(last){ pos={x:last.x,y:last.y,h:0}; }
+}
+console.log(JSON.stringify({st:P.state().explore, goes}));
+"""
+
+
+def test_the_explorer_ends_rather_than_shuttling_between_edges_it_cannot_clear() -> None:
+    # The map never grows here (nothing feeds it), so every edge stays: he must give each up
+    # after arriving twice, and finish.
+    got = _node(_PAGE.replace("GRID", json.dumps(str(_GRID))).replace("FED", "true"))
+    assert got["st"]["done"] == "explored"
+    assert got["goes"] < 40
+
+
+def test_with_no_fed_pose_the_explorer_says_so_and_stops() -> None:
+    got = _node(_PAGE.replace("GRID", json.dumps(str(_GRID))).replace("FED", "false"))
+    assert got["st"]["done"] == "no_pose" and got["goes"] == 0
+
+
+def test_a_frame_with_no_floor_labels_leaves_clear_columns_to_the_picture_s_reach() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    # Nothing near: every column is clear. Labelled with floor, each says how far floor showed;
+    # unlabelled, none can, and the map falls back to the picture's reach.
+    prog = (
+        f"const V=require({json.dumps(str(_VISION))});"
+        "const w=48,h=64,depth=new Array(w*h).fill(30);"
+        "const fr=(labels)=>V.reduce({w,h,vfov:75,pitch:47,camH:0.1,depth,labels}).scan;"
+        "console.log(JSON.stringify({bare:fr(undefined),"
+        "floor:fr(new Array(w*h).fill(V.VOCAB.indexOf('floor')))}))"
+    )
+    out = subprocess.run([node, "-e", prog], capture_output=True, text=True, check=True)
+    got = json.loads(out.stdout)
+    assert all(c["m"] is None and "open" not in c for c in got["bare"])
+    assert all("open" in c for c in got["floor"])

@@ -811,7 +811,9 @@ pose it does nothing yet, since a grid built on a drifting pose smears (wave E4)
 he can reach: a shortest path over seen floor, costed to keep off walls, pulled straight where
 he can see along it, and walked as one route (`gbMap.go`). At each edge he turns only toward
 the headings that still hide unseen floor. A route that ends stuck backs him out six seconds,
-and a goal he failed to reach is not tried again. He is done when no edge is left he can reach.
+and a goal he failed to reach, or arrived at twice without clearing it, is not tried again. He is
+done when no edge is left he can reach, or after ten seconds with no fed pose (`no_pose`). A
+depth source with no floor label frees a clear column as far as the picture reaches instead.
 It keeps the grid in page memory; the persona's map is unchanged.
 
 ### Visual memories (wave G4d)

@@ -130,14 +130,16 @@
     var hit = mid.filter(function (c) { return c.m !== null; });
     var ahead = (hit.length ? hit.map(function (c) { return c.m; }) : mid.map(function (c) { return c.open; }))
       .reduce(function (a, v) { return a === null || v < a ? v : a; }, null);
-    // m null is clear as far as `reach`: the map frees those cells and marks none.
+    // Without floor in the labels, how far floor shows can't be told: such a column carries no
+    // `open`, and the map frees it as far as the picture reaches.
+    var knowsFloor = !!lab && names.indexOf("floor") >= 0;
     var scan = fine.map(function (d, q) {
       var col = { deg: r2(half - sw * (q + 0.5)), m: d.length ? r2(pct(d, NEAR_PCT)) : null };
       if (col.m === null) {
         if (rows[q] && blind[q] / rows[q] > BLIND_SHARE) col.blind = true;
         // Clear only as far as floor was seen that way: at the picture's top corners nothing
         // below his height shows at all, which says nothing about what stands there.
-        col.open = r2(floorFar[q]);
+        if (knowsFloor) col.open = r2(floorFar[q]);
       }
       return col;
     });

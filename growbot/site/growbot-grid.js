@@ -130,8 +130,9 @@
   };
 
   /* Cheapest paths from (x, y) over cells seen free, each step's cost raised near anything
-     seen and steeply where his body would touch it. His own cell and its neighbours are
-     allowed whatever they are: he is standing there. Returns {dist, prev} keyed by cell. */
+     seen and steeply where his body would touch it. Unseen cells within two of his own are
+     allowed, since he is standing there; a cell seen occupied never is. Returns {dist, prev}
+     keyed by cell. */
   Grid.prototype.paths = function (x, y) {
     var clear = this._clearance(), body = BODY_M / CELL, nearR = CLEAR_M / CELL;
     var s = cellOf(x, y), sk = key(s[0], s[1]), dist = new Map(), prev = new Map(), heap = new Heap();
@@ -202,13 +203,16 @@
       var g = null;
       for (var q = 0; q < fronts[f].length; q++) {
         var d = P.dist.get(fronts[f][q]);
-        if (d !== undefined && (!g || d < g.d)) g = { d: d, k: fronts[f][q] };
+        if (d === undefined || g && d >= g.d) continue;
+        // The cells at his feet are the edges of each look's wedge, which start at his lens: a
+        // frontier reaching there is aimed at by its nearest cell past them, not dropped.
+        var cq = ij(fronts[f][q]), mq = mid(cq[0], cq[1]);
+        if (Math.hypot(mq.x - x, mq.y - y) < 0.2) continue;
+        g = { d: d, k: fronts[f][q] };
       }
       if (!g) continue;
       var c = ij(g.k), at = mid(c[0], c[1]);
       if ((failed || []).some(function (b) { return Math.hypot(b.x - at.x, b.y - at.y) < FAILED_M; })) continue;
-      // Already standing on it: it is the picture's edge where he is, which looking round sees.
-      if (Math.hypot(at.x - x, at.y - y) < 0.2) continue;
       if (!best || g.d < best.m) best = { goal: at, cells: fronts[f].length, m: g.d, k: g.k };
     }
     if (!best) return null;
@@ -218,8 +222,9 @@
     return best;
   };
 
-  /* The path to cell k as few points as keep it on cells as clear as the path's own: from
-     each point, the furthest cell down the path in a straight line over such cells. */
+  /* The path to cell k as few points as keep it on seen floor his body clears: from each
+     point, the furthest cell down the path in a straight line over such cells. A path that
+     needs more than GO_POINTS_MAX keeps its first ones: he plans again where they end. */
   Grid.prototype.route = function (P, k) {
     var cells = [];
     for (var c = k; c !== undefined; c = P.prev.get(c)) cells.unshift(c);
@@ -244,7 +249,7 @@
       pts.push(mid(cc[0], cc[1]));
       at = far;
     }
-    return pts.slice(-GO_POINTS_MAX).map(function (p) { return { x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 }; });
+    return pts.slice(0, GO_POINTS_MAX).map(function (p) { return { x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 }; });
   };
 
   /* Which way to look from (x, y): of headings every LOOK_STEP degrees, the one whose view
@@ -314,7 +319,7 @@
         var h = here();
         if (!sc || !sc.scan || !h || !fed()) return;
         var pose;
-        if (sc.lens && isFinite(+sc.lens.x) && isFinite(+sc.lens.y) && isFinite(+sc.lens.h)) {
+        if (sc.lens && [sc.lens.x, sc.lens.y, sc.lens.h].every(function (v) { return v !== null && isFinite(+v); })) {
           // A source that knows where its lens was for this frame (the sim's truth).
           pose = { x: +sc.lens.x, y: +sc.lens.y, h: +sc.lens.h };
         } else {
@@ -322,6 +327,7 @@
           var hh = sc.h === null || sc.h === undefined ? +h.h : +sc.h;
           pose = { x: +h.x + CAM_AHEAD_M * Math.cos(hh * D), y: +h.y + CAM_AHEAD_M * Math.sin(hh * D), h: hh };
         }
+        if (!isFinite(pose.x) || !isFinite(pose.y) || !isFinite(pose.h)) return;
         grid.add(pose, sc.scan, sc.reach);
         (sc.things || []).forEach(function (t) { grid.saw(pose, t.what, t.deg, t.m); });
       } catch (e) {}
@@ -330,6 +336,9 @@
     /* The explorer: look round, go to the nearest frontier, look round, until none is left.
        Each beat does one thing and only when his legs are free. */
     var LOOK_DEG = 90, LOOKS = 4, BEAT_MS = 500, GO_SETTLE_MS = 3000, BACK_S = 6;
+    // A route that ends some other way than stuck or too long (the legs' duty budget, another
+    // move taking over) is tried once more; TRIES_MAX bounds a run that keeps finding edges.
+    var NO_POSE_MS = 10000, TRIES_MAX = 300;
     var ex = null, timer = null;
     var busy = function () {
       try { return typeof _motion !== "undefined" && !!_motion; } catch (e) { return false; }
@@ -341,7 +350,15 @@
         var st = window.gbMap.goState();
         // A route's walk can still be loading its skills when it is asked: not ended yet.
         if (!st || st.why === "" || st.why === "ended" && Date.now() - ex.goT < GO_SETTLE_MS) return;
-        if (st.why !== "arrived") ex.failed.push(ex.goal);
+        var near = function (L) {
+          return L.some(function (q) { return Math.hypot(q.x - ex.goal.x, q.y - ex.goal.y) < FAILED_M; });
+        };
+        if (st.why === "arrived") {
+          // Arriving at the same edge a second time means looking from there doesn't clear it:
+          // without this he can go back and forth between two such edges for the whole run.
+          if (near(ex.arrived)) ex.failed.push(ex.goal); else ex.arrived.push(ex.goal);
+        } else if (st.why === "stuck" || st.why === "too_long" || near(ex.ended)) ex.failed.push(ex.goal);
+        else ex.ended.push(ex.goal);
         log("grid_reached", { why: st.why, to: ex.goal });
         ex.phase = "look"; ex.looks = 0;
         // Stuck is something he can't see holding him (a jamb at his shoulder, a chair leg):
@@ -357,7 +374,13 @@
         return;
       }
       var h = here();
-      if (!h || !fed()) return;
+      if (!h || !fed()) {
+        // The grid only fills on a fed pose: without one there is nothing to explore on.
+        if (!ex.waitT) ex.waitT = Date.now();
+        else if (Date.now() - ex.waitT > NO_POSE_MS) { ex.done = "no_pose"; log("grid_explored", { done: ex.done }); }
+        return;
+      }
+      ex.waitT = 0;
       if (ex.phase === "look") {
         // The first look is all the way round; after that he turns only toward what he has
         // not seen, while a turn still shows enough of it, up to LOOKS turns.
@@ -379,9 +402,9 @@
         ex.started = true;
         ex.phase = "plan";
       }
-      var nx = grid.next(+h.x, +h.y, ex.failed), c = grid.counts();
+      var nx = ex.tries < TRIES_MAX ? grid.next(+h.x, +h.y, ex.failed) : null, c = grid.counts();
       if (!nx) {
-        ex.done = "explored";
+        ex.done = ex.tries < TRIES_MAX ? "explored" : "tries";
         log("grid_explored", { free: c.free, occ: c.occ, things: grid.things.length, tries: ex.tries });
         return;
       }
@@ -394,7 +417,7 @@
     api.explore = function (on) {
       if (timer) { clearInterval(timer); timer = null; }
       if (!on) { ex = null; return null; }
-      ex = { phase: "look", looks: 0, failed: [], tries: 0, done: "", goal: null, started: false };
+      ex = { phase: "look", looks: 0, failed: [], ended: [], arrived: [], tries: 0, done: "", goal: null, started: false, waitT: 0 };
       timer = setInterval(function () { try { beat(); } catch (e) { log("grid_error", { e: String(e).slice(0, 120) }); } }, BEAT_MS);
       return api.state();
     };

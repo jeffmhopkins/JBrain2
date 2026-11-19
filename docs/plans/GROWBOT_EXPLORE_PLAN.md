@@ -114,7 +114,9 @@ Each wave is tested in the sim first on true pose and depth, so a failure points
   | maze3-s2 | 1/6 | 4/6 | 13.22 | 394 | 0 |
 
   Every room in 4 of 12 (old 0 of 12), 52 of 66 rooms in the runs that finished (old 21 of 71),
-  falls 1 (old 6). Still to do in E2: the flat (one run hung, one fell by the lamp, and the
+  falls 1 (old 6). The table predates the review's fixes (a frontier reaching back to his feet
+  is no longer dropped, an edge arrived at twice is given up), so the next battery re-measures.
+  Still to do in E2: the flat (one run hung, one fell by the lamp, and the
   kitchen is the room most missed), fewer and shorter looks so the houses finish inside the
   time, and the inspection phase with major items identified in the table.
 - **E3 — noisy depth** (`--vision noisy`), true pose. *Pass:* ≥10/12, ≥80% identified.
