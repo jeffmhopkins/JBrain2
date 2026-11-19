@@ -2210,6 +2210,59 @@
     else btWakeButton();
   } catch (e) {}
 
+  // Leaving puts him to sleep (owner, 2026-11-19: "if I leave the pwa it should automatically
+  // pause him and if I re-enter it should be in the wake up screen that allows me to do the body
+  // test"). Upstream raises the wake screen only at boot, so a page the phone kept alive came back
+  // on the live view. A hide pauses him at once (soft: a pause the person chose is theirs and
+  // survives the reload on its own), and the return reloads, which lands on the wake screen.
+  // Only a page whose wake screen was tapped through: a new creature never had one, and one
+  // still up needs nothing. A file chooser or share sheet hides the page on Android too; coming
+  // back from one is not leaving, and a reload there would drop the picked soul.
+  function wakeOnReturn() {
+    if (typeof document.getElementById !== "function" || !document.getElementById("wakeGate")) return false;
+    var woke = false, away = false, picking = false, gone = false;
+    document.addEventListener("click", function (e) {
+      var t = e && e.target;
+      if (t && t.id === "wgWake") woke = true;
+      else if (t && t.tagName === "INPUT" && String(t.type).toLowerCase() === "file") picking = true;
+    }, true);
+    var nav = typeof navigator !== "undefined" ? navigator : null;
+    try {
+      if (nav && typeof nav.share === "function") {
+        var share = nav.share;
+        nav.share = function () { picking = true; return share.apply(this, arguments); };
+      }
+    } catch (x) {}
+    function hide() {
+      if (away || !woke || window._wakeGateUp || picking) return;
+      away = true;
+      try {
+        if (window.gbBodyTest && window.gbBodyTest.active()) window.gbBodyTest.stop("hidden");
+        var was = typeof paused !== "undefined" && !!paused;
+        if (!was && typeof setPaused === "function") setPaused(true);
+        logEv("left_app", { paused: was ? 1 : 0 });
+      } catch (x) {}
+    }
+    function back() {
+      if (gone) return;
+      if (picking) { picking = false; return; }
+      if (!away) return;
+      away = false;
+      gone = true;
+      try { document.getElementById("wakeGate").style.display = "flex"; } catch (x) {}
+      location.reload();
+    }
+    document.addEventListener("visibilitychange", function () { if (document.hidden) hide(); else back(); });
+    window.addEventListener("pagehide", hide);
+    window.addEventListener("pageshow", function (ev) { if (ev && ev.persisted && !document.hidden) back(); });
+    return true;
+  }
+  try {
+    // After upstream's own hide listeners, so its stale-build reload still sees him unpaused.
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wakeOnReturn);
+    else wakeOnReturn();
+  } catch (e) {}
+
   function load(pid) {
     var ref = "/api/box/policy?id=" + encodeURIComponent(pid), hit = cache[pid];
     if (!hit || Date.now() - hit.t >= KEEP_MS) {
