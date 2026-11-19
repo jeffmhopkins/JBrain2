@@ -342,9 +342,9 @@ def test_a_route_turning_round_to_a_point_behind_him_keeps_to_one_side() -> None
 
 
 def test_a_long_turn_kept_to_one_side_is_not_stuck_and_a_new_point_picks_its_own_side() -> None:
-    """The walk is sent a quarter turn the kept way (it wraps what it is sent), while the stuck
-    watch counts the angle still to turn that way, so a slow turn past a wobble keeps closing;
-    and the next point is not held to the last one's side."""
+    """The walk is sent at most 150 degrees the kept way (it re-wraps what it is sent with its
+    own gyro), while the stuck watch counts the angle still to turn that way, so a slow turn
+    past a wobble keeps closing; and the next point is not held to the last one's side."""
     got = _page(
         "_live.map={v:1,t:0,rooms:[],doors:[],things:[],here:{x:0,y:0,h:0,room:'',t:0}};"
         "var R=null;window.gbOwnGoReady=function(){ return true; };"
@@ -360,9 +360,9 @@ def test_a_long_turn_kept_to_one_side_is_not_stuck_and_a_new_point_picks_its_own
         "h.x=-1;h.y=0.02;tick(200);var nxt=R(clock);"
         "console.log(JSON.stringify({w:w,out:out,nxt:nxt}));"
     )
-    # The wobble past 180 is sent as a quarter turn left, which the walk can't wrap the other way.
-    assert got["w"]["heading"] == 90
-    assert all(not o.get("done") and 0 < o["heading"] < 180 for o in got["out"])
+    # The wobble past 180 is sent as 150 left, which the walk can't wrap the other way.
+    assert got["w"]["heading"] == 150
+    assert all(not o.get("done") and 0 < o["heading"] <= 150 for o in got["out"])
     assert got["nxt"]["heading"] == pytest.approx(-120, abs=1)
 
 
