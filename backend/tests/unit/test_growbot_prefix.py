@@ -34,6 +34,7 @@ class _Store:
         self.turns: list[dict[str, Any]] = []
         self.abandoned: list[Any] = []
         self.forgotten: list[str] = []
+        self.idle_saves: list[str] = []
         self.restores: list[tuple[str, str, Any]] = []
         self.saves: list[tuple[str, str, int, Any]] = []
         self.efforts: list[str | None] = []
@@ -90,9 +91,9 @@ class _Store:
         reasoning_effort: str | None,
         *,
         role: Any = None,
-        keep_bigger: bool = False,
+        only_into_empty: bool = False,
     ) -> tuple[bool, int]:
-        self.prepares.append((conversation_key, role, keep_bigger))
+        self.prepares.append((conversation_key, role, only_into_empty))
         return self.conv, len(self.prepares)
 
     def note_conversation_turn(
@@ -127,6 +128,10 @@ class _Store:
     async def forget_conversation(self, conversation_key: str) -> int:
         self.forgotten.append(conversation_key)
         return 1
+
+    async def save_idle_conversation(self, served_model: str) -> bool:
+        self.idle_saves.append(served_model)
+        return True
 
 
 @pytest.fixture(autouse=True)
@@ -724,3 +729,72 @@ def test_brain_access_deletes_his_files_and_keeps_them_off_until_restart(tmp_pat
         assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
     assert store.forgotten == [prefix.conversation_key(_SYSTEM)]
     assert store.turns == [] and store.abandoned == [GROWBOT_ROLE] * 3
+
+
+def test_a_streamed_turn_claims_the_whole_prompt_not_just_what_it_read(tmp_path: Path) -> None:
+    """The page streams without usage, so the engine's timings are all there is: the slot
+    holds what the turn reused AND what it read, and a claim of only the latter fails the
+    save's check that the slot still holds this conversation."""
+    store = _Store()
+    app, auth = _his(tmp_path, store, _cold(cached=23_000))
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=_turn(), headers=auth).status_code == 200
+    (turn,) = store.turns
+    assert turn["input_tokens"] == 30_000 and turn["cached_tokens"] == 23_000
+
+
+async def test_his_slot_is_saved_once_he_has_been_quiet() -> None:
+    """Not left to the warm keeper, which tends only jerv's own local model."""
+    store = _Store()
+    saver = prefix.ConversationSaver()
+    saver.schedule(store, "m", after_s=0.05)
+    # A turn inside the wait restarts it: one save, after the last turn.
+    saver.schedule(store, "m", after_s=0.05)
+    await asyncio.sleep(0.2)
+    assert store.idle_saves == ["m"]
+    saver.schedule(None, "m", after_s=0)
+    await asyncio.sleep(0.01)
+    assert store.idle_saves == ["m"]
+
+
+def test_the_wait_outlasts_the_stores_own_idle_bar() -> None:
+    from jbrain.llm import kv_prefix
+
+    assert prefix.CONVERSATION_SAVE_AFTER_S > kv_prefix.CONVERSATION_IDLE_SAVE_S
+    assert prefix.CONVERSATION_RESTORE_TIMEOUT_S < 90
+
+
+def test_a_kept_turn_schedules_the_save(tmp_path: Path) -> None:
+    store = _Store()
+    app, auth = _his(tmp_path, store, _used(30_000, 29_000, 40))
+    with TestClient(app) as client:
+        assert client.post(_COMPLETIONS, json=_turn(False), headers=auth).status_code == 200
+        saver = app.state.growbot_conversation_saver
+        assert saver._task is not None and not saver._task.done()
+
+
+async def test_a_restore_that_outlives_its_bound_is_not_overwritten_by_the_prefix() -> None:
+    class _Slow(_Store):
+        async def prepare_conversation(self, *a: Any, **kw: Any) -> tuple[bool, int]:
+            await asyncio.sleep(1)
+            return True, 1
+
+    import unittest.mock
+
+    with unittest.mock.patch.object(prefix, "CONVERSATION_RESTORE_TIMEOUT_S", 0.01):
+        assert await prefix.restore_conversation(_Slow(), "m", _SYSTEM, "none") == (None, None)
+
+
+def test_a_replay_drops_the_claim_on_his_slot(tmp_path: Path) -> None:
+    store = _Store()
+    from jbrain.api import growbot_calls
+    from jbrain.api.deps import current_debug_principal
+    from tests.unit.test_growbot_calls import DEBUG
+
+    app, _auth = _his(tmp_path, store, _used(30_000, 29_000, 40))
+    app.include_router(growbot_calls.debug_router, prefix="/api")
+    app.dependency_overrides[current_debug_principal] = lambda: DEBUG
+    with TestClient(app) as client:
+        r = client.post("/api/debug/growbot/replay", json=_turn(False))
+        assert r.status_code == 200
+    assert store.turns == [] and store.abandoned == [GROWBOT_ROLE]

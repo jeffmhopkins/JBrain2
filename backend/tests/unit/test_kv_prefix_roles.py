@@ -1536,7 +1536,7 @@ def _creature_turn(store: KvPrefixStore, gw: FakeGateway, n_in: int) -> None:
 
 async def _creature_prepare(store: KvPrefixStore) -> bool:
     restored, _seq = await store.prepare_conversation(
-        FLASH, "growbot:x", "persona", [], None, role=SlotRole.GROWBOT, keep_bigger=True
+        FLASH, "growbot:x", "persona", [], None, role=SlotRole.GROWBOT, only_into_empty=True
     )
     return restored
 
@@ -1558,14 +1558,16 @@ async def test_the_creatures_quiet_conversation_is_saved_and_comes_back_after_a_
     assert gw2.restored == [(slot, name)]
 
 
-async def test_a_creature_slot_already_holding_more_is_left_alone(root: Path) -> None:
-    """Only the api restarted: the engine's slot still holds the conversation, newer than
-    the file, and a restore would throw the newer turns away."""
+@pytest.mark.parametrize("live", [34_000, 5_000])
+async def test_a_creature_slot_holding_anything_is_left_alone(root: Path, live: int) -> None:
+    """Only the api restarted: the engine's slot still holds his conversation, newer than the
+    file, and a restore would throw the newer turns away. Shorter counts too: a dream starts
+    a new history, so a live slot can hold fewer tokens than the save from before it."""
     store, gw = _store(root)
     _creature_turn(store, gw, 30_000)
     assert await store.save_idle_conversation(FLASH, idle_s=0)
     store2, gw2 = _store(root)
-    gw2.slot_state = _slots(s10=34_000)
+    gw2.slot_state = _slots(s10=live)
     assert not await _creature_prepare(store2)
     assert gw2.restored == []
-    assert store2._counters.get("conversation_skipped_slot_holds_more") == 1
+    assert store2._counters.get("conversation_skipped_slot_occupied") == 1

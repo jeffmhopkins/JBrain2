@@ -51,6 +51,12 @@ log = logging.getLogger(__name__)
 RESTORE_AFTER_QUIET_S: Final = 300.0
 # The bound on a restore check, so a stuck gateway cannot hold a turn.
 RESTORE_TIMEOUT_S: Final = 30.0
+# A conversation file is the prefix plus the day's talk and looks, several times the size, and
+# still inside the turn's 90 s fuse.
+CONVERSATION_RESTORE_TIMEOUT_S: Final = 60.0
+# His slot is saved this long after his last turn: the store's own idle bar, plus a margin so
+# the claim has aged past it when the save looks.
+CONVERSATION_SAVE_AFTER_S: Final = 615.0
 # A save primes the creature's slot, so it waits until the creature has been quiet this long,
 # and gives up after `SAVE_GIVE_UP_S` of chatter (the next cold turn tries again).
 SAVE_QUIET_S: Final = 20.0
@@ -100,7 +106,7 @@ class PrefixStore(Protocol):
         reasoning_effort: str | None,
         *,
         role: Any = None,
-        keep_bigger: bool = False,
+        only_into_empty: bool = False,
     ) -> tuple[bool, int]: ...
 
     def note_conversation_turn(
@@ -121,6 +127,8 @@ class PrefixStore(Protocol):
     ) -> None: ...
 
     async def forget_conversation(self, conversation_key: str) -> int: ...
+
+    async def save_idle_conversation(self, served_model: str) -> bool: ...
 
 
 def _pooled(model: str) -> bool:
@@ -152,9 +160,11 @@ def conversation_key(system: str) -> str:
 
 async def restore_conversation(
     store: PrefixStore | None, model: str, system: str, level: str
-) -> tuple[bool, int | None]:
+) -> tuple[bool | None, int | None]:
     """Load his saved conversation back into his slot if the slot lost it. Returns (restored,
-    the store's sequence for this turn's note)."""
+    the store's sequence for this turn's note); restored is None when the restore outlived its
+    bound, so the engine may still be loading it: a prefix restore then would see the
+    never-used slot as empty and overwrite the conversation arriving in it."""
     if store is None or len(system) < MIN_SYSTEM_CHARS or not _pooled(model):
         return False, None
     try:
@@ -166,10 +176,13 @@ async def restore_conversation(
                 [],
                 level,
                 role=GROWBOT_ROLE,
-                keep_bigger=True,
+                only_into_empty=True,
             ),
-            RESTORE_TIMEOUT_S,
+            CONVERSATION_RESTORE_TIMEOUT_S,
         )
+    except TimeoutError:
+        log.warning("growbot conversation restore timed out model=%s", model)
+        return None, None
     except Exception:  # noqa: BLE001 - the turn re-reads rather than fail
         log.warning("growbot conversation restore failed model=%s", model, exc_info=True)
         return False, None
@@ -234,6 +247,35 @@ def consumed(store: PrefixStore | None, model: str, system: str, level: str) -> 
         store.note_prefix_used(model, fingerprint, role=GROWBOT_ROLE)
     except Exception:  # noqa: BLE001 - the memo is bookkeeping; the turn already ran
         log.warning("growbot prefix memo not cleared model=%s", model, exc_info=True)
+
+
+class ConversationSaver:
+    """Saves his slot once he has been quiet `CONVERSATION_SAVE_AFTER_S`. The warm keeper's
+    tick does this for jerv's chats, but only while it tends jerv's own local model, so a
+    creature on Flash-Next with jerv on another engine or in the cloud would never be saved.
+    Each turn restarts the wait."""
+
+    def __init__(self) -> None:
+        self._task: asyncio.Task[None] | None = None
+
+    def schedule(
+        self,
+        store: PrefixStore | None,
+        model: str,
+        after_s: float = CONVERSATION_SAVE_AFTER_S,
+    ) -> None:
+        if store is None or not _pooled(model):
+            return
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+        self._task = asyncio.create_task(self._save(store, model, after_s))
+
+    async def _save(self, store: PrefixStore, model: str, after_s: float) -> None:
+        await asyncio.sleep(after_s)
+        try:
+            await store.save_idle_conversation(model)
+        except Exception:  # noqa: BLE001 - the keeper's tick or the next quiet tries again
+            log.warning("growbot conversation save failed model=%s", model, exc_info=True)
 
 
 class PrefixSaver:

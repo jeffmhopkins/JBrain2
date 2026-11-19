@@ -271,6 +271,23 @@ async def _kept_off_disk(state: Any, persona_id: str | None, store: Any, system:
     return True
 
 
+def _whole_prompt(collector: ReplyCollector, rec: CallRecord) -> int | None:
+    """The tokens the slot holds before the answer. The page streams without asking for usage,
+    so `rec.prompt_tokens` is llama-server's `prompt_n`, only what this turn evaluated (a few
+    hundred on a warm turn); the slot also holds the `cache_n` it reused."""
+    evaluated, reused = collector.engine.get("prompt_n"), collector.engine.get("cache_n")
+    if isinstance(evaluated, int) and isinstance(reused, int):
+        return evaluated + reused
+    return rec.prompt_tokens
+
+
+def _conversation_saver(state: Any) -> prefix.ConversationSaver:
+    saver: prefix.ConversationSaver | None = getattr(state, "growbot_conversation_saver", None)
+    if saver is None:
+        saver = state.growbot_conversation_saver = prefix.ConversationSaver()
+    return saver
+
+
 def _forgotten(state: Any) -> set[str]:
     """The personas seen with brain access on since the api started."""
     seen: set[str] | None = getattr(state, "growbot_off_disk", None)
@@ -520,7 +537,7 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                 # conversation comes back from disk if it was saved, else the prefix alone.
                 long_quiet = previous is None or time.monotonic() - previous > RESTORE_AFTER_QUIET_S
                 store = getattr(state, "kv_prefix", None)
-                restored = False
+                restored: bool | None = False
                 if not replay:
                     to_disk = not await _kept_off_disk(state, rec.persona_id, store, system)
                 if not replay and long_quiet:
@@ -530,7 +547,7 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                         )
                     if restored:
                         mark("conversation_restore_ms")
-                    else:
+                    elif restored is False:
                         restored = await prefix.restore(store, model, system, level)
                 if restored:
                     mark("restore_ms")
@@ -598,21 +615,26 @@ async def serve_turn(request: Request, payload: Any, *, replay: bool = False) ->
                 # The quiet window a replay waits for runs from the END of a turn: a cold
                 # turn can outlast it.
                 state.growbot_last_turn = time.monotonic()
-                # Only a turn that reached the slot changed what it holds.
-                if "first_byte_ms" in rec.timings:
-                    prefix.note_turn(
-                        getattr(state, "kv_prefix", None),
-                        rec.model,
-                        system,
-                        level,
-                        ok=rec.ok and to_disk,
-                        prompt_tokens=rec.prompt_tokens,
-                        completion_tokens=rec.completion_tokens,
-                        cached_tokens=rec.cached_tokens,
-                        seq=conv_seq,
-                    )
-                if rec.ok and is_cold(rec):
-                    _quietly(_save_prefix, request, rec.model, system, level, lock, pool_guard)
+            # Only a turn that reached the slot changed what it holds. A replay's slot holds
+            # an edited prompt, never his conversation, so it only drops the claim.
+            if "first_byte_ms" in rec.timings:
+                store = getattr(state, "kv_prefix", None)
+                keep = rec.ok and to_disk and not replay
+                prefix.note_turn(
+                    store,
+                    rec.model,
+                    system,
+                    level,
+                    ok=keep,
+                    prompt_tokens=_whole_prompt(collector, rec),
+                    completion_tokens=rec.completion_tokens,
+                    cached_tokens=rec.cached_tokens,
+                    seq=conv_seq,
+                )
+                if keep:
+                    _quietly(_conversation_saver(state).schedule, store, rec.model)
+            if not replay and rec.ok and is_cold(rec):
+                _quietly(_save_prefix, request, rec.model, system, level, lock, pool_guard)
             log_call(request, rec)
             await client.aclose()
 

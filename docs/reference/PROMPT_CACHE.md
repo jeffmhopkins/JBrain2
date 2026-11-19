@@ -178,9 +178,15 @@ no persona named, none found or a failed read count as on), and the first turn t
 deletes his file and keeps him off disk until the api restarts, since his history goes on
 carrying what a lookup told him after access is turned off. Its key is a hash of the creature's system text
 (`growbot/prefix.py` `conversation_key`), so a changed persona or prompt is a different file.
-The keeper's tick saves it after 10 idle minutes; a turn after more than 5 quiet minutes
-restores it before the prefix-only restore, and only when slot 10 holds fewer tokens than the
-file (`keep_bigger`), so an api restart never overwrites a live slot with an older save.
+The creature lane saves it itself, a little over 10 minutes after his last turn
+(`ConversationSaver`; the keeper's tick saves only while it tends jerv's own local model,
+which the creature's engine need not be). A turn's claim counts the whole prompt the slot
+holds, read and reused (`prompt_n + cache_n`: the page streams without usage). A turn after
+more than 5 quiet minutes restores it before the prefix-only restore, and only into an empty
+slot 10 (`only_into_empty`): after an api restart the engine survived, a slot holding anything
+holds his live conversation, newer than the file and, after a dream, possibly shorter. A
+restore that outlives its 60 s bound gets no prefix restore after it, which would overwrite
+the conversation still arriving. A debug replay drops the claim, never saves.
 
 **Brain/curator chats never get a conversation file.** Role prefix files hold only the system
 prompt and tool schemas, no owner data, and are unaffected. Deleting a chat, or changing its
