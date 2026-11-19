@@ -322,6 +322,25 @@ def test_a_route_steers_by_heading_point_by_point_and_ends_when_he_arrives() -> 
     assert got["st"] == {"n": 2, "i": 1, "why": "arrived"}
 
 
+def test_a_route_turning_round_to_a_point_behind_him_keeps_to_one_side() -> None:
+    """A point nearly behind him: the error's sign flips with each wobble of his heading, and a
+    turn that chases it swings left and right in place, which is how he fell in the sim."""
+    got = _page(
+        "_live.map={v:1,t:0,rooms:[],doors:[],things:[],here:{x:0,y:0,h:0,room:'',t:0}};"
+        "var R=null;window.gbOwnGoReady=function(){ return true; };"
+        "window.gbOwnGo=function(r){ R=r; return {state:'accepted'}; };"
+        "window.gbMap.go([{x:-1,y:0.02}]);var h=_live.map.here,out=[];"
+        # About 179 left to begin, then his heading wobbles a few degrees either way.
+        "[0,3,-2,4,-3,30,120,175].forEach(function(a){ h.h=a; tick(200); out.push(R(clock)); });"
+        "console.log(JSON.stringify(out));"
+    )
+    # He starts turning left, and keeps turning left however the wobble flips the sign.
+    assert all(o["speed"] == 0 and o["heading"] > 0 for o in got[:6])
+    # Once round past the side, he steers straight at it and walks within 10 degrees.
+    assert got[6]["heading"] == pytest.approx(178.85 - 120, abs=0.5)
+    assert got[7]["speed"] == 1
+
+
 def test_a_route_that_stops_getting_closer_ends_itself_and_none_runs_without_skills() -> None:
     """No range sensor tells him a wall stopped him (owner): a route he makes no headway on
     for 12 s ends "stuck", and a turn that keeps closing counts as headway."""
