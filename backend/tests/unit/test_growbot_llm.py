@@ -614,6 +614,11 @@ def test_a_png_reads_its_size_too() -> None:
     Image.new("RGB", (320, 240)).save(out, "PNG")
     url = "data:image/png;base64," + base64.b64encode(out.getvalue()).decode()
     assert openai_slot_fit.image_tokens(url, 16) == 10 * 8 + 4
+    # A chunk ahead of IHDR (Apple's CgBI, which the decoder skips) is not a size: charged flat.
+    raw = out.getvalue()
+    cgbi = raw[:8] + b"\x00\x00\x00\x04CgBI" + bytes(4) + bytes(4) + raw[8:]
+    url = "data:image/png;base64," + base64.b64encode(cgbi).decode()
+    assert openai_slot_fit.image_tokens(url, 16) == 4096
 
 
 def _sof(marker: int, w: int, h: int) -> bytes:

@@ -731,8 +731,9 @@ A look rides in the turn whose thought sent it, never in a turn the box has alre
 carried or walking don't fill the pile in minutes. A dream clears them. Past 60 looks the older
 half goes in one step (one cache break, not one a turn). The pile is kept in the phone's
 IndexedDB too, so a reload keeps the day. Like the faces, the pictures leave the phone with the
-creature: a page not running a persona of the box (moved, deleted, a G2 session) deletes the store
-and keeps its looks in memory only, and another persona's looks are deleted on sight.
+creature: a page whose creature has gone (moved, deleted, a G2 session) deletes the store, a page
+not running a box persona keeps its looks in memory only, and another persona's looks are deleted
+on sight.
 
 At the creature's picture floor (`CREATURE_IMAGE_MIN_TOKENS`, 256) a small look still costs ~270
 tokens, the same as a full frame, so the box charges each picture at its real size against that

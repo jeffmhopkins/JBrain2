@@ -23,9 +23,10 @@
    look: a small copy keeps the room, not the print on a box.
 
    The pile is kept in IndexedDB as well, so a reload or an update does not forget the day. Like
-   the faces (growbot-box.js), the pictures leave this phone with the creature: a page that is
-   not running a persona of the box (moved to another phone, deleted, a G2 session) deletes the
-   store and keeps its looks in memory only, and another persona's looks are deleted on sight.
+   the faces (growbot-box.js), the pictures leave this phone with the creature: a page whose
+   creature has gone (moved to another phone, deleted, a G2 session) deletes the store, a page
+   not running a persona of the box keeps its looks in memory only, and another persona's looks
+   are deleted on sight.
 
    The pure half (which turn each look rides in, the cap, the tag) is tested in node; the page
    half reads the creature page's globals (_live, camFacing) lazily. */
@@ -175,11 +176,15 @@
   /* The kept pile, read once: this persona's looks since its last dream. Older ones and other
      personas' are deleted as they are found. */
   function load() {
-    if (homeless()) {
+    var bs = root.__gbBoxSoul;
+    // Gone from this phone (away, a G2 session): its pictures go too, as its faces do. A page
+    // with no soul yet (on its way to the robot it wears) leaves the store alone.
+    if (bs && (bs.away || bs.g2)) {
       try { root.indexedDB.deleteDatabase(DB); } catch (e) {}
       loaded = true;
       return;
     }
+    if (homeless()) { loaded = true; return; }
     tx(function (s) {
       var rq = s.getAll();
       rq.onsuccess = function () {

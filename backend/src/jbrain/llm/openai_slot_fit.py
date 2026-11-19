@@ -106,7 +106,10 @@ def _image_size(data: bytes) -> tuple[int, int] | None:
     """(width, height) from a PNG's IHDR or a JPEG's frame header, read the way the engine's
     decoder (stb_image) reads it: fill bytes before a marker are skipped, and only the frame
     types it decodes count. Anything else is None, which charges flat."""
-    if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        # Only an IHDR first: stb_image also takes Apple's CgBI chunk ahead of it.
+        if data[12:16] != b"IHDR" or len(data) < 24:
+            return None
         return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
     if data[:2] != b"\xff\xd8":
         return None

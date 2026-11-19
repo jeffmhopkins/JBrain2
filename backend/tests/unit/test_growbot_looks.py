@@ -174,13 +174,15 @@ def test_the_page_keeps_each_sent_picture_and_replays_the_looks() -> None:
 
 
 def test_the_pictures_leave_this_phone_with_the_creature() -> None:
-    """As the faces do (growbot-box.js): a page not running a persona of the box (moved away,
-    deleted, a G2 session) deletes the store, and nothing of it is written there."""
+    """As the faces do (growbot-box.js): a page whose creature has gone (moved away, deleted, a
+    G2 session) deletes the store, and a page not running a box persona writes nothing there."""
     src = _LOOKS.read_text(encoding="utf-8")
     homeless = src[src.index("function homeless()") :][:200]
     assert "s.away" in homeless and "s.g2" in homeless and "!s.persona" in homeless
-    load = src[src.index("function load()") :][:200]
-    assert "if (homeless())" in load and "deleteDatabase(DB)" in load
+    load = src[src.index("function load()") :][:500]
+    assert "if (bs && (bs.away || bs.g2))" in load and "deleteDatabase(DB)" in load
+    # A page with no soul yet (redirecting to the robot it wears) leaves the store alone.
+    assert load.index("deleteDatabase") < load.index("if (homeless()) { loaded = true; return; }")
     tx = src[src.index("function tx(fn)") :][:80]
     assert "if (homeless()) return;" in tx
     # Another persona's looks are not kept, whatever their age.
