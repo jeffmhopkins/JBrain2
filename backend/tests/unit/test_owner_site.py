@@ -22,7 +22,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -128,6 +128,15 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _distinct_port(taken: Iterable[int]) -> int:
+    # Each pick's socket is closed before the next, so the kernel can hand the same port out
+    # twice; Caddy then refuses the config ("scheme and port violate convention").
+    used = set(taken)
+    while (port := _free_port()) in used:
+        pass
+    return port
+
+
 class _Echo(BaseHTTPRequestHandler):
     hits = 0
 
@@ -167,7 +176,9 @@ class _Stack:
         site_dir = self._site_dir
         echo = self._echo
         names = ("public", "http", "lan", "owner", "growbot")
-        self.ports = {name: _free_port() for name in names}
+        self.ports = {}
+        for name in names:
+            self.ports[name] = _distinct_port(self.ports.values())
         etc = root / "etc"
         www = root / "www"
         www.mkdir(parents=True)
@@ -197,9 +208,10 @@ class _Stack:
         caddyfile = caddyfile.replace(":8443", f":{self.ports['owner']}")
         caddyfile = caddyfile.replace("servers :8444", f"servers :{self.ports['growbot']}")
         # Into the Caddyfile's own global block, which keeps the owner listener's options.
+        https_port = _distinct_port(self.ports.values())
         test_opts = (
             "\n{\n\tadmin off\n\tskip_install_trust\n\tauto_https disable_redirects\n"
-            f"\thttp_port {self.ports['http']}\n\thttps_port {_free_port()}\n"
+            f"\thttp_port {self.ports['http']}\n\thttps_port {https_port}\n"
         )
         assert "\n{\n" in caddyfile
         self.config = root / "Caddyfile"
@@ -499,3 +511,11 @@ def test_the_growbot_port_advertises_no_http3(stack: _Stack) -> None:
     assert b"alt-svc" not in growbot.lower()
     lan, _ = stack.request("lan", f"jbrain.local:{stack.ports['lan']}", tls=tls)
     assert b"alt-svc" in lan.lower()
+
+
+def test_the_stack_never_gives_two_listeners_one_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    picks = iter([5000, 5000, 5001, 5000, 5001, 5002])
+    monkeypatch.setattr(sys.modules[__name__], "_free_port", lambda: next(picks))
+    assert _distinct_port([]) == 5000
+    assert _distinct_port([5000]) == 5001
+    assert _distinct_port([5000, 5001]) == 5002
