@@ -5036,6 +5036,61 @@ REST_STAND_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += REST_STAND_PATCHES
 
+# Every look he takes, kept until he dreams (owner, 2026-11-19), growbot-looks.js: each picture a
+# thought sends is kept small, tagged with when and where he took it, and replayed inside the
+# turn it was taken in, so the history ahead of a new turn still reads the same and the box
+# resumes from it. Looks since the last kept turn ride one message at the history's end, and
+# looks whose turn the window has dropped ride one message ahead of the talk.
+LOOKS_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        '<script src="/growbot-pano.js"></script>',
+        '<script src="/growbot-pano.js"></script><script src="/growbot-looks.js"></script>',
+        1,
+    ),
+    (
+        "v3/next.html",
+        '  for (i=0;i<tr.length;i++){ if(String(tr[i].a||"")==="(stayed quiet)"&&!tr[i].w&&!tr[i].d)'
+        ' continue; msgs.push({role:"user",content:(tr[i].t?"["+gbHistStamp(tr[i].t)+"] ":"")'
+        '+traceMoment(tr[i].u)}); msgs.push({role:"assistant",content:gbTraceReply(tr[i])}); }',
+        '  var _gbKt=tr.filter(function(x){ return !(String(x.a||"")==="(stayed quiet)"&&!x.w&&!x.d); }),'
+        ' _gbL=(typeof window!=="undefined"&&window.gbLooks)||null,'
+        " _gbAll=_live.scratch.traces||[], _gbK0=tr.length?_gbAll.indexOf(tr[0]):_gbAll.length,"
+        " _gbLk=_gbL?_gbL.split(_gbKt.map(function(x){ return +x.t||0; }),"
+        "_gbL.now(),_gbK0>0?+_gbAll[_gbK0-1].t||0:0):null;\n"
+        "  if(_gbLk&&_gbLk.early.length) msgs.push({role:\"user\",content:_gbL.early(_gbLk.early)});\n"
+        '  for (i=0;i<_gbKt.length;i++){ var _gbHt=(_gbKt[i].t?"["+gbHistStamp(_gbKt[i].t)+"] ":"")'
+        "+traceMoment(_gbKt[i].u); msgs.push({role:\"user\",content:_gbLk?"
+        "_gbL.content(_gbLk.by[i],_gbHt):_gbHt});"
+        ' msgs.push({role:"assistant",content:gbTraceReply(_gbKt[i])}); }\n'
+        '  if(_gbLk&&_gbLk.pending.length) msgs.push({role:"user",content:'
+        "_gbL.parts(_gbLk.pending)});",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  if(frames.length){ try{ _lastLook={j:frames[frames.length-1].j",
+        "  if(frames.length&&window.gbLooks){ try{ window.gbLooks.add(frames[frames.length-1],_eyeAt,"
+        '_gbIssT,kind==="tick"); }catch(_gbLk){} }\n'
+        "  if(frames.length){ try{ _lastLook={j:frames[frames.length-1].j",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '+":"+(camOn?1:0)+":"+camFacing; }',
+        '+":"+(camOn?1:0)+":"+camFacing+(typeof window!=="undefined"&&window.gbLooks?'
+        '":"+window.gbLooks.key():""); }',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "helps aim his eye (sight lines, FOV). stays on this phone, never saved.",
+        "helps aim his eye (sight lines, FOV). a small copy rides his thoughts until he dreams.",
+        1,
+    ),
+]
+PATCHES += LOOKS_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
@@ -5160,6 +5215,7 @@ OWN_SCRIPTS = (
     "growbot-talklog.js",
     "growbot-map.js",
     "growbot-pano.js",
+    "growbot-looks.js",
     "growbot-vision.js",
     "growbot-grid.js",
     "growbot-camtest.js",
@@ -5205,6 +5261,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     shutil.copyfile(HERE / "growbot-talklog.js", site / "growbot-talklog.js")
     shutil.copyfile(HERE / "growbot-map.js", site / "growbot-map.js")
     shutil.copyfile(HERE / "growbot-pano.js", site / "growbot-pano.js")
+    shutil.copyfile(HERE / "growbot-looks.js", site / "growbot-looks.js")
     shutil.copyfile(HERE / "growbot-vision.js", site / "growbot-vision.js")
     # His occupancy grid and the frontier explorer on it (wave E2), fed by the vision's scans.
     shutil.copyfile(HERE / "growbot-grid.js", site / "growbot-grid.js")

@@ -939,7 +939,7 @@ def test_past_replies_go_back_to_the_model_in_its_own_json_shape() -> None:
     """Replayed as bare words, the creature's history taught the model to answer in clipped
     plain text; each past reply now rides as {"say", "emotion"}, a page note as an empty say."""
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
-    assert 'msgs.push({role:"assistant",content:gbTraceReply(tr[i])});' in page
+    assert 'msgs.push({role:"assistant",content:gbTraceReply(_gbKt[i])});' in page
     assert 'content:tr[i].d?tr[i].a+"\\n(did: "' not in page
     assert ',e:(o&&typeof o.emotion==="string"?o.emotion.slice(0,12):undefined)' in page
     start = page.index("function gbTraceReply(t){")
@@ -5451,7 +5451,7 @@ def test_history_drops_quiet_turns_and_marks_moves_it_only_claimed() -> None:
     assert '(did: "+t.d+")":gbClaimNote(r)); }' in page
     h = page.index("function gbHist(now){")
     hist = page[h : h + 1500]
-    assert 'if(String(tr[i].a||"")==="(stayed quiet)"&&!tr[i].w&&!tr[i].d) continue;' in hist
+    assert 'return !(String(x.a||"")==="(stayed quiet)"&&!x.w&&!x.d); }' in hist
     assert 'if(o.follow==="me"&&o._gbFollowed){ w.follow="me"; n++; }' in page
 
 
