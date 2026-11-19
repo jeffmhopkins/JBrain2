@@ -36,8 +36,9 @@ def test_each_look_rides_in_the_turn_it_was_taken_in() -> None:
         "const s=L.split([100,200],[{t:5},{t:90},{t:100},{t:150},{t:250}]);"
         "console.log(JSON.stringify({by:s.by.map(a=>a.map(l=>l.t)),pending:s.pending.map(l=>l.t)}))"
     )
-    # A look older than every turn the history replays rides in its first one.
-    assert got["by"] == [[5, 90, 100], [150]]
+    # A look older than every turn the history replays rides in its first one; one sent the
+    # moment a reply landed belongs to the next turn.
+    assert got["by"] == [[5, 90], [100, 150]]
     # One newer than every turn waits at the history's end for the next kept turn.
     assert got["pending"] == [250]
 
@@ -74,6 +75,29 @@ def test_the_history_ahead_of_a_new_turn_reads_the_same() -> None:
     assert got == [True, 2]
 
 
+def test_a_look_rides_in_the_turn_that_sent_it_not_one_already_read() -> None:
+    """A thought that began just after the last reply landed may send a picture taken before
+    it: it rides in its own turn, not inside the one the box has already read."""
+    got = _node(
+        "const s=L.split([100,200],[{t:95,at:101},{t:99},{t:150,at:200},{t:150,at:150}],0);"
+        "console.log(JSON.stringify([s.by.map(a=>a.map(l=>l.at||l.t)),s.pending.map(l=>l.at)]))"
+    )
+    by, pending = got
+    assert by == [[99], [101, 150]]
+    # A look its turn's reply has not landed after yet is pending.
+    assert pending == [200]
+
+
+def test_a_tick_keeps_its_look_only_after_a_while_or_a_move() -> None:
+    got = _node(
+        "const p={x:0,y:0,h:90}, last={t:0,p};"
+        "console.log(JSON.stringify([L.tickKeeps(last,{t:10000,p}),L.tickKeeps(last,{t:30000,p}),"
+        "L.tickKeeps(last,{t:10000,p:{x:0.6,y:0,h:90}}),L.tickKeeps(last,{t:10000,p:{x:0,y:0,h:130}}),"
+        "L.tickKeeps(undefined,{t:5,p}),L.tickKeeps({t:0},{t:10000,p})]))"
+    )
+    assert got == [False, True, True, True, True, False]
+
+
 def test_a_dream_clears_the_looks_before_it() -> None:
     got = _node("console.log(JSON.stringify(L.since([{t:30},{t:10},{t:20}],15).map(l=>l.t)))")
     assert got == [20, 30]
@@ -88,7 +112,7 @@ def test_past_the_cap_the_older_half_goes_in_one_step() -> None:
     kept_at_cap, over, cap, px = got
     assert kept_at_cap == 10
     assert over == [6, 7, 8, 9, 10]
-    assert cap == 160 and px == 160
+    assert cap == 60 and px == 160
 
 
 def test_each_picture_says_when_and_where_it_was_taken() -> None:
@@ -103,6 +127,14 @@ def test_each_picture_says_when_and_where_it_was_taken() -> None:
         " on your map facing 135 degrees in the kitchen]"
     )
     assert bare == "[camera, a look you took at 2:03:09 pm with your forward eye]"
+    # A stored pose missing a number never throws: the look goes out without one.
+    assert (
+        _node(
+            "const t=new Date(2026,10,19,14,3,9).getTime();"
+            "console.log(JSON.stringify(L.tag({t,j:'x',p:{x:'a',y:1}})))"
+        )
+        == bare
+    )
     # The look's words, its picture, then the turn's own words: as the live turn had them. The
     # tag opens "[camera" so a lane that cannot see drops it with the picture.
     assert content == [
@@ -131,7 +163,7 @@ def test_the_page_keeps_each_sent_picture_and_replays_the_looks() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert '<script src="/growbot-looks.js?v=' in page
     # The picture a thought sends is kept, before the turn's frames are built.
-    assert "window.gbLooks.add(frames[frames.length-1],_eyeAt)" in page
+    assert 'window.gbLooks.add(frames[frames.length-1],_eyeAt,_gbIssT,kind==="tick")' in page
     # The history weaves the looks into the turns they were taken in, pending ones at its end.
     hist = page[page.index("function gbHist(now)") : page.index("function gbWarmKey()")]
     assert "_gbL.split(" in hist and "_gbL.content(_gbLk.by[i]" in hist

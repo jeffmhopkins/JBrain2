@@ -14,8 +14,13 @@
 
    A dream clears them: the pile holds only looks taken after the last dream. LOOK_MAX bounds a
    long day; past it the older half goes in one step, so the cache breaks once rather than every
-   turn (the history window's own rule, gbHistWindow). Fine detail still needs a fresh look: a
-   small copy keeps the room, not the print on a box.
+   turn (the history window's own rule, gbHistWindow). It starts small: at the box's picture floor
+   a small look reads as ~270 tokens, the same as a full frame, and a cold read of the whole pile
+   (a halving, an engine restart) has to finish inside the turn's 90 s fuse, so it is raised only
+   once that read is measured on the box. A thought with no person in it (a tick) keeps its look
+   only if TICK_GAP_MS have passed since the last one kept or he has moved, so a carried or
+   walking robot's watch ticks do not fill the pile in minutes. Fine detail still needs a fresh
+   look: a small copy keeps the room, not the print on a box.
 
    The pile is kept in IndexedDB as well, so a reload or an update does not forget the day.
 
@@ -23,22 +28,28 @@
    half reads the creature page's globals (_live, camFacing) lazily. */
 (function (root) {
   "use strict";
-  var LOOK_PX = 160, LOOK_Q = 0.7, LOOK_MAX = 160, DB = "gb-looks", STORE = "looks";
+  var LOOK_PX = 160, LOOK_Q = 0.7, LOOK_MAX = 60, DB = "gb-looks", STORE = "looks";
+  var TICK_GAP_MS = 30000, MOVED_M = 0.5, TURNED_DEG = 30;
+  // Another persona's looks are left alone (it may be running in another tab), until this old.
+  var STALE_MS = 3 * 86400000;
   /* A look that shows what the last one did is not kept: standing still, a person's turns
      send the same view over and over. "The same" is the grey 8x8 copies differing by under
      SAME_GREY a pixel, from within SAME_M and SAME_DEG of where the last was taken. */
   var SIG = 8, SAME_GREY = 6, SAME_M = 0.2, SAME_DEG = 15;
 
   /* Which history message each look rides in. `ts` is the time of each turn the history
-     replays, oldest first. A look rides in the first turn at or after it (a turn's time is when
-     its reply landed, after the look it sent); one newer than every turn is pending. One taken
-     by `before` (the last turn the window has dropped) is early: its turn is gone from the
-     history, so it rides one message ahead of it that only ever grows at its end. */
+     replays, oldest first. A look rides in the turn that sent it: the first turn whose reply
+     landed after the thought that sent it began (`at`; its picture may be older than the last
+     reply, and must not join that turn's message, which the box has already read). One newer
+     than every turn is pending. One sent by `before` (the last turn the window has dropped) is
+     early: its turn is gone from the history, so it rides one message ahead of it that only
+     ever grows at its end. */
   function split(ts, looks, before) {
     var by = ts.map(function () { return []; }), pending = [], early = [];
     looks.forEach(function (l) {
-      if (before && l.t <= before) { early.push(l); return; }
-      for (var i = 0; i < ts.length; i++) if (+ts[i] >= l.t) { by[i].push(l); return; }
+      var at = isFinite(+l.at) ? +l.at : l.t;
+      if (before && at <= before) { early.push(l); return; }
+      for (var i = 0; i < ts.length; i++) if (+ts[i] > at) { by[i].push(l); return; }
       pending.push(l);
     });
     return { early: early, by: by, pending: pending };
@@ -69,11 +80,12 @@
 
   /* The words beside a look's picture. Opens "[camera" so a lane that cannot see drops it with
      the picture (callModel's blind strip). */
+  function posed(p) { return !!p && isFinite(+p.x) && isFinite(+p.y) && isFinite(+p.h); }
   function tag(l) {
     var s = "[camera, a look you took at " + clock(l.t) + " with your " + (l.eye === "b" ? "rear eye" : "forward eye");
-    if (l.p) {
-      s += ", standing at (" + l.p.x.toFixed(1) + ", " + l.p.y.toFixed(1) + ") m on your map facing " + Math.round(l.p.h) + " degrees";
-      if (l.p.room) s += " in the " + l.p.room;
+    if (posed(l.p)) {
+      s += ", standing at (" + (+l.p.x).toFixed(1) + ", " + (+l.p.y).toFixed(1) + ") m on your map facing " + Math.round(+l.p.h) + " degrees";
+      if (typeof l.p.room === "string" && l.p.room) s += " in the " + l.p.room;
     }
     return s + "]";
   }
@@ -88,6 +100,13 @@
     var d = 0;
     for (var i = 0; i < a.g.length; i++) d += Math.abs(a.g[i] - b.g[i]);
     return d / a.g.length < SAME_GREY;
+  }
+
+  /* Whether a tick's look is worth keeping after `last`: enough time, or he has moved. */
+  function tickKeeps(last, l) {
+    if (!last || l.t - last.t >= TICK_GAP_MS) return true;
+    if (!posed(last.p) || !posed(l.p)) return false;
+    return Math.hypot(l.p.x - last.p.x, l.p.y - last.p.y) >= MOVED_M || Math.abs(wrap(l.p.h - last.p.h)) >= TURNED_DEG;
   }
 
   function parts(looks) {
@@ -107,7 +126,7 @@
 
   var api = {
     split: split, since: since, trim: trim, tag: tag, parts: parts, content: content, same: same,
-    early: early,
+    early: early, tickKeeps: tickKeeps,
     LOOK_PX: LOOK_PX, LOOK_MAX: LOOK_MAX,
   };
   if (typeof module !== "undefined" && module.exports) { module.exports = api; return; }
@@ -154,7 +173,9 @@
       rq.onsuccess = function () {
         var me = soul(), dt = dreamT(), keep = [], gone = [];
         (rq.result || []).forEach(function (l) {
-          if (l && typeof l.j === "string" && isFinite(+l.t) && l.soul === me && l.t > dt) keep.push(l); else gone.push(l);
+          if (!l || typeof l.j !== "string" || !isFinite(+l.t)) { if (l && l.id !== undefined) gone.push(l); return; }
+          if (l.soul !== me) { if (Date.now() - l.t > STALE_MS) gone.push(l); return; }
+          if (l.t > dt) keep.push(l); else gone.push(l);
         });
         drop(gone);
         var have = {};
@@ -185,15 +206,18 @@
   }
 
   root.gbLooks = {
-    /* From think(), with the picture this thought sends (its time and base64 jpeg). */
-    add: function (f, eye) {
+    /* From think(), with the picture this thought sends (its time and base64 jpeg), the eye,
+       when the thought began, and whether it was a tick. */
+    add: function (f, eye, at, tick) {
       if (!f || typeof f.j !== "string" || !f.j || !isFinite(+f.t)) return;
       var me = soul(), t = +f.t, p = pose();
+      at = isFinite(+at) ? +at : t;
       if (pile.some(function (l) { return l.t === t; })) return;
       shrink(f.j, function (j, g) {
         if (!j || soul() !== me) return;
-        var l = { id: me + ":" + t, soul: me, t: t, j: j, g: g, eye: eye === "b" ? "b" : "f", p: p };
+        var l = { id: me + ":" + t, soul: me, t: t, at: at, j: j, g: g, eye: eye === "b" ? "b" : "f", p: p };
         if (same(pile[pile.length - 1], l)) return;
+        if (tick && !tickKeeps(pile[pile.length - 1], l)) return;
         var before = pile;
         pile = trim(since(pile.concat([l]), dreamT()));
         drop(before.filter(function (x) { return pile.indexOf(x) < 0; }));

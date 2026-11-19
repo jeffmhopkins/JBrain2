@@ -5070,8 +5070,8 @@ LOOKS_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         "  if(frames.length){ try{ _lastLook={j:frames[frames.length-1].j",
-        "  if(frames.length&&window.gbLooks){ try{ window.gbLooks.add(frames[frames.length-1],_eyeAt);"
-        " }catch(_gbLk){} }\n"
+        "  if(frames.length&&window.gbLooks){ try{ window.gbLooks.add(frames[frames.length-1],_eyeAt,"
+        '_gbIssT,kind==="tick"); }catch(_gbLk){} }\n'
         "  if(frames.length){ try{ _lastLook={j:frames[frames.length-1].j",
         1,
     ),
@@ -5080,6 +5080,12 @@ LOOKS_PATCHES: list[tuple[str, str, str, int]] = [
         '+":"+(camOn?1:0)+":"+camFacing; }',
         '+":"+(camOn?1:0)+":"+camFacing+(typeof window!=="undefined"&&window.gbLooks?'
         '":"+window.gbLooks.key():""); }',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "helps aim his eye (sight lines, FOV). stays on this phone, never saved.",
+        "helps aim his eye (sight lines, FOV). a small copy rides his thoughts until he dreams.",
         1,
     ),
 ]

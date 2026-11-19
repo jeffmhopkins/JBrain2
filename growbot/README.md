@@ -726,11 +726,17 @@ since the last turn he kept ride one message at the end of the history; looks wh
 history window has dropped ride one message ahead of the talk that only grows at its end. A look
 that shows what the last one did (same spot, same heading, near-identical picture) is not kept.
 
-A dream clears them. Past 160 looks the older half goes in one step (one cache break, not one a
-turn). The pile is kept in the phone's IndexedDB too, so a reload keeps the day. At the creature's
-picture floor (`CREATURE_IMAGE_MIN_TOKENS`, 256) a small look still costs ~270 tokens, the same as
-a full frame, so the box charges each picture at its real size against that floor
-(`openai_slot_fit.image_tokens`) and the GrowBot slot holds 128k. Fine detail still needs a fresh
+A look rides in the turn whose thought sent it, never in a turn the box has already read. A tick
+(no person in the thought) keeps its look only after 30 s or a move, so watch ticks while he is
+carried or walking don't fill the pile in minutes. A dream clears them. Past 60 looks the older
+half goes in one step (one cache break, not one a turn). The pile is kept in the phone's
+IndexedDB too, so a reload keeps the day; another persona's looks are left alone for three days.
+
+At the creature's picture floor (`CREATURE_IMAGE_MIN_TOKENS`, 256) a small look still costs ~270
+tokens, the same as a full frame, so the box charges each picture at its real size against that
+floor (`openai_slot_fit.image_tokens`) rather than a flat 4096. The cap of 60 keeps a cold read of
+the whole pile (after a halving or an engine restart) inside the turn's 90 s fuse until that read
+is measured on the box; a bigger pile needs that number first. Fine detail still needs a fresh
 full-size look.
 
 ### His view all around, and choosing where to go

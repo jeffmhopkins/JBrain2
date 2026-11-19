@@ -577,10 +577,11 @@ def _jpeg(w: int, h: int) -> dict[str, Any]:
 
 def test_a_days_small_looks_fit_the_creatures_slot(tmp_path: Path) -> None:
     """growbot-looks.js: a full pile of small looks rides every turn. At the creature's floor
-    each costs ~270 tokens, not the flat 4096 that would refuse the turn."""
+    each costs ~270 tokens, not the flat 4096 that would refuse the turn. Sixty of them and a
+    frame stay well inside the slot, with room for the prompt and the talk."""
     res = _Residency()
     app, auth, gw = _app(tmp_path, models=(_FLASH,), residency=res, active="flash-next")
-    looks = [{"role": "user", "content": [_jpeg(120, 160)] * 160}]
+    looks = [{"role": "user", "content": [_jpeg(120, 160)] * 60}]
     body = {"model": _FLASH, "messages": [*looks, {"role": "user", "content": [_jpeg(240, 320)]}]}
     assert TestClient(app).post(_COMPLETIONS, json=body, headers=auth).status_code == 200
     assert len(gw.sent) == 1
@@ -589,7 +590,8 @@ def test_a_days_small_looks_fit_the_creatures_slot(tmp_path: Path) -> None:
     estimate = openai_slot_fit.estimate_prompt_tokens(
         _FLASH, sent, image_floor=growbot_llm.CREATURE_IMAGE_MIN_TOKENS
     )
-    assert 161 * 256 <= estimate <= 161 * 300
+    assert 61 * 256 <= estimate <= 61 * 300
+    assert estimate + 9_000 + 16_000 < FLASH_NEXT_POOL.cap(GROWBOT_ROLE)
 
 
 def test_a_picture_is_charged_at_its_size_against_the_floor() -> None:

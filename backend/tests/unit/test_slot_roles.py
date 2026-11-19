@@ -230,8 +230,7 @@ def test_growbot_has_its_own_slot_appended_last() -> None:
     growbot = FLASH_NEXT_POOL.reservation(SlotRole.GROWBOT)
     assert growbot.slot == FLASH_NEXT_POOL.n_slots - 1 == 10
     assert growbot.overflow is None
-    # Room for a day's looks beside the prompt and the talk (growbot-looks.js).
-    assert growbot.cap_tokens == 131_072
+    assert growbot.cap_tokens == 2 * FLASH_NEXT_POOL.cap(SlotRole.PET)
     assert slot_roles.GROWBOT_ROLE is SlotRole.GROWBOT
     assert SlotRole.GROWBOT not in slot_roles.TASK_ROLES.values()
 
