@@ -816,6 +816,14 @@ done when no edge is left he can reach, or after ten seconds with no fed pose (`
 depth source with no floor label frees a clear column as far as the picture reaches instead.
 It keeps the grid in page memory; the persona's map is unchanged.
 
+A move the page refuses (legs cooling after a jolt, the duty budget) is waited out, not held
+against the edge he was going to; 40 refusals in a row end the run (`no_legs`), and no route
+skills at all end it at once (`no_skills`). Tipped onto his nose (lying screen up), he gets
+himself up with the Body tab's get-up and looks round again, up to three tries without a walk
+between them before the run ends `down`; `?exploreup=0` leaves him lying. Turning in place to a
+point nearly behind him, he keeps to the side he started turning, so a wobble across 180
+degrees can't swing him left and right.
+
 ### Visual memories (wave G4d)
 
 The saved views upstream keeps in IndexedDB (`v3/visual-memory.js`) live on the box with the

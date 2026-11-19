@@ -346,6 +346,17 @@
     // the frontier: he waits it out. REFUSED_MAX in a row (200 s, over three of the duty
     // budget's 60 s windows) is legs that won't move.
     var REST_MS = 5000, REFUSED_MAX = 40;
+    // Tipped onto his nose mid-walk (screen up, still), he gets himself up with the Body tab's
+    // get-up and looks round again: in the sim battery he tipped in 11 of 12 houses and lay
+    // there for the rest of the run, 45% of all its time. UPS_MAX tries without a walk between
+    // them ends the run as "down". ?exploreup=0 leaves him lying.
+    var UP_WAIT_MS = 20000, UPS_MAX = 3, upOn = true;
+    try { upOn = new URLSearchParams(location.search).get("exploreup") !== "0"; } catch (e) {}
+    function lying() {
+      try {
+        return window.GBGetupWire.posture(_wireSamples, performance.now()).kind === "screen_up";
+      } catch (e) { return false; }
+    }
     var ex = null, timer = null;
     var busy = function () {
       try { return typeof _motion !== "undefined" && !!_motion; } catch (e) { return false; }
@@ -354,6 +365,19 @@
     function beat() {
       if (!ex || ex.done) return;
       if (Date.now() < ex.restT) return;
+      if (lying()) {
+        if (!upOn || ex.ups >= UPS_MAX || typeof window.gbGetUp !== "function") {
+          ex.done = "down"; log("grid_explored", { done: ex.done, ups: ex.ups });
+          return;
+        }
+        ex.ups++;
+        log("grid_getup", { n: ex.ups });
+        window.gbGetUp();
+        ex.restT = Date.now() + UP_WAIT_MS;
+        // A route he fell on is over: he looks round from where he stands again.
+        ex.phase = "look"; ex.looks = 0;
+        return;
+      }
       if (ex.phase === "go") {
         var st = window.gbMap.goState();
         // A route's walk can still be loading its skills when it is asked: not ended yet.
@@ -429,7 +453,7 @@
       // and is judged by (goal), while giving up gives up the frontier itself (front).
       var goal = nx.points[nx.points.length - 1] || nx.goal;
       if (window.gbMap.go(nx.points)) {
-        ex.refused = 0;
+        ex.refused = 0; ex.ups = 0;
         ex.phase = "go"; ex.goal = goal; ex.front = nx.goal; ex.goT = Date.now(); ex.goM = Math.hypot(goal.x - +h.x, goal.y - +h.y);
       }
       else if (!(window.gbOwnGoReady && window.gbOwnGoReady())) {
@@ -447,7 +471,7 @@
     api.explore = function (on) {
       if (timer) { clearInterval(timer); timer = null; }
       if (!on) { ex = null; return null; }
-      ex = { phase: "look", looks: 0, failed: [], ended: [], arrived: [], tries: 0, done: "", goal: null, started: false, waitT: 0, restT: 0, refused: 0 };
+      ex = { phase: "look", looks: 0, failed: [], ended: [], arrived: [], tries: 0, done: "", goal: null, started: false, waitT: 0, restT: 0, refused: 0, ups: 0 };
       timer = setInterval(function () { try { beat(); } catch (e) { log("grid_error", { e: String(e).slice(0, 120) }); } }, BEAT_MS);
       return api.state();
     };

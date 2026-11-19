@@ -235,7 +235,7 @@ def test_a_frontier_running_back_to_his_feet_is_still_a_way_on() -> None:
 # The page half with its neighbours stubbed: a fed pose (FED) that moves FRAC of the way to his
 # last route's end each beat, routes that end WHY at once, and a beat run by hand until he is
 # done or has set off STOP times. The first REFUSE routes asked for are refused, as the page
-# refuses a walk while his legs cool after an abort.
+# refuses a walk while his legs cool after an abort. RETIP tips him over again after each walk.
 _PAGE = """
 let now=0, beatFn=null, pos={x:1,y:1.5,h:0}, isFed=FED;
 global.document={}; global.window=global;
@@ -244,10 +244,15 @@ Date.now=()=>now;
 global.logEv=()=>{};
 global.runGait=()=>{};
 global.gbOwnGoReady=()=>READY;
+let down=DOWN, ups=0;
+global._wireSamples=[]; global.performance={now:()=>now};
+global.GBGetupWire={posture:()=>({kind:down?"screen_up":"up"})};
+global.gbGetUp=()=>{ups++; if(UPWORKS) down=false;};
 global.gbPose={source:()=>isFed?"fed":"reckoned"};
 let goes=0, last=null, refuse=REFUSE, asked=0;
 global.gbMap={map:()=>({here:pos}), turn:()=>(TURNS?{dir:"left",turn:90,secs:9}:null),
-  go:(pts)=>{asked++; if(refuse-->0) return false; goes++; last=pts[pts.length-1]; return true;},
+  go:(pts)=>{asked++; if(refuse-->0) return false; goes++; last=pts[pts.length-1];
+    if(RETIP) down=true; return true;},
   goState:()=>last?{why:WHY}:null};
 delete require.cache[require.resolve(GRID)];
 const P=require(GRID);
@@ -257,7 +262,7 @@ for(let b=0;b<3000&&!P.state().explore.done&&goes<STOP;b++){
   now+=500; beatFn();
   if(last){ pos={x:pos.x+(last.x-pos.x)*FRAC,y:pos.y+(last.y-pos.y)*FRAC,h:0}; }
 }
-console.log(JSON.stringify({st:P.state().explore, goes, asked, now}));
+console.log(JSON.stringify({st:P.state().explore, goes, asked, now, ups}));
 """
 
 
@@ -269,6 +274,9 @@ def _page(
     refuse: int = 0,
     ready: bool = True,
     turns: bool = False,
+    down: bool = False,
+    up_works: bool = True,
+    retip: bool = False,
 ) -> Any:
     return _node(
         _PAGE.replace("GRID", json.dumps(str(_GRID)))
@@ -279,6 +287,9 @@ def _page(
         .replace("REFUSE", str(refuse))
         .replace("READY", json.dumps(ready))
         .replace("TURNS", json.dumps(turns))
+        .replace("UPWORKS", json.dumps(up_works))
+        .replace("RETIP", json.dumps(retip))
+        .replace("DOWN", json.dumps(down))
     )
 
 
@@ -349,3 +360,17 @@ def test_a_refused_walk_is_waited_out_not_counted_against_the_frontier() -> None
     # stub) he never gets past looking round to set off anywhere.
     stalled = _page(True, turns=True)
     assert stalled["st"]["done"] == "no_legs" and stalled["goes"] == 0
+
+
+def test_tipped_onto_his_nose_he_gets_up_and_explores_on() -> None:
+    # In the sim battery he tipped in 11 of 12 houses and lay there for the rest of the run.
+    got = _page(True, stop=3, down=True)
+    assert got["ups"] == 1 and got["goes"] == 3
+    # A get-up that never stands him is tried a few times, then the run ends as "down".
+    stuck = _page(True, down=True, up_works=False)
+    assert stuck["st"]["done"] == "down" and stuck["ups"] == 3 and stuck["goes"] == 0
+    # Standing, he is never told to get up.
+    assert _page(True, stop=3)["ups"] == 0
+    # The three tries are per fall, not per run: tipped after every walk, he keeps going.
+    often = _page(True, stop=6, retip=True)
+    assert often["goes"] == 6 and often["ups"] > 3 and often["st"].get("done") != "down"

@@ -127,6 +127,11 @@ class FakeBox:
     # Every model call and answer, for the run's timeline.
     calls: list[dict[str, Any]] = field(default_factory=list)
     t0: float = field(default_factory=time.monotonic)
+    # The run's clock for call times, so they line up with its timeline.
+    clock: Callable[[], float] | None = None
+
+    def _t(self) -> float:
+        return self.clock() if self.clock else round(time.monotonic() - self.t0, 2)
 
     # ------------------------------------------------------------------ dispatch
 
@@ -272,7 +277,7 @@ class FakeBox:
 
     async def llm(self, body: bytes, stream: bool) -> Reply:
         req = json.loads(body or b"{}")
-        call: dict[str, Any] = {"request": req, "t": round(time.monotonic() - self.t0, 2)}
+        call: dict[str, Any] = {"request": req, "t": self._t()}
         self.calls.append(call)
         try:
             text = await self.model(req)

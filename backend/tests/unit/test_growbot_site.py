@@ -4772,8 +4772,9 @@ def test_the_body_tabs_get_up_is_an_explicit_ask_that_opens_the_runner_only_for_
     assert got["ok"] == "started" and got["seen"] == [True, True, True]
     assert got["after"] is False
     assert [s["explicit"] for s in got["starts"]] == [True, True, True]
-    # Its own id space, so a spoken ask's one-try rule never refuses a press.
-    assert [s["id"] for s in got["starts"]] == [-1, -2, -3] and got["starts"][0]["age"] == 0
+    # Its own id space, so a spoken ask's one-try rule never refuses a press; never -1, the
+    # runner's "nothing spent yet", which refused the first press after a load (sim).
+    assert [s["id"] for s in got["starts"]] == [-2, -3, -4] and got["starts"][0]["age"] == 0
     # A first tick that ends the run, and a start it refuses, both come back in its words.
     assert got["moves"][1]["state"] == "cancelled"
     assert got["moves"][1]["reason"] == "words for timer_gap"

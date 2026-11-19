@@ -84,8 +84,14 @@
       interval: 40,
     }));
   };
-  setInterval(fire, 40);
-  window.__simMotion = (m) => { latest = m; };
+  // On the run's locked clock (run.Options.lockstep) the run fires them once per control tick
+  // instead: this interval may have been set before the page's clock was swapped for the run's,
+  // and would then fire on the wall clock while performance.now() stood still between ticks.
+  setInterval(() => { if (!window.__simLocked) fire(); }, 40);
+  window.__simMotion = (m, locked) => {
+    latest = m;
+    if (locked) { window.__simLocked = true; fire(); }
+  };
 
   // What the creature does, for the run's timeline: its own event log, as it happens.
   window.__simEvents = [];

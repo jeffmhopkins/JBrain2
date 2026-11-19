@@ -49,6 +49,9 @@ DOWN_S = 3.0
 EXPLORERS = ("walls", "grid")
 # Past its minutes, how long a child run may take to start, score and write its report.
 CHILD_SLACK_S = 300.0
+# Its minutes are the physics clock's (run.Options.lockstep): a loaded machine runs them
+# slower than the wall clock, by up to this much before a child counts as hung.
+CHILD_SLOW_X = 4.0
 
 
 @dataclass
@@ -303,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
             s, k, t0, p = item
             if p.poll() is None:
                 # A hung browser must not hold up the whole battery's table.
-                if time.monotonic() - t0 > args.minutes * 60 + CHILD_SLACK_S:
+                if time.monotonic() - t0 > args.minutes * 60 * CHILD_SLOW_X + CHILD_SLACK_S:
                     p.kill()
                     p.wait()
                     running.remove(item)

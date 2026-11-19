@@ -96,29 +96,37 @@ Each wave is tested in the sim first on true pose and depth, so a failure points
   8-connected cells, costed to keep off walls, never through floor not seen), turning on arrival
   only toward headings that still hide unseen floor, backing off after a stuck route and never
   retrying a goal it failed. Things he names are kept on the grid, joined within 0.75 m.
-  Battery, 25 sim-minutes, true pose and depth (2026-11-19):
+  The sim's page clock is now locked to its physics clock (`dave_sim/run.py`): page timers,
+  sensors and the camera advance only with physics ticks, so a busy host slows the run instead
+  of squeezing the page's control loop between bursts of physics. On the wall clock the last
+  battery tipped him in 11 of 12 houses (13 falls, every one after a burst of up to 10 physics
+  ticks back to back with the legs splayed past 135°), and he never got up, so 45% of all run
+  time was spent lying down. Exploring now gets him up when he is lying (up to three times
+  between accepted moves; `?exploreup=0` turns it off), and waits out a refused move instead of
+  dropping the frontier. Battery, 25 sim-minutes, true pose and depth, locked clock
+  (2026-11-19):
 
-  | run | old (`walls`) rooms | grid rooms | grid walked m | grid stuck s | grid falls |
-  | --- | --- | --- | --- | --- | --- |
-  | flat-s0 | 1/5 | timed out | | | |
-  | flat-s1 | 1/5 | 1/5 | 3.46 | 0 | 1 |
-  | flat-s2 | 1/5 | 3/5 | 25.94 | 168 | 0 |
-  | maze1-s0 | 1/6 | 5/6 | 29.21 | 237 | 0 |
-  | maze1-s1 | 2/6 | 6/6 | 22.66 | 218 | 0 |
-  | maze1-s2 | 4/6 | 5/6 | 17.21 | 522 | 0 |
-  | maze2-s0 | 3/6 | 6/6 | 31.9 | 0 | 0 |
-  | maze2-s1 | 3/6 | 5/6 | 31.71 | 0 | 0 |
-  | maze2-s2 | 1/6 | 5/6 | 30.81 | 108 | 0 |
-  | maze3-s0 | 1/6 | 6/6 | 26.54 | 0 | 0 |
-  | maze3-s1 | 2/6 | 6/6 | 31.72 | 0 | 0 |
-  | maze3-s2 | 1/6 | 4/6 | 13.22 | 394 | 0 |
+  | run | rooms | walked m | stuck s | falls |
+  | --- | --- | --- | --- | --- |
+  | flat-s0 | 4/5 | 33.06 | 114 | 0 |
+  | flat-s1 | 4/5 | 38.06 | 0 | 0 |
+  | flat-s2 | 4/5 | 36.53 | 0 | 0 |
+  | maze1-s0 | 6/6 | 31.73 | 0 | 0 |
+  | maze1-s1 | 6/6 | 26.57 | 188 | 0 |
+  | maze1-s2 | 6/6 | 35.47 | 0 | 0 |
+  | maze2-s0 | 6/6 | 33.18 | 0 | 0 |
+  | maze2-s1 | 6/6 | 38.13 | 0 | 0 |
+  | maze2-s2 | 4/6 | 7.86 | 1055 | 0 |
+  | maze3-s0 | 6/6 | 27.49 | 287 | 0 |
+  | maze3-s1 | 6/6 | 35.21 | 0 | 0 |
+  | maze3-s2 | 6/6 | 36.10 | 0 | 0 |
 
-  Every room in 4 of 12 (old 0 of 12), 52 of 66 rooms in the runs that finished (old 21 of 71),
-  falls 1 (old 6). The table predates the review's fixes (a frontier reaching back to his feet
-  is no longer dropped, an edge arrived at twice is given up), so the next battery re-measures.
-  Still to do in E2: the flat (one run hung, one fell by the lamp, and the
-  kitchen is the room most missed), fewer and shorter looks so the houses finish inside the
-  time, and the inspection phase with major items identified in the table.
+  Every room in 8 of 12 (the wall-clock battery before it: 2 of 12), 64 of 69 rooms, no falls.
+  The tips were mostly the sim's clock, not his gait. Still to do in E2: the flat's kitchen is
+  missed in all three (he takes the nearest frontier, and its door is left until after the time
+  runs out), so frontier choice should favour edges that open onto large unseen areas; looking
+  round is 31% of the time, so fewer and shorter looks; `maze2-s2` sat stuck for 17 minutes;
+  and the inspection phase with major items identified in the table.
 - **E3 — noisy depth** (`--vision noisy`), true pose. *Pass:* ≥10/12, ≥80% identified.
 - **E4 — estimated pose**, web only. *Pass:* ≥9/12, ≥75% identified, never in the wrong room by
   his belief for more than 60 s. If it misses, re-anchor to known places by matching a survey

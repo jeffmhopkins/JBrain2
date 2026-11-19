@@ -28,6 +28,18 @@ The page is served as written except for one patch: the face detector runs on Me
 CPU path, because headless Chromium's software GL takes ~250 ms a frame and the tracker
 drops frames that old. `box.SIM_PATCHES` fails the run if the patch stops matching.
 
+The page's clock is the physics clock (`Options.lockstep`, on by default): Playwright's page
+clock holds Date, timers, `performance.now` and animation frames, and each 40 ms control tick
+of physics is followed by the same 40 ms of the page's time. A loaded machine makes a run take
+longer, not walk differently, and the loop never runs ahead of real time, since the model's
+latency is real. On the wall clock (lockstep off) the loop ran owed physics ticks back to back
+on one stale leg command, up to ten at a time with three runs on four cores, and the walk loop
+ticked late and uneven. Scenario waits, the chip's clock, model call times and every timeline
+time are on the run's clock too, and the phone's motion sensors fire once per tick rather than
+on their own timer. The camera's frame rate is capped on the run's clock, but physics doesn't
+wait for a frame, so a slow render still means fewer frames. A physics loop that dies ends
+every wait with its error instead of freezing the run's clock.
+
 Live runs share the creature lane with the real robot: the box answers 409 while the real
 Dave has spoken in the last two minutes, and a run waits briefly for quiet rather than
 taking his slot, then lets that turn fail. A run is only meaningful while the robot is
@@ -115,7 +127,13 @@ times a second (`growbot-map.js` `gbPose`), so a planner is judged on a perfect 
 walls` is today's round of the walls; `--explorer grid` is the map and frontier explorer
 (`gbGrid.explore`), which needs `--vision` and `--pose truth` for now. With `grid`, each run's
 `plan.svg` also draws his grid under the rest: floor he has seen in green, what he hit in dark
-purple, and the things he named as pink dots.
+purple, and the things he named as pink dots. Its minutes are the physics clock's; a child may
+take four times as long on the wall clock before it counts as hung. Each state row in a run's
+`timeline.json` also says what the robot touches other than the floor (`touch`, geom names) and
+the most physics ticks run back to back since the last row (`burst`, 1 on the locked clock).
+
+`gets_up_from_nose_down` tips him onto his nose as the forward walk left him in the battery
+(screen up, legs limp) and runs the Body tab's get-up: he is standing again within seconds.
 
 ## Scenarios
 
