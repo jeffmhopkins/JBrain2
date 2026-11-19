@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=11995a4181e8"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-vision.js?v=065e966e3518"></script><script src="/growbot-grid.js?v=73fa8d8f8b5f"></script><script src="/growbot-pano.js?v=139904412435"></script><script src="/growbot-map.js?v=a59cbabf6b98"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=5a64f14c6bed"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-vision.js?v=065e966e3518"></script><script src="/growbot-grid.js?v=73fa8d8f8b5f"></script><script src="/growbot-pano.js?v=139904412435"></script><script src="/growbot-map.js?v=a59cbabf6b98"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -10084,13 +10084,13 @@ var _motion=null, _walkLog=[], _motionGen=0;
    200ms beat vs the 300ms release leaves 100ms of margin for a late packet.
    Explicit pose holds keep their requested duration. Completed leg policies use a 60-second
    inactivity hold, renewed by interaction or fresh active-task replies. Idle expiry reclines. ---- */
-var _holdLog=null, _holdWasUp=false;
+var _holdLog=null, _holdWasUp=false, _gbHoldTipN=0;
 var _holdRfx="";   // 0925 R2: the reflex whose move started this hold (moveLegs sets it right after holdPose), so its end keeps main's fold (see _restTall)
 var HOLD_MAX_S=600, HOLD_BEAT_MS=200, HOLD_IDLE_S=60, _holdIdle=false, _holdIv=null, _holdPose=null, _holdAlt=null, _holdFlip=0, _holdEnd=0, _holdFrom=0;   /* 0811 (Brit): the old 20s "duty budget" was brownout protection for a FAULTY board and is retired — the field cost was real (a tester's creature could not watch her fish tank for more than a few seconds, 16 hold attempts in one session). 600s is not a duty budget, it is a battery-sanity bound on a forgotten hold; re-holds are free and unlimited. */
 function holdStop(sit){
   try{ if(sit&&_holdPose&&window._faceTrack) window._faceTrack.yieldTo("a pose hold"); }catch(e){}
   if(_holdIv){ clearInterval(_holdIv); _holdIv=null; }
-  var had=!!_holdPose; _holdIdle=false; _holdPose=null; _holdAlt=null; _holdEnd=0; _holdFrom=0; _holdLog=null; _holdWasUp=false; _holdRfx="";/*LAB-GETUP{*/_holdRec=null;/*}LAB-GETUP*/
+  var had=!!_holdPose; _holdIdle=false; _holdPose=null; _holdAlt=null; _holdEnd=0; _holdFrom=0; _holdLog=null; _holdWasUp=false; _gbHoldTipN=0; _holdRfx="";/*LAB-GETUP{*/_holdRec=null;/*}LAB-GETUP*/
   if(sit&&had){ try{ if(window._ftForgetPose) window._ftForgetPose(); if(window._ftSettle) window._ftSettle(2200); }catch(e){} }   /* folding then letting go: the old stance is gone; settle = the 700ms fold + the drop */
   if(had){ _legRelaxT=Date.now()+(sit?700:0); _relNotOwnT=(arguments[1]||(typeof linMag!=="undefined"&&linMag>11))?_legRelaxT:0; }
   if(had&&!sit&&!arguments[1]){ try{ if(!(typeof linMag!=="undefined"&&linMag>11)){ selfMoveUntil=Math.max(selfMoveUntil,Date.now()+(typeof SELF_TAIL_MS!=="undefined"?SELF_TAIL_MS:3500)); if(typeof _ownUntil!=="undefined") _ownUntil=Math.max(_ownUntil,Date.now()+1000); } }catch(e){} }   // 1005: a limp release drops the robot by itself, so its slump keeps the 3.5 s bump window (not after a grab, lin > 11; not for a hand-off, holdStop(false,1), where the legs stay driven)
@@ -10144,7 +10144,7 @@ function holdPose(pose,playMs,secs){
     var _ay=(typeof accel!=="undefined"&&accel)?(accel.y||0):0, _al=(typeof linMag!=="undefined")?linMag:0;
     if(n>_holdFrom+800){                                   // let the pose settle before arming
       if(!_holdWasUp && _ay>=5.5) _holdWasUp=true;         // remember whether this hold was ever a STAND (a bow-hold is legitimately not upright)
-      if(_al>11 || (_holdWasUp && _ay<5.5)){ try{ logEv("hold_abort",{lin:Math.round(_al),y:Math.round(_ay)}); }catch(e){} try{ _downLift=0; }catch(_dl){}   // 0928 (round 5): knocked over, so a pending lie-down lift goes with the hold (round 4: a knocked "look at the door" hold kept it, and the next nod stood the robot up)
+      if(_holdWasUp) _gbHoldTipN=_ay<5.5?_gbHoldTipN+1:0; if(_al>11 || (_holdWasUp && _gbHoldTipN>=3)){ try{ logEv("hold_abort",{lin:Math.round(_al),y:Math.round(_ay)}); }catch(e){} try{ _downLift=0; }catch(_dl){}   // 0928 (round 5): knocked over, so a pending lie-down lift goes with the hold (round 4: a knocked "look at the door" hold kept it, and the next nod stood the robot up)
         try{ if(window._ftTipped) window._ftTipped(_al>11?"hold_grabbed":"hold_tipped"); }catch(e){}   /* face tracking must not take the legs straight back */
         try{ if(typeof _partsHalt==="function") _partsHalt(_al>11?"hold_grabbed":"hold_tipped"); }catch(_ph){}   // 1104 parts: a knocked hold lets the parts go too, with or without the face lane (PARTS-APP)
         holdStop(false); return; }                          // hands or the floor won: go limp NOW and let the real reflexes speak
@@ -10176,15 +10176,15 @@ function carryLegMotion(restPose){   // restPose (0923, Brit): a COMPLETED walk 
   try{ if(!_imuWhy) _runEnd(_motion,"superseded"); }catch(e){}   // 0924 review P2: a new move replaced a running walk/spin -> its one end row (see _runEnd). A finished walk plumbs _imuWhy="done" and writes its own.
   if(paused||document.hidden||!window._body||!window._body.ready||!_bodyAlive()){stopMotion();return false;}
   if(_wheels){ stopMotion(); return false; }
-  var why=_imuWhy||"superseded", last=(restPose&&why==="done")?restPose:(_motion&&_motion.lastPose), report=_motion&&_motion.report;   /* 0923 bench: the idle hold pinned wherever the stride stopped (e.g. L40/R124, a wide split), re-sent every 200ms and renewed for 60s past the last interaction — one servo strained audibly and drained the pack. Only a finished walk passes restPose; a superseding move still carries the live frame so the next motion doesn't jerk. */
+  var why=_imuWhy||"superseded", last=(restPose&&why==="done")?restPose:(_motion&&_motion.lastPose), report=_motion&&_motion.report, _gbFrom=(restPose&&why==="done"&&_motion&&_motion.lastPose)?{l:+_motion.lastPose.l,r:+_motion.lastPose.r}:null;   /* 0923 bench: the idle hold pinned wherever the stride stopped (e.g. L40/R124, a wide split), re-sent every 200ms and renewed for 60s past the last interaction — one servo strained audibly and drained the pack. Only a finished walk passes restPose; a superseding move still carries the live frame so the next motion doesn't jerk. */
   _motionGen++; if(why==="done") _gbDoneGen[_motionGen]=1; else delete _gbDoneGen[_motionGen];
   try{ _bodyBootClose(_motion); }catch(_be){}
   if(_motion){ if(_motion.loopIv)clearTimeout(_motion.loopIv); if(_motion.timer)clearTimeout(_motion.timer); _motion=null; }
   if(last&&window._body&&window._body.ready&&_bodyAlive()&&!paused&&!document.hidden){
-    var _gbG1=_motionGen; holdPose(last,0,HOLD_IDLE_S,true);
+    var _gbG1=_motionGen, _gbGl=(_gbFrom&&typeof window.gbGlideMs==="function")?window.gbGlideMs(_gbFrom,last):0; holdPose(last,_gbGl,HOLD_IDLE_S,true); if(_gbGl) window.gbGlideLegs(_gbFrom,last,_gbGl,_holdPose);
     if(why==="done") for(var _gbG=_gbG1+1;_gbG<=_motionGen;_gbG++) _gbDoneGen[_gbG]=1;
     // Renew immediately; don't spend a timer beat of the firmware's dead-man margin.
-    try{window._body.pose(last.l,last.r);}catch(e){stopMotion();return false;}
+    try{ if(!_gbGl) window._body.pose(last.l,last.r); }catch(e){stopMotion();return false;}
   }
   try{if(_IMULOG==="1")_imuEnd(_imuWhy||"superseded");_imuWhy="";}catch(e){}
   _moveReport(report,why==="done"?"completed":"cancelled",why,{holding:!!_holdPose});

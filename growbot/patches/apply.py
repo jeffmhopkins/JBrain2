@@ -5036,6 +5036,52 @@ REST_STAND_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += REST_STAND_PATCHES
 
+# A finished walk's legs glide from its last stride to the hold's rest stance (growbot-box.js
+# gbGlideLegs) instead of one command at full servo speed, and the hold lets go on a tip only
+# once it lasts three beats (600 ms): after a walk ended, the owner's body test (2026-11-19) saw
+# the hold go limp at a wobble and drop him three times.
+GLIDE_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        'var why=_imuWhy||"superseded", last=(restPose&&why==="done")?restPose:'
+        "(_motion&&_motion.lastPose), report=_motion&&_motion.report;",
+        'var why=_imuWhy||"superseded", last=(restPose&&why==="done")?restPose:'
+        "(_motion&&_motion.lastPose), report=_motion&&_motion.report,"
+        " _gbFrom=(restPose&&why===\"done\"&&_motion&&_motion.lastPose)?"
+        "{l:+_motion.lastPose.l,r:+_motion.lastPose.r}:null;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "var _gbG1=_motionGen; holdPose(last,0,HOLD_IDLE_S,true);",
+        "var _gbG1=_motionGen, _gbGl=(_gbFrom&&typeof window.gbGlideMs===\"function\")?"
+        "window.gbGlideMs(_gbFrom,last):0; holdPose(last,_gbGl,HOLD_IDLE_S,true);"
+        " if(_gbGl) window.gbGlideLegs(_gbFrom,last,_gbGl,_holdPose);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "try{window._body.pose(last.l,last.r);}catch(e){stopMotion();return false;}",
+        "try{ if(!_gbGl) window._body.pose(last.l,last.r); }catch(e){stopMotion();return false;}",
+        1,
+    ),
+    ("v3/next.html", "var _holdLog=null, _holdWasUp=false;", "var _holdLog=null, _holdWasUp=false, _gbHoldTipN=0;", 1),
+    (
+        "v3/next.html",
+        "_holdLog=null; _holdWasUp=false; _holdRfx=\"\";",
+        "_holdLog=null; _holdWasUp=false; _gbHoldTipN=0; _holdRfx=\"\";",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "if(_al>11 || (_holdWasUp && _ay<5.5)){",
+        "if(_holdWasUp) _gbHoldTipN=_ay<5.5?_gbHoldTipN+1:0;"
+        " if(_al>11 || (_holdWasUp && _gbHoldTipN>=3)){",
+        1,
+    ),
+]
+PATCHES += GLIDE_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

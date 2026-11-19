@@ -4313,9 +4313,11 @@ def _trained_walk(
     turn: float = 0,
     secs: float = 1,
     go: list[dict[str, Any]] | None = None,
+    held: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     env = {
         **os.environ,
+        "GB_HELD": json.dumps(held) if held else "",
         "GB_GO": json.dumps(go) if go else "",
         "GB_TURN": str(turn),
         "GB_SECS": str(secs),
@@ -4385,6 +4387,26 @@ def test_a_trained_walk_levels_the_stance_and_steers_by_heading() -> None:
     assert got["errs"] == []
     # It spends the legs' duty budget like a stock walk.
     assert [w["ms"] for w in got["walkLog"]] == [1000]
+
+
+def test_a_trained_walk_glides_from_the_held_rest_to_its_stance() -> None:
+    # Owner's body test, 2026-11-19: from his rest (40/140) the stance's 90/90 went out as one
+    # command and threw him back on every walk start.
+    got = _trained_walk("spin_left", _LEANING, held={"l": 40, "r": 140}, wait_ms=3600)
+    poses = got["allPoses"]
+    # From where the legs were held (with this phone's trims, as the stance's 94/88 has them).
+    assert poses[0] == [44, 138]
+    stance = poses.index([94, 88])
+    # No faster than 60 degrees a second, eased, at a pose every 50 ms: a few degrees a step.
+    steps = [
+        max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+        for a, b in zip(poses[:stance], poses[1 : stance + 1], strict=True)
+    ]
+    assert max(steps) <= 6
+    assert 12 <= stance <= 22
+    # Then the stance's own settle and the walk, as before.
+    assert ["started", "stance_commands"] in got["reports"]
+    assert got["n"] >= 18 and got["errs"] == []
 
 
 def test_a_trained_walk_rests_when_the_duty_budget_is_spent() -> None:

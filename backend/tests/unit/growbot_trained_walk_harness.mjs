@@ -32,6 +32,8 @@ g._wheels = false; g.paused = false; g.dreaming = false; g.document = { hidden: 
 g.ori = { a: 0, b: 0, g: 0 }; g.accel = PHONE.accel; g.rate = PHONE.rate; g.linMag = 0;
 g._motion = null; g._motionGen = 0; g.selfMoveUntil = 0; g._gaitCoolUntil = 0; g._imuWhy = "";
 g._body = { ready: true, pose(l, r) { poses.push([l, r]); } };
+// GB_HELD: the legs held at a pose when the walk starts (a rest's hold), as _legStart reads it.
+if (process.env.GB_HELD) { const held = JSON.parse(process.env.GB_HELD); g._legStart = () => ({ mode: "anchor", anchor: held }); }
 g._bodyAlive = () => true; g.ensureIMU = () => {}; g.holdStop = () => {}; g.logEv = () => {};
 g.phoneTiltDegrees = () => 0; g.setErr = (m) => errs.push(m);
 g.calNow = () => ({ L_OFF: 4, R_OFF: -2, L_SIGN: -1, R_SIGN: 1, IMU_SIGN: [1, -1, 1], gain: 0.7 });
@@ -121,5 +123,5 @@ const teleIv = setInterval(() => { if (g._motion && g._motion.tele) tele = g._mo
 await new Promise((r) => setTimeout(r, Number(process.env.GB_WAIT || 0) || (STEER ? 3600 : 2400)));
 clearInterval(teleIv);
 const screen = shown.length ? shown[shown.length - 1].innerHTML : "";
-console.log(JSON.stringify({ go: go && { state: go.state, mv: go.mv, why: go._gbGo }, goCalls, goAsk, tele, screen, logs: logs.map((l) => l[0]), ends: logs.filter((l) => l[0] === "walk_end").map((l) => l[1]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), last: poses[poses.length - 1], errs }));
+console.log(JSON.stringify({ go: go && { state: go.state, mv: go.mv, why: go._gbGo }, goCalls, goAsk, tele, screen, logs: logs.map((l) => l[0]), ends: logs.filter((l) => l[0] === "walk_end").map((l) => l[1]), accepted, steered, estopped, estopAt, files: fed.map((f) => f.file), cmds: fed.map((f) => f.cmd), reports, walkLog: g._walkLog, fed: fed.slice(0, 3), tail: fed.slice(-2), n: fed.length, poses: poses.slice(0, 2), allPoses: process.env.GB_HELD ? poses : undefined, last: poses[poses.length - 1], errs }));
 if (FOLLOW) process.exit(0);
