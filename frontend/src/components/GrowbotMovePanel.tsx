@@ -74,6 +74,9 @@ const TRICKS: { id: GrowbotMove; label: string }[] = [
   { id: "stand_tall", label: "Stand tall" },
   // Upstream's tested get-up, from lying on its back; the creature says why when it can't.
   { id: "get_up", label: "Get up" },
+  // A fixed series of leg moves, ending in faster and faster lifts until he tips: the training
+  // sim replays it to match its body to his. Put him down on the floor he walks on first.
+  { id: "sim_match", label: "Sim match" },
 ];
 const STOCK_GESTURES = new Set<string>(["wiggle", "bow", "sway"]);
 
@@ -97,6 +100,7 @@ const DOING: Record<GrowbotMove, string> = {
   spin_escape_left: "Escape-spinning left",
   stand_tall: "Standing tall",
   get_up: "Getting up",
+  sim_match: "Matching the sim",
   wiggle: "Wiggling",
   bow: "Bowing",
   sway: "Swaying",

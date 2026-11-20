@@ -283,7 +283,8 @@ async def _list_robots(request: Request, ctx: SessionContext) -> list[RobotOut]:
 # What the Body tab can ask the creature wearing a robot to do (growbot/server/serve.py MOVES).
 # Walks and spins (escape spins too) run the creature's own policies on its phone's motion
 # sensors; stand_tall is its tall pose; get_up is upstream's tested get-up from lying on its
-# back; the gestures are its body's named keyframes, `gesture`
+# back; sim_match is the fixed leg series the training sim replays to fit its body to the robot
+# (growbot-box.js gbSimMatch); the gestures are its body's named keyframes, `gesture`
 # any of them by `name`; `look` runs a library policy (a trick) facing ahead, in place when it
 # takes a speed; stop halts whatever runs.
 Move = Literal[
@@ -295,6 +296,7 @@ Move = Literal[
     "spin_escape_right",
     "stand_tall",
     "get_up",
+    "sim_match",
     "wiggle",
     "bow",
     "sway",

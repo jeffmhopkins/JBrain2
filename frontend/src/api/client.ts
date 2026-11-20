@@ -3987,6 +3987,7 @@ export type GrowbotMove =
   | "spin_escape_right"
   | "stand_tall"
   | "get_up"
+  | "sim_match"
   | "wiggle"
   | "bow"
   | "sway"
