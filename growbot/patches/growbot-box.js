@@ -2187,7 +2187,7 @@
     // A transcript: true when the test took it, so no model turn hears it.
     heard: function (txt) {
       if (bt && bt.phase !== "result") return !!bt.heard(txt);
-      if (!btLoading && smAsked(txt)) return true;
+      if (!btLoading && !btAsking && smAsked(txt)) return true;
       return btLoading ? BT_ASK.test(String(txt || "").trim()) : btAsked(txt);
     },
   };
@@ -3068,8 +3068,13 @@
   // him asleep, so this closes the one and wakes from the other, lifts a kept pause (asking for
   // it is asking him to move), and gives the body a moment to answer before the refusals apply.
   var SM_WAIT_MS = 20000, smStarting = false;
+  // A body test drives the legs itself: the sim match waits its turn rather than take them.
+  function smBodyTestOn() {
+    try { return btAsking || !!(window.gbBodyTest && window.gbBodyTest.active()); } catch (x) { return false; }
+  }
   function smStart(src) {
     if (smStarting || (typeof _motion !== "undefined" && _motion && _motion.kind === "simmatch")) return false;
+    if (smBodyTestOn()) { setErr("the sim match waits until the body test is done"); return false; }
     smStarting = true;
     try { logEv("simmatch_asked", { src: src }); } catch (x) {}
     try { if (typeof _brainOn !== "undefined" && _brainOn && typeof brainToggle === "function") brainToggle(); } catch (x) {}
@@ -3077,17 +3082,23 @@
     try { ensureIMU(); } catch (x) {}
     var until = Date.now() + SM_WAIT_MS;
     (function wait() {
+      // Paused, put back to sleep or a body test begun while it waited: the ask is off.
+      var off = smBodyTestOn() ? "a body test started" :
+        (typeof paused !== "undefined" && paused) ? "he was paused" : "";
+      if (off) { smStarting = false; setErr("the sim match didn't start (" + off + ")"); return; }
       var ready = false;
       try { ready = !window._wakeGateUp && !!window._body && !!window._body.ready && _bodyAlive(true) && !!ori; } catch (x) {}
       if (!ready && Date.now() < until) { setTimeout(wait, 250); return; }
       smStarting = false;
+      if (window._wakeGateUp) { setErr("the sim match didn't start (he's still asleep)"); return; }
       // Still not ready: the move's own refusal says which part is missing.
       window.gbSimMatch();
     })();
     return true;
   }
   window.gbSimMatchFromPhone = smStart;
-  var SM_ASK = /^\W*(?:(?:hey\W+)?dave\W+)?(?:(?:(?:can|could|will)\W+you|let'?s|please)\W+)?(?:(?:start|run|do|begin)\W+(?:(?:a|the|your|my)\W+)?)?(?:sim|sym|same)[\s-]?match(?:ed|es)?\W*(?:(?:test|please|now|dave)\W*)*$/i;
+  window.gbSimMatchHere = function () { return !!btRobot(); };
+  var SM_ASK = /^\W*(?:(?:hey\W+)?dave\W+)?(?:(?:(?:can|could|will)\W+you|let'?s|please)\W+)?(?:(?:start|run|do|begin)\W+(?:(?:a|the|your|my)\W+)?)?(?:sim|sym)[\s-]?match(?:ed|es)?\W*(?:(?:test|please|now|dave)\W*)*$/i;
   function smAsked(txt) {
     if (!btRobot() || !SM_ASK.test(String(txt || "").trim())) return false;
     smStart("voice");
@@ -3128,6 +3139,7 @@
     return true;
   }
   function smButtons() {
+    if (!btRobot()) return;
     smWakeButton();
     if (smPanelButton() || typeof MutationObserver !== "function" || !document.body) return;
     var mo = new MutationObserver(function () { if (smPanelButton()) mo.disconnect(); });

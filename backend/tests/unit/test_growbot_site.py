@@ -5251,7 +5251,9 @@ _SM_STUB = (
     " this.disconnect=function(){ said.push('disconnect'); }; }"
     "var robot=JSON.parse(process.argv[2]);"
     "function btRobot(){ return robot; }"
+    "var bt=false, btAsking=false; function setErr(m){ said.push('err:'+m); }"
     "var window={_wakeGateUp:false, _body:{ready:true},"
+    " gbBodyTest:{active:function(){ return bt; }},"
     " gbSimMatch:function(){ said.push('simmatch'); }};"
     "var _motion=null, _brainOn=false, paused=false, ori={a:0,b:45,g:0}, alive=true;"
     "function brainToggle(){ _brainOn=!_brainOn; said.push('brain:'+_brainOn); }"
@@ -5334,6 +5336,7 @@ def test_the_sim_match_has_a_wake_screen_button_and_a_spoken_ask() -> None:
         "sim match",
         "Dave, start the sim match please",
         "let's do a sim match test",
+        "sym match",
         "same match",
         "how did the sim match go",
         "stop the sim match",
@@ -5342,9 +5345,51 @@ def test_the_sim_match_has_a_wake_screen_button_and_a_spoken_ask() -> None:
         "said.push(JSON.stringify(" + json.dumps(asks) + ".map(function(a){ var r=smAsked(a);"
         " smStarting=false; return r; })));"
     )
-    assert json.loads(said[-1]) == [True, True, True, True, False, False]
+    assert json.loads(said[-1]) == [True, True, True, True, False, False, False]
     box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
-    assert "if (!btLoading && smAsked(txt)) return true;" in box
+    assert "if (!btLoading && !btAsking && smAsked(txt)) return true;" in box
+
+
+def test_the_sim_match_leaves_a_body_test_its_legs_and_a_pause_calls_it_off() -> None:
+    """Review of #1960: a body test drives the legs itself, so an ask during one is refused in
+    words, and a body test begun or a pause made while it waits for the body calls it off."""
+    assert _sim_match_phone("bt=true; said.push(String(smStart('brain')));") == [
+        "err:the sim match waits until the body test is done",
+        "false",
+    ]
+    began = "window._body.ready=false; smStart('voice'); setTimeout(function(){ bt=true; }, 50);"
+    assert _sim_match_phone(began) == [
+        "simmatch_asked:voice",
+        "err:the sim match didn't start (a body test started)",
+    ]
+    paused = (
+        "window._body.ready=false; smStart('wake'); setTimeout(function(){ paused=true; }, 50);"
+    )
+    assert _sim_match_phone(paused) == [
+        "simmatch_asked:wake",
+        "err:the sim match didn't start (he was paused)",
+    ]
+    # Still asleep when the wait runs out: said so, and no move is sent.
+    asleep = "window._wakeGateUp=true; smStart('wake');"
+    assert _sim_match_phone(asleep) == [
+        "simmatch_asked:wake",
+        "err:the sim match didn't start (he's still asleep)",
+    ]
+
+
+def test_the_brain_panels_settings_start_the_sim_match() -> None:
+    """The bar's Brain panel (Settings tab) is the brain menu the owner opens on his phone: a Sim
+    match row there, on a robot's phone only, closes the panel and starts it."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "h+=travelRow();h+=faceMirrorRow();h+=simMatchRow();" in page
+    assert (
+        'if(c("#gbkSimMatch")){ brainPClose(); window.gbSimMatchFromPhone("settings"); return; }'
+        in page
+    )
+    row = page[page.index("function simMatchRow(){") : page.index("function showBrainLogLink(")]
+    assert 'typeof window.gbSimMatchHere!=="function"||!window.gbSimMatchHere()' in row
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.gbSimMatchHere = function () { return !!btRobot(); };" in box
 
 
 def test_the_sim_match_buttons_are_only_on_a_robots_phone() -> None:

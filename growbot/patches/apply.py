@@ -5142,6 +5142,41 @@ FACE_MIRROR_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += FACE_MIRROR_PATCHES
 
+# The Sim match from the Brain panel's Settings (owner, 2026-11-20: "I can only run this from my
+# phone and if Dave is up I can't go to that other screen. This needs to be set from the pwa brain
+# menu"). On a robot's phone only; the tap closes the panel and hands over to growbot-box.js's
+# gbSimMatchFromPhone, which wakes him from the panel's pause and waits for the body.
+_GB_SIM_MATCH_ROW_JS = (
+    "function simMatchRow(){ if(typeof window.gbSimMatchHere!==\"function\"||!window.gbSimMatchHere())"
+    " return '';\n"
+    " return '<button type=\"button\" class=\"gbkWrow\" id=\"gbkSimMatch\">"
+    "<span class=\"gbkTt\"><b>Sim match</b><small>A leg test for the training sim, ending in faster"
+    " and faster lifts until he tips. Put him on the floor he walks on and be ready to catch him"
+    "</small></span><span style=\"margin-left:auto;color:#ffb27a\">Start</span></button>';\n}\n"
+)
+SIM_MATCH_ROW_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "h+=travelRow();h+=faceMirrorRow();",
+        "h+=travelRow();h+=faceMirrorRow();h+=simMatchRow();",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function showBrainLogLink(link){",
+        _GB_SIM_MATCH_ROW_JS + "function showBrainLogLink(link){",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(c("#gbkFaceMirror")){',
+        'if(c("#gbkSimMatch")){ brainPClose(); window.gbSimMatchFromPhone("settings"); return; }\n'
+        ' if(c("#gbkFaceMirror")){',
+        1,
+    ),
+]
+PATCHES += SIM_MATCH_ROW_PATCHES
+
 # Every look he takes, kept until he dreams (owner, 2026-11-19), growbot-looks.js: each picture a
 # thought sends is kept small, tagged with when and where he took it, and replayed inside the
 # turn it was taken in, so the history ahead of a new turn still reads the same and the box

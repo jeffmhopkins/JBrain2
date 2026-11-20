@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=8ce27dadf560"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-vision.js?v=065e966e3518"></script><script src="/growbot-grid.js?v=73fa8d8f8b5f"></script><script src="/growbot-pano.js?v=139904412435"></script><script src="/growbot-looks.js?v=1fdb1b15ec15"></script><script src="/growbot-map.js?v=a59cbabf6b98"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js?v=d3800053fdfb"></script><script src="/growbot-face.js?v=7e7411d0426e"></script><script src="/growbot-status.js?v=0314feb1b2bd"></script><script src="/growbot-eyes.js?v=de5a948ed530"></script><script src="/growbot-talklog.js?v=25dee4fdf7b5"></script><script src="/growbot-vision.js?v=065e966e3518"></script><script src="/growbot-grid.js?v=73fa8d8f8b5f"></script><script src="/growbot-pano.js?v=139904412435"></script><script src="/growbot-looks.js?v=1fdb1b15ec15"></script><script src="/growbot-map.js?v=a59cbabf6b98"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -15130,6 +15130,9 @@ function travelRow(){var on=!!window.TRAVEL;
 function faceMirrorRow(){var on=!!window.FACE_MIRROR;
  return '<button type="button" class="gbkWrow" id="gbkFaceMirror" aria-pressed="'+on+'"><span class="gbkTt"><b>Mirror face tracking</b><small>Flips left and right for turning toward a face. Try it if he turns the wrong way</small></span><span style="margin-left:auto;color:'+(on?'#37E0C8':'#7F93AB')+'">'+(on?'On':'Off')+'</span></button>';
 }
+function simMatchRow(){ if(typeof window.gbSimMatchHere!=="function"||!window.gbSimMatchHere()) return '';
+ return '<button type="button" class="gbkWrow" id="gbkSimMatch"><span class="gbkTt"><b>Sim match</b><small>A leg test for the training sim, ending in faster and faster lifts until he tips. Put him on the floor he walks on and be ready to catch him</small></span><span style="margin-left:auto;color:#ffb27a">Start</span></button>';
+}
 function showBrainLogLink(link){
  var row=g("gbkBrainLogs");if(!row)return;
  var old=g("gbkBrainLogLink");if(old){old.focus();old.select();return;}
@@ -15494,7 +15497,7 @@ function roomHTML(){ var h="";
        hands off to it. */
     '</div>'; }
   h+=moveMeRow();
-  h+=lowPowerRow();h+=travelRow();h+=faceMirrorRow();
+  h+=lowPowerRow();h+=travelRow();h+=faceMirrorRow();h+=simMatchRow();
   if(!window.__gbBox)h+=wRow("byok","brain","#FFB24D","your own key","bring your own brain, optional");
   /* 0908 (Brit): these were two dead INPUTS, not just dead buttons — one asked for a real
      sk-or- key and threw it away. Removed, and the row hands off to the host's own key pane where
@@ -15708,6 +15711,7 @@ g("gbkBBody").addEventListener("click",function(e){
    return; }
  if(c("#gbkCreditsBack")){ bTab=W.moveFrom||"c"; W.moveOpen=false; renderBrainP(); g("gbkPackOpen").focus(); return; }
  if((x=c("[data-hand]"))){ handOff(x.getAttribute("data-hand"),x.getAttribute("data-full")==="1"); return; }
+ if(c("#gbkSimMatch")){ brainPClose(); window.gbSimMatchFromPhone("settings"); return; }
  if(c("#gbkFaceMirror")){ window.setFaceMirror(!window.FACE_MIRROR); renderBrainP(); var fm=g("gbkFaceMirror");if(fm)fm.focus();return; }
  if(c("#gbkTravel")){ window.setTravel(!window.TRAVEL); renderBrainP(); var tv=g("gbkTravel");if(tv)tv.focus();return; }
  if(c("#gbkLowPower")){ window.setLowPower(!window.LOW_POWER); renderBrainP(); var lp=g("gbkLowPower");if(lp)lp.focus();return; }
