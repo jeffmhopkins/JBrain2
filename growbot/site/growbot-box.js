@@ -2895,7 +2895,6 @@
     });
   }
 
-  // As runGait: one move request, and a move it never admitted reads as blocked.
   // `turn` is the degrees a skill set's "turn" move steers onto (+ left).
   /* The Sim match test (owner, 2026-11-19: tonight's walks fell where the same commands in the
      sim never do; "this has to be an issue with the physics of the sim"). From the walk's own
@@ -2950,17 +2949,25 @@
       if (!window._body || !window._body.ready) { refuse(attempt, "connection_unavailable", "no robot connected — its legs aren't here"); return; }
       if (!_bodyAlive()) { refuse(attempt, "connection_unavailable", "robot not answering"); return; }
       ensureIMU();
+      // The tip check reads the phone's orientation: without it the ladder would drive full
+      // strokes into a fallen robot.
+      if (!ori) { refuse(attempt, "no_orientation", "no orientation readings from this phone — tap to allow motion, then try again"); return; }
       var total = SIM_MATCH[SIM_MATCH.length - 1][0];
       if (dutyLeftMs() < total * 1000 + 3000) { refuse(attempt, "duty_limit", "resting its legs a moment (duty limit)"); return; }
-      var cal = calNow(), L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0, neutral = { l: 90 + L, r: 90 + Rr }, from = null;
+      // The walker's own mapping (growbot_runner.js step, with start()'s calibration and the
+      // swap it sets): a0 the left port, each leg's sign from the body's walk.cal.
+      var cal = calNow(), L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0;
+      var LS = +cal.L_SIGN || -1, RS = +cal.R_SIGN || 1, neutral = { l: 90 + L, r: 90 + Rr }, from = null;
       try {
         var ls = typeof _legStart === "function" ? _legStart() : null;
         if (ls && ls.mode === "anchor") from = { l: +ls.anchor.l + L, r: +ls.anchor.r + Rr };
       } catch (e) {}
       carryLegMotion();
       var gen = _motionGen, M = { kind: "simmatch", report: attempt, drive: "" };
+      // Its own move, so the move's end trims the self-motion window from when it began.
+      attempt.mv = { kind: "sim_match" };
       _motion = M;
-      var glide = glideMs(from, neutral), glideEnd = Date.now() + glide, prepEnd = glideEnd + PREP_MS, t0 = 0, n = 0, upB = null, tipN = 0;
+      var glide = glideMs(from, neutral), glideEnd = Date.now() + glide, prepEnd = glideEnd + PREP_MS, t0 = 0, n = 0, upB = null, tipN = 0, jerkN = 0;
       _walkLog.push({ t: Date.now(), ms: total * 1000 });
       selfMoveUntil = prepEnd + total * 1000 + 3500;
       function send(l, r) {
@@ -2969,50 +2976,67 @@
         M.lastPose = { l: l - L, r: r - Rr };
       }
       function end(why) {
-        _imuWhy = "done";
-        carryLegMotion({ l: 90, r: 90 });
         try { logEv("simmatch_end", { v: SIM_MATCH_V, why: why, ticks: n }); } catch (e) {}
-        // carryLegMotion reports a finished move itself; an early end says why on top.
-        if (why !== "done") _moveReport(attempt, "cancelled", why);
+        if (why === "done") { _imuWhy = "done"; carryLegMotion({ l: 90, r: 90 }); }
+        else {
+          // As a walk's tip and grab abort: let go, and catch his balance before the next move.
+          _imuWhy = why; stopMotion(); _gaitCoolUntil = Date.now() + 4000;
+          setErr(why === "tipped" ? "I tipped over, so I stopped." : "easy — set me down gently.");
+        }
         $("brainTxt").textContent = "awake";
+      }
+      function guarded(f) {
+        return function () {
+          try { f(); } catch (e) {
+            if (_motion !== M) return;
+            stopMotion();
+            setErr("the sim match stumbled (" + ((e && e.message) || e) + ")");
+          }
+        };
       }
       function gone() {
         if (gen !== _motionGen || _motion !== M) return true;
         if (paused || document.hidden || dreaming || !window._body || !window._body.ready || !_bodyAlive()) { stopMotion(); return true; }
         return false;
       }
-      function prep() {
+      var prep = guarded(function () {
         if (gone()) return;
         var g = glide && Date.now() < glideEnd ? between(from, neutral, 1 - (glideEnd - Date.now()) / glide) : neutral;
         try { send(Math.round(g.l), Math.round(g.r)); } catch (e) { stopMotion(); return; }
         if (!M.started) { M.started = true; _moveReport(attempt, "started", "stance_commands", { gait: "simmatch" }); }
         if (Date.now() < prepEnd) { M.loopIv = setTimeout(prep, Date.now() < glideEnd ? GLIDE_TICK_MS : 100); return; }
-        upB = ori ? { b: ori.b, g: ori.g } : null;
+        if (!ori) { end("no_orientation"); return; }
+        upB = { b: ori.b, g: ori.g };
         t0 = Date.now();
+        attempt.mv.t0 = t0;
         try { logEv("simmatch_start", { v: SIM_MATCH_V, hz: SIM_MATCH_HZ, l_off: L, r_off: Rr }); } catch (e) {}
         $("brainTxt").textContent = "matching the sim…";
         tick();
-      }
-      function tick() {
+      });
+      var tick = guarded(function () {
         if (gone()) return;
         var st = (Date.now() - t0) / 1000;
         if (st > total) { end("done"); return; }
         // A tip ends the series (the ladder is meant to find it) and holds him.
-        var dTilt = ori && upB ? phoneTiltDegrees(ori, upB) : null;
+        var dTilt = ori && upB ? phoneTiltDegrees(ori, upB) : null, lin = typeof linMag === "number" ? linMag : 0;
         tipN = dTilt > 55 ? tipN + 1 : 0;
+        jerkN = lin > 11 ? jerkN + 1 : 0;
         if (tipN >= 3) { end("tipped"); return; }
-        var a = simMatchAt(st), l = Math.round(90 + L - a[0] * 90), r = Math.round(90 + Rr + a[1] * 90);
+        if (jerkN >= 6) { end("grabbed"); return; }
+        var a = simMatchAt(st), clamp = function (v) { return Math.max(0, Math.min(180, Math.round(v))); };
+        var l = clamp(90 + L + LS * a[0] * 90), r = clamp(90 + Rr + RS * a[1] * 90);
         try { send(l, r); } catch (e) { stopMotion(); return; }
         n++;
         M.tele = { mode: "simmatch", l: l, r: r, act: a, n: n, dt: 1000 / SIM_MATCH_HZ, st: st };
         M.loopIv = setTimeout(tick, 1000 / SIM_MATCH_HZ);
-      }
+      });
       prep();
     } finally {
       if (attempt.state === "requested") _moveReport(attempt, "blocked", "not_admitted");
     }
   };
 
+  // As runGait: one move request, and a move it never admitted reads as blocked.
   window.gbTrainedWalk = function (pid, move, secs, drive, following, turn) {
     var attempt = _moveRequest((following ? "walk:follow:" : "walk:trained:") + String(move).slice(0, 16));
     try { start(pid, move, +secs || 0, attempt, drive, !!following, false, turn); }

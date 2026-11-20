@@ -37,7 +37,9 @@ g._body = { ready: true, pose(l, r) { poses.push([l, r]); } };
 // GB_HELD: the legs held at a pose when the walk starts (a rest's hold), as _legStart reads it.
 if (process.env.GB_HELD) { const held = JSON.parse(process.env.GB_HELD); g._legStart = () => ({ mode: "anchor", anchor: held }); }
 g._bodyAlive = () => true; g.ensureIMU = () => {}; g.holdStop = () => {}; g.logEv = () => {};
-g.phoneTiltDegrees = () => 0; g.setErr = (m) => errs.push(m);
+// GB_TIP_AT: the phone reads 60 degrees off its stance from that many ms in (a tip).
+const tipAt = Number(process.env.GB_TIP_AT || 0), bornT = Date.now();
+g.phoneTiltDegrees = () => (tipAt && Date.now() - bornT >= tipAt ? 60 : 0); g.setErr = (m) => errs.push(m);
 g.calNow = () => ({ L_OFF: 4, R_OFF: -2, L_SIGN: -1, R_SIGN: 1, IMU_SIGN: [1, -1, 1], gain: 0.7 });
 g.$ = () => ({ textContent: "" });
 // The eyes' feed, the creature's screen and its camera, for the follower.
