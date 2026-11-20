@@ -2187,6 +2187,7 @@
     // A transcript: true when the test took it, so no model turn hears it.
     heard: function (txt) {
       if (bt && bt.phase !== "result") return !!bt.heard(txt);
+      if (!btLoading && smAsked(txt)) return true;
       return btLoading ? BT_ASK.test(String(txt || "").trim()) : btAsked(txt);
     },
   };
@@ -3059,6 +3060,83 @@
       if (attempt.state === "requested") _moveReport(attempt, "blocked", "not_admitted");
     }
   };
+
+  // Started on his own phone (owner, 2026-11-20: "I can only run this from my phone and if Dave
+  // is up I can't go to that other screen. This needs to be set from the pwa brain menu"): the
+  // brain panel's Mind tab, the wake screen and "sim match" said out loud start it here, as the
+  // Body tab's trick does. The brain panel pauses him while it is open and the wake screen holds
+  // him asleep, so this closes the one and wakes from the other, lifts a kept pause (asking for
+  // it is asking him to move), and gives the body a moment to answer before the refusals apply.
+  var SM_WAIT_MS = 20000, smStarting = false;
+  function smStart(src) {
+    if (smStarting || (typeof _motion !== "undefined" && _motion && _motion.kind === "simmatch")) return false;
+    smStarting = true;
+    try { logEv("simmatch_asked", { src: src }); } catch (x) {}
+    try { if (typeof _brainOn !== "undefined" && _brainOn && typeof brainToggle === "function") brainToggle(); } catch (x) {}
+    try { if (typeof paused !== "undefined" && paused && typeof setPaused === "function") setPaused(false); } catch (x) {}
+    try { ensureIMU(); } catch (x) {}
+    var until = Date.now() + SM_WAIT_MS;
+    (function wait() {
+      var ready = false;
+      try { ready = !window._wakeGateUp && !!window._body && !!window._body.ready && _bodyAlive(true) && !!ori; } catch (x) {}
+      if (!ready && Date.now() < until) { setTimeout(wait, 250); return; }
+      smStarting = false;
+      // Still not ready: the move's own refusal says which part is missing.
+      window.gbSimMatch();
+    })();
+    return true;
+  }
+  window.gbSimMatchFromPhone = smStart;
+  var SM_ASK = /^\W*(?:(?:hey\W+)?dave\W+)?(?:(?:(?:can|could|will)\W+you|let'?s|please)\W+)?(?:(?:start|run|do|begin)\W+(?:(?:a|the|your|my)\W+)?)?(?:sim|sym|same)[\s-]?match(?:ed|es)?\W*(?:(?:test|please|now|dave)\W*)*$/i;
+  function smAsked(txt) {
+    if (!btRobot() || !SM_ASK.test(String(txt || "").trim())) return false;
+    smStart("voice");
+    return true;
+  }
+  var SM_BTN = "font:13px/1 GBEntryMono,'Departure Mono',ui-monospace,monospace;border:2px solid #7F93AB;border-radius:0;background:transparent;color:#E8F6FF;padding:12px 16px;min-height:44px;min-width:240px;margin-top:14px;cursor:pointer";
+  function smWakeButton() {
+    if (!btRobot() || typeof document.getElementById !== "function") return false;
+    var wake = document.getElementById("wgWake");
+    if (!wake || !wake.parentNode || document.getElementById("wgSimMatch")) return false;
+    var b = document.createElement("button");
+    b.id = "wgSimMatch";
+    b.type = "button";
+    b.textContent = "sim match";
+    b.style.cssText = SM_BTN;
+    // Woken in the tap itself, as the body test is, for the voice and the motion sensors.
+    b.onclick = function () { wake.click(); smStart("wake"); };
+    var after = document.getElementById("wgCamTest") || document.getElementById("wgBodyTest") || wake;
+    after.parentNode.insertBefore(b, after.nextSibling);
+    return true;
+  }
+  // The brain panel is built the first time it opens, so the button goes in when it appears.
+  function smPanelButton() {
+    if (!btRobot() || typeof document.getElementById !== "function") return false;
+    var pane = document.getElementById("bpPaneMind");
+    if (!pane || document.getElementById("bpmSimMatch")) return !!pane;
+    var b = document.createElement("button");
+    b.id = "bpmSimMatch";
+    b.type = "button";
+    b.className = "bpx";
+    b.style.cssText = "color:#ffb27a;border-color:#6b4a2f";
+    b.title = "a fixed leg test from his walking stance, ending in faster and faster lifts until he tips: the training sim replays it to match its body to his. set him down on the floor he walks on, and be ready to catch him";
+    b.textContent = "sim match \u00b7 leg test for the sim";
+    b.onclick = function () { smStart("brain"); };
+    var after = document.getElementById("bpmVouch");
+    if (after && after.parentNode === pane) pane.insertBefore(b, after.nextSibling);
+    else pane.insertBefore(b, pane.firstChild);
+    return true;
+  }
+  function smButtons() {
+    smWakeButton();
+    if (smPanelButton() || typeof MutationObserver !== "function" || !document.body) return;
+    var mo = new MutationObserver(function () { if (smPanelButton()) mo.disconnect(); });
+    mo.observe(document.body, { childList: true });
+  }
+  try {
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", smButtons);
+    else smButtons();
+  } catch (e) {}
 
   // As runGait: one move request, and a move it never admitted reads as blocked.
   window.gbTrainedWalk = function (pid, move, secs, drive, following, turn) {

@@ -326,7 +326,12 @@ of one, small oscillations at 1 and 2.5 Hz, then a ladder of full-stroke lifts (
 down to 0.15 s that is meant to end in a tip, where the walk's own tip check ends it and holds
 him. The flight recorder keeps each tick's action (`act`) and series time (`st`) beside the tilt,
 between `simmatch_start` and `simmatch_end` rows; GrowBot_Training replays the same series to fit
-its sim body to his.
+its sim body to his. It starts from his own phone too (owner, 2026-11-20: "I can only run this from
+my phone"), since the phone on his body is the only one in hand while he is up: the brain panel's
+Mind tab (`bpmSimMatch`, under "he is standing now"), the wake screen's **sim match** under the
+body and camera tests, and "sim match" said out loud. Each closes the brain panel (which paused
+him) or wakes him, lifts a kept pause, and waits up to 20 s for the body and the motion sensors
+before the move's own refusals apply (`gbSimMatchFromPhone`).
 
 **Flight recorder.** Whenever the legs move, and around the diary rows that matter to them
 (walks, skills, holds, rests, jolts, falls, recoveries), the page keeps what the body test
