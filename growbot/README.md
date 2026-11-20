@@ -383,6 +383,11 @@ which the sidecar hands to the api's `/internal/growbot/bodytests` and answers o
 While it runs `heardText` gives it every line after `gbEStop`, so no model turn moves the legs.
 On a robot's phone the wake screen has its own **body test** button, for an owner with one
 phone: it reads the skill set from `/api/box/skills` (only for a robot the phone drives).
+Saying "body test" (alone, or after start, run, do or begin, as in "can you start the body
+test" or "let's do a body test") starts it the same way (`gbBodyTest.heard`). A persona, or any
+page on a robot's phone, always opens on the wake screen (`apply.py` `WAKE_GATE_PATCHES`):
+upstream skips it for a diary of two lines or fewer, which a persona whose history was
+forgotten also has.
 Leaving the app puts him back behind that screen (`growbot-box.js` `wakeOnReturn`): once the
 wake screen was tapped through, a hide pauses him and stops a body test, and coming back reloads
 the page onto the wake screen. A pause the person chose survives the reload as before; a file
