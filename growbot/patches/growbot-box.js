@@ -2185,7 +2185,10 @@
     stop: function (why) { btGen++; if (bt) bt.cancel(why || "stopped"); },
     active: function () { return btLoading || (!!bt && bt.phase !== "result"); },
     // A transcript: true when the test took it, so no model turn hears it.
-    heard: function (txt) { return !!(bt && bt.phase !== "result" && bt.heard(txt)); },
+    heard: function (txt) {
+      if (bt && bt.phase !== "result") return !!bt.heard(txt);
+      return !btLoading && btAsked(txt);
+    },
   };
 
   // The wake screen's camera test (owner, 2026-11-15: "set up the phone and you do face
@@ -2363,18 +2366,34 @@
     b.style.cssText = "font:13px/1 GBEntryMono,'Departure Mono',ui-monospace,monospace;border:2px solid #7F93AB;border-radius:0;background:transparent;color:#E8F6FF;padding:12px 16px;min-height:44px;min-width:240px;margin-top:14px;cursor:pointer";
     b.onclick = function () {
       wake.click();
-      fetch("/api/box/skills?robot=" + encodeURIComponent(id), { cache: "no-store" }).then(function (r) {
-        if (r.status === 403) throw new Error("this phone isn't signed in to drive " + id);
-        if (!r.ok) throw new Error("the box said " + r.status);
-        return r.json();
-      }).then(function (j) {
-        if (!j || !j.skills) throw new Error("no trained walks cover two skills yet");
-        window.gbBodyTest.start(j.skills);
-      }).catch(function (e) {
-        setErr("the body test didn't start (" + ((e && e.message) || e) + ")");
-      });
+      btFromBox(id);
     };
     wake.parentNode.insertBefore(b, wake.nextSibling);
+    return true;
+  }
+  // The library's skill set for this robot, then the test: the wake screen's button and the
+  // spoken ask (gbBodyTest.heard) both start it this way.
+  function btFromBox(id) {
+    return fetch("/api/box/skills?robot=" + encodeURIComponent(id), { cache: "no-store" }).then(function (r) {
+      if (r.status === 403) throw new Error("this phone isn't signed in to drive " + id);
+      if (!r.ok) throw new Error("the box said " + r.status);
+      return r.json();
+    }).then(function (j) {
+      if (!j || !j.skills) throw new Error("no trained walks cover two skills yet");
+      window.gbBodyTest.start(j.skills);
+    }).catch(function (e) {
+      setErr("the body test didn't start (" + ((e && e.message) || e) + ")");
+    });
+  }
+  // Asked out loud (owner, 2026-11-20: "Can I have Dave call the body test"): "body test" on
+  // its own, or after start, run, do or begin, the way the wake screen's button would. A
+  // sentence about one ("how did the body test go") is talk, and a stop word never starts one.
+  var BT_ASK = /^\W*(?:(?:hey\W+)?dave\W+)?(?:(?:please\W+)?(?:start|run|do|begin)\W+(?:(?:a|the|your|my)\W+)?)?body[\s-]?test\W*(?:(?:please|now)\W*)?$/i;
+  function btAsked(txt) {
+    var id = btRobot();
+    if (!id || !BT_ASK.test(String(txt || "").trim())) return false;
+    try { logEv("bodytest_asked", {}); } catch (x) {}
+    btFromBox(id);
     return true;
   }
   try {

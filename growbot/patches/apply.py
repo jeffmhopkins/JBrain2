@@ -5197,6 +5197,23 @@ LOOKS_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += LOOKS_PATCHES
 
+# A creature the box keeps (a persona) always opens on the wake screen, where its body test
+# is (owner, 2026-11-20: "when I open up Dave for the first time he starts running"). Upstream
+# skips the screen for a creature whose diary holds two lines or fewer, as a brand-new sprout
+# with nothing to wake; a persona whose history was forgotten has that same empty diary, so
+# Dave booted straight into the live view, and growbot-box.js's wakeOnReturn, which needs the
+# screen tapped through, never brought it back.
+WAKE_GATE_PATCHES: list[tuple[str, str, str, int]] = [
+    (
+        "v3/next.html",
+        "try{ var _ret=!window.__justAdopted && ((_live.bornAt===1)||((_live.log||[]).length>2));",
+        "try{ var _ret=!window.__justAdopted && ((_live.bornAt===1)||((_live.log||[]).length>2)"
+        "||!!(window.__gbBoxSoul&&window.__gbBoxSoul.persona));",
+        1,
+    ),
+]
+PATCHES += WAKE_GATE_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
