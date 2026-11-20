@@ -5235,6 +5235,171 @@ def test_asking_for_a_body_test_out_loud_starts_one() -> None:
     assert got["fetched"] == ["/api/box/skills?robot=gb-abc123"] * 6
 
 
+_SM_STUB = (
+    "var said=[], els={}, obs=[], clock=0;"
+    "function el(id){ var e={id:id, kids:[], parentNode:null, style:{},"
+    " insertBefore:function(n,ref){ n.parentNode=e; var i=ref?e.kids.indexOf(ref):-1;"
+    " if(i<0) e.kids.push(n); else e.kids.splice(i,0,n); els[n.id]=n; },"
+    " click:function(){ if(e.onclick) e.onclick(); }};"
+    " Object.defineProperty(e,'nextSibling',{get:function(){ var k=e.parentNode.kids;"
+    " return k[k.indexOf(e)+1]||null; }}); els[id]=e; return e; }"
+    "function add(parent,id){ var e=el(id); e.parentNode=parent; parent.kids.push(e); return e; }"
+    "var document={readyState:'complete', body:{},"
+    " getElementById:function(i){ return els[i]||null; },"
+    " createElement:function(){ return el(''); }, addEventListener:function(){}};"
+    "function MutationObserver(f){ this.observe=function(){ obs.push(f); };"
+    " this.disconnect=function(){ said.push('disconnect'); }; }"
+    "var robot=JSON.parse(process.argv[2]);"
+    "function btRobot(){ return robot; }"
+    "var bt=false, btAsking=false; function setErr(m){ said.push('err:'+m); }"
+    "var window={_wakeGateUp:false, _body:{ready:true},"
+    " gbBodyTest:{active:function(){ return bt; }},"
+    " gbSimMatch:function(){ said.push('simmatch'); }};"
+    "var _motion=null, _brainOn=false, paused=false, ori={a:0,b:45,g:0}, alive=true;"
+    "function brainToggle(){ _brainOn=!_brainOn; said.push('brain:'+_brainOn); }"
+    "function setPaused(p){ paused=p; said.push('pause:'+p); }"
+    "function ensureIMU(){} function _bodyAlive(){ return alive; }"
+    "function logEv(e,d){ said.push(e+':'+d.src); }\n"
+)
+
+
+def _sim_match_phone(steps: str, robot: str = "gb-abc123") -> list[str]:
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    code = box[box.index("  // Started on his own phone") : box.index("  // As runGait: one move")]
+    # The wait for the body, cut short so a body that never answers is seen in a test.
+    code = code.replace("SM_WAIT_MS = 20000", "SM_WAIT_MS = 300")
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    program = (
+        _SM_STUB
+        + code
+        + "\n"
+        + steps
+        + "\nsetTimeout(function(){ console.log(JSON.stringify(said)); }, 700);"
+    )
+    out = subprocess.run(
+        [node, "-e", program, "", json.dumps(robot)], capture_output=True, text=True, check=True
+    )
+    return json.loads(out.stdout)
+
+
+def test_the_sim_match_starts_from_the_brain_panel_on_his_own_phone() -> None:
+    """Owner, 2026-11-20: "I can only run this from my phone and if Dave is up I can't go to that
+    other screen. This needs to be set from the pwa brain menu". The brain panel is built when it
+    first opens; its Mind tab gets the button, and a tap closes the panel (which paused him) and
+    starts the series once the body answers."""
+    steps = (
+        "var pane;"
+        "setTimeout(function(){ pane=el('bpPaneMind'); add(pane,'bpmXfer'); add(pane,'bpmVouch');"
+        " add(pane,'bpmLook'); obs.forEach(function(f){ f(); });"
+        " said.push(pane.kids.map(function(k){ return k.id; }).join(','));"
+        " _brainOn=true; paused=true; els.bpmSimMatch.click(); }, 10);"
+    )
+    got = _sim_match_phone(steps)
+    assert got == [
+        "disconnect",
+        "bpmXfer,bpmVouch,bpmSimMatch,bpmLook",
+        "simmatch_asked:brain",
+        "brain:false",
+        "pause:false",
+        "simmatch",
+    ]
+
+
+def test_the_sim_match_waits_for_the_body_then_lets_the_move_say_why() -> None:
+    steps = (
+        "window._body.ready=false; smStart('brain');"
+        # A second ask while the first waits is the same ask.
+        " said.push('again:'+smStart('voice'));"
+        " setTimeout(function(){ said.push('still waiting'); }, 100);"
+    )
+    got = _sim_match_phone(steps)
+    assert got == ["simmatch_asked:brain", "again:false", "still waiting", "simmatch"]
+
+
+def test_the_sim_match_has_a_wake_screen_button_and_a_spoken_ask() -> None:
+    wake = (
+        "var gate=el('gate'); var w=add(gate,'wgWake'); add(gate,'wgBodyTest');"
+        " add(gate,'wgCamTest'); w.onclick=function(){ said.push('wake'); };"
+        " window._wakeGateUp=true; smWakeButton();"
+        " said.push(gate.kids.map(function(k){ return k.id; }).join(','));"
+        " els.wgSimMatch.click(); setTimeout(function(){ window._wakeGateUp=false; }, 100);"
+    )
+    assert _sim_match_phone(wake) == [
+        "wgWake,wgBodyTest,wgCamTest,wgSimMatch",
+        "wake",
+        "simmatch_asked:wake",
+        "simmatch",
+    ]
+    asks = [
+        "sim match",
+        "Dave, start the sim match please",
+        "let's do a sim match test",
+        "sym match",
+        "same match",
+        "how did the sim match go",
+        "stop the sim match",
+    ]
+    said = _sim_match_phone(
+        "said.push(JSON.stringify(" + json.dumps(asks) + ".map(function(a){ var r=smAsked(a);"
+        " smStarting=false; return r; })));"
+    )
+    assert json.loads(said[-1]) == [True, True, True, True, False, False, False]
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "if (!btLoading && !btAsking && smAsked(txt)) return true;" in box
+
+
+def test_the_sim_match_leaves_a_body_test_its_legs_and_a_pause_calls_it_off() -> None:
+    """Review of #1960: a body test drives the legs itself, so an ask during one is refused in
+    words, and a body test begun or a pause made while it waits for the body calls it off."""
+    assert _sim_match_phone("bt=true; said.push(String(smStart('brain')));") == [
+        "err:the sim match waits until the body test is done",
+        "false",
+    ]
+    began = "window._body.ready=false; smStart('voice'); setTimeout(function(){ bt=true; }, 50);"
+    assert _sim_match_phone(began) == [
+        "simmatch_asked:voice",
+        "err:the sim match didn't start (a body test started)",
+    ]
+    paused = (
+        "window._body.ready=false; smStart('wake'); setTimeout(function(){ paused=true; }, 50);"
+    )
+    assert _sim_match_phone(paused) == [
+        "simmatch_asked:wake",
+        "err:the sim match didn't start (he was paused)",
+    ]
+    # Still asleep when the wait runs out: said so, and no move is sent.
+    asleep = "window._wakeGateUp=true; smStart('wake');"
+    assert _sim_match_phone(asleep) == [
+        "simmatch_asked:wake",
+        "err:the sim match didn't start (he's still asleep)",
+    ]
+
+
+def test_the_brain_panels_settings_start_the_sim_match() -> None:
+    """The bar's Brain panel (Settings tab) is the brain menu the owner opens on his phone: a Sim
+    match row there, on a robot's phone only, closes the panel and starts it."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "h+=travelRow();h+=faceMirrorRow();h+=simMatchRow();" in page
+    assert (
+        'if(c("#gbkSimMatch")){ brainPClose(); window.gbSimMatchFromPhone("settings"); return; }'
+        in page
+    )
+    row = page[page.index("function simMatchRow(){") : page.index("function showBrainLogLink(")]
+    assert 'typeof window.gbSimMatchHere!=="function"||!window.gbSimMatchHere()' in row
+    box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.gbSimMatchHere = function () { return !!btRobot(); };" in box
+
+
+def test_the_sim_match_buttons_are_only_on_a_robots_phone() -> None:
+    steps = (
+        "var gate=el('gate'); add(gate,'wgWake'); var pane=el('bpPaneMind');"
+        " said.push(String(smWakeButton()), String(smPanelButton()), String(smAsked('sim match')));"
+    )
+    assert _sim_match_phone(steps, robot="") == ["false", "false", "false"]
+
+
 def test_leaving_the_app_pauses_him_and_coming_back_lands_on_the_wake_screen() -> None:
     """Owner, 2026-11-19: paused, left, came back, and the page the phone kept alive was still
     on the live view. A hide after the wake tap pauses him (stopping a body test) and the return
