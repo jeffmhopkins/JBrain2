@@ -5179,17 +5179,20 @@ def test_a_persona_opens_on_the_wake_screen_even_with_no_history() -> None:
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     line = page[page.index("try{ var _ret=") :].split("\n", 1)[0]
     assert "((_live.log||[]).length>2)" in line
-    assert "||!!(window.__gbBoxSoul&&window.__gbBoxSoul.persona))" in line
+    assert "||!!(window.__gbBoxSoul&&window.__gbBoxSoul.persona)" in line
+    # A robot's phone opens on it even when the box could not say which persona it runs.
+    assert "||/[?&]id=gb-/.test(location.search));" in line
     box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.__gbBoxSoul = { persona: loaded };" in box
 
 
 def test_asking_for_a_body_test_out_loud_starts_one() -> None:
     """Owner, 2026-11-20: "Can I have Dave call the body test". The ask on its own or after
-    start/run/do/begin starts it as the wake screen's button does; talk about one does not."""
+    start/run/do/begin starts it as the wake screen's button does; talk about one does not, and a
+    repeat while the first is still on its way is the same ask."""
     box = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     code = box[box.index("  // The robot this phone wears") : box.index("  function load(pid) {")]
-    assert "return !btLoading && btAsked(txt);" in box
+    assert 'return btLoading ? BT_ASK.test(String(txt || "").trim()) : btAsked(txt);' in box
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -5205,25 +5208,31 @@ def test_asking_for_a_body_test_out_loud_starts_one() -> None:
         "function fetch(u){ fetched.push(u); return Promise.resolve({ok:true, status:200,"
         " json:function(){ return Promise.resolve({skills:{look:'a'}}); }}); }\n"
         + code
-        + "\nvar said=JSON.parse(process.argv[1]).map(btAsked);"
-        "setTimeout(function(){ console.log(JSON.stringify({said:said, started:started.length,"
-        " fetched:fetched})); }, 20);"
+        + "\nvar said=[], asks=JSON.parse(process.argv[1]);"
+        "(function next(k){ if(k>=asks.length){ console.log(JSON.stringify({said:said,"
+        " started:started.length, fetched:fetched})); return; }"
+        " var a=asks[k]; if(Array.isArray(a)){ said.push(a.map(btAsked)); }"
+        " else said.push(btAsked(a)); setTimeout(function(){ next(k+1); }, 5); })(0);"
     )
     asks = [
         "body test",
         "Dave, start the body test please",
-        "run a body-test now",
+        "can you run a body-test now",
+        "let's do a body test, Dave",
+        "body text",
         "how did the body test go",
         "stop the body test",
         "don't start the body test",
+        # Said twice before the skill set came back: one test.
+        ["body test", "body test"],
     ]
     out = subprocess.run(
         [node, "-e", program, json.dumps(asks)], capture_output=True, text=True, check=True
     )
     got = json.loads(out.stdout)
-    assert got["said"] == [True, True, True, False, False, False]
-    assert got["started"] == 3
-    assert got["fetched"] == ["/api/box/skills?robot=gb-abc123"] * 3
+    assert got["said"] == [True, True, True, True, True, False, False, False, [True, True]]
+    assert got["started"] == 6
+    assert got["fetched"] == ["/api/box/skills?robot=gb-abc123"] * 6
 
 
 def test_leaving_the_app_pauses_him_and_coming_back_lands_on_the_wake_screen() -> None:

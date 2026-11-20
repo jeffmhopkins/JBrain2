@@ -2187,7 +2187,7 @@
     // A transcript: true when the test took it, so no model turn hears it.
     heard: function (txt) {
       if (bt && bt.phase !== "result") return !!bt.heard(txt);
-      return !btLoading && btAsked(txt);
+      return btLoading ? BT_ASK.test(String(txt || "").trim()) : btAsked(txt);
     },
   };
 
@@ -2388,12 +2388,17 @@
   // Asked out loud (owner, 2026-11-20: "Can I have Dave call the body test"): "body test" on
   // its own, or after start, run, do or begin, the way the wake screen's button would. A
   // sentence about one ("how did the body test go") is talk, and a stop word never starts one.
-  var BT_ASK = /^\W*(?:(?:hey\W+)?dave\W+)?(?:(?:please\W+)?(?:start|run|do|begin)\W+(?:(?:a|the|your|my)\W+)?)?body[\s-]?test\W*(?:(?:please|now)\W*)?$/i;
+  // "Body text" is how the words engine often hears it.
+  var BT_ASK = /^\W*(?:(?:hey\W+)?dave\W+)?(?:(?:(?:can|could|will)\W+you|let'?s|please)\W+)?(?:(?:start|run|do|begin)\W+(?:(?:a|the|your|my)\W+)?)?body[\s-]?te(?:st|xt)s?\W*(?:(?:please|now|dave)\W*)*$/i;
+  // A second ask while the skill set is still on its way is the same ask, not a second test.
+  var btAsking = false;
   function btAsked(txt) {
     var id = btRobot();
     if (!id || !BT_ASK.test(String(txt || "").trim())) return false;
+    if (btAsking) return true;
+    btAsking = true;
     try { logEv("bodytest_asked", {}); } catch (x) {}
-    btFromBox(id);
+    btFromBox(id).then(function () { btAsking = false; });
     return true;
   }
   try {

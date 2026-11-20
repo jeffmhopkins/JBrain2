@@ -5203,12 +5203,14 @@ PATCHES += LOOKS_PATCHES
 # with nothing to wake; a persona whose history was forgotten has that same empty diary, so
 # Dave booted straight into the live view, and growbot-box.js's wakeOnReturn, which needs the
 # screen tapped through, never brought it back.
+# A robot's phone (?id=gb-...) opens on it too, so its body test is there even when the box
+# could not say which persona it runs.
 WAKE_GATE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         "try{ var _ret=!window.__justAdopted && ((_live.bornAt===1)||((_live.log||[]).length>2));",
         "try{ var _ret=!window.__justAdopted && ((_live.bornAt===1)||((_live.log||[]).length>2)"
-        "||!!(window.__gbBoxSoul&&window.__gbBoxSoul.persona));",
+        "||!!(window.__gbBoxSoul&&window.__gbBoxSoul.persona)||/[?&]id=gb-/.test(location.search));",
         1,
     ),
 ]
