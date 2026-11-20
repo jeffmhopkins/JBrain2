@@ -269,6 +269,20 @@ def test_put_rejects_unknown_task_provider_and_effort(
     assert "llm_task_overrides" not in store.values  # nothing leaked
 
 
+# Every client _authed_client entered, shut down after its test. Its lifespan starts the
+# app's background loops (the Minecraft drains among them) on the client's own thread;
+# left running, they kept polling for the rest of the worker's run and landed in a later
+# Minecraft test's fake sidecar as calls that test never made.
+_ENTERED: list[TestClient] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_entered_clients() -> Iterator[None]:
+    yield
+    while _ENTERED:
+        _ENTERED.pop().__exit__(None, None, None)
+
+
 def _authed_client(
     settings: Settings, gateway: FakeLocalGateway | None = None
 ) -> tuple[TestClient, FakeSettingsStore]:
@@ -277,6 +291,7 @@ def _authed_client(
     store = FakeSettingsStore()
     c = TestClient(app)
     c.__enter__()
+    _ENTERED.append(c)
     app.state.auth_repo = FakeAuthRepo()
     app.state.settings_store = store
     app.state.local_gateway = gateway or FakeLocalGateway()

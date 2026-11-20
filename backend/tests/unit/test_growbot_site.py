@@ -4317,9 +4317,13 @@ def _trained_walk(
     policy: str = "",
     rec: bool = False,
     mirror: bool = False,
+    sim_match: bool = False,
+    tip_at: int = 0,
 ) -> dict[str, Any]:
     env = {
         **os.environ,
+        "GB_TIP_AT": str(tip_at) if tip_at else "",
+        "GB_SIMMATCH": "1" if sim_match else "",
         "GB_MIRROR": "1" if mirror else "",
         "GB_REC": "1" if rec else "",
         "GB_POLICY": policy,
@@ -4446,6 +4450,46 @@ def test_the_flight_recorder_posts_a_walk_and_closes_its_run_as_the_page_goes() 
         "n": 3,
         "ok": True,
     }
+
+
+def test_the_sim_match_plays_its_fixed_series_from_the_walks_stance() -> None:
+    """Owner, 2026-11-19: tonight's walks fell where the same commands never tip the sim, so
+    a fixed series of leg moves runs on him and in the sim alike. From the stance (with this
+    phone's trims, as a walk's), each tick's action goes out as the walker maps it: a0 the left
+    port, mirrored; the recorder reads the action and the series time off the motion."""
+    # Its 70 s need a body with no duty budget (upstream's default) or a big one; this harness
+    # grants a minute unless told.
+    got = _trained_walk("look", _STILL, sim_match=True, wait_ms=3200, duty_ms=200000)
+    assert got["errs"] == []
+    poses = got["allPoses"]
+    assert poses[0] == [94, 88]
+    # Its slow sweep: act 0.5 on both legs is 45 degrees out from the stance on each.
+    assert [49, 133] in poses
+    assert "simmatch_start" in got["logs"]
+    tele = got["lastTele"]
+    assert tele["mode"] == "simmatch" and 0 < tele["st"] < 3
+    assert got["at"][:5] == [[0, 0], [0.25, 0.25], [0.5, 0.5], [0.4, 0.4], [0.5, 0]]
+    # The ladder's full stroke, and still once it is over.
+    assert got["at"][5] == [0.9, 0.9] and got["at"][6] == [0, 0]
+
+
+def test_the_sim_match_lets_go_when_he_tips_and_says_so() -> None:
+    """Review: a tip ends the series as a walk's tip abort does, letting go rather than holding
+    a fallen robot, with the move's end saying it tipped, never that it finished."""
+    # 60 degrees past the stance once the series runs (the stance is read at its start).
+    tipped = {"accel": {"x": 0.0, "y": 0.0, "z": 9.8}, "rate": {"a": 0.0, "b": 0.0, "g": 0.0}}
+    got = _trained_walk("look", tipped, sim_match=True, wait_ms=3200, duty_ms=200000, tip_at=1800)
+    assert "simmatch_start" in got["logs"] and "simmatch_end" in got["logs"]
+    # Let go (stopMotion, whose report the page makes from the tip), never carried to a hold.
+    assert got["lastTele"] is None and got["last"] != ["rest"]
+    assert ["completed", "done"] not in got["reports"]
+    assert "I tipped over, so I stopped." in got["errs"]
+
+
+def test_the_sim_match_is_a_body_tab_move() -> None:
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert 'move === "sim_match"' in shim and "window.gbSimMatch();" in shim
+    assert "simmatch_start|simmatch_end" in shim
 
 
 def test_a_trained_walk_rests_when_the_duty_budget_is_spent() -> None:

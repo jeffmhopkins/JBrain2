@@ -1414,6 +1414,9 @@
       if (typeof window.moveLegs !== "function") throw new Error("the creature has not loaded its legs yet");
       var t = typeof STAND_TALL !== "undefined" && STAND_TALL ? STAND_TALL : TALL;
       window.moveLegs({ body: { steps: [{ l: t.l, r: t.r, ms: t.ms }] } });
+    } else if (move === "sim_match") {
+      if (typeof window.gbSimMatch !== "function") throw new Error("this page can't run the sim match yet");
+      window.gbSimMatch();
     } else if (move === "get_up") {
       // Upstream's tested get-up, from lying screen-up; the page says why when it can't.
       if (typeof window.gbGetUp !== "function") throw new Error("this page can't get up yet");
@@ -1929,6 +1932,7 @@
       if (w.act) out.act = [btR(w.act[0], 1000), btR(w.act[1], 1000)];
       if (w.net && w.net !== w.act) out.net = [btR(w.net[0], 1000), btR(w.net[1], 1000)];
       if (w.fs) out.fst = w.fs;
+      if (typeof w.st === "number") out.st = btR(w.st, 1000);
     }
     try {
       if (ori) { out.oa = btR(ori.a); out.ob = btR(ori.b); out.og = btR(ori.g); }
@@ -2223,7 +2227,7 @@
      the debug API's GET /growbot/bodytests/{n}. Not while a body test runs (that one records
      it); ?legrec=0 turns it off. */
   var REC_MS = 50, REC_PRE_MS = 3000, REC_POST_MS = 6000, REC_FLUSH_MS = 2000, REC_ROWS_MAX = 55000, REC_FINAL_ROWS = 200;
-  var REC_EVENTS = /^(walk_start|walk_end|move_end|skill|hold_start|hold_end|hold_abort|rest_tall|self_jolt|fall_think|reflex_[a-z]+|gait_abort|recover_[a-z_]+|action_outcome|act|spin_stuck|shake_block|legs_slack|face_mirror)$/;
+  var REC_EVENTS = /^(walk_start|walk_end|move_end|skill|hold_start|hold_end|hold_abort|rest_tall|self_jolt|fall_think|reflex_[a-z]+|gait_abort|recover_[a-z_]+|action_outcome|act|spin_stuck|shake_block|legs_slack|face_mirror|simmatch_start|simmatch_end)$/;
   var REC_CODE = /^[A-Za-z0-9_.:-]{0,40}$/;
   var rec = null, recLast = "";
   function recNew() {
@@ -2891,8 +2895,148 @@
     });
   }
 
-  // As runGait: one move request, and a move it never admitted reads as blocked.
   // `turn` is the degrees a skill set's "turn" move steers onto (+ left).
+  /* The Sim match test (owner, 2026-11-19: tonight's walks fell where the same commands in the
+     sim never do; "this has to be an issue with the physics of the sim"). From the walk's own
+     stance, a fixed series of leg moves in the policy's action space (radians over
+     action_to_rad, 1 = 90 degrees; a0 the sim's right leg, which drives the left port as the
+     walker's swap does), played at 25 Hz exactly as a walk sends them, slow and fast, both legs
+     and one. The flight recorder keeps each tick's action (act) beside the tilt, and
+     GrowBot_Training's sim_match replays the same version (SIM_MATCH_V) to fit the sim's body
+     until its tilt matches his. Kept to half a stroke until the ladder at its end. Each key is [seconds from the start, a0, a1], linear between; two keys at
+     one time are a step. */
+  var SIM_MATCH_V = "sm1", SIM_MATCH_HZ = 25;
+  var SIM_MATCH = [
+    [0, 0, 0], [1, 0, 0],
+    [2, 0.5, 0.5], [3, 0.5, 0.5], [4, 0, 0], [5, 0, 0],
+    [6, -0.5, -0.5], [7, -0.5, -0.5], [8, 0, 0], [9, 0, 0],
+    [9, 0.4, 0.4], [10, 0.4, 0.4], [10, 0, 0], [11.5, 0, 0],
+    [11.5, -0.4, -0.4], [12.5, -0.4, -0.4], [12.5, 0, 0], [14, 0, 0],
+    [14, 0.5, 0], [15, 0.5, 0], [15, 0, 0], [16, 0, 0],
+    [16, 0, 0.5], [17, 0, 0.5], [17, 0, 0], [18, 0, 0],
+    [18.25, 0.3, 0.3], [18.75, -0.3, -0.3], [19.25, 0.3, 0.3], [19.75, -0.3, -0.3],
+    [20.25, 0.3, 0.3], [20.75, -0.3, -0.3], [21, 0, 0], [22, 0, 0],
+    [22.1, 0.3, 0.3], [22.3, -0.3, -0.3], [22.5, 0.3, 0.3], [22.7, -0.3, -0.3],
+    [22.9, 0.3, 0.3], [23.1, -0.3, -0.3], [23.3, 0.3, 0.3], [23.5, -0.3, -0.3], [23.6, 0, 0], [25, 0, 0],
+  ];
+  /* Then the ladder (owner, 2026-11-19: "slowly move legs from the 45 position to the upright
+     position, and then go a little faster, then a little faster, etc until he falls"): both legs
+     from the stance to the walk's full stroke (0.9, the 0.3 s lift that threw him tonight) over
+     each of SIM_MATCH_LADDER seconds, a slow 2 s back and 1.5 s still between. It runs last, as
+     it is meant to end in a fall; the tip check ends it there and the recorder keeps the 6 s
+     after. */
+  var SIM_MATCH_LADDER = [3, 2, 1.5, 1, 0.7, 0.5, 0.35, 0.25, 0.15];
+  (function () {
+    var t = SIM_MATCH[SIM_MATCH.length - 1][0];
+    SIM_MATCH_LADDER.forEach(function (up) {
+      SIM_MATCH.push([t + up, 0.9, 0.9], [t + up + 0.5, 0.9, 0.9], [t + up + 2.5, 0, 0], [t + up + 4, 0, 0]);
+      t += up + 4;
+    });
+  })();
+  function simMatchAt(t) {
+    var K = SIM_MATCH, i = 0;
+    if (t <= K[0][0]) return [K[0][1], K[0][2]];
+    while (i < K.length - 1 && K[i + 1][0] <= t) i++;
+    if (i >= K.length - 1) return [K[i][1], K[i][2]];
+    var a = K[i], b = K[i + 1], f = (t - a[0]) / (b[0] - a[0]);
+    return [a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  }
+  window.gbSimMatchAt = simMatchAt;
+  window.gbSimMatch = function () {
+    var attempt = _moveRequest("sim_match");
+    try {
+      if (_wheels) { refuse(attempt, "no_legs", "the sim match needs legs, and this body rolls"); return; }
+      if (!window._body || !window._body.ready) { refuse(attempt, "connection_unavailable", "no robot connected — its legs aren't here"); return; }
+      if (!_bodyAlive()) { refuse(attempt, "connection_unavailable", "robot not answering"); return; }
+      ensureIMU();
+      // The tip check reads the phone's orientation: without it the ladder would drive full
+      // strokes into a fallen robot.
+      if (!ori) { refuse(attempt, "no_orientation", "no orientation readings from this phone — tap to allow motion, then try again"); return; }
+      var total = SIM_MATCH[SIM_MATCH.length - 1][0];
+      if (dutyLeftMs() < total * 1000 + 3000) { refuse(attempt, "duty_limit", "resting its legs a moment (duty limit)"); return; }
+      // The walker's own mapping (growbot_runner.js step, with start()'s calibration and the
+      // swap it sets): a0 the left port, each leg's sign from the body's walk.cal.
+      var cal = calNow(), L = +cal.L_OFF || 0, Rr = +cal.R_OFF || 0;
+      var LS = +cal.L_SIGN || -1, RS = +cal.R_SIGN || 1, neutral = { l: 90 + L, r: 90 + Rr }, from = null;
+      try {
+        var ls = typeof _legStart === "function" ? _legStart() : null;
+        if (ls && ls.mode === "anchor") from = { l: +ls.anchor.l + L, r: +ls.anchor.r + Rr };
+      } catch (e) {}
+      carryLegMotion();
+      var gen = _motionGen, M = { kind: "simmatch", report: attempt, drive: "" };
+      // Its own move, so the move's end trims the self-motion window from when it began.
+      attempt.mv = { kind: "sim_match" };
+      _motion = M;
+      var glide = glideMs(from, neutral), glideEnd = Date.now() + glide, prepEnd = glideEnd + PREP_MS, t0 = 0, n = 0, upB = null, tipN = 0, jerkN = 0;
+      _walkLog.push({ t: Date.now(), ms: total * 1000 });
+      selfMoveUntil = prepEnd + total * 1000 + 3500;
+      function send(l, r) {
+        holdStop(false);
+        (window._body.raw || window._body).pose(l, r);
+        M.lastPose = { l: l - L, r: r - Rr };
+      }
+      function end(why) {
+        try { logEv("simmatch_end", { v: SIM_MATCH_V, why: why, ticks: n }); } catch (e) {}
+        if (why === "done") { _imuWhy = "done"; carryLegMotion({ l: 90, r: 90 }); }
+        else {
+          // As a walk's tip and grab abort: let go, and catch his balance before the next move.
+          _imuWhy = why; stopMotion(); _gaitCoolUntil = Date.now() + 4000;
+          setErr(why === "tipped" ? "I tipped over, so I stopped." : "easy — set me down gently.");
+        }
+        $("brainTxt").textContent = "awake";
+      }
+      function guarded(f) {
+        return function () {
+          try { f(); } catch (e) {
+            if (_motion !== M) return;
+            stopMotion();
+            setErr("the sim match stumbled (" + ((e && e.message) || e) + ")");
+          }
+        };
+      }
+      function gone() {
+        if (gen !== _motionGen || _motion !== M) return true;
+        if (paused || document.hidden || dreaming || !window._body || !window._body.ready || !_bodyAlive()) { stopMotion(); return true; }
+        return false;
+      }
+      var prep = guarded(function () {
+        if (gone()) return;
+        var g = glide && Date.now() < glideEnd ? between(from, neutral, 1 - (glideEnd - Date.now()) / glide) : neutral;
+        try { send(Math.round(g.l), Math.round(g.r)); } catch (e) { stopMotion(); return; }
+        if (!M.started) { M.started = true; _moveReport(attempt, "started", "stance_commands", { gait: "simmatch" }); }
+        if (Date.now() < prepEnd) { M.loopIv = setTimeout(prep, Date.now() < glideEnd ? GLIDE_TICK_MS : 100); return; }
+        if (!ori) { end("no_orientation"); return; }
+        upB = { b: ori.b, g: ori.g };
+        t0 = Date.now();
+        attempt.mv.t0 = t0;
+        try { logEv("simmatch_start", { v: SIM_MATCH_V, hz: SIM_MATCH_HZ, l_off: L, r_off: Rr }); } catch (e) {}
+        $("brainTxt").textContent = "matching the sim…";
+        tick();
+      });
+      var tick = guarded(function () {
+        if (gone()) return;
+        var st = (Date.now() - t0) / 1000;
+        if (st > total) { end("done"); return; }
+        // A tip ends the series (the ladder is meant to find it) and holds him.
+        var dTilt = ori && upB ? phoneTiltDegrees(ori, upB) : null, lin = typeof linMag === "number" ? linMag : 0;
+        tipN = dTilt > 55 ? tipN + 1 : 0;
+        jerkN = lin > 11 ? jerkN + 1 : 0;
+        if (tipN >= 3) { end("tipped"); return; }
+        if (jerkN >= 6) { end("grabbed"); return; }
+        var a = simMatchAt(st), clamp = function (v) { return Math.max(0, Math.min(180, Math.round(v))); };
+        var l = clamp(90 + L + LS * a[0] * 90), r = clamp(90 + Rr + RS * a[1] * 90);
+        try { send(l, r); } catch (e) { stopMotion(); return; }
+        n++;
+        M.tele = { mode: "simmatch", l: l, r: r, act: a, n: n, dt: 1000 / SIM_MATCH_HZ, st: st };
+        M.loopIv = setTimeout(tick, 1000 / SIM_MATCH_HZ);
+      });
+      prep();
+    } finally {
+      if (attempt.state === "requested") _moveReport(attempt, "blocked", "not_admitted");
+    }
+  };
+
+  // As runGait: one move request, and a move it never admitted reads as blocked.
   window.gbTrainedWalk = function (pid, move, secs, drive, following, turn) {
     var attempt = _moveRequest((following ? "walk:follow:" : "walk:trained:") + String(move).slice(0, 16));
     try { start(pid, move, +secs || 0, attempt, drive, !!following, false, turn); }

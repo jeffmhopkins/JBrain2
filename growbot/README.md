@@ -1,6 +1,6 @@
 # growbot — the desk robot's brain on the box
 
-> **Status:** Living · **Last verified:** 2026-11-19
+> **Status:** Living · **Last verified:** 2026-11-20
 
 The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
 phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
@@ -317,6 +317,16 @@ straight to neutral), a skill set's file swap glides from the stride it was in b
 settle, and a finished walk glides from its last stride into the idle hold (`GLIDE_PATCHES`:
 `carryLegMotion` calls `gbGlideLegs`). The hold lets go on a tip only once the tilt lasts three
 beats (600 ms), so a wobble right after a walk no longer drops him; a grab still lets go at once.
+
+**Sim match** (the Body tab's trick; `gbSimMatch`; owner, 2026-11-19: tonight's walks fell
+where the same leg commands, replayed in the training sim, never tip it). From the walk's stance
+it plays a fixed series of leg moves (`SIM_MATCH`, version `sm1`) in the policy's action space at
+25 Hz, mapped to the legs exactly as the walker maps them: slow sweeps and steps of both legs and
+of one, small oscillations at 1 and 2.5 Hz, then a ladder of full-stroke lifts (0 to 0.9) over 3 s
+down to 0.15 s that is meant to end in a tip, where the walk's own tip check ends it and holds
+him. The flight recorder keeps each tick's action (`act`) and series time (`st`) beside the tilt,
+between `simmatch_start` and `simmatch_end` rows; GrowBot_Training replays the same series to fit
+its sim body to his.
 
 **Flight recorder.** Whenever the legs move, and around the diary rows that matter to them
 (walks, skills, holds, rests, jolts, falls, recoveries), the page keeps what the body test
